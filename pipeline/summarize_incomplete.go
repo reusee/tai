@@ -16,25 +16,16 @@ const TheoryOfHandoff = `
 When a generation attempt is truncated (no summary block) or errors after
 producing partial output, a handoff summary is constructed before retrying.
 Truncation often occurs because the model attempted too many changes at
-once, exceeding output length limits. The handoff condenses the valuable
-thinking from the interrupted output — discoveries, insights, analysis,
-decisions about the problem, and specific attempted code modifications —
-into a single self-contained text.
+once, exceeding output length limits. HandoffSystemPrompt is itself the
+theory text for what the handoff must carry — the preserved thinking, the
+atomicity acknowledgment, and the task-partitioning guidance — and it is
+not repeated here.
 
 All changes are atomic: a truncated or failed attempt applies nothing to
 disk, so there is no completed work on disk and claims that changes took
-effect are hallucinations. However, summarizing what changes were being
-attempted and evaluating whether they are sound is crucial: it informs the
-next generation so it can complete a manageable initial subset of those
-changes first, using a continue block to partition the remaining work
-across subsequent generations instead of repeatedly attempting an
-oversized emission that triggers truncation again.
-
-The handoff's value is in the reasoning and structural plan it preserves:
-it guides the direction of the next generation, prevents repeating
-preliminary analysis, and directs task partitioning. The handoff is
-reference material, not a substitute for thinking: the next generation
-must still reason about the problem and decide how to partition its work.
+effect are hallucinations. The handoff is therefore transient error
+recovery, not history: it is injected into one retry request and never
+persists as compressed context (see TheoryOfContextPhilosophy).
 
 The handoff model is a single model specified by HandoffModel. When empty,
 the fast model (FastModelName) is used if configured; otherwise the default

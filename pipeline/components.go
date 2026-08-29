@@ -70,16 +70,16 @@ philosophy (see components.TheoryOfDisabledBlocks).
 Read-only files, skeleton files, hidden packages, and mandatory planning
 are prompt-only Components: they contribute system prompt sections without
 defining a block kind or processing blocks. The skeleton-files section
-teaches the "begin of skeleton of file" marker contract — treat the
-skeleton as an index and fetch the original with an ingest block before
-modifying the file — and is included unconditionally: the gotools
-module-root listing always renders skeletons, so the rule must be present
-in every codes session even when per-file skeletons are disabled (see
-anytexts.TheoryOfContextSkeleton). The hidden-packages notice
-(gotools.HiddenPackagesSystemPrompt, from the go.hidden configuration)
-appears only when at least one pattern is configured; it lists the hidden
-import-path patterns so the model neither fetches their symbols nor reads
-their files. See gotools.TheoryOfHiddenPackages.
+teaches the "begin of skeleton of file" marker contract (SkeletonFilesSystemPrompt
+is itself the theory text for the consumption rules and is not repeated here)
+and is included unconditionally: the gotools module-root listing always renders
+skeletons, so the rule must be present in every codes session even when
+per-file skeletons are disabled (see anytexts.TheoryOfContextSkeleton). The
+hidden-packages notice (gotools.HiddenPackagesSystemPrompt, from the
+go.hidden configuration) appears only when at least one pattern is
+configured; it lists the hidden import-path patterns so the model neither
+fetches their symbols nor reads their files. See
+gotools.TheoryOfHiddenPackages.
 
 ExtraSystemPrompt is also a prompt-only Component. The components carry no
 reminder text of their own; the late reminder role belongs to the system

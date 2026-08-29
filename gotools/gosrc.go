@@ -12,76 +12,47 @@ Go symbol names — one per line — and the system resolves each symbol to its
 declaration source, returned as user content in the next generation round.
 It complements ingest under a taught division of labor: for Go source code
 the prompts prefer go-src, because a fetch returns the exact declaration
-with its doc comments, the defining file and line, a references report of
-the symbol's callers, a selector packages report listing the full import
-paths of packages used in selector expressions within the declaration, and
-interface relations for named types and interfaces — none of which a
-whole-file ingest provides. The ingest kind keeps what go-src cannot fetch:
-non-Go files, whole-file views, glob discovery, and network resources. The
-division is taught only in the go-src prompts; the ingest prompt stays
-language-neutral because the blocks package defines no Go-specific kind.
-The kind's purpose is precision under the visibility system: a package
-shown at documentation visibility carries only go doc output, so the model
-knows declaration signatures but not implementations; go-src lets the model
-pull exactly the implementations it needs instead of re-fetching whole
-files (see TheoryOfVisibilityAllocation). Focus packages are pinned at
-documentation level, which makes go-src the primary path from the
-declaration surface to the implementation: the initial context carries only
-declarations, test-function names, and file names, and the model fetches
-exactly the source it needs before understanding, modifying, or reviewing
-any focus declaration — including test functions, which the focus package
-block lists by name. Under the -all-src flag focus packages are pinned at
-full source, so the initial context already carries every focus
-declaration's implementation and go-src fetching is unnecessary for focus
-declarations; the kind remains the fetch path for context packages at
-documentation visibility.
+with its doc comments and its reports — none of which a whole-file ingest
+provides — while ingest keeps what go-src cannot fetch: non-Go files,
+whole-file views, glob discovery, and network resources. The division is
+taught only in the go-src prompts; the ingest prompt stays language-neutral
+because the blocks package defines no Go-specific kind. The kind's purpose
+is precision under the visibility system: a package shown at documentation
+visibility carries only go doc output, so the model knows declaration
+signatures but not implementations; go-src lets the model pull exactly the
+implementations it needs instead of re-fetching whole files (see
+TheoryOfVisibilityAllocation). Focus packages are pinned at documentation
+level, which makes go-src the primary path from the declaration surface to
+the implementation: the initial context carries only declarations,
+test-function names, and file names, and the model fetches exactly the
+source it needs before understanding, modifying, or reviewing any focus
+declaration — including test functions, which the focus package block
+lists by name. Under the -all-src flag focus packages are pinned at full
+source, so the initial context already carries every focus declaration's
+implementation and go-src fetching is unnecessary for focus declarations;
+the kind remains the fetch path for context packages at documentation
+visibility.
 
-The block body is opaque to the mechanism: each non-empty line is one
-symbol name in the go doc form [<pkg>.][<sym>.][<methodOrField>] — a
-plain name for a top-level declaration, TypeName.MethodName for a method,
-with an optional package qualifier (full import path, path suffix, or
-the package's declared name) restricting the match to that package, an
-optional leading * receiver
-prefix ignored, and generic parameter lists on the type name ignored.
-Name matching follows go doc's case rule: lower-case query letters match
-either case, upper-case letters match exactly.
-
-A symbol may also be a package reference: an exact loaded package import
-path or package name resolves to the package's go doc documentation
-instead of declaration source. Focus packages are documented with the
--cmd and -u flags — a main package's documentation and unexported
-symbols are shown because the model edits focus packages — while a
-context package shows its exported API surface. Package matching takes
-precedence over symbol matching, mirroring go doc; a package name may
-match several packages, all of which are returned.
-
-The prompts teach three facts about resolution results. The qualifier
-should be the full import path when restricting a symbol to a package:
-an import path names exactly one loaded package, while a bare package
-name or path suffix may match several same-named packages and multiply
-the results. Each resolved block names the defining file (with line),
-so the fetched declaration doubles as the authoritative file-path for
-change blocks targeting it. And resolution reads the in-memory file set
-captured at context assembly — it never re-reads the disk — so a file
-modified by change blocks during the session still yields
-pre-modification content on a repeated fetch; verification of applied
-changes belongs to go-test blocks and disk reads, not to re-fetching
-symbols.
+The block body is opaque to the mechanism. GoSrcBlockSystemPrompt is
+itself the theory text for the body's symbol grammar (the go doc name
+form, package qualifiers, receiver prefixes, generic parameter lists, and
+the case rule), for package-reference resolution, and for the
+resolution-result contract (prefer the full import path as the qualifier,
+use the defining file path in change blocks, and the in-memory snapshot
+that never re-reads the disk); none of it is repeated here. The resolution
+mechanism is documented in TheoryOfGoSrcResolution.
 
 The go-test and go-src mechanisms are Go-specific, so they live in this
 package together with the resolver (ResolveGoSymbols, which needs the
 parsed ASTs); the blocks package defines only the generic block format
 and the language-neutral kinds. Like ingest, go-src is strictly read-only
-and is not a completion signal: a round carrying a go-src block still
-needs a summary block, and the stop rule is phrased summary-first —
-emit the summary block immediately after the last go-src block's closing
-line, then end the response — so no stop instruction licenses halting at
-the closing line, the observed failure shape of a lone go-src block
-ending a response. A round that ends on a go-src block without a
-summary is retried with feedback naming the missing summary; the go-src
-block is discarded with the failed attempt and must be re-emitted
-together with the summary block — re-emission is what makes the symbol
-requests take effect (see pipeline.TheoryOfLoops).
+and follows the summary-first stop discipline shared by every
+stop-and-wait kind (see blocks.TheoryOfSummaryBlocks). At the loop level
+a round that ends on a go-src block without a summary is retried with
+feedback naming the missing summary; the go-src block is discarded with
+the failed attempt and must be re-emitted together with the summary
+block — re-emission is what makes the symbol requests take effect (see
+pipeline.TheoryOfLoops).
 `
 
 const GoSrcBlockSystemPrompt = `

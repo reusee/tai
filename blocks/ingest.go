@@ -19,12 +19,12 @@ import (
 
 const TheoryOfIngestBlocks = `
 The ingest block lets the model request additional context during a
-generation cycle: it emits XML tags describing the desired context; the generate
-loop detects the block via ParserState, fetches the requested data, appends it as
-user content, and initiates another generation request. The block is strictly
-read-only: it must not produce any side effects such as writing files or making
-state-changing API calls. The order of XML tags within the block determines the
-order of context parts in the appended user message.
+generation cycle: it emits XML tags describing the desired context; the
+generate loop detects the block via ParserState, fetches the requested data,
+appends it as user content, and initiates another generation request.
+IngestBlockSystemPrompt is itself the theory text for the tag-level
+contract — the supported tags, their attributes, the read-only guarantee,
+and the tag-order semantics — and it is not repeated here.
 
 The kind is named "ingest" rather than "read" deliberately: "read" collides
 with tool names the model has internalized from training, and the collision
@@ -33,9 +33,9 @@ of this block protocol. An uncommon kind name eliminates the collision.
 
 Symbol-level source fetching belongs to a dedicated kind where one exists:
 the codes pipeline teaches go-src — which appends a references report of the
-resolved declarations' callers — as the preferred path for Go source, so ingest
-keeps whole files, glob discovery, and network resources. The ingest prompt
-itself stays language-neutral; see gotools.TheoryOfGoSrcBlocks for the
+resolved declarations' callers — as the preferred path for Go source, so
+ingest keeps whole files, glob discovery, and network resources. The ingest
+prompt itself stays language-neutral; see gotools.TheoryOfGoSrcBlocks for the
 division of labor.
 
 The lsp tag is ingest's language-server extension point: blocks parses the
@@ -47,37 +47,28 @@ language server resolves a nil handler: the lsp documentation is omitted
 from the prompt, and an emitted lsp tag returns an explicit unavailability
 error part rather than being silently ignored.
 
-The file tag permits absolute paths as explicit references while rejecting relative
-paths that escape the current directory via parent-directory traversal, balancing
-flexibility with a basic sanity check. Absolute paths are resolved relative to the
-root directory when within it, or read directly from the filesystem when outside
-it, so the model can reference files in system directories like /tmp. The fetch tag
-supports optional HTTP headers (user-agent, referer, cookie) so the model can access
-resources that require them, but remains read-only (HTTP GET). The glob tag lists
-files matching a pattern without reading their contents, allowing the model to
-discover files before requesting their content; it applies the same path sanity
-check as the file tag. Glob patterns are resolved relative to the root directory so
-that doublestar.FilepathGlob searches within the root's tree rather than the
-process's current working directory. The glob tag supports ** (globstar) patterns
-for recursive directory traversal via doublestar; when ** appears as a complete
-path segment, it matches zero or more directories.
+The file tag permits absolute paths as explicit references while rejecting
+relative paths that escape the current directory via parent-directory
+traversal, balancing flexibility with a basic sanity check. Absolute paths
+are resolved relative to the root directory when within it, or read directly
+from the filesystem when outside it, so the model can reference files in
+system directories like /tmp. The fetch tag supports optional HTTP headers
+(user-agent, referer, cookie) so the model can access resources that require
+them, but remains read-only (HTTP GET). The glob tag applies the same path
+sanity check as the file tag; glob patterns are resolved relative to the
+root directory so that doublestar.FilepathGlob searches within the root's
+tree rather than the process's current working directory, and a ** segment
+that forms a complete path component matches zero or more directories.
 
-Like every kind whose prompt stops and waits for the next round (shell, go-test,
-go-src), the ingest prompt carries the summary discipline: the block does not
-replace the summary block, the prompt requires a summary block in the same
-round after the ingest block, and the stop rule is phrased summary-first — emit
-the summary block immediately after the last ingest block's closing line, then
-end the response and wait — the same wording as the shell prompt, so no stop
-instruction licenses halting at the closing line. The prompt also adds the
-sequence rule that the block after the last ingest block's closing line must be
-the summary block. At the loop level an ingest block never completes a round on
-its own: a round carrying ingest blocks but no summary block is retried with
-feedback naming the missing summary, and the ingest blocks are discarded with
-the failed attempt and must be re-emitted together with the summary block
-(see pipeline.TheoryOfLoops).
+The ingest prompt follows the summary-first stop discipline shared by every
+stop-and-wait kind (see TheoryOfSummaryBlocks). At the loop level an ingest
+block never completes a round on its own: a round carrying ingest blocks but
+no summary block is retried with feedback naming the missing summary, and
+the ingest blocks are discarded with the failed attempt and must be
+re-emitted together with the summary block (see pipeline.TheoryOfLoops).
 
-Only ingest blocks are consumed from ParserState during context
-processing; blocks of other kinds are preserved so they remain available after the
+Only ingest blocks are consumed from ParserState during context processing;
+blocks of other kinds are preserved so they remain available after the
 context is provided.
 `
 

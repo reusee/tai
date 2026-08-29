@@ -45,81 +45,29 @@ lists top-level structure (headings or definitions) and omits details.
 `
 
 const TheoryOfMandatoryPlanning = `
-Mandatory planning requires every task to begin with an overall plan and task
-decomposition, emitted as a plan-only first round, followed by execution
-rounds delimited by continue blocks. The motivation is output-length safety:
-models with long reasoning chains can exceed the maximum generation length on
-large or complex tasks, truncating the response mid-block and wasting the
-round. A plan-only first round followed by small execution rounds keeps each
-round's thinking and output bounded, so no single response approaches the
-generation limit. The mandate is opt-in via the -plan flag; when disabled (the
-default), the planning system prompt is omitted. When enabled, the mandate
-applies uniformly to every task, including apparently trivial ones, because
-truncation risk cannot be reliably predicted from the request alone; the cost
-is one extra short round-trip per task.
+Mandatory planning requires every task to begin with an overall plan and
+task decomposition, emitted as a plan-only first round, followed by
+execution rounds delimited by continue blocks. The motivation is
+output-length safety: models with long reasoning chains can exceed the
+maximum generation length on large or complex tasks, truncating the
+response mid-block and wasting the round. A plan-only first round followed
+by small execution rounds keeps each round's thinking and output bounded,
+so no single response approaches the generation limit. The mandate is
+opt-in via the -plan flag; when disabled (the default), the planning system
+prompt is omitted. When enabled, the mandate applies uniformly to every
+task, including apparently trivial ones, because truncation risk cannot be
+reliably predicted from the request alone; the cost is one extra short
+round-trip per task. MandatoryPlanningSystemPrompt is itself the theory
+text for the round structure, the task-list conventions, the decomposition
+strategies, and the decomposition-precedes-action rule, and they are not
+repeated here.
 
-Planning is an extension layered on top of the continue block mechanism (see
-TheoryOfContinueBlocks): the mechanism only transports the block body back as
-the next user message, while this mandate defines what the body contains and
-how rounds are structured. The two are orthogonal: continue blocks may serve
-other extensions with entirely different body conventions.
-
-For complex tasks, the model maintains a task list in the continue block body.
-In each round, the model selects one or a few tasks from the list to execute,
-produces the corresponding change blocks, and ends with a summary block
-followed by a continue block containing the updated task list — marking
-completed tasks and listing remaining tasks. The continue block does not
-replace the summary block: the summary is mandatory in every response, and a
-round ending on a continue block alone is retried as incomplete. This cycle
-repeats until all tasks are complete, at which point the final round ends with
-only a summary block.
-
-Decomposition must precede any action, including analysis and reasoning, not
-just code changes. A composite task such as "find bugs and fix" contains an
-analysis phase (finding bugs) that may itself span many files or modules and
-exceed the generation limit if performed in a single round. The planning round
-must therefore partition the input space — for example by file or module group
-— so that each round analyzes or acts on only a subset.
-`
-
-const TheoryOfTaskDecomposition = `
-Task decomposition is a portfolio of strategies applied in combination. No one
-strategy suffices for all tasks; the model must select and blend strategies
-based on task shape, risk profile, and observed progress.
-
-Structural strategies determine how work is divided: by input partition (e.g.,
-one round per focus-file group), by logical step sequence, by architectural
-layer (interface definition before implementation before caller updates), or by
-independent units (decoupling tasks with no mutual dependencies to maximize
-parallel execution).
-
-Adaptive strategies determine how the model responds during generation:
-truncate immediately and continue in the next round if output is already long;
-refine the task list progressively if a coarse task reveals finer subtasks;
-dedicate the next round to diagnosis and fix after an error; adjust the task
-list dynamically when execution feedback contradicts the plan.
-
-Quality strategies determine how correctness is ensured: include dedicated
-verification rounds after implementation; isolate high-uncertainty tasks as
-probing rounds; gather context before making changes.
-
-Scheduling strategies determine ordering and sizing: order by dependency;
-isolate high blast-radius changes; split by estimated token consumption;
-distinguish one-way door (irreversible) from two-way door (reversible)
-decisions.
-
-The primary trigger for splitting into multiple rounds is the expected output
-volume of a single round: when a task requires more than approximately 5-7
-change blocks, or when an analysis phase must process many files or modules.
-Secondary triggers include natural phase boundaries and dependency chains.
-Each round should produce a coherent, reviewable set of changes; prefer fewer,
-larger rounds over many tiny rounds to minimize round-trip overhead.
-
-Decomposition must precede any action, including analysis and reasoning. A
-composite task such as "find bugs and fix" contains an analysis phase that may
-itself span many files or modules; the planning round must partition the input
-space so that each round — whether analyzing or implementing — handles only a
-subset.
+Planning is an extension layered on top of the continue block mechanism
+(see blocks.TheoryOfContinueBlocks): the mechanism only transports the
+block body back as the next user message, while this mandate defines what
+the body contains and how rounds are structured. The two are orthogonal:
+continue blocks may serve other extensions with entirely different body
+conventions.
 `
 
 const MandatoryPlanningSystemPrompt = `**Mandatory Planning and Multi-Round Generation:**

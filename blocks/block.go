@@ -9,47 +9,43 @@ import (
 )
 
 const TheoryOfBlockFormatGeneral = `
-The heredoc block format is a general-purpose structured output format for AI
-models. Each block has a kind (function name), parameters (named arguments on the
-opening line), and a body. The opening marker is <<DELIMITER kind(param1="value1", ...);
-the closing marker is the DELIMITER alone on its own line. When no parameters are
-needed, parentheses may be omitted (bare kind). Only the delimiter string and the
-header structure are unified; the body content is defined by the specific kind.
+The heredoc block format is a general-purpose structured output format for
+AI models; BlockFormatSystemPrompt is itself the theory text for the marker
+structure, the delimiter selection policy, and the line-start requirement,
+and those rules are not repeated here. Only the delimiter string and the
+header structure are unified; the body content is defined by the specific
+kind.
 
-Kind generality: the block format prompt describes only the format and the rules
-that apply to every kind — marker structure, delimiter policy, deferred execution.
-It must not mention or reference any specific kind's semantics, and must not
-assume which kinds a deployment provides, requires, or forbids. Third-party
-programs may embed the format prompt without any tai-implemented kind, so every
-kind-specific statement belongs in that kind's own prompt.
+Kind generality: the block format prompt describes only the format and the
+rules that apply to every kind — marker structure, delimiter policy,
+deferred execution. It must not mention or reference any specific kind's
+semantics, and must not assume which kinds a deployment provides, requires,
+or forbids. Third-party programs may embed the format prompt without any
+tai-implemented kind, so every kind-specific statement belongs in that kind's
+own prompt.
 
-Delimiter selection policy: every delimiter MUST be an uncommon Chinese two-character
-word (e.g., 龃龉). Content — source code, prompts, and configuration text —
-is overwhelmingly ASCII or common-script writing, so a rare Han pair has negligible
-probability of appearing in a block body, satisfying the body-disjointness guarantee
+Delimiter rarity is the integrity rationale behind the policy: content —
+source code, prompts, and configuration text — is overwhelmingly ASCII or
+common-script writing, so a rare Han pair has negligible probability of
+appearing in a block body, satisfying the body-disjointness guarantee
 without requiring the model to scan its output for collisions. The fixed
-two-character length keeps the delimiter visually distinct and its token cost
-constant. The model must never emit the literal placeholder "DELIMITER", must never
-reuse an example delimiter, and must never use a delimiter of any other length or
-script.
+two-character length keeps the delimiter visually distinct and its token
+cost constant.
 
-Line-start requirement: the opening marker must appear at the beginning of a line;
-the closing marker (the delimiter alone) must be on its own line. A << not at the
-start of a line is regular content and will not start a block. The prompt states
-the rule twice: abstractly, and as a mechanical emission-time self-check — before
-emitting <<, the model verifies the preceding character is a newline and emits a
-newline first otherwise — because models occasionally violate the abstract rule
-but can execute a concrete check. Naming the common violation shapes (prose
-run-on, list bullets, code fences) tells the model where the risk concentrates.
+The line-start rule is stated twice in the prompt — abstractly, and as a
+mechanical emission-time self-check — because models occasionally violate
+the abstract rule but can execute a concrete check; naming the common
+violation shapes (prose run-on, list bullets, code fences) tells the model
+where the risk concentrates.
 
-Unclosed block detection: an opening marker at line start without a matching closing
-line is a malformed block; the parser reports an error rather than silently skipping
-it.
+Unclosed block detection: an opening marker at line start without a
+matching closing line is a malformed block; the parser reports an error
+rather than silently skipping it.
 
 Delimiter rule centralization: the delimiter rules live only in
-BlockFormatSystemPrompt. Individual kind prompts describe only their kind-specific
-semantics. The deferred-execution contract is centralized the same way; see
-TheoryOfDeferredExecution.
+BlockFormatSystemPrompt. Individual kind prompts describe only their
+kind-specific semantics. The deferred-execution contract is centralized the
+same way; see TheoryOfDeferredExecution.
 `
 
 const TheoryOfDeferredExecution = `
@@ -63,52 +59,47 @@ atomically after the round succeeds, with apply errors reported in the
 next round.
 
 The distinction matters because models trained on tool-call APIs expect a
-result before continuing generation. Under the block protocol that
+result before continuing generation; under the block protocol that
 expectation produces hallucinations: the model writes as if a command had
 already run or a file had already been fetched, fabricating outputs that
 never existed and sometimes building later blocks on the fabricated
-results. The format prompt therefore states the deferred-execution
-contract explicitly: nothing executes while generating, results arrive only
-in the next round, an emitted block must be assumed unexecuted, and
-content that depends on a block's result must wait for a later round.
-Kind prompts may state kind-specific arrival details (which round the
-output arrives in, stop-and-wait rules) but must not restate the general
-principle; BlockFormatSystemPrompt owns it, mirroring the delimiter rule
-centralization.
+results. BlockFormatSystemPrompt states the deferred-execution contract
+explicitly for this reason and owns it: kind prompts may state
+kind-specific arrival details (which round the output arrives in,
+stop-and-wait rules) but must not restate the general principle,
+mirroring the delimiter rule centralization (see
+TheoryOfBlockFormatGeneral).
 `
 
 const TheoryOfBoundaryUniqueness = `
-The delimiter is the sole disambiguator between consecutive blocks within a single
-response. The parser closes a block at the first line that exactly matches the
-opening marker's delimiter. A line that does not match the delimiter is treated as
-body content; if no matching delimiter line is found, the block is unclosed. The
-closing marker line does not require a trailing newline: when the delimiter is the
-last content in the buffer, the parser extracts it from the remaining content, and
-an incomplete (still streaming) delimiter — a shorter extracted string — will not
-match, so the block remains unclosed until the full delimiter arrives.
+The delimiter is the sole disambiguator between consecutive blocks within a
+single response. The parser closes a block at the first line that exactly
+matches the opening marker's delimiter. A line that does not match the
+delimiter is treated as body content; if no matching delimiter line is
+found, the block is unclosed. The closing marker line does not require a
+trailing newline: when the delimiter is the last content in the buffer, the
+parser extracts it from the remaining content, and an incomplete (still
+streaming) delimiter — a shorter extracted string — will not match, so the
+block remains unclosed until the full delimiter arrives.
 
-The delimiter must be freshly chosen as an uncommon Chinese two-character word,
-never copied from the illustrative examples. The example blocks in the system prompt
-deliberately use distinct delimiters to demonstrate this rule, and those exact
-strings are forbidden for reuse. Rarity is the integrity guarantee: a pair of
-uncommon Chinese characters is effectively absent from code and prose, so the chance
-of a body line accidentally matching the delimiter is negligible, while reusing an
-example delimiter would cause a subsequent real block opened with that same
-delimiter to close at the wrong marker. The parser enforces the Han requirement at
-extraction time: extractDelimiter validates that the delimiter is exactly two
-Unicode Han characters, rejecting ASCII, other scripts, and any other length, so
-only two-character Chinese delimiters are recognized as block markers.
+BlockFormatSystemPrompt is itself the theory text for the delimiter
+selection policy — a fresh uncommon Chinese two-character word per block,
+never a reused example, never the literal placeholder — and it is not
+repeated here. The rationale is rarity: a pair of uncommon Chinese
+characters is effectively absent from code and prose, so the chance of a
+body line accidentally matching the delimiter is negligible, while reusing
+an example delimiter would cause a subsequent real block opened with that
+same delimiter to close at the wrong marker. The parser enforces the Han
+requirement at extraction time: extractDelimiter validates that the
+delimiter is exactly two Unicode Han characters, rejecting ASCII, other
+scripts, and any other length, so only two-character Chinese delimiters are
+recognized as block markers.
 
-The delimiter must also be disjoint from the block body; this is a hard requirement,
-not an optional suggestion. Because the parser closes the block at the first line
-matching the delimiter, a body line that matches the delimiter would prematurely
-terminate the block and discard all remaining content. The model must therefore
-select a delimiter that does not appear anywhere in the code or text it is about to
-emit. Two uncommon Chinese characters satisfy this by construction for code and
-prose, but the model must verify the chosen pair is absent from the body before
-emitting the block. Body-disjointness is as important as the anti-reuse guarantee:
-both are integrity guarantees of the format, and violating either corrupts the
-block.
+Body-disjointness carries the same weight as the anti-reuse guarantee:
+because the parser closes the block at the first line matching the
+delimiter, a body line equal to the delimiter prematurely terminates the
+block and discards the remaining content — violating either integrity
+guarantee corrupts the block.
 `
 
 const TheoryOfNestedBlockParsing = `

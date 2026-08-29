@@ -14,66 +14,38 @@ import (
 )
 
 const TheoryOfGoTestBlocks = `
-Go-test blocks allow the model to run Go tests and receive the output as part of
-a generation cycle. After making code changes, the model emits a go-test block to
-verify correctness. The system runs go test with the specified arguments and feeds
-both stdout and stderr back as user content. If tests fail, the error output is
-returned so the model can debug and fix the issues in subsequent rounds. This
-enables autonomous test-driven development: the model writes code, runs tests,
-reads failures, and iterates until all tests pass.
+Go-test blocks allow the model to run Go tests and receive the output as
+part of a generation cycle, enabling autonomous test-driven development:
+the model writes code, runs tests, reads failures, and iterates until all
+tests pass. The go-test block is Go-specific — it only makes sense in Go
+projects with a go.mod file — so its prompts and processing live in the
+gotools package, not in the language-neutral blocks package; non-Go
+projects rely on shell blocks for command execution.
+GoTestBlockSystemPrompt is itself the theory text for the body format, the
+absolute-path rule, the -run targeting guidance, and the summary
+discipline, and none of it is repeated here.
 
-The go-test block is Go-specific: it only makes sense in Go projects with a go.mod
-file. The system prompt instructs the model to use go-test blocks only when working
-with Go code. In non-Go projects, the model should rely on shell blocks for command
-execution instead. Because the kind is Go-specific, its prompts and processing
-live in the gotools package, not in the language-neutral blocks package.
+Each non-empty body line is passed as a separate argument to go test via
+exec.Command, bypassing the shell entirely, so model-generated content
+never reaches a shell interpreter; the empty body runs ./... because the
+model does not know the working directory, and the test output includes it
+so later blocks can use absolute package paths.
 
-The block body contains optional arguments passed to go test, one argument per
-line. If the body is empty, all tests in the current directory tree (./...) are
-run. Each non-empty line is passed as a separate argument to go test via
-exec.Command, bypassing the shell entirely. This avoids shell injection
-vulnerabilities that could arise from passing model-generated content through sh -c.
+ProcessGoTestBlocks always returns test output, regardless of whether tests
+pass or fail; the go-test component feeds it back as user content, always
+triggering a new round. Some models run tests first and need the results to
+decide whether to continue; withholding output on pass causes the system to
+exit prematurely when they intended to proceed after seeing the test
+results. By always feeding back stdout and stderr, the model can see pass
+results and continue its workflow, or see failure output and debug the
+issues.
 
-The model does not know the current working directory, so relative path arguments
-(e.g., ./pkg/...) are error-prone: the model may guess the wrong relative path and
-test the wrong package or no package at all. The test output includes the working
-directory so the model can construct correct absolute paths (e.g.,
-/home/user/project/pkg/...) for subsequent runs. When the model does not yet know
-the working directory, it should use an empty body to run all tests (./...), which
-does not require knowing the directory. After the first test run, the working
-directory is available in the output and the model should switch to absolute paths
-for specific package tests.
-
-Test commands should target the specific test functions the model modified or
-added, rather than running an entire package. Precise -run patterns (e.g., -run
-TestFoo or -run TestBar/subcase) produce faster, more focused feedback and avoid
-noise from unrelated test failures. The model should only fall back to package-level
-or ./... runs when it needs a broad sanity check or does not yet know which tests
-are relevant. After modifying or adding a test function, the go-test block should
-name that function in the -run argument so the verification is directly tied to
-the change.
-
-The go-test block does not carry the round's narrative — that is the summary
-block's role. When the model emits a go-test block, it must still emit a summary
-block in the same round to describe what was done, including the test
-verification. A round with a go-test block but no summary block is retried with
-feedback naming the missing summary: the go-test block is discarded with the
-failed attempt and must be re-emitted together with the summary block —
-re-emission is what makes the test run happen (see pipeline.TheoryOfLoops). This
-applies to every round, including debug rounds where tests fail and the go-test
-component produces Parts that trigger a new round; the go-test prompt phrases
-its stop rule summary-first — emit the summary block immediately after the
-go-test block's closing line, then end the response — mirroring the shell
-prompt, and adds the sequence rule that the block after the go-test block's
-closing line must be the summary block.
-
-ProcessGoTestBlocks always returns test output, regardless of whether tests pass
-or fail; the go-test component feeds it back as user content, always triggering a
-new round. Some models run tests first and need the results to decide whether to
-continue; withholding output on pass causes the system to exit prematurely when they
-intended to proceed after seeing the test results. By always feeding back stdout and
-stderr, the model can see pass results and continue its workflow, or see failure
-output and debug the issues.
+At the loop level a go-test block never completes a round on its own: a
+round with a go-test block but no summary block is retried with feedback
+naming the missing summary, and the block is discarded with the failed
+attempt and must be re-emitted together with the summary block —
+re-emission is what makes the test run happen (see
+pipeline.TheoryOfLoops).
 `
 
 const GoTestBlockSystemPrompt = `

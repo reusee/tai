@@ -14,17 +14,16 @@ triggers no new round — so the wasted output also implies an action that
 never happened (the model may emit a shell block and then reason as if the
 command had run).
 
-DisabledBlocksNotice closes the gap by explicitly listing the kinds that are
-NOT available in the current session, each with a replacement behavior
-(shell: state the command in prose; continue: deliver the complete answer in
-this response; change: describe the modification; go-test, go-src, ingest:
-state the need in prose). DisabledBlocksComponent wraps the notice as a
-prompt-only Component: no Kind, no Process function, so it never enters
-Processable and cannot consume blocks. An empty notice (no kinds, or only
-unknown kinds) renders the component inert — every assembly method skips
-it. CommonComponents itself carries no notices: each caller owns its
-complete disabled list in a single notice component, so a prompt never shows
-the notice twice.
+DisabledBlocksNotice closes the gap by explicitly listing the kinds that
+are NOT available in the current session, each with a replacement behavior;
+disabledKindDescriptions holds the per-kind lines and is itself the theory
+text for them, so they are not repeated here. DisabledBlocksComponent wraps
+the notice as a prompt-only Component: no Kind, no Process function, so it
+never enters Processable and cannot consume blocks. An empty notice (no
+kinds, or only unknown kinds) renders the component inert — every assembly
+method skips it. CommonComponents itself carries no notices: each caller
+owns its complete disabled list in a single notice component, so a prompt
+never shows the notice twice.
 
 Determinism: kinds are sorted and deduplicated and each kind renders one
 fixed line, so equal inputs produce byte-identical notices and the LLM

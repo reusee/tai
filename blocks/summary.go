@@ -2,40 +2,31 @@ package blocks
 
 const TheoryOfSummaryBlocks = `
 Summary blocks serve two purposes: they provide a brief description of each
-generation round's content (including reasoning and actions taken) and act as the
-completion signal that tells the system a round has ended normally. One summary
-block is emitted per round, after all other blocks except any continue block; when
-a continue block is present, the summary block appears before it. The body is a
-markdown bullet list using the "-" format; each item is a single short, concise
-phrase so the user can quickly scan what was done and thought without reading dense
-paragraphs or long sentences. Summaries are collected after generation ends and
-displayed alongside the round statistics, providing a human-readable narrative of
-the session without interfering with block processing or state management. Summary
-blocks are always enabled because they have no side effects and help the user
-understand what the model did and thought in each round without reading the full
-output.
+generation round's content (including reasoning and actions taken) and act as
+the completion signal that tells the system a round has ended normally.
+SummaryBlockSystemPrompt is itself the theory text for the emission,
+ordering, and body-format rules, and they are not repeated here. Summaries
+are collected after generation ends and displayed alongside the round
+statistics, providing a human-readable narrative of the session without
+interfering with block processing or state management. Summary blocks are
+always enabled because they have no side effects and help the user
+understand what the model did and thought in each round without reading the
+full output.
 
 No block kind replaces or implies the summary: a round that ends without a
-summary block is retried, including rounds carrying component-triggering blocks
-(see pipeline.TheoryOfLoops), and the retry feedback names the missing summary.
-Every kind whose prompt stops and waits for the next round (shell, go-test,
-go-src, ingest) phrases its stop rule summary-first — emit the summary block
-immediately after the kind's closing line, then end the response — and forbids
-stopping at the closing line itself; no stop-and-wait prompt places a bare stop
-instruction before the summary requirement, because a model that reads "stop"
-first halts at the closing line and omits the summary, the observed failure
-shape of a lone go-src block ending a response. Each prompt declares that its
-block does not replace the summary and adds the sequence rule that the block
-after its closing line must be the summary block; the summary prompt adds a
-closing self-check so the model verifies its last block before ending the
-response, and it explicitly covers the fetch-only response shape — a response
-whose only blocks are ingest, go-src, shell, or go-test blocks still requires the
-summary, because the system reads the summary as its only proof that the
-response was generated completely and followed the rules. When the retry budget
-is exhausted, the loop synthesizes a summary so the round statistics and the
-summary display keep the round's narrative. When no changes were made, the
-summary block body should be "No changes were needed." so the model still
-signals normal completion.
+summary block is retried, including rounds carrying component-triggering
+blocks (see pipeline.TheoryOfLoops), and the retry feedback names the
+missing summary. Every kind whose prompt stops and waits for the next round
+(shell, go-test, go-src, ingest) phrases its stop rule summary-first and
+adds the sequence rule that the block after its closing line must be the
+summary block, because a model that reads a bare stop instruction first
+halts at the closing line and omits the summary — the observed failure
+shape of a lone go-src block ending a response. The summary prompt covers
+the fetch-only response shape explicitly for the same reason: the system
+reads the summary as its only proof that the response was generated
+completely and followed the rules. When the retry budget is exhausted, the
+loop synthesizes a summary so the round statistics and the summary display
+keep the round's narrative.
 
 Summary language is user-configurable (flags.SummaryLanguage, the
 -summary-language flag or the summary_language config path): when set, the

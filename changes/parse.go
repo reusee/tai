@@ -8,27 +8,20 @@ import (
 )
 
 const TheoryOfNonGoFileChanges = `
-Non-Go files cannot be structurally parsed to identify top-level declarations.
-Therefore, change block operations that require structural identification
-(MODIFY, ADD_BEFORE, ADD_AFTER, and DELETE with a specific declaration target)
-are only valid for Go files. For non-Go files, file-level operations (WRITE,
-RENAME, DELETE with target=*) and text-level operations (REPLACE,
-INSERT_BEFORE, INSERT_AFTER) are permitted; the find-anchor mechanics of the
-text-level operations live in TheoryOfTextLevelOperations.
+Non-Go files cannot be structurally parsed to identify top-level
+declarations, which is why the change block format restricts them to
+file-level and text-level operations; ChangeBlockPrompt's "Non-Go file
+restriction" section is itself the theory text for the operational rule and
+is not repeated here. The find-anchor mechanics of the text-level
+operations live in TheoryOfTextLevelOperations.
 `
 
 const TheoryOfTextLevelOperations = `
 Text-level operations (REPLACE, INSERT_BEFORE, INSERT_AFTER) enable partial
-edits to non-Go text files without structural parsing. They use a find
-attribute to locate a unique string anchor in the file and apply the edit
-relative to that anchor. The find string must appear exactly once; if it
-appears zero or multiple times, the operation fails with an error, and the
-model must either choose a more specific (longer) find string or fall back to
-WRITE for full-file replacement.
-
-REPLACE substitutes the found string with the block body; an empty body
-effectively deletes the found text. INSERT_BEFORE inserts the body before the
-found anchor; INSERT_AFTER inserts it after.
+edits to non-Go text files without structural parsing; ChangeBlockPrompt's
+rules for them — the find anchor, its uniqueness requirement, and the
+REPLACE/INSERT semantics — are the theory text for the contract and are not
+repeated here.
 
 INSERT_BEFORE and INSERT_AFTER always place the inserted content on its own
 line(s): a newline separator is added automatically when the block body does
@@ -41,12 +34,11 @@ mirrors the Go structural ADD operations (see buildModifiedSource in
 apply.go), which also separate inserted declarations with newlines; the
 text-level operations apply the same line-boundary principle to plain text.
 
-Text-level operations are restricted to non-Go files. For Go files, structural
-operations (MODIFY, ADD_BEFORE, ADD_AFTER, DELETE) must be used instead. The
-model has difficulty correctly reproducing whitespace characters in the find
-string, causing the string match to fail on Go source code where whitespace is
-semantically significant for formatting. AST-based declaration matching does
-not depend on exact whitespace reproduction and is therefore more robust.
+The Go-file restriction exists because the model has difficulty correctly
+reproducing whitespace characters in the find string, causing the string
+match to fail on Go source code where whitespace is semantically significant
+for formatting; AST-based declaration matching does not depend on exact
+whitespace reproduction and is therefore more robust.
 
 The uniqueness requirement is the integrity guarantee: it prevents ambiguous
 edits where the model's find string matches multiple locations. Line-number-
@@ -56,41 +48,29 @@ generate accurate line numbers; a unique string anchor is content-addressed.
 
 const TheoryOfSpecialGoTargets = `
 The "package" and "import" targets are special Go-only targets that support
-only the MODIFY operation. They enable token-efficient modification of the
-package clause and import block without requiring WRITE to replace the entire
+only the MODIFY operation. They exist for token-efficient modification of
+the package clause and the import block without WRITE replacing the entire
 file — essential when moving a file to a different package, renaming a
-package, or updating imports across dependent files.
+package, or updating imports across dependent files. ChangeBlockPrompt's
+"Special Go-Only Targets (MODIFY)" section is itself the theory text for
+the targets' body contracts and is not repeated here.
 
-The "package" target replaces the file's package clause (the "package xxx"
-line). The body must be the new package clause (e.g., "package newpkg"). If
-the body contains extra declarations, only the package clause is extracted.
-This target is Go-only; applying it to a non-Go file is rejected by
-ValidateChangeBlock because MODIFY is not a file-level operation.
-
-The "import" target replaces ALL import declarations in the file as a group.
-The body must be the new import block(s) (e.g., "import (\n\t\"fmt\"\n)") or
-individual import declarations. If the file has no existing imports, the new
-imports are inserted after the package clause. An empty body removes all
-imports; goimports adds back any imports still needed by the remaining code.
-This target unifies replacement and insertion into a single "set imports"
-operation. It is Go-only for the same reason as "package".
-
-Both targets run goimports after replacement to ensure valid formatting and
-import synchronization. If the file does not exist or has no real package
-clause, MODIFY is a no-op (consistent with existing MODIFY behavior).
+ValidateChangeBlock rejects the targets on non-Go files, because MODIFY is
+not a file-level operation, and rejects every operation other than MODIFY
+for them. The "import" target unifies replacement and insertion into a
+single "set imports" operation. If the file does not exist or has no real
+package clause, MODIFY is a no-op (consistent with existing MODIFY
+behavior). Both targets run goimports after replacement to ensure valid
+formatting and import synchronization.
 `
 
 const TheoryOfPreciseModifications = `
-Precise modifications (MODIFY, ADD_BEFORE, ADD_AFTER, DELETE, REPLACE,
-INSERT_BEFORE, INSERT_AFTER) target a specific declaration or text anchor,
-touching only the bytes that need to change. WRITE replaces the entire file
-content, which is token-expensive and has a large review blast radius: every
-byte must be re-verified, and unrelated code may be accidentally altered.
-Therefore WRITE should be reserved for two cases: creating a new file from
-scratch, or replacing the majority of a file's content. For small or
-localized changes, precise modifications must always be preferred. This
-principle minimizes token cost, reduces review burden, and preserves the
-integrity of untouched code.
+Precise modifications are preferred over WRITE because they touch only the
+bytes that need to change, while WRITE's whole-file replacement is
+token-expensive, has a large review blast radius, and risks altering
+unrelated code. ChangeBlockPrompt's "Prefer Precise Modifications" section
+is itself the theory text for the rule and its reserved WRITE cases, and
+is not repeated here.
 ` // isGoFile reports whether the given file path has a .go extension.
 func isGoFile(path string) bool {
 	return strings.HasSuffix(path, ".go")
