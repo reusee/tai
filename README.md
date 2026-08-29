@@ -112,6 +112,7 @@ Gemini, OpenAI, DeepSeek, Volcano Engine (Huoshan), Baidu, Tencent, Alibaba Clou
 | `-all-src` | Include full source of focus packages, including tests, in the context |
 | `-shell` | Enable shell block execution |
 | `-stdin` | Add standard input content to the chat messages |
+| `-clean` | Add the code cleanup prompt to the chat messages |
 | `-plan` | Enable mandatory planning and multi-round generation |
 | `-apply` / `-no-apply` | Control whether change blocks are applied |
 | `-no-memory` | Disable user profile memory persistence |

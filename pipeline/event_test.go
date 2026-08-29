@@ -248,13 +248,15 @@ func TestRunEmitsRequestEvent(t *testing.T) {
 }
 
 // TestDescribeRequest verifies the effective-value resolution of the
-// request description: the temperature and effort flags override the
-// spec fields, unset values are omitted, and the model identity and
-// token limits come from the spec. See TheoryOfLoopEvents.
+// request description: the resolved spec path leads the detail, the
+// temperature and effort flags override the spec fields, unset values
+// are omitted, and the model identity and token limits come from the
+// spec. See TheoryOfLoopEvents.
 func TestDescribeRequest(t *testing.T) {
 	specTemperature := float32(0.2)
 	maxTokens := 8192
 	spec := generators.Spec{
+		Name:              "provider/model-b",
 		Model:             "model-b",
 		Temperature:       &specTemperature,
 		ReasoningEffort:   "low",
@@ -262,6 +264,7 @@ func TestDescribeRequest(t *testing.T) {
 	}
 	detail := describeRequest(spec, generators.TemperatureFlag{}, generators.EffortFlag(""))
 	for _, want := range []string{
+		"spec provider/model-b",
 		"model model-b",
 		"temperature 0.2",
 		"effort low",
@@ -293,7 +296,8 @@ func TestDescribeRequest(t *testing.T) {
 	}
 
 	// A spec with no optional fields set renders the model identity
-	// alone: every default value is omitted.
+	// alone: every default value is omitted, including the spec path
+	// when the spec was constructed without one.
 	bare := describeRequest(generators.Spec{Model: "model-bare"},
 		generators.TemperatureFlag{}, generators.EffortFlag(""))
 	if want := "model model-bare"; bare != want {

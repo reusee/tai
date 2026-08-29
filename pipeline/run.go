@@ -984,26 +984,31 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 }
 
 // describeRequest renders the actual generation parameters of one
-// request as the EventRequest detail: the model identity and the
-// effective temperature, reasoning effort, and token limits. The
-// effective values mirror the generators' flag-over-spec precedence —
-// the -temperature and -effort flags override the spec fields (see
-// Gemini.Generate and OpenAI.Generate) — so the event reports the
-// values the request actually carries, unlike the generators'
-// "generating" log, which records the spec's effort even when the flag
-// overrides it. Max generate tokens come from the spec: every built-in
-// command passes nil GenerateOptions, so the spec field is the
-// effective limit; flags.MaxTokens bounds only the input budget and is
-// not part of the request. Unset values are omitted from the detail.
-// See TheoryOfLoopEvents.
+// request as the EventRequest detail: the resolved spec path, the model
+// identity, and the effective temperature, reasoning effort, and token
+// limits. The spec path is the full resolved generator path (Spec.Name
+// after resolveSpec, e.g. "google/flash"); specs constructed without
+// resolution (built-in shortcuts, the ollama shorthand) carry no path
+// and omit the field. The effective values mirror the generators'
+// flag-over-spec precedence — the -temperature and -effort flags
+// override the spec fields (see Gemini.Generate and OpenAI.Generate) —
+// so the event reports the values the request actually carries, unlike
+// the generators' "generating" log, which records the spec's effort
+// even when the flag overrides it. Max generate tokens come from the
+// spec: every built-in command passes nil GenerateOptions, so the spec
+// field is the effective limit; flags.MaxTokens bounds only the input
+// budget and is not part of the request. Unset values are omitted from
+// the detail. See TheoryOfLoopEvents.
 func describeRequest(
 	spec generators.Spec,
 	temperatureFlag generators.TemperatureFlag,
 	effortFlag generators.EffortFlag,
 ) string {
-	parts := []string{
-		fmt.Sprintf("model %s", spec.Model),
+	var parts []string
+	if spec.Name != "" {
+		parts = append(parts, fmt.Sprintf("spec %s", spec.Name))
 	}
+	parts = append(parts, fmt.Sprintf("model %s", spec.Model))
 	if spec.Family != "" {
 		parts = append(parts, fmt.Sprintf("family %s", spec.Family))
 	}

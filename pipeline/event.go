@@ -39,9 +39,10 @@ re-execute the phase chain as a new attempt, up to the retry budget
 carried by MaxAttempts.
 
 EventRequest precedes each attempt's request: its Detail describes the
-actual generation parameters — the model identity and the effective
-temperature, reasoning effort, and token limits — resolved from the
-generator spec with the temperature and effort flag overrides applied
+actual generation parameters — the resolved spec path, the model
+identity, and the effective temperature, reasoning effort, and token
+limits — resolved from the generator spec with the temperature and
+effort flag overrides applied
 (the flags are dscope provided and captured by the Module.Run provider,
 mirroring the generators' flag-over-spec precedence), so a live consumer
 sees what the request actually carries — more truthfully than the
@@ -173,12 +174,13 @@ const EventGoal EventKind = "goal"
 const EventLoopStart EventKind = "loop-start"
 
 // EventRequest reports the actual generation parameters of one request,
-// emitted before the attempt's request is initiated: the model identity
-// and the effective temperature, reasoning effort, and token limits,
-// resolved from the generator spec with the temperature and effort flag
-// overrides applied. The event is the loop-level view of the request:
-// retries internal to the generator are separate API calls not visible
-// here. Detail carries the description. See TheoryOfLoopEvents.
+// emitted before the attempt's request is initiated: the resolved spec
+// path, the model identity, and the effective temperature, reasoning
+// effort, and token limits, resolved from the generator spec with the
+// temperature and effort flag overrides applied. The event is the
+// loop-level view of the request: retries internal to the generator are
+// separate API calls not visible here. Detail carries the description.
+// See TheoryOfLoopEvents.
 const EventRequest EventKind = "request"
 
 // Event is one notable occurrence during a generation loop run. Events
