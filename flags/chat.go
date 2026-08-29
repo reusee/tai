@@ -22,8 +22,9 @@ terminal, no content is read and the current Chats value is forked unchanged.
 
 const TheoryOfCleanFlag = `
 The clean flag appends a fixed cleanup prompt to the chat messages (Chats).
-The prompt instructs the model to delete redundant code and mechanisms, and
-to merge and simplify duplicate tests. It is an additional key on the Chats
+The prompt instructs the model to delete redundant code and mechanisms, to
+merge and simplify duplicate tests, and to delete theory text content that
+duplicates other theory texts. It is an additional key on the Chats
 flag type, registered as the bare word "clean" like "chat"; Parse matches
 arguments verbatim, so the invocation carries no leading dash. It composes
 with chat flags in any argument order: each Handle invocation reads the
@@ -33,7 +34,7 @@ updated pointer. The flag takes no argument; the prompt is fixed.
 
 // cleanPrompt is the fixed task directive the clean flag appends to the
 // chat messages. See TheoryOfCleanFlag.
-const cleanPrompt = "Delete redundant code and mechanisms. Merge and simplify duplicate tests."
+const cleanPrompt = "Delete redundant code and mechanisms. Merge and simplify duplicate tests. Delete theory text content that duplicates other theory texts."
 
 type Chats []string
 
