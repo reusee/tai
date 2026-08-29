@@ -8,9 +8,29 @@ import (
 	"github.com/reusee/tai/configs"
 )
 
+// TheoryOfHandoffModelPrecedence documents how config values from multiple
+// files select the handoff model. See pipeline.TheoryOfHandoffModel for the
+// fallback chain and generator selection.
+const TheoryOfHandoffModelPrecedence = `
+HandoffModel is a scalar selection, never an accumulation: when several
+config files set the same path, the first non-empty value wins. HandleConfig
+receives values in loader root order, and the tai loader lists roots from
+most local to most global (working directory, module root, user config dir,
+/etc), so first-wins lets a project-level config pin the handoff model
+unaffected by global settings; a more global root applies only when no more
+local file sets the path, and an explicitly empty string counts as unset.
+The value is a single string — lists are rejected, matching the tai schema.
+Precedence layers compose: app-specific paths (e.g. cmd_ai.handoff_model)
+come after the generic paths in ConfigPathsFunc and override them
+(configs.TheoryOfConfigPathPrecedence), and the -handoff-model flag
+overrides every config value because flags.Parse runs after configs.Load
+(TheoryOfConfigFlagParity).
+`
+
 // HandoffModel is the model used for handoff. When empty, the fast model
 // (FastModelName) is used if configured; otherwise the default model
-// (ModelName) is used. See states.TheoryOfHandoffModel.
+// (ModelName) is used. See pipeline.TheoryOfHandoffModel and
+// TheoryOfHandoffModelPrecedence.
 type HandoffModel string
 
 func (Module) HandoffModel() (ret HandoffModel) {
@@ -59,35 +79,23 @@ func (m HandoffModel) ConfigPathsFunc() any {
 }
 
 func (m HandoffModel) HandleConfig(path string, values []*cue.Value) (any, error) {
-	var ret HandoffModel
-	found := false
+	// Values arrive in loader root order, most local root first, so the
+	// first non-empty value wins: a project-level config overrides
+	// personal and system defaults, and an explicitly empty string counts
+	// as unset. The value is a single string, never a list.
+	// See TheoryOfHandoffModelPrecedence.
 	for _, v := range values {
-		switch v.Kind() {
-		case cue.StringKind:
-			var s string
-			if err := v.Decode(&s); err != nil {
-				return nil, err
-			}
-			if s != "" {
-				ret = HandoffModel(s)
-				found = true
-			}
-		case cue.ListKind:
-			var list []string
-			if err := v.Decode(&list); err != nil {
-				return nil, err
-			}
-			for _, s := range list {
-				if s != "" {
-					ret = HandoffModel(s)
-					found = true
-					break
-				}
-			}
+		if v.Kind() != cue.StringKind {
+			return nil, fmt.Errorf("handoff model config %q: expecting string, got %v", path, v.Kind())
+		}
+		var s string
+		if err := v.Decode(&s); err != nil {
+			return nil, err
+		}
+		if s != "" {
+			ret := HandoffModel(s)
+			return &ret, nil
 		}
 	}
-	if !found {
-		return nil, nil
-	}
-	return &ret, nil
+	return nil, nil
 }

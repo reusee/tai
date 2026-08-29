@@ -69,25 +69,9 @@ func TestHandoffModelConfig(t *testing.T) {
 		}
 	})
 
-	t.Run("ListTakesFirst", func(t *testing.T) {
-		v := ctx.CompileString(`["gemini-flash", "deepseek-chat"]`)
-		m := HandoffModel("")
-		def, err := m.HandleConfig("handoff_model", []*cue.Value{&v})
-		if err != nil {
-			t.Fatal(err)
-		}
-		ret, ok := def.(*HandoffModel)
-		if !ok {
-			t.Fatalf("expected *HandoffModel, got %T", def)
-		}
-		if string(*ret) != "gemini-flash" {
-			t.Fatalf("expected gemini-flash (first from list), got %v", *ret)
-		}
-	})
-
-	t.Run("LaterValueOverrides", func(t *testing.T) {
-		v1 := ctx.CompileString(`"first"`)
-		v2 := ctx.CompileString(`"second"`)
+	t.Run("FirstValueWins", func(t *testing.T) {
+		v1 := ctx.CompileString(`"project-model"`)
+		v2 := ctx.CompileString(`"global-model"`)
 		m := HandoffModel("")
 		def, err := m.HandleConfig("handoff_model", []*cue.Value{&v1, &v2})
 		if err != nil {
@@ -97,8 +81,34 @@ func TestHandoffModelConfig(t *testing.T) {
 		if !ok {
 			t.Fatalf("expected *HandoffModel, got %T", def)
 		}
-		if string(*ret) != "second" {
-			t.Fatalf("expected second (later value overrides), got %v", *ret)
+		if string(*ret) != "project-model" {
+			t.Fatalf("expected project-model (first value wins), got %v", *ret)
+		}
+	})
+
+	t.Run("EmptyFirstFallsThroughToLaterRoot", func(t *testing.T) {
+		v1 := ctx.CompileString(`""`)
+		v2 := ctx.CompileString(`"global-model"`)
+		m := HandoffModel("")
+		def, err := m.HandleConfig("handoff_model", []*cue.Value{&v1, &v2})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ret, ok := def.(*HandoffModel)
+		if !ok {
+			t.Fatalf("expected *HandoffModel, got %T", def)
+		}
+		if string(*ret) != "global-model" {
+			t.Fatalf("expected global-model (empty first value falls through), got %v", *ret)
+		}
+	})
+
+	t.Run("ListReturnsError", func(t *testing.T) {
+		v := ctx.CompileString(`["gemini-flash", "deepseek-chat"]`)
+		m := HandoffModel("")
+		_, err := m.HandleConfig("handoff_model", []*cue.Value{&v})
+		if err == nil {
+			t.Fatal("expected error for list value")
 		}
 	})
 
