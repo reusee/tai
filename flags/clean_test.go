@@ -8,7 +8,7 @@ import (
 
 func TestParseCleanFlag(t *testing.T) {
 	scope := dscope.New(Module{})
-	result, err := Parse(scope, []string{"-clean"})
+	result, err := Parse(scope, []string{"clean"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -21,7 +21,7 @@ func TestParseCleanFlag(t *testing.T) {
 
 func TestParseCleanAndChat(t *testing.T) {
 	scope := dscope.New(Module{})
-	result, err := Parse(scope, []string{"chat", "hello", "-clean"})
+	result, err := Parse(scope, []string{"chat", "hello", "clean"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -36,8 +36,8 @@ func TestCleanFlagRegistered(t *testing.T) {
 	scope := dscope.New(Module{})
 	scope.Call(func(chats Chats) {
 		keys := chats.Keys()
-		if _, ok := keys["-clean"]; !ok {
-			t.Fatal("-clean flag not registered in Chats.Keys()")
+		if _, ok := keys["clean"]; !ok {
+			t.Fatal("clean flag not registered in Chats.Keys()")
 		}
 	})
 }
