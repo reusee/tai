@@ -11,6 +11,10 @@ import (
 	"github.com/reusee/tai/taiui"
 )
 
+// eventIndentHanWidth is the Events tab's tree indent per depth, in
+// Han characters: two U+3000 characters, four terminal columns.
+const eventIndentHanWidth = 2
+
 const TheoryOfEventTree = `
 Events tab tree theory:
 - The Events tab renders the pipeline event stream as a tree: every
@@ -23,11 +27,11 @@ Events tab tree theory:
   arrival heals into the same tree as in-order arrival. Children are
   ordered by sequence number.
 - Display order is a depth-first walk of the forest, independent of
-  arrival order. Every display line is indented by one Han-character
-  width (U+3000, two terminal columns) per depth: the node's lines are
-  wrapped within the width left by the indent first, then the indent
-  prefixes every wrapped line, so continuation lines keep the indent
-  and no line overflows the pane.
+  arrival order. Every display line is indented by two Han-character
+  widths (U+3000, four terminal columns) per depth: the node's lines
+  are wrapped within the width left by the indent first, then the
+  indent prefixes every wrapped line, so continuation lines keep the
+  indent and no line overflows the pane.
 - Every event carries an elapsed-time timer: the node records the
   duration from the TUI session's start (TUI.startTime) to the event's
   arrival, and the node's first display line right-aligns the stopwatch
@@ -230,8 +234,8 @@ func formatElapsed(d time.Duration) string {
 // node contributes only its header and the expand hint. See
 // TheoryOfEventTree.
 func wrapEventNode(n *eventNode, contentWidth, depth int, shade taiui.Color, options displaywidth.Options) []taiui.Line {
-	indent := strings.Repeat("\u3000", depth)
-	wrapWidth := max(contentWidth-2*depth, 1)
+	indent := strings.Repeat("\u3000", eventIndentHanWidth*depth)
+	wrapWidth := max(contentWidth-2*eventIndentHanWidth*depth, 1)
 	timerText := formatElapsed(n.elapsed)
 	timerWidth := options.String(timerText)
 	timerZone := timerWidth + 1

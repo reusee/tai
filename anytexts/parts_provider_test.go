@@ -551,9 +551,9 @@ func TestExcludePatternDirectoryPrefix(t *testing.T) {
 
 func TestIsExcludedPathMatchesBasename(t *testing.T) {
 	// Slash-less exclusion patterns must match the path's basename at any
-	// depth, following gitignore-style semantics. Without this,
-	// -exclude "*.md" fails to exclude markdown files in subdirectories.
-	// See TheoryOfPatternMatching.
+	// depth, following gitignore-style semantics, including paths with
+	// ".." prefixes from sibling workspace modules and directory-prefix
+	// patterns against dotdot-stripped paths. See TheoryOfPatternMatching.
 	tests := []struct {
 		name     string
 		path     string
@@ -579,9 +579,27 @@ func TestIsExcludedPathMatchesBasename(t *testing.T) {
 			excluded: true,
 		},
 		{
+			name:     "glob matches basename with dotdot prefix",
+			path:     "../mod2/README.md",
+			patterns: []string{"*.md"},
+			excluded: true,
+		},
+		{
+			name:     "plain name matches basename with dotdot prefix",
+			path:     "../mod2/README.md",
+			patterns: []string{"README.md"},
+			excluded: true,
+		},
+		{
 			name:     "slash pattern matches dotdot-stripped path",
 			path:     "../mod2/README.md",
 			patterns: []string{"mod2/README.md"},
+			excluded: true,
+		},
+		{
+			name:     "directory prefix matches dotdot-stripped path",
+			path:     "../mod2/sub/file.go",
+			patterns: []string{"mod2"},
 			excluded: true,
 		},
 		{
@@ -590,12 +608,24 @@ func TestIsExcludedPathMatchesBasename(t *testing.T) {
 			patterns: []string{"*.md"},
 			excluded: false,
 		},
+		{
+			name:     "unrelated dotdot file not excluded",
+			path:     "../mod2/main.go",
+			patterns: []string{"*.md"},
+			excluded: false,
+		},
+		{
+			name:     "go file not excluded by md pattern",
+			path:     "docs/README.md",
+			patterns: []string{"*.go"},
+			excluded: false,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := isExcludedPath(tt.path, tt.patterns)
+			got := IsExcludedPath(tt.path, tt.patterns)
 			if got != tt.excluded {
-				t.Fatalf("isExcludedPath(%q, %v) = %v, want %v", tt.path, tt.patterns, got, tt.excluded)
+				t.Fatalf("IsExcludedPath(%q, %v) = %v, want %v", tt.path, tt.patterns, got, tt.excluded)
 			}
 		})
 	}

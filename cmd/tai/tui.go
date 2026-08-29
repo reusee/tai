@@ -83,7 +83,7 @@ stream as a tree (see TheoryOfEventTree): each goal loop is one branch
 rooted at its loop-start event, an attempt nests under it, and the
 attempt's lifecycle events nest under its start; display order is a
 depth-first walk, so out-of-order arrival renders in tree order, and
-every line carries one Han-character width of indent per depth. The tab
+every line carries two Han-character widths of indent per depth. The tab
 alternates the same two shades per event: all display lines of one event
 share one shade, and consecutive events alternate. Model output is captured from the
 generation state by the tuiOutputState decorator, passed through

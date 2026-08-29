@@ -569,7 +569,7 @@ func TestTUIEventsAlternateBackgrounds(t *testing.T) {
 // TestTUIEventsTreeRendering verifies the Events tab's tree rendering: a
 // lifecycle event that arrives before its parent heals under it, the
 // depth-first display order is independent of arrival order, every
-// display line carries one Han-character width of indent per depth, and
+// display line carries two Han-character widths of indent per depth, and
 // consecutive events alternate the two background shades. Every event's
 // first display line right-aligns its elapsed-time timer at the pane's
 // right edge. See TheoryOfEventTree and pipeline.TheoryOfLoopEvents.
@@ -602,15 +602,15 @@ func TestTUIEventsTreeRendering(t *testing.T) {
 
 	contentWidth := max(box.Width()-1, 1)
 	display := tui.eventsDisplay(contentWidth, panelStyle.BaseBG)
-	// Every display line carries one Han-character width of indent per
+	// Every display line carries two Han-character widths of indent per
 	// depth: the loop root at depth 0, the attempt at depth 1, its
 	// lifecycle events at depth 2.
 	depths := []int{0, 1, 2, 2}
 	wantOrder := []string{
 		"🌳 [Loop 1 start]",
-		"\u3000🚀 [loop 1 attempt 1 start]",
-		"\u3000\u3000📊 [Usage] loop 1 attempt 1: prompt 0, cached 0, completion 0, thoughts 0",
-		"\u3000\u3000🏁 [Finish: length]",
+		"\u3000\u3000🚀 [loop 1 attempt 1 start]",
+		"\u3000\u3000\u3000\u3000📊 [Usage] loop 1 attempt 1: prompt 0, cached 0, completion 0, thoughts 0",
+		"\u3000\u3000\u3000\u3000🏁 [Finish: length]",
 	}
 	if len(display) != len(wantOrder) {
 		t.Fatalf("expected %d display lines, got %d", len(wantOrder), len(display))
@@ -631,7 +631,7 @@ func TestTUIEventsTreeRendering(t *testing.T) {
 		if width := options.String(display[i].Text); width != contentWidth {
 			t.Fatalf("line %d: expected the timer right-aligned at width %d, got %d", i, contentWidth, width)
 		}
-		indent := strings.Repeat("\u3000", depths[i])
+		indent := strings.Repeat("\u3000", eventIndentHanWidth*depths[i])
 		if !strings.HasPrefix(display[i].Text, indent) || strings.HasPrefix(display[i].Text, indent+"\u3000") {
 			t.Fatalf("line %d: expected indent depth %d, got %q", i, depths[i], display[i].Text)
 		}
@@ -652,7 +652,7 @@ func TestTUIEventsTreeRendering(t *testing.T) {
 		t.Fatalf("expected wrapped thought summary lines, got %d", len(display))
 	}
 	for _, line := range display[len(wantOrder)+1:] {
-		if !strings.HasPrefix(line.Text, "\u3000\u3000") {
+		if !strings.HasPrefix(line.Text, strings.Repeat("\u3000", 2*eventIndentHanWidth)) {
 			t.Fatalf("expected the depth-2 indent on %q", line.Text)
 		}
 	}

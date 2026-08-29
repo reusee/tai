@@ -3,13 +3,9 @@ package main
 import (
 	"context"
 	"os"
-	"sort"
 	"strings"
 
-	"github.com/bmatcuk/doublestar/v4"
-	"github.com/reusee/tai/anytexts"
 	"github.com/reusee/tai/apps"
-	"github.com/reusee/tai/components"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
@@ -81,18 +77,25 @@ intervention, and the user is only prompted when the model has no pending
 automated actions. See pipeline.TheoryOfIdleHandler and pipeline.TheoryOfLoops.
 
 User Prompt Ordering and Prefix Cache:
-The user prompt places file context first, then the verbatim system prompt
-restate, and the dynamic user input last. The restate repeats the full system
-prompt under a short re-read instruction
-(components.SystemPromptRestate), so the model re-reads every rule immediately
-before generating, while the static sections stay in the LLM prefix cache:
-when the user input changes across sessions, only the final element changes,
-and the file context and the restate remain byte-identical and fully
-cacheable — the restate varies only when the system prompt itself varies.
-This is the same dynamic-content-last principle that places the current time
-at the end of the system prompt (see AISystemPrompt) and the memory profile
-at the end of the system prompt sections (see TheoryOfAIComponents). See
-TheoryOfPrefixCaching in generators/state_func_map.go.
+The user prompt is assembled by the shared UserPrompt provider, the same
+anytexts.PartsProvider mechanism the next command uses, so this command
+carries no file pipeline of its own: the provider expands the -file
+patterns, renders every file with begin/end markers (read-only annotations
+included), applies the token budget derived from the spec's ContextTokens,
+and brackets the file context with the -chat input (see
+pipeline.TheoryOfChatBracketing), so the task precedes the context. The
+command scope forks SystemPrompt to the AI assistant system prompt, so the
+restate the provider appends repeats the prompt the session actually runs
+on. This command appends the user input after the restate inside its own
+marker, keeping reference material and the task request delineated. Static
+sections stay in the LLM prefix cache: when the user input changes across
+sessions, only the final marker changes, and the file context and the
+restate remain byte-identical — the restate varies only when the system
+prompt itself varies. This is the same dynamic-content-last principle that
+places the current time at the end of the system prompt (see
+AISystemPrompt) and the memory profile at the end of the system prompt
+sections (see TheoryOfAIComponents). See TheoryOfPrefixCaching in
+generators/state_func_map.go.
 
 Thought Summarization:
 The -summarize-thoughts flag wires pipeline.NewThoughtsSummarize around the
@@ -112,17 +115,27 @@ var AICommand = Command{
 	Defs: []any{
 		modes.ForProduction(),
 		new(apps.Name("cmd_ai")),
+		// In the ai command's scope, SystemPrompt is the AI assistant
+		// system prompt: the shared UserPrompt provider restates it and
+		// charges it to the token budget, so the restate must repeat the
+		// prompt the session actually runs on. Scopes without this fork
+		// keep the codes prompt from Module.SystemPrompt. See
+		// TheoryOfAiCommand.
+		func(getAISystemPrompt AISystemPrompt) SystemPrompt {
+			prompt, err := getAISystemPrompt()
+			ce(err)
+			return SystemPrompt(prompt)
+		},
 	},
 	Main: func(
 		logger logs.Logger,
-		getSystemPrompt AISystemPrompt,
 		comps AIComponents,
 		updateMemoryFromBlock memories.UpdateMemoryFromBlock,
 		buildGenerate generators.BuildGenerate,
 		buildChatIdle pipeline.BuildChatIdle,
 		getDefaultGenerator generators.GetDefaultGenerator,
-		flagFiles flags.Files,
-		nameMatch anytexts.NameMatch,
+		systemPrompt SystemPrompt,
+		userPrompt UserPrompt,
 		flagChats flags.Chats,
 		noMemory NoMemory,
 		loopRun pipeline.Run,
@@ -138,55 +151,20 @@ var AICommand = Command{
 		input := strings.Join(flagChats, "\n")
 		logger.InfoContext(ctx, "input", "len", len(input))
 
-		systemPrompt, err := getSystemPrompt()
-		ce(err)
-
-		var files []string
-		for pattern := range flagFiles {
-			paths, err := doublestar.FilepathGlob(pattern)
-			if err != nil {
-				files = append(files, pattern)
-			} else {
-				for _, path := range paths {
-					info, err := os.Stat(path)
-					if err != nil {
-						continue
-					}
-					if info.IsDir() {
-						continue
-					}
-					files = append(files, path)
-				}
-			}
-		}
-		sort.Strings(files)
-
-		var parts []generators.Part
-
-		for _, filePath := range files {
-
-			if !nameMatch(filePath) {
-				continue
-			}
-			fileParts, err := filePathToParts(filePath)
-			ce(err)
-			parts = append(parts, fileParts...)
-			logger.Info("file",
-				"path", filePath,
-			)
-		}
-
-		parts = append(parts, comps.UserPromptParts()...)
-
-		parts = append(parts, components.SystemPromptRestate(systemPrompt))
-
-		parts = append(parts, generators.Text(
+		// The user prompt comes from the shared UserPrompt provider — the
+		// same parts-provider mechanism the next command uses — so this
+		// command carries no file pipeline of its own. The provider
+		// expands the -file patterns, renders every file with begin/end
+		// markers, applies the token budget, and appends the system
+		// prompt restate; the user input marker follows so the task stays
+		// separated from the file context. See TheoryOfAiCommand.
+		parts := append([]generators.Part(userPrompt), generators.Text(
 			"\n``` begin of user input\n"+input+"\n``` end of user input\n",
 		))
 
 		var baseState generators.State
 		baseState = generators.NewPrompts(
-			systemPrompt,
+			string(systemPrompt),
 			[]*generators.Content{
 				{
 					Role:  "user",
@@ -208,9 +186,6 @@ var AICommand = Command{
 
 		prevBufLen := 0
 
-		// OnIdle is the sole input gateway. An unattended run ends here:
-		// closed stdin makes ChatInput return io.EOF, so the loop ends
-		// after the generation instead of prompting.
 		onIdle := buildChatIdle(generator, nil)
 
 		// Run the unified generation loop. The PhaseBuilder includes only

@@ -456,16 +456,17 @@ func WorkingDirectoryPart() generators.Part {
 	)
 }
 
-// isExcludedPath checks whether the given path is excluded by any exclusion
+// IsExcludedPath checks whether the given path is excluded by any exclusion
 // pattern. Non-glob patterns are treated as directory prefixes: "pkg"
 // excludes both "pkg" itself and everything under "pkg/". Glob patterns
 // are matched with doublestar.PathMatch. The path is also matched with
 // leading ".." components stripped, so patterns are evaluated against the
 // project or workspace root rather than the current position. Slash-less
 // patterns (e.g., "*.md" or "README.md") additionally match the path's
-// basename at any depth, following gitignore-style semantics.
-// See TheoryOfPatternMatching.
-func isExcludedPath(path string, excludePatterns []string) bool {
+// basename at any depth, following gitignore-style semantics. It is the
+// shared implementation for both parts providers; gotools.isExcludedPath
+// delegates to it. See TheoryOfPatternMatching.
+func IsExcludedPath(path string, excludePatterns []string) bool {
 	cleanedPath := filepath.Clean(path)
 	baseName := filepath.Base(cleanedPath)
 
@@ -539,7 +540,7 @@ func (c PartsProvider) Parts(
 		}
 
 		// Skip files excluded by patterns.
-		if isExcludedPath(info.Path, excludePatterns) {
+		if IsExcludedPath(info.Path, excludePatterns) {
 			continue
 		}
 
