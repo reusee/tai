@@ -469,21 +469,6 @@ func renderText(t _Text, box Box, style Style, draw drawFunc, cursor cursorFunc,
 	}
 }
 
-// splitCluster separates a grapheme cluster into its base rune and the
-// combining runes that follow it. A single-rune cluster decodes the
-// base directly and returns no combining runes.
-func splitCluster(cluster string) (rune, []rune) {
-	base, size := utf8.DecodeRuneInString(cluster)
-	if size == len(cluster) {
-		return base, nil
-	}
-	var combc []rune
-	for _, r := range cluster[size:] {
-		combc = append(combc, r)
-	}
-	return base, combc
-}
-
 // splitClusterWidth splits a grapheme cluster into its base rune and
 // combining runes, and returns the cluster's display width, in one
 // pass: the base rune is decoded once and the width is measured from

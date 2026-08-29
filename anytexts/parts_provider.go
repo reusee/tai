@@ -26,19 +26,16 @@ be included via symlinks. Cycle detection uses two complementary mechanisms:
 1. Ancestor check: a symlink whose resolved target is an ancestor of the current
    path would create an infinite loop and is skipped.
 2. Visited set: a map of resolved real paths records every symlink target that
-   has been followed. If a symlink resolves to a path already in the set, it is
-   skipped to break cycles that do not involve an ancestor relationship (e.g.,
-   mutual symlinks between sibling directories).
+       has been followed. If a symlink resolves to a path already in the set, it is
+       skipped to break cycles that do not involve an ancestor relationship (e.g.,
+       mutual symlinks between sibling directories).
 Broken symlinks whose targets cannot be resolved are silently skipped rather than
 aborting the entire traversal.
 
 Directly-specified focus files that resolve outside writable directories are
-marked read-only at collection time; see TheoryOfFocusFileDirectoryCheck.
-The read-only annotation applies to both directly-specified focus files
-and files discovered during directory traversal, ensuring the model is
-consistently informed that these files cannot be modified. The
-writable-directory check resolves symlinks in the path; its mechanism lives
-in TheoryOfFocusFileDirectoryCheck.
+marked read-only at collection time; the mechanism, its application to
+traversal-discovered files, and its symlink resolution live in
+TheoryOfFocusFileDirectoryCheck.
 `
 
 const TheoryOfFocusFileDirectoryCheck = `

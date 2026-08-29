@@ -113,10 +113,6 @@ taiui TUI support theory:
   any project can build a terminal UI on top of taiui's rendering. They
   are pure state and rendering: they do not depend on generators,
   blocks, or any application-specific model.
-- ScrollState encapsulates the follow-tail view state of a scrollable
-  pane: the offset is clamped against the wrapped display-line count,
-  following sticks to the latest row, and reaching the latest row
-  resumes following.
 `
 
 const TheoryOfCellComparison = `

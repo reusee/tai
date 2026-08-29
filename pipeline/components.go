@@ -36,14 +36,12 @@ deliberately not listed as disabled: the blocks are the deliverable of a dry
 run, reviewed by the user, so the model must keep emitting them. See
 components.TheoryOfDisabledBlocks.
 
-The go-test component runs Go tests after change blocks are applied. Test
-output (stdout and stderr) is always fed back to the model as Parts,
-triggering a new generation regardless of whether tests pass or fail: the
-model needs the results to decide whether to continue, and withholding
-output on pass causes the system to exit prematurely when the model intended
-to proceed. The go-test component is placed after change so tests run
-against the updated source, and before summary so test output is available
-for the next generation.
+The go-test component runs Go tests after change blocks are applied and
+feeds the output back as Parts that trigger the next generation; the
+always-return-output rationale lives in gotools.TheoryOfGoTestBlocks and
+is not repeated here. The go-test component is placed after change so
+tests run against the updated source, and before summary so test output
+is available for the next generation.
 
 The go-src component resolves go-src block symbols — Go symbol names, one
 per line — through gotools.ResolveGoSymbols, appended as user content for

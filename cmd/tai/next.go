@@ -60,10 +60,7 @@ tuiOutputState decorator still streams raw thoughts to the Output tab. See
 pipeline.TheoryOfThoughtsSummarize.
 
 The user prompt places the -chat arguments before the parts provider content
-when given, following pipeline.TheoryOfChatBracketing: the model reads the
-task before the long file context, while the system prompt restate after the
-context keeps the rules the freshest input before generating. The single-shot
-design has no trailing chat content, so the restate remains the last part.
+when given, following pipeline.TheoryOfChatBracketing.
 `
 
 type SystemPrompt string

@@ -83,13 +83,8 @@ streaming) delimiter — a shorter extracted string — will not match, so the
 block remains unclosed until the full delimiter arrives.
 
 BlockFormatSystemPrompt is itself the theory text for the delimiter
-selection policy — a fresh uncommon Chinese two-character word per block,
-never a reused example, never the literal placeholder — and it is not
-repeated here. The rationale is rarity: a pair of uncommon Chinese
-characters is effectively absent from code and prose, so the chance of a
-body line accidentally matching the delimiter is negligible, while reusing
-an example delimiter would cause a subsequent real block opened with that
-same delimiter to close at the wrong marker. The parser enforces the Han
+selection policy, and TheoryOfBlockFormatGeneral owns the rarity rationale
+behind it; neither is repeated here. The parser enforces the Han
 requirement at extraction time: extractDelimiter validates that the
 delimiter is exactly two Unicode Han characters, rejecting ASCII, other
 scripts, and any other length, so only two-character Chinese delimiters are

@@ -182,9 +182,8 @@ func (m *boxModel) drawBorder(outer, box Box, style Style, draw drawFunc, option
 		iter.SetText(m.title)
 		for iter.Next() {
 			cluster := iter.Value()
-			w := clusterWidth(options, cluster)
+			mainc, combc, w := splitClusterWidth(options, cluster)
 			if x >= edgeLeft && x+w-1 <= edgeRight {
-				mainc, combc := splitCluster(cluster)
 				draw(x, top, mainc, combc, style)
 			}
 			x += w

@@ -15,9 +15,6 @@ tai handoff model theory:
   summarization, which needs a single stable generator. GetHandoffGenerators
   provides a single-element slice containing the resolved handoff model for
   handoff generation.
-- Flags override config values: when both a config file and a command-line flag
-  set the handoff model, the flag value takes precedence because flags.Parse
-  runs after configs.Load.
 `
 
 // GetHandoffGenerator returns the primary handoff generator: the

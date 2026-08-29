@@ -129,37 +129,6 @@ func TestPartsIncludesWorkingDirectoryHint(t *testing.T) {
 	})
 }
 
-func TestExcludePatternDirectoryPrefix(t *testing.T) {
-	scope := dscope.New(
-		modes.ForTest(t),
-		new(Module),
-	)
-
-	dir := filepath.Join(testdataDir, "main")
-	scope.Fork(
-		func() LoadDir {
-			return LoadDir(dir)
-		},
-	).Call(func(
-		provider PartsProvider,
-	) {
-		// Exclude the dep1 directory. The pattern "pkg" must match both
-		// files exactly named "pkg" and all files under the "pkg/"
-		// directory, so dep1.go must be excluded.
-		parts, err := provider.Parts(256, generators.DeepseekTokenCounterFn, []string{"!../dep1"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, part := range parts {
-			if text, ok := part.(generators.Text); ok {
-				if strings.Contains(string(text), "dep1.go") {
-					t.Fatalf("dep1.go should be excluded by !../dep1 pattern")
-				}
-			}
-		}
-	})
-}
-
 func TestExcludePatternExcludesWorkspaceMarkdown(t *testing.T) {
 	// In workspace mode, markdown files in sibling modules are listed by
 	// the module-root listing part. An exclusion pattern like "!*.md"

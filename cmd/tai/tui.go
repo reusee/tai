@@ -128,58 +128,39 @@ magenta; model output keeps the default foreground. Role colors are ANSI 16
 palette colors, so text uses only the standard 16-color SGR codes; only
 backgrounds use true-color hex values. Colors are carried per output line
 through wrapping, so a wrapped line keeps its role color. The keys
-1, 2, and 3 select the corresponding tab (Output, Events, Logs respectively):
-pressing a focused tab's key collapses it to a thin strip showing the tab's
-key and title, and moves the focus to the expanded tab that was last focused
-(see the focus-order paragraph below); pressing a non-focused or collapsed
-tab's key expands it (if collapsed) and takes the focus. Switching to an
-already-expanded tab keeps its current view; re-expanding a collapsed tab
-resumes following the live tail. The Output tab starts expanded and
-focused, following the live tail — the model's stream is the pane the
-user watches, so it is open from the first frame — while the Events and
-Logs tabs stay collapsed and expand automatically the FIRST time content
-for them arrives — the Events tab on its first rendered event line, the
-Logs tab on any log record — so the interface surfaces panes only when
-they have something to show. Subsequent content arrivals do not re-expand
-a tab the user collapsed; instead its collapsed strip carries a
-red-circle unseen emoji from that arrival until the tab is expanded
-again, which clears the mark. Auto-expansion never
-changes an existing focus: a tab popping open cannot steal attention from the
-pane the user is reading, and it resumes following the tail; only when
-no tab is focused does the first auto-expanded tab become the focus, so
-keyboard navigation remains usable. The focused tab occupies three times the space
-of each non-focused tab: the expanded tabs share the available space
-proportionally to their weights (3 for the focused tab, 1 for every
-other, total expanded+2), with the last tab absorbing the rounding
-remainder; collapsed tabs take one column (vertical split) or one row
-(horizontal split) each. The Logs tab caps its box at logsMaxBoxHeight rows while expanded but not focused — logs are internal diagnostics, so an unfocused pane shows only the latest lines — and the freed rows go to the other expanded tabs by weight; focusing Logs restores the usual ratio. The s key switches between vertical splitting (tabs
-side by side, a vertical split line) and horizontal splitting (tabs
-stacked, one above the other). Tab cycles the focus among
-the expanded tabs, skipping collapsed ones; the [ and ] keys jump
-the Output tab's view through the section transitions — a role change or a
-thought/non-thought change — so the user can quickly browse the whole output:
-the Output tab colors each section by its role and thinking state, so a
-transition is a color change between consecutive wrapped display lines.
-Each transition contributes two jump stops: the exit stop anchors the
-previous section's last line at the bottom of the pane — the view ends
-exactly at the change — and the entry stop anchors the new section's first
-line at the top of the pane. Walking the stops with ] visits, for every
-change, first how the previous section ends and then how the new one
-begins, so both sides of a change are reachable, not only section starts.
-A backward jump with no earlier stop falls back to the very beginning of
-the output, so the start of the first section — a display line that is never
-itself a transition — is always reachable by section navigation. A forward
-jump with no later stop falls back to the live tail, the symmetric
-endpoint, so the ] key always moves the view to a defined position —
-without the fallback the key would silently do nothing whenever the view
-sits in the last section or the output has one uniform section. The
-jump stops following the tail, and a collapsed Output tab expands and takes
-the focus so the jump result is visible. When the generation
-finishes, the TUI stays open so the output can be browsed, and q (or Ctrl-C)
-quits the TUI after a confirmation: the first press shows a confirmation bar
-at the bottom of the screen, and a second press quits; any other key cancels
-the confirmation and is processed normally, so an accidental q press never
-loses the session.
+1, 2, and 3 select the corresponding tab (Output, Events, Logs
+respectively); the number-key collapse/expand and focus-handoff semantics,
+first-content auto-expansion, the unseen emoji on collapsed strips, and
+the weighted layout (the focused tab weighs 3, every other expanded tab 1)
+are the taiui tab state machine's (taiui.TheoryOfTabs) and are not
+repeated here. The Output tab starts expanded and focused, following the
+live tail — the model's stream is the pane the user watches, so it is open
+from the first frame — while the Events and Logs tabs stay collapsed and
+expand on their first content (the Events tab on its first rendered event
+line, the Logs tab on any log record), so the interface surfaces panes
+only when they have something to show. The Logs tab caps its box at
+logsMaxBoxHeight rows while expanded but not focused — logs are internal
+diagnostics, so an unfocused pane shows only the latest lines — and the
+freed rows go to the other expanded tabs by weight; focusing Logs
+restores the usual ratio. The s key switches between vertical splitting
+(tabs side by side, a vertical split line) and horizontal splitting (tabs
+stacked, one above the other). Tab cycles the focus among the expanded
+tabs, skipping collapsed ones; the [ and ] keys jump the Output tab's view
+through the section transitions — in the Output tab a transition is a role
+change or a thought/non-thought change, i.e., a color change between
+consecutive wrapped display lines — using the exit and entry jump stops of
+taiui.TheoryOfSectionNavigation. A forward jump with no later stop falls
+back to the live tail, the symmetric endpoint of taiui's backward
+fallback to the beginning, so the ] key always moves the view to a
+defined position — without the fallback the key would silently do nothing
+whenever the view sits in the last section or the output has one uniform
+section. The jump stops following the tail, and a collapsed Output tab
+expands and takes the focus so the jump result is visible. When the
+generation finishes, the TUI stays open so the output can be browsed, and
+q (or Ctrl-C) quits the TUI after a confirmation: the first press shows a
+confirmation bar at the bottom of the screen, and a second press quits;
+any other key cancels the confirmation and is processed normally, so an
+accidental q press never loses the session.
 
 - Rendering is a plain function of the TUI's state, following the
 taiuidemo pattern: render() computes the wrapped display lines of each

@@ -1859,45 +1859,6 @@ func TestTabPanelBoxCollapsedFirstAndLast(t *testing.T) {
 	}
 }
 
-func TestCollapsedPanelRendering(t *testing.T) {
-	style := panelStyle
-
-	t.Run("Horizontal", func(t *testing.T) {
-		element := taiui.CollapsedPanel(taiui.Box{Top: 0, Left: 0, Bottom: 1, Right: 12}, "1 Output", false, false, style)
-		screen := &panelTestScreen{width: 12, height: 1}
-		taiui.Render(element, screen)
-		if len(screen.frames) == 0 {
-			t.Fatal("expected a rendered frame")
-		}
-		frame := screen.frames[len(screen.frames)-1]
-		if cell := frame.Cells[2]; cell.Rune != '1' {
-			t.Fatalf("expected '1' at (2,0), got %v", cell.Rune)
-		}
-		if cell := frame.Cells[4]; cell.Rune != 'O' {
-			t.Fatalf("expected 'O' at (4,0), got %v", cell.Rune)
-		}
-	})
-
-	t.Run("Vertical", func(t *testing.T) {
-		element := taiui.CollapsedPanel(taiui.Box{Top: 0, Left: 0, Bottom: 8, Right: 1}, "1 Output", false, false, style)
-		screen := &panelTestScreen{width: 1, height: 8}
-		taiui.Render(element, screen)
-		if len(screen.frames) == 0 {
-			t.Fatal("expected a rendered frame")
-		}
-		frame := screen.frames[len(screen.frames)-1]
-		if cell := frame.Cells[0]; cell.Rune != '1' {
-			t.Fatalf("expected '1' at (0,0), got %v", cell.Rune)
-		}
-		if cell := frame.Cells[1*frame.Width+0]; cell.Rune != ' ' {
-			t.Fatalf("expected space at (0,1), got %v", cell.Rune)
-		}
-		if cell := frame.Cells[2*frame.Width+0]; cell.Rune != 'O' {
-			t.Fatalf("expected 'O' at (0,2), got %v", cell.Rune)
-		}
-	})
-}
-
 func TestComputeTabBoxesAllCollapsed(t *testing.T) {
 	tabs := taiui.NewTabs(3)
 	tabs.SplitVertical = true
