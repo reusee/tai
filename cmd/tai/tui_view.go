@@ -79,7 +79,7 @@ var tuiHelpLines = []string{
 	"wheel / drag\tscroll pane under cursor",
 	"m\ttoggle mouse reporting (off: select & copy in the terminal)",
 	"q / Ctrl-C\tquit (press again to confirm)",
-	"input bar\tbottom row of the output tab; type anytime, esc releases keys",
+	"input bar\tclick the bottom row to focus and type; esc or view-changing keys release",
 	"?\ttoggle this help overlay",
 }
 

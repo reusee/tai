@@ -229,18 +229,24 @@ keys that double as navigation bindings (q, 1..3, s, [, ]) are typed
 as characters while the bar is focused, and Esc (or Ctrl-C) releases
 the keyboard back to navigation without cancelling anything.
 
-Focus is idle-driven and pointer-driven: the bar takes focus when a
-ChatInput call arrives (the model is idle and typing is the natural
-next action) and when the user clicks the bar's row, and it keeps
-focus after a submit, so a line typed while the model generated is
-sent with the next Enter. A left press outside the bar's row releases
-the focus; wheel events never change it. While focused, Enter submits
-the line ONLY when a ChatInput call is actually waiting — during
-generation typing works but Enter is a no-op and the line is kept, so
-the content reaches the model's next round. Esc and Ctrl-C only
-unfocus; the blocked ChatInput keeps waiting, and io.EOF reaches it
-only through the quit path (cancelChatInput), so ending the session
-always goes through the quit confirmation.
+Focus is pointer-driven: the bar takes focus ONLY when the user clicks
+its row, and it keeps focus after a submit, so a line typed while the
+model generated is sent with the next Enter. A waiting ChatInput call
+never takes the keyboard — until the click the keys keep driving
+navigation and the terminal cursor stays hidden. A left press outside
+the bar's row releases the focus; wheel events never change it. While
+focused, Enter submits the line ONLY when a ChatInput call is actually
+waiting — during generation typing works but Enter is a no-op and the
+line is kept, so the content reaches the model's next round. Esc and
+Ctrl-C only unfocus; the blocked ChatInput keeps waiting, and io.EOF
+reaches it only through the quit path (cancelChatInput), so ending the
+session always goes through the quit confirmation. A fall-through
+navigation key (arrows, page keys, tab) that changes other elements —
+scrolling the focused pane, cycling the tab focus — also releases the
+focus: handleKey snapshots the view state before the dispatch and
+compares it after, so a key that changes nothing (a page-up already at
+the top) keeps the bar focused. After any loss the cursor hides and
+ONLY a click on the bar's row regains the focus.
 
 The terminal cursor is shown while the bar is focused — the focused
 bar renders an Input element whose CursorAt records the editing
@@ -726,16 +732,13 @@ func (t *TUI) LogsWriter() io.Writer {
 func (t *TUI) ChatInput(prompt string) (string, error) {
 	ch := make(chan chatInputResult, 1)
 	t.mu.Lock()
-	// A quit confirmation armed before the bar took focus must not fire
-	// on a later quit key: while the bar is focused, q types text.
-	t.quit.Cancel()
+	// A waiting call does not take the keyboard: focus is gained only
+	// by a click on the bar's row, so the keys keep driving navigation
+	// and the terminal cursor stays hidden until the click. The pending
+	// typed line is preserved, so text typed before the click is
+	// submitted with the first Enter. See TheoryOfTUIChatInput.
 	t.inputPrompt = prompt
 	t.inputResult = ch
-	// The model went idle: typing is the natural next action, so the
-	// bar takes the keyboard. The pending typed line is preserved, so
-	// text typed while the model generated is submitted with the first
-	// Enter. See TheoryOfTUIChatInput.
-	t.inputFocused = true
 	t.mu.Unlock()
 	t.notify()
 	res := <-ch
@@ -851,6 +854,19 @@ func (t *TUI) focusInputLocked() {
 	}
 }
 
+// chatInputViewSnapshot captures the view state a fall-through key may
+// change while the chat input bar is focused: the pane scroll states,
+// the tab focus, the tab expansion, and the split axis. handleKey
+// compares the snapshots taken before and after a fall-through key's
+// dispatch to detect whether the key changed other elements — the
+// condition that releases the input focus. See TheoryOfTUIChatInput.
+type chatInputViewSnapshot struct {
+	scrolls  [3]taiui.ScrollState
+	expanded [3]bool
+	focus    int
+	split    bool
+}
+
 // inputRowHit reports whether the given cell lies on the chat input
 // bar's row: the bottom row of the expanded Output tab's box, the same
 // row buildRoot renders the bar on. The caller holds t.mu. See
@@ -864,6 +880,18 @@ func (t *TUI) inputRowHit(x, y int) bool {
 		return false
 	}
 	return y == box.Bottom-1 && x >= box.Left && x < box.Right
+}
+
+// chatInputViewSnapshotLocked returns the current view snapshot for the
+// input-focus release detection. The caller holds t.mu. See
+// TheoryOfTUIChatInput.
+func (t *TUI) chatInputViewSnapshotLocked() chatInputViewSnapshot {
+	var snap chatInputViewSnapshot
+	snap.scrolls = t.scrolls
+	snap.focus = t.tabs.Focus
+	copy(snap.expanded[:], t.tabs.Expanded)
+	snap.split = t.tabs.SplitVertical
+	return snap
 }
 
 func (t *TUI) captureContent(content *generators.Content) {
@@ -1042,7 +1070,19 @@ func (t *TUI) handleKey(key string) bool {
 	}
 	// While the chat input bar is focused, editing keys edit the
 	// pending line; every other key falls through to the dispatch below
-	// so the TUI stays operable while typing. See TheoryOfTUIChatInput.
+	// so the TUI stays operable while typing. A fall-through key that
+	// changes other elements — scrolling the focused pane, cycling the
+	// tab focus — releases the input focus so the cursor hides, and
+	// only a click on the bar's row regains it; the view snapshot taken
+	// here is compared after the dispatch to detect the change. See
+	// TheoryOfTUIChatInput.
+	t.mu.Lock()
+	inputFocused := t.inputFocused
+	var viewBefore chatInputViewSnapshot
+	if inputFocused {
+		viewBefore = t.chatInputViewSnapshotLocked()
+	}
+	t.mu.Unlock()
 	if t.handleChatInputKey(key) {
 		return false
 	}
@@ -1105,6 +1145,17 @@ func (t *TUI) handleKey(key string) bool {
 			fmt.Fprintf(t.tty, "\x1b[%d;1H", height)
 			return true
 		}
+	}
+	// A fall-through key that changed other elements while the input
+	// was focused hands the keyboard back to navigation; a key that
+	// changed nothing (a page-up already at the top) keeps the bar
+	// focused. See TheoryOfTUIChatInput.
+	if inputFocused {
+		t.mu.Lock()
+		if viewBefore != t.chatInputViewSnapshotLocked() {
+			t.inputFocused = false
+		}
+		t.mu.Unlock()
 	}
 	return false
 }

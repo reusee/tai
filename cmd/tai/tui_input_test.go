@@ -22,19 +22,17 @@ func newChatInputTestTUI() *TUI {
 }
 
 // waitChatInputWaiting polls until a ChatInput call is waiting on the
-// bar (inputResult registered) and the bar holds the keyboard focus,
-// bounding the wait so a failed activation fails the test instead of
-// hanging. Waiting on the waiter itself — not just the focus — matters
-// because the bar can already be focused (focus persists across a
-// submit), and Enter must not run before the channel is registered.
+// bar (inputResult registered), bounding the wait so a failed
+// activation fails the test instead of hanging. A waiting call no
+// longer takes the keyboard — focus is click-driven — so tests that
+// need typing click the input row themselves. See TheoryOfTUIChatInput.
 func waitChatInputWaiting(t *testing.T, tu *TUI) {
 	t.Helper()
 	for i := 0; i < 1000; i++ {
 		tu.mu.Lock()
-		focused := tu.inputFocused
 		waiting := tu.inputResult != nil
 		tu.mu.Unlock()
-		if focused && waiting {
+		if waiting {
 			return
 		}
 		time.Sleep(time.Millisecond)
@@ -44,6 +42,8 @@ func waitChatInputWaiting(t *testing.T, tu *TUI) {
 
 func TestTUIChatInputSubmitsTypedLine(t *testing.T) {
 	tu := newChatInputTestTUI()
+	tu.width, tu.height = 80, 24
+	tu.tabs.FocusTab(0)
 	type result struct {
 		line string
 		err  error
@@ -54,6 +54,8 @@ func TestTUIChatInputSubmitsTypedLine(t *testing.T) {
 		done <- result{line, err}
 	}()
 	waitChatInputWaiting(t, tu)
+	// Focus is click-driven: click the bar's row before typing.
+	tu.handleMouseKey("mouse-left@5,21")
 
 	// "he", cursor left, insert "x" → "hxe"; a trailing space is typed
 	// and removed again so both keys are exercised.
@@ -84,12 +86,17 @@ func TestTUIChatInputSubmitsTypedLine(t *testing.T) {
 // TheoryOfTUIChatInput.
 func TestTUIChatInputCtrlCUnfocusesWithoutCancelling(t *testing.T) {
 	tu := newChatInputTestTUI()
+	tu.width, tu.height = 80, 24
+	tu.tabs.FocusTab(0)
 	done := make(chan error, 1)
 	go func() {
 		_, err := tu.ChatInput(">> ")
 		done <- err
 	}()
 	waitChatInputWaiting(t, tu)
+	// Focus is click-driven: click the bar's row so Ctrl-C has a focus
+	// to release.
+	tu.handleMouseKey("mouse-left@5,21")
 	tu.handleKey("ctrl-c")
 	tu.mu.Lock()
 	focused := tu.inputFocused
@@ -119,18 +126,22 @@ func TestTUIChatInputCtrlCUnfocusesWithoutCancelling(t *testing.T) {
 }
 
 // TestTUIChatInputTypingKeepsNavigation pins the non-modal key routing:
-// while the bar is focused, number keys type into the line, navigation
-// keys (arrows, tab) still drive the TUI, and Esc hands the keyboard
-// back to navigation without cancelling the waiting ChatInput. See
+// while the bar is focused, number keys type into the line; a
+// navigation key that changes other elements (an arrow that scrolls)
+// still drives the TUI and releases the input focus — the cursor hides
+// and only a click regains it; Esc releases the keyboard back to
+// navigation without cancelling the waiting ChatInput. See
 // TheoryOfTUIChatInput.
 func TestTUIChatInputTypingKeepsNavigation(t *testing.T) {
 	tu := newChatInputTestTUI()
+	tu.width, tu.height = 80, 24
 	// An expanded, focused Output tab with a scrollable view makes the
-	// arrow keys observable, and an expanded Logs tab makes the tab
-	// key's focus cycling observable.
+	// arrow keys observable. The clicks below run while only the Output
+	// tab is expanded, so its box spans the full height minus the two
+	// collapsed strips and the input row is the fixed row 21; the Logs
+	// tab is expanded afterwards to make the tab key's focus cycling
+	// observable.
 	tu.tabs.FocusTab(0)
-	tu.tabs.Expanded[2] = true
-	tu.tabs.HasContent[2] = true
 	tu.scrolls[0].MaxOffset = 100
 	tu.scrolls[0].Offset = 50
 
@@ -140,6 +151,8 @@ func TestTUIChatInputTypingKeepsNavigation(t *testing.T) {
 		close(done)
 	}()
 	waitChatInputWaiting(t, tu)
+	// Focus is click-driven: click the bar's row before typing.
+	tu.handleMouseKey("mouse-left@5,21")
 
 	// Number keys type into the line instead of toggling tabs.
 	if quit := tu.handleKey("1"); quit {
@@ -152,53 +165,65 @@ func TestTUIChatInputTypingKeepsNavigation(t *testing.T) {
 		t.Fatalf("key 1 should type into the input line, got %q", line)
 	}
 
-	// Navigation keys keep working while typing: arrows scroll the
-	// focused pane.
+	// Navigation keys keep working while typing: an arrow scrolls the
+	// focused pane, and because it changes other elements it releases
+	// the input focus. See TheoryOfTUIChatInput.
 	tu.handleKey("up")
 	tu.mu.Lock()
 	offset := tu.scrolls[0].Offset
+	focused := tu.inputFocused
 	tu.mu.Unlock()
 	if offset != 49 {
 		t.Fatalf("up must scroll the focused pane while typing, got offset %d", offset)
 	}
+	if focused {
+		t.Fatal("a view-changing navigation key must release the input focus")
+	}
+
+	// A click regains the focus, and Esc releases it again without
+	// cancelling the waiting ChatInput.
+	tu.handleMouseKey("mouse-left@5,21")
+	tu.handleKey("esc")
+	tu.mu.Lock()
+	focused = tu.inputFocused
+	waiting := tu.inputResult != nil
+	tu.mu.Unlock()
+	if focused {
+		t.Fatal("esc must unfocus the input bar")
+	}
+	if !waiting {
+		t.Fatal("esc must not cancel the waiting ChatInput call")
+	}
+
+	// With the focus released, keys drive the TUI: down scrolls back,
+	// tab cycles the focus to the expanded Logs tab, and 2 expands the
+	// Events tab instead of typing.
+	tu.tabs.Expanded[2] = true
+	tu.tabs.HasContent[2] = true
 	tu.handleKey("down")
 	tu.mu.Lock()
 	offset = tu.scrolls[0].Offset
 	tu.mu.Unlock()
 	if offset != 50 {
-		t.Fatalf("down must scroll the focused pane while typing, got offset %d", offset)
+		t.Fatalf("down must scroll the focused pane, got offset %d", offset)
 	}
-
-	// The tab key cycles the tab focus instead of typing a character.
 	tu.handleKey("tab")
 	tu.mu.Lock()
 	focus := tu.tabs.Focus
-	line = string(tu.inputLine)
 	tu.mu.Unlock()
 	if focus != 2 {
-		t.Fatalf("tab must cycle the tab focus while typing, got %d", focus)
+		t.Fatalf("tab must cycle the tab focus, got %d", focus)
 	}
-	if line != "1" {
-		t.Fatalf("tab must not type into the input line, got %q", line)
-	}
-
-	// Esc releases the keyboard: number keys drive the TUI again and
-	// the waiting ChatInput stays blocked.
-	tu.handleKey("esc")
 	tu.handleKey("2")
 	tu.mu.Lock()
 	expanded := tu.tabs.Expanded[1]
-	waiting := tu.inputResult != nil
 	tu.mu.Unlock()
 	if !expanded {
-		t.Fatal("key 2 must expand the Events tab after esc unfocused the input")
-	}
-	if !waiting {
-		t.Fatal("esc must not cancel the waiting ChatInput call")
+		t.Fatal("key 2 must expand the Events tab once the input is unfocused")
 	}
 	select {
 	case <-done:
-		t.Fatal("ChatInput must stay blocked after esc")
+		t.Fatal("ChatInput must stay blocked after the navigation keys")
 	default:
 	}
 	tu.cancelChatInput()
@@ -241,8 +266,8 @@ func TestTUIChatInputEnterWaitsForIdle(t *testing.T) {
 		t.Fatalf("enter without a waiter must keep the line, got %q", line)
 	}
 
-	// The model goes idle: ChatInput auto-focuses the bar, the typed
-	// line survives, and Enter sends it.
+	// The model goes idle: the waiting call leaves the click-gained
+	// focus in place, the typed line survives, and Enter sends it.
 	type result struct {
 		line string
 		err  error
@@ -326,6 +351,57 @@ func TestTUIChatInputMouseFocusAndBlur(t *testing.T) {
 	tu.mu.Unlock()
 	if !focused {
 		t.Fatal("wheel events must not blur the input bar")
+	}
+}
+
+// TestTUIChatInputNavBlurOnViewChange pins the view-change release
+// rule: while the bar is focused, a fall-through navigation key that
+// changes other elements — a page key that moves the scroll offset —
+// releases the input focus, and a key that changes nothing — a page-up
+// already at the top — keeps it. See TheoryOfTUIChatInput.
+func TestTUIChatInputNavBlurOnViewChange(t *testing.T) {
+	tu := newChatInputTestTUI()
+	tu.width, tu.height = 80, 24
+	tu.tabs.FocusTab(0)
+	tu.scrolls[0].MaxOffset = 100
+	tu.scrolls[0].Offset = 50
+	tu.scrolls[0].Follow = false
+
+	// Click the input row — the bottom row of the expanded Output tab's
+	// box; the two collapsed strips leave rows 0..21, so the input row
+	// is 21 — to focus the bar.
+	tu.handleMouseKey("mouse-left@5,21")
+
+	// A page-up that moves the offset changes other elements and must
+	// release the focus.
+	tu.handleKey("pageup")
+	tu.mu.Lock()
+	offset := tu.scrolls[0].Offset
+	focused := tu.inputFocused
+	tu.mu.Unlock()
+	if offset == 50 {
+		t.Fatal("pageup must move the scroll offset")
+	}
+	if focused {
+		t.Fatal("a view-changing page key must release the input focus")
+	}
+
+	// A page-up already at the top changes nothing and keeps the focus.
+	tu.handleMouseKey("mouse-left@5,21")
+	tu.mu.Lock()
+	tu.scrolls[0].Offset = 0
+	tu.scrolls[0].Follow = false
+	tu.mu.Unlock()
+	tu.handleKey("pageup")
+	tu.mu.Lock()
+	offset = tu.scrolls[0].Offset
+	focused = tu.inputFocused
+	tu.mu.Unlock()
+	if offset != 0 {
+		t.Fatalf("pageup at the top must not move the offset, got %d", offset)
+	}
+	if !focused {
+		t.Fatal("a page key that changes nothing must keep the input focus")
 	}
 }
 
