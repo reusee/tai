@@ -74,8 +74,6 @@ from an independent context and corrects potential errors in the changes,
 improving accuracy.
 `
 
-type Generate func(ctx context.Context, output io.Writer) error
-
 // GenerateWithResultWithStats runs the full codes generation pipeline and
 // returns the Result together with the attempt statistics collected during the
 // run. The statistics are returned so that callers that run multiple
@@ -496,17 +494,6 @@ This handoff is transient error recovery. The condensed content is injected
 into one retry request and does not persist as compressed history. The system does
 not compress conversation. See TheoryOfContextPhilosophy.
 `
-
-// Generate wraps GenerateWithResult, discarding the Result and returning
-// only the error, so callers see the func(ctx, output) error signature.
-func (Module) Generate(
-	generateWithResult GenerateWithResult,
-) Generate {
-	return func(ctx context.Context, output io.Writer) error {
-		_, err := generateWithResult(ctx, output)
-		return err
-	}
-}
 
 // GenerateWithResult wraps GenerateWithResultWithStats, discarding the
 // attempt statistics so existing callers see the same (Result, error)

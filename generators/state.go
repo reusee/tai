@@ -14,9 +14,9 @@ achieved by value-copying the receiver (ret := s), cloning shared slices
 (slices.Clone, make+copy) before mutation, and never writing through shared
 map or slice references. Content objects referenced by pointer (*Content) are
 treated as copy-on-write: any modification (e.g., Merge) produces a new
-*Content rather than mutating the original. Shared maps (FuncMap.m) and slices
-(stateWithFunctions.fns) are safe to share across State instances because they
-are never mutated after construction.
+*Content rather than mutating the original. Shared maps (FuncMap.m) are safe
+to share across State instances because they are never mutated after
+construction.
 `
 
 type State interface {

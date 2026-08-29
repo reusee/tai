@@ -546,7 +546,7 @@ func TestThoughtsSummarizeFunctionsDelegate(t *testing.T) {
 	buf := new(bytes.Buffer)
 
 	fn := &generators.Function{Decl: generators.FuncDecl{Name: "test"}}
-	upstream := generators.WithFunctions(generators.NewPrompts("", nil), fn)
+	upstream := generators.NewFuncMap(generators.NewPrompts("", nil), fn)
 	state := NewThoughtsSummarize(context.Background(), upstream, summarizer, buf)
 
 	var names []string

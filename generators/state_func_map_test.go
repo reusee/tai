@@ -4,12 +4,12 @@ import (
 	"testing"
 )
 
-func TestWithFunctions(t *testing.T) {
+func TestFuncMap(t *testing.T) {
 	fn1 := &Function{Decl: FuncDecl{Name: "foo"}}
 	fn2 := &Function{Decl: FuncDecl{Name: "bar"}}
 
 	base := NewPrompts("hello", nil)
-	s := WithFunctions(base, fn1, fn2)
+	s := NewFuncMap(base, fn1, fn2)
 
 	if s.SystemPrompt() != "hello" {
 		t.Fatal("bad system prompt")

@@ -15,8 +15,6 @@ func (Module) GetDefaultGenerator(
 	}
 }
 
-type GetDefaultFastModel func() (Generator, error)
-
 // ModelFamily is the family of the resolved default generator. It selects
 // family-specific extra system prompts. The default provider derives the
 // family from the resolved default generator, so no customization is
@@ -31,13 +29,4 @@ func (Module) ModelFamily(
 		return ""
 	}
 	return ModelFamily(generator.Spec().Family)
-}
-
-func (Module) GetDefaultFastModel(
-	name flags.FastModelName,
-	get GetGenerator,
-) GetDefaultFastModel {
-	return func() (Generator, error) {
-		return get(string(name))
-	}
 }
