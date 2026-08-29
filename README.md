@@ -120,6 +120,7 @@ Gemini, OpenAI, DeepSeek, Volcano Engine (Huoshan), Baidu, Tencent, Alibaba Clou
 | `-review` | Run a review loop after generation to review and fix changes |
 | `-thoughts` / `-no-thoughts` | Control reasoning thought visibility |
 | `-summarize-thoughts` | Enable periodic summarization of thoughts |
+| `-summary-language` | Set the output language for summary blocks |
 | `-confidential` | Restrict model selection to zero-data-retention models |
 | `-pkg` / `-load` | Add a Go package loading pattern (focus packages) |
 | `-ctx` / `-dep` | Add a context package pattern for dependency analysis |

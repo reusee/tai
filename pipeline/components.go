@@ -128,6 +128,7 @@ func (Module) CodesComponents(
 	modelFamily generators.ModelFamily,
 	apply flags.Apply,
 	plan flags.Plan,
+	summaryLanguage flags.SummaryLanguage,
 	flagShell flags.Shell,
 	applyChangeBlocks changes.ApplyChangeBlocks,
 	resolveGoSymbols gotools.ResolveGoSymbols,
@@ -168,8 +169,8 @@ func (Module) CodesComponents(
 	}
 
 	// Go-test component: run Go tests after change blocks are applied.
-	// Test output is always fed back to the model as Parts, triggering a
-	// new generation regardless of whether tests pass or fail: the model
+	// Test output is always fed back to the model as Parts, triggering
+	// a new generation regardless of whether tests pass or fail: the model
 	// needs the results to decide whether to continue, and withholding
 	// output on pass causes the system to exit prematurely when the model
 	// intended to proceed. Placed after change so tests run against
@@ -278,10 +279,18 @@ func (Module) CodesComponents(
 
 	// Summary component: processed in runGeneration for completion
 	// detection and attempt statistics, not in the main component loop.
-	// See TheoryOfCodesComponents.
+	// A configured summary language (flags.SummaryLanguage) appends the
+	// language instruction to the summary block prompt so the model
+	// writes the bullet items in that language; an empty language leaves
+	// the prompt unchanged, preserving the LLM prefix cache.
+	// See TheoryOfCodesComponents and blocks.TheoryOfSummaryBlocks.
+	summaryPrompt := blocks.SummaryBlockSystemPrompt
+	if summaryLanguage != "" {
+		summaryPrompt += blocks.SummaryLanguageInstruction(string(summaryLanguage))
+	}
 	comps = append(comps, components.Component{
 		Kind:          "summary",
-		PromptSection: blocks.SummaryBlockSystemPrompt,
+		PromptSection: summaryPrompt,
 	})
 
 	// Read-only files: prompt-only component, no block kind.

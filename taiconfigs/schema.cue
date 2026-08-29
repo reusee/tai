@@ -266,3 +266,8 @@ functions?: [...{
 // When set (e.g., "zh", "en"), the summarizer is instructed to output
 // summaries in that language.
 thoughts_summarize_language?: string
+// summary_language sets the output language for summary blocks. When
+// empty (the default), no language hint is given to the model. When set
+// (e.g., "zh", "en"), the summary block prompt instructs the model to
+// write the summary bullet items in that language.
+summary_language?: string
