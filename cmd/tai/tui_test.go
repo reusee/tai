@@ -2199,6 +2199,12 @@ func TestTUIHandleEventRendersKinds(t *testing.T) {
 		t.Fatalf("unexpected attempt start line: %+v", last[0])
 	}
 
+	tui.handleEvent(pipeline.Event{Kind: pipeline.EventRequest, Attempt: 3, Detail: "model model-a, temperature 0.5, effort high"})
+	last = tui.eventRoots[len(tui.eventRoots)-1].lines
+	if last[0].Text != "📡 [Attempt 3 request] model model-a, temperature 0.5, effort high" || last[0].Color != outputColorLogLine {
+		t.Fatalf("unexpected request line: %+v", last[0])
+	}
+
 	tui.handleEvent(pipeline.Event{Kind: pipeline.EventAttemptCompleted, Attempt: 3})
 	last = tui.eventRoots[len(tui.eventRoots)-1].lines
 	if last[0].Text != "✅ [Attempt 3 complete]" || last[0].Color != outputColorLogLine {

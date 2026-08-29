@@ -7,9 +7,10 @@ import (
 const TheoryOfLoopEvents = `
 Run is the loop's single event iterator: every notable occurrence during a
 generation run — attempt lifecycle (start, completion, truncation, error),
-retry decisions, handoffs, synthesized completion summaries, attempt finish
-reasons, per-attempt token usage, periodic thought summaries,
-component-triggered continuations, and idle-handler input — flows to the
+the actual request parameters (EventRequest), retry decisions, handoffs,
+synthesized completion summaries, attempt finish reasons, per-attempt token
+usage, periodic thought summaries, component-triggered continuations, and
+idle-handler input — flows to the
 consumer as one Event stream (iter.Seq2[Event, error]), unifying the
 loop's architecture on the iterator pattern. Events are constructed and
 yielded the moment their facts are known — an attempt's start event
@@ -37,6 +38,18 @@ finish reason; its completion event carries the summary. Retries
 re-execute the phase chain as a new attempt, up to the retry budget
 carried by MaxAttempts.
 
+EventRequest precedes each attempt's request: its Detail describes the
+actual generation parameters — the model identity and the effective
+temperature, reasoning effort, and token limits — resolved from the
+generator spec with the temperature and effort flag overrides applied
+(the flags are dscope provided and captured by the Module.Run provider,
+mirroring the generators' flag-over-spec precedence), so a live consumer
+sees what the request actually carries — more truthfully than the
+generators' "generating" log, which records the spec's effort even when
+the flag overrides it. The event is the loop-level view: retries
+internal to the generator's Retrier are separate API calls not visible
+here, so one loop attempt may cover several requests.
+
 Event.Loop attributes every event to its goal run: RunOptions.Loop
 carries the 1-based goal loop number, and the loop's emit layer stamps
 it onto every event it yields, so a consumer sees which goal loop
@@ -51,8 +64,8 @@ within the run, and Parent, the sequence number of its parent. The emit
 layer stamps the loop number, the sequence number, and the parent in one
 place, so no construction site can omit them. A goal run opens its
 branch with an EventLoopStart, the run's first event, and every attempt
-nests under it: the attempt's start event parents its finish, usage,
-truncation, retry, handoff, completion, synthesized-summary, and
+nests under it: the attempt's start event parents its request, finish,
+usage, truncation, retry, handoff, completion, synthesized-summary, and
 thought-summary events, and the components-triggered and idle events
 that follow the attempt. Non-goal runs emit no loop-start, so their
 attempt-start events are roots and their display bytes are unchanged.
@@ -159,6 +172,15 @@ const EventGoal EventKind = "goal"
 // TheoryOfLoopEvents.
 const EventLoopStart EventKind = "loop-start"
 
+// EventRequest reports the actual generation parameters of one request,
+// emitted before the attempt's request is initiated: the model identity
+// and the effective temperature, reasoning effort, and token limits,
+// resolved from the generator spec with the temperature and effort flag
+// overrides applied. The event is the loop-level view of the request:
+// retries internal to the generator are separate API calls not visible
+// here. Detail carries the description. See TheoryOfLoopEvents.
+const EventRequest EventKind = "request"
+
 // Event is one notable occurrence during a generation loop run. Events
 // are constructed and yielded the moment their facts are known; the
 // terminal error, if any, arrives with the final yield's error
@@ -216,7 +238,8 @@ type Event struct {
 	// Detail carries a human-readable description for less structured
 	// events: the reason for EventRetry and EventTruncated, the finish
 	// reason for EventFinish, the outcome marker ("error") for
-	// EventUsage, and the message text for EventGoal.
+	// EventUsage, the generation parameter description for
+	// EventRequest, and the message text for EventGoal.
 	Detail string
 }
 

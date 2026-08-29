@@ -212,13 +212,14 @@ var _ InteractionRecorder = (*records.Recorder)(nil)
 // single generation (single-shot mode). The result is filled into
 // result as the run progresses, and the returned iterator yields one
 // Event per notable occurrence — attempt lifecycle (start, completion,
-// truncation), retries and handoffs, synthesized completion summaries,
-// attempt finish reasons, per-attempt token usage, periodic thought
-// summaries, and component-triggered or idle continuations — constructed
-// and yielded the moment their facts are known, with the terminal
-// error, if any, arriving with the final yield's error component.
-// Callers may suspend and resume the run via iter.Pull2, inspecting the
-// result between pulls. See TheoryOfLoops and TheoryOfLoopEvents.
+// truncation), request parameters, retries and handoffs, synthesized
+// completion summaries, attempt finish reasons, per-attempt token
+// usage, periodic thought summaries, and component-triggered or idle
+// continuations — constructed and yielded the moment their facts are
+// known, with the terminal error, if any, arriving with the final
+// yield's error component. Callers may suspend and resume the run via
+// iter.Pull2, inspecting the result between pulls. See TheoryOfLoops
+// and TheoryOfLoopEvents.
 type Run func(ctx context.Context, opts RunOptions, result *Result) iter.Seq2[Event, error]
 
 // generationResult is the outcome of one generation: the updated
@@ -289,6 +290,15 @@ type loopState struct {
 	// logger is dscope provided, captured by the Run provider. See
 	// TheoryOfUsageLogging.
 	logger logs.Logger
+
+	// temperatureFlag and effortFlag carry the dscope-resolved
+	// temperature and reasoning-effort flag values, captured by the Run
+	// provider. The request description (EventRequest) resolves the
+	// effective generation parameters from the generator spec and these
+	// flag overrides, mirroring the generators' flag-over-spec
+	// precedence. See TheoryOfLoopEvents.
+	temperatureFlag generators.TemperatureFlag
+	effortFlag      generators.EffortFlag
 }
 
 // buildContinueReason describes why the generation loop continues to
@@ -314,9 +324,10 @@ func buildContinueReason(triggeredKinds []string, parseErrorFeedback bool) strin
 // followed by the success tail (summary synthesis, OnAttemptSuccess,
 // usage recording, completion reporting, parse-error feedback, component
 // processing, and idle handling). Each attempt is one pass through the
-// phase chain; its lifecycle events — attempt start, finish, truncation,
-// handoff, usage, completion — are constructed and yielded the moment
-// their facts are known. See TheoryOfLoops and TheoryOfLoopEvents.
+// phase chain; its lifecycle events — attempt start, request
+// parameters, finish, truncation, handoff, usage, completion — are
+// constructed and yielded the moment their facts are known. See
+// TheoryOfLoops and TheoryOfLoopEvents.
 func (ls *loopState) runGeneration() (generationResult, error) {
 	var collectedBlocks []blocks.Block
 	var generationSummaries []string
@@ -366,12 +377,35 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 			ls.opts.OnAttemptStart()
 		}
 
+		// The request event precedes the attempt's request: it
+		// describes the actual generation parameters — the model and
+		// the effective temperature, reasoning effort, and token
+		// limits — resolved from the generator spec and the flag
+		// overrides, mirroring the generators' flag-over-spec
+		// precedence. Unlike the generators' "generating" log, which
+		// records the spec's effort even when the flag overrides it,
+		// the event reports the values the request actually carries.
+		// The loop cannot see retries internal to the generator's
+		// Retrier: one loop attempt may cover several API calls. See
+		// TheoryOfLoopEvents.
+		if ls.opts.Generator != nil {
+			ls.emitEvent(Event{
+				Kind:    EventRequest,
+				Attempt: ls.attempt,
+				Detail: describeRequest(
+					ls.opts.Generator.Spec(),
+					ls.temperatureFlag,
+					ls.effortFlag,
+				),
+			})
+		}
+
 		// Create parser handler that collects blocks and
 		// optionally invokes the caller's BlockHandler.
 		parserHandler := func(block blocks.Block) error {
 			// Report every parsed block to the interaction
-			// recorder, whether or not it is consumed by
-			// the caller's BlockHandler.
+			// recorder, whether or not it is consumed by the
+			// caller's BlockHandler.
 			if ls.rec != nil && ls.rec.Enabled() {
 				ls.rec.Block(block)
 			}
@@ -949,6 +983,62 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 	}, nil
 }
 
+// describeRequest renders the actual generation parameters of one
+// request as the EventRequest detail: the model identity and the
+// effective temperature, reasoning effort, and token limits. The
+// effective values mirror the generators' flag-over-spec precedence —
+// the -temperature and -effort flags override the spec fields (see
+// Gemini.Generate and OpenAI.Generate) — so the event reports the
+// values the request actually carries, unlike the generators'
+// "generating" log, which records the spec's effort even when the flag
+// overrides it. Max generate tokens come from the spec: every built-in
+// command passes nil GenerateOptions, so the spec field is the
+// effective limit; flags.MaxTokens bounds only the input budget and is
+// not part of the request. Unset values render as "default". See
+// TheoryOfLoopEvents.
+func describeRequest(
+	spec generators.Spec,
+	temperatureFlag generators.TemperatureFlag,
+	effortFlag generators.EffortFlag,
+) string {
+	temperature := "default"
+	if temperatureFlag.Value != nil {
+		temperature = fmt.Sprintf("%g", *temperatureFlag.Value)
+	} else if spec.Temperature != nil {
+		temperature = fmt.Sprintf("%g", *spec.Temperature)
+	}
+	effort := "default"
+	if effortFlag != "" {
+		effort = string(effortFlag)
+	} else if spec.ReasoningEffort != "" {
+		effort = spec.ReasoningEffort
+	}
+	maxGenerateTokens := "default"
+	if spec.MaxGenerateTokens != nil {
+		maxGenerateTokens = fmt.Sprintf("%d", *spec.MaxGenerateTokens)
+	}
+	thinkingTokens := "default"
+	if spec.MaxThinkingTokens != nil {
+		thinkingTokens = fmt.Sprintf("%d", *spec.MaxThinkingTokens)
+	}
+	parts := []string{
+		fmt.Sprintf("model %s", spec.Model),
+	}
+	if spec.Family != "" {
+		parts = append(parts, fmt.Sprintf("family %s", spec.Family))
+	}
+	parts = append(parts,
+		fmt.Sprintf("temperature %s", temperature),
+		fmt.Sprintf("effort %s", effort),
+		fmt.Sprintf("max tokens %s", maxGenerateTokens),
+		fmt.Sprintf("thinking tokens %s", thinkingTokens),
+	)
+	if spec.ContextTokens > 0 {
+		parts = append(parts, fmt.Sprintf("context %d", spec.ContextTokens))
+	}
+	return strings.Join(parts, ", ")
+}
+
 // recordAttemptUsage records the aggregated token usage of one attempt:
 // to the run's event stream as an EventUsage (the display source for a
 // live consumer) and as a "usage" log entry. Attempts that record no
@@ -1311,6 +1401,8 @@ func (s recordedState) AppendContent(content *generators.Content) (generators.St
 func (Module) Run(
 	recorder InteractionRecorder,
 	logger logs.Logger,
+	temperatureFlag generators.TemperatureFlag,
+	effortFlag generators.EffortFlag,
 ) Run {
 	return func(ctx context.Context, opts RunOptions, result *Result) iter.Seq2[Event, error] {
 		if result == nil {
@@ -1329,16 +1421,21 @@ func (Module) Run(
 
 			// The loop state carries the mutable state of the run. Events
 			// are yielded through the guarded emitEvent/emitTerminal
-			// methods. See TheoryOfLoopEvents.
+			// methods. The temperature and effort flag values feed the
+			// request description (EventRequest); they are dscope
+			// provided, captured here like the logger. See
+			// TheoryOfLoopEvents.
 			ls := &loopState{
-				ctx:        ctx,
-				opts:       opts,
-				rec:        rec,
-				result:     result,
-				yield:      yield,
-				state:      opts.InitialState,
-				maxRetries: opts.MaxRetries,
-				logger:     logger,
+				ctx:             ctx,
+				opts:            opts,
+				rec:             rec,
+				result:          result,
+				yield:           yield,
+				state:           opts.InitialState,
+				maxRetries:      opts.MaxRetries,
+				logger:          logger,
+				temperatureFlag: temperatureFlag,
+				effortFlag:      effortFlag,
 			}
 			if ls.maxRetries == 0 && (opts.RetryOnMissingCompletion || opts.RetryOnError) {
 				ls.maxRetries = defaultMaxRetries

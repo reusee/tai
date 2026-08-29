@@ -47,8 +47,9 @@ and the request lifecycle is tracked by isGeneratingLog and outputTabLabel.
 
 The TUI interface replaces stdout with a three-tab terminal UI: the Output
 tab streams the model output, the Events tab renders the generation loop's
-event stream — attempt starts ("🚀 [Attempt N start]"), attempt summaries,
-truncations, retries, handoff starts and
+event stream — attempt starts ("🚀 [Attempt N start]"), the request
+parameter lines ("📡 [Attempt N request] ...") that precede each request,
+attempt summaries, truncations, retries, handoff starts and
 synthesized summaries, the finish reasons ("🏁 [Finish: stop]"), the
 per-attempt usage lines ("📊 [Usage] ..."), the thought summaries when
 -summarize-thoughts is enabled, the component/idle continuations, the
@@ -60,15 +61,16 @@ with the kind's emoji (eventEmoji) followed by a bracketed label, one
 display style shared by every kind and by the goal verdicts the pipeline
 emits (pipeline.RunGoal).
 Goal-loop runs attribute the per-attempt events to their loop: attempt
-starts and completions render "[loop L attempt N ...]" and usage lines
-render "[Usage] loop L attempt N: ..."; non-goal runs omit the
-attribution and keep their display bytes unchanged.
+starts, requests, and completions render "[loop L attempt N ...]" and
+usage lines render "[Usage] loop L attempt N: ..."; non-goal runs omit
+the attribution and keep their display bytes unchanged.
 A completed attempt with no summary
 shows a completion line ("✅ [Attempt N complete]"), and an unknown kind shows
 a generic "❓ [Event <kind>]" line, so no pipeline event type is silently
 dropped. Events are constructed and yielded the moment their facts are
-known: an attempt-start precedes its work, a handoff-start precedes the
-handoff request, and a truncation fires before the handoff summary is
+known: an attempt-start precedes its work, a request event precedes the
+attempt's request, a handoff-start precedes the handoff request, and a
+truncation fires before the handoff summary is
 requested. The Events tab's only content source is pipeline.Run:
 withTUIOutputObserver taps the run's event iterator and forwards every
 event to handleEvent, so every Events-tab line originates from a pipeline
@@ -116,8 +118,8 @@ blocks, never scans rendered text for "[Finish: ...]" markers, and never
 captures model output through a
 stdout pipe; retry feedback cannot duplicate summary content because the
 loop's events are the single authority. The goal-mode verdicts and
-failure notes are pipeline events too (EventGoal), so they render in
-the Events tab and never reach the Output
+failure notes are pipeline events too (EventGoal), so they render in the
+Events tab and never reach the Output
 tab. stdout is discarded in TUI mode, while stderr stays visible
 in the Output tab. Content is colored by role, matching the non-TUI output
 colors (see generators/colors.go): user input is blue, tool calls and
@@ -1337,6 +1339,7 @@ func (t *TUI) handleEvent(ev pipeline.Event) {
 var eventEmoji = map[pipeline.EventKind]string{
 	pipeline.EventAttemptStart:        "🚀",
 	pipeline.EventAttemptCompleted:    "✅",
+	pipeline.EventRequest:             "📡",
 	pipeline.EventTruncated:           "✂️",
 	pipeline.EventRetry:               "🔁",
 	pipeline.EventHandoffStart:        "🤝",
@@ -1386,11 +1389,11 @@ func loopPrefix(loop int, attemptLabel string) string {
 // summary body. An unknown kind shows a generic event line, so no
 // pipeline event type is silently dropped. Log-style events use the log
 // color; the thought summary header uses the thought color; summary
-// bodies stay plain. The attempt start, completion, and usage lines
-// attribute the attempt to its goal loop via loopPrefix; non-goal runs
-// keep the bare attempt labels. The loop-start event renders the line
-// that roots its goal loop's branch. The goal event renders its message
-// lines in the log color, the emoji on the first line.
+// bodies stay plain. The attempt start, request, completion, and usage
+// lines attribute the attempt to its goal loop via loopPrefix; non-goal
+// runs keep the bare attempt labels. The loop-start event renders the
+// line that roots its goal loop's branch. The goal event renders its
+// message lines in the log color, the emoji on the first line.
 func eventLines(ev pipeline.Event) []taiui.Line {
 	// The "attempt x/y" budget display uses the in-generation
 	// position, pairing with MaxAttempts; hand-constructed events
@@ -1403,6 +1406,9 @@ func eventLines(ev pipeline.Event) []taiui.Line {
 	case pipeline.EventAttemptStart:
 		return eventLog(ev.Kind, fmt.Sprintf("[%s start]",
 			loopPrefix(ev.Loop, fmt.Sprintf("Attempt %d", ev.Attempt))))
+	case pipeline.EventRequest:
+		return eventLog(ev.Kind, fmt.Sprintf("[%s request] %s",
+			loopPrefix(ev.Loop, fmt.Sprintf("Attempt %d", ev.Attempt)), ev.Detail))
 	case pipeline.EventAttemptCompleted:
 		header := eventLog(ev.Kind, fmt.Sprintf("[%s complete]",
 			loopPrefix(ev.Loop, fmt.Sprintf("Attempt %d", ev.Attempt))))

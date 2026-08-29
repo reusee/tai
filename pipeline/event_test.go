@@ -135,6 +135,161 @@ func TestRunEventStream(t *testing.T) {
 	})
 }
 
+// requestEventGenerator is a minimal Generator whose Spec feeds the
+// request-description assertions of TestRunEmitsRequestEvent; its
+// Generate is never called because the test drives its own phase.
+type requestEventGenerator struct {
+	spec generators.Spec
+}
+
+func (g requestEventGenerator) Spec() generators.Spec {
+	return g.spec
+}
+
+func (g requestEventGenerator) CountTokens(string) (int, error) {
+	return 0, nil
+}
+
+func (g requestEventGenerator) Generate(ctx context.Context, state generators.State, options *generators.GenerateOptions) (generators.State, error) {
+	return state, nil
+}
+
+// TestRunEmitsRequestEvent verifies that each attempt opens with an
+// EventRequest before its request: the event follows the attempt-start
+// event, nests under it, and its Detail describes the actual generation
+// parameters resolved from the generator spec — the flag overrides stay
+// unset in this scope, so the spec values are the effective ones. See
+// TheoryOfLoopEvents.
+func TestRunEmitsRequestEvent(t *testing.T) {
+	withRun(t, func(run Run) {
+		temperature := float32(0.5)
+		maxTokens := 4096
+		generator := requestEventGenerator{
+			spec: generators.Spec{
+				Name:              "test",
+				Model:             "model-a",
+				Family:            "family-a",
+				Temperature:       &temperature,
+				ReasoningEffort:   "low",
+				MaxGenerateTokens: &maxTokens,
+				ContextTokens:     100000,
+			},
+		}
+		opts := RunOptions{
+			Generator:    generator,
+			InitialState: generators.NewPrompts("", nil),
+			Components:   nil,
+			PhaseBuilder: func(g generators.Generator) generators.Phase {
+				return func(ctx context.Context, state generators.State) (generators.Phase, generators.State, error) {
+					newState, err := state.AppendContent(&generators.Content{
+						Role: generators.RoleLog,
+						Parts: []generators.Part{
+							generators.FinishReason("stop"),
+							generators.Text("<<齉爩 summary\n- done\n齉爩\n"),
+						},
+					})
+					if err != nil {
+						return nil, state, err
+					}
+					return nil, newState, nil
+				}
+			},
+		}
+
+		var result Result
+		var events []Event
+		var terminalErr error
+		for ev, err := range run(context.Background(), opts, &result) {
+			if err != nil {
+				terminalErr = err
+			}
+			events = append(events, ev)
+		}
+		if terminalErr != nil {
+			t.Fatalf("unexpected terminal error: %v", terminalErr)
+		}
+
+		var kinds []EventKind
+		for _, ev := range events {
+			kinds = append(kinds, ev.Kind)
+		}
+		wantKinds := []EventKind{
+			EventAttemptStart,
+			EventRequest,
+			EventFinish,
+			EventAttemptCompleted,
+		}
+		if !slices.Equal(kinds, wantKinds) {
+			t.Fatalf("expected event kinds %v, got %v", wantKinds, kinds)
+		}
+		requestEv := events[1]
+		if requestEv.Attempt != 1 {
+			t.Fatalf("unexpected request event attempt: %+v", requestEv)
+		}
+		if requestEv.Parent != events[0].Seq {
+			t.Fatalf("expected the request event to nest under the attempt start, got parent %d", requestEv.Parent)
+		}
+		for _, want := range []string{
+			"model model-a",
+			"family family-a",
+			"temperature 0.5",
+			"effort low",
+			"max tokens 4096",
+			"thinking tokens default",
+			"context 100000",
+		} {
+			if !strings.Contains(requestEv.Detail, want) {
+				t.Fatalf("request detail %q missing %q", requestEv.Detail, want)
+			}
+		}
+	})
+}
+
+// TestDescribeRequest verifies the effective-value resolution of the
+// request description: the temperature and effort flags override the
+// spec fields, unset values render as "default", and the model
+// identity and token limits come from the spec. See
+// TheoryOfLoopEvents.
+func TestDescribeRequest(t *testing.T) {
+	specTemperature := float32(0.2)
+	maxTokens := 8192
+	spec := generators.Spec{
+		Model:             "model-b",
+		Temperature:       &specTemperature,
+		ReasoningEffort:   "low",
+		MaxGenerateTokens: &maxTokens,
+	}
+	detail := describeRequest(spec, generators.TemperatureFlag{}, generators.EffortFlag(""))
+	for _, want := range []string{
+		"model model-b",
+		"temperature 0.2",
+		"effort low",
+		"max tokens 8192",
+		"thinking tokens default",
+	} {
+		if !strings.Contains(detail, want) {
+			t.Fatalf("detail %q missing %q", detail, want)
+		}
+	}
+
+	flagTemperature := float32(0.9)
+	detail = describeRequest(spec,
+		generators.TemperatureFlag{Value: &flagTemperature},
+		generators.EffortFlag("high"),
+	)
+	for _, want := range []string{
+		"temperature 0.9",
+		"effort high",
+	} {
+		if !strings.Contains(detail, want) {
+			t.Fatalf("flag-overridden detail %q missing %q", detail, want)
+		}
+	}
+	if strings.Contains(detail, "family") {
+		t.Fatalf("unset family must be omitted, got %q", detail)
+	}
+}
+
 // eventSummaryGenerator is a minimal generators.Generator whose Generate
 // returns a fixed summary block, so NewSummarizer can be exercised
 // without a real model. See TestRunThoughtSummaryEvent.
