@@ -1306,8 +1306,7 @@ type RunOptions struct {
 // formatHandoffPrompt formats the retry user prompt with the handoff content.
 // See TheoryOfHandoff.
 func formatHandoffPrompt(retryPrompt string, attempt, maxAttempts int) string {
-	prefix := fmt.Sprintf(incompleteOutputHandoffPrefix, attempt, maxAttempts)
-	return FormatHandoffPrompt(prefix, retryPrompt)
+	return fmt.Sprintf(incompleteOutputHandoffPrefix, attempt, maxAttempts) + retryPrompt
 }
 
 // Result holds the outcome of a generation loop.

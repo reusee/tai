@@ -740,10 +740,8 @@ func buildDeleteRanges(fset *token.FileSet, f *ast.File, prefixLen int) map[stri
 	return ranges
 }
 
-// getChangeBlockBodyNameFromInfo extracts the primary entity name from a parsed
-// BodyInfo without re-parsing the body. Callers that already hold a BodyInfo
-// (e.g., ApplyChangeBlock, findTargetRange) should use this instead of
-// getChangeBlockBodyName to avoid redundant AST parsing.
+// getChangeBlockBodyNameFromInfo extracts the primary entity name from a
+// parsed BodyInfo without re-parsing the body.
 func getChangeBlockBodyNameFromInfo(info *BodyInfo) string {
 	if info == nil || info.entityCount() == 0 {
 		return ""

@@ -405,7 +405,7 @@ func handoffRetryState(
 				"[System note: The previous generation attempt was interrupted by an error after producing partial output: %v. This is a retry. The failed attempt's output was discarded — its structured blocks were NOT applied. If the intended modifications are extensive, partition the work across multiple rounds using continue blocks rather than emitting all changes at once. Re-emit every block you intend to take effect, then correct the issue and continue.]\n\n",
 				phaseErr,
 			)
-			msg := FormatHandoffPrompt(prefix, handoff.Prompt)
+			msg := prefix + handoff.Prompt
 			newState, appendErr := errState.AppendContent(&generators.Content{
 				Role: generators.RoleUser,
 				Parts: []generators.Part{

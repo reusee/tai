@@ -9,32 +9,16 @@ import (
 )
 
 func TestParseHelp(t *testing.T) {
-	scope := dscope.New(Module{})
-	_, err := Parse(scope, []string{"-help"})
-	var helpErr *HelpError
-	if !errors.As(err, &helpErr) {
-		t.Fatalf("expected HelpError, got: %v", err)
-	}
-	if !strings.Contains(helpErr.Usage, "chat") {
-		t.Fatal("help usage should contain flag descriptions")
-	}
-}
-
-func TestParseHelpLongForm(t *testing.T) {
-	scope := dscope.New(Module{})
-	_, err := Parse(scope, []string{"--help"})
-	var helpErr *HelpError
-	if !errors.As(err, &helpErr) {
-		t.Fatalf("expected HelpError, got: %v", err)
-	}
-}
-
-func TestParseHelpShortForm(t *testing.T) {
-	scope := dscope.New(Module{})
-	_, err := Parse(scope, []string{"-h"})
-	var helpErr *HelpError
-	if !errors.As(err, &helpErr) {
-		t.Fatalf("expected HelpError, got: %v", err)
+	for _, arg := range []string{"-help", "--help", "-h"} {
+		scope := dscope.New(Module{})
+		_, err := Parse(scope, []string{arg})
+		var helpErr *HelpError
+		if !errors.As(err, &helpErr) {
+			t.Fatalf("arg %q: expected HelpError, got: %v", arg, err)
+		}
+		if !strings.Contains(helpErr.Usage, "chat") {
+			t.Fatalf("arg %q: help usage should contain flag descriptions", arg)
+		}
 	}
 }
 

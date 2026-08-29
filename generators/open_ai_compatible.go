@@ -1,9 +1,5 @@
 package generators
 
-import (
-	"github.com/reusee/tai/configs"
-)
-
 // firstNonZero returns the first non-empty string argument, or the empty
 // string if both are empty.
 func firstNonZero(a, b string) string {
@@ -30,12 +26,6 @@ type AzureEndpoint string
 func (Module) OpenRouterEndpoint() OpenRouterEndpoint {
 	return "https://openrouter.ai/api/v1"
 }
-
-var (
-	_ configs.Config = AzureEndpoint("")
-	_ configs.Config = AzureAPIVersion("")
-	_ configs.Config = OpenRouterEndpoint("")
-)
 
 type NewOpenRouter func(spec Spec) *OpenAI
 

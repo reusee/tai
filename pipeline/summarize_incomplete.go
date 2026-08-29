@@ -500,12 +500,6 @@ func FormatSummaryBlock(summary string) string {
 	return "<<" + delimiter + " summary\n" + summary + "\n" + delimiter
 }
 
-// FormatHandoffPrompt formats the retry user prompt with the handoff content.
-// See TheoryOfHandoff.
-func FormatHandoffPrompt(prefix, handoffPrompt string) string {
-	return prefix + handoffPrompt
-}
-
 // freshDelimiter returns a fresh pair of uncommon Chinese characters for
 // use as a block delimiter in system-generated blocks. The delimiter is
 // chosen randomly from a set of uncommon Chinese characters so it is

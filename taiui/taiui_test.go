@@ -600,123 +600,39 @@ func TestTextTabExpansion(t *testing.T) {
 
 func TestTextFastPathMatchesGeneralPath(t *testing.T) {
 	// The fast path must produce the same output as the general path for
-	// the conditions it handles. A no-op offset style forces the general
-	// path without changing the output.
-	for _, text := range []string{"hello", "a\tb", "e\u0301x", "\U0001F469\u200d\U0001F4BB"} {
-		fast := newFakeScreen(80, 25)
-		Render(Text(text), fast)
-
-		general := newFakeScreen(80, 25)
-		Render(Text(text, OffsetStyleFunc(func(int) StyleFunc { return SameStyle })), general)
-
-		if !fast.frames[len(fast.frames)-1].Equal(general.frames[len(general.frames)-1]) {
-			t.Fatalf("fast path output differs from general path for %q", text)
+	// every condition it handles: plain text, fill, cursor, cursor-at-
+	// offset, and their combinations. A no-op offset style forces the
+	// general path without changing the output.
+	renderBoth := func(specs ...any) (fast Frame, general Frame) {
+		fastScreen := newFakeScreen(80, 25)
+		Render(Text(specs...), fastScreen)
+		generalScreen := newFakeScreen(80, 25)
+		Render(Text(append(specs, OffsetStyleFunc(func(int) StyleFunc { return SameStyle }))...), generalScreen)
+		return fastScreen.frames[len(fastScreen.frames)-1], generalScreen.frames[len(generalScreen.frames)-1]
+	}
+	assertEqual := func(specs ...any) {
+		t.Helper()
+		fast, general := renderBoth(specs...)
+		if !fast.Equal(general) {
+			t.Fatalf("fast path output differs from general path for %v", specs)
 		}
 	}
-}
 
-func TestTextFastPathEmptyBoxCursor(t *testing.T) {
+	texts := []string{"hello", "a\tb", "e\u0301x", "\U0001F469\u200d\U0001F4BB", ""}
+	for _, text := range texts {
+		assertEqual(text)
+		assertEqual(text, Fill(true))
+		assertEqual(text, Cursor(true))
+		assertEqual(text, Fill(true), Cursor(true))
+		for _, offset := range []int{0, 1, 2, 10} {
+			assertEqual(text, CursorAt(offset))
+			assertEqual(text, Fill(true), CursorAt(offset))
+		}
+	}
+
 	// An empty box override with a cursor: the fast path must not set a
 	// cursor, matching the general path's early return.
-	fast := newFakeScreen(80, 25)
-	Render(Text("a", Cursor(true), Box{Top: 5, Left: 0, Bottom: 5, Right: 10}), fast)
-
-	general := newFakeScreen(80, 25)
-	Render(Text("a", Cursor(true), Box{Top: 5, Left: 0, Bottom: 5, Right: 10}, OffsetStyleFunc(func(int) StyleFunc { return SameStyle })), general)
-
-	if !fast.frames[len(fast.frames)-1].Equal(general.frames[len(general.frames)-1]) {
-		t.Fatal("fast path empty-box cursor output differs from general path")
-	}
-}
-
-func TestTextFastPathCursorMatchesGeneralPath(t *testing.T) {
-	// The fast path must produce the same cursor position as the general
-	// path for the conditions it handles. A no-op offset style forces the
-	// general path without changing the output.
-	for _, text := range []string{"hello", "a\tb", "e\u0301x", "\U0001F469\u200d\U0001F4BB", ""} {
-		fast := newFakeScreen(80, 25)
-		Render(Text(text, Cursor(true)), fast)
-
-		general := newFakeScreen(80, 25)
-		Render(Text(text, Cursor(true), OffsetStyleFunc(func(int) StyleFunc { return SameStyle })), general)
-
-		if !fast.frames[len(fast.frames)-1].Equal(general.frames[len(general.frames)-1]) {
-			t.Fatalf("fast path cursor output differs from general path for %q", text)
-		}
-	}
-}
-
-func TestTextFastPathCursorAtMatchesGeneralPath(t *testing.T) {
-	// The fast path must produce the same cursor-at-offset position as
-	// the general path for the conditions it handles. A no-op offset
-	// style forces the general path without changing the output.
-	for _, text := range []string{"hello", "a\tb", "e\u0301x", "\U0001F469\u200d\U0001F4BB", ""} {
-		for _, offset := range []int{0, 1, 2, 10} {
-			fast := newFakeScreen(80, 25)
-			Render(Text(text, CursorAt(offset)), fast)
-
-			general := newFakeScreen(80, 25)
-			Render(Text(text, CursorAt(offset), OffsetStyleFunc(func(int) StyleFunc { return SameStyle })), general)
-
-			if !fast.frames[len(fast.frames)-1].Equal(general.frames[len(general.frames)-1]) {
-				t.Fatalf("fast path cursor-at output differs from general path for %q at offset %d", text, offset)
-			}
-		}
-	}
-}
-
-func TestTextFastPathFillMatchesGeneralPath(t *testing.T) {
-	// The fast path must produce the same output as the general path for
-	// the conditions it handles, including fill. A no-op offset style
-	// forces the general path without changing the output.
-	for _, text := range []string{"hello", "a\tb", "e\u0301x", "\U0001F469\u200d\U0001F4BB", ""} {
-		fast := newFakeScreen(80, 25)
-		Render(Text(text, Fill(true)), fast)
-
-		general := newFakeScreen(80, 25)
-		Render(Text(text, Fill(true), OffsetStyleFunc(func(int) StyleFunc { return SameStyle })), general)
-
-		if !fast.frames[len(fast.frames)-1].Equal(general.frames[len(general.frames)-1]) {
-			t.Fatalf("fast path fill output differs from general path for %q", text)
-		}
-	}
-}
-
-func TestTextFastPathFillCursorMatchesGeneralPath(t *testing.T) {
-	// The fast path must produce the same cursor position as the general
-	// path for the conditions it handles, including fill. A no-op offset
-	// style forces the general path without changing the output.
-	for _, text := range []string{"hello", "a\tb", "e\u0301x", "\U0001F469\u200d\U0001F4BB", ""} {
-		fast := newFakeScreen(80, 25)
-		Render(Text(text, Fill(true), Cursor(true)), fast)
-
-		general := newFakeScreen(80, 25)
-		Render(Text(text, Fill(true), Cursor(true), OffsetStyleFunc(func(int) StyleFunc { return SameStyle })), general)
-
-		if !fast.frames[len(fast.frames)-1].Equal(general.frames[len(general.frames)-1]) {
-			t.Fatalf("fast path fill cursor output differs from general path for %q", text)
-		}
-	}
-}
-
-func TestTextFastPathFillCursorAtMatchesGeneralPath(t *testing.T) {
-	// The fast path must produce the same cursor-at-offset position as
-	// the general path for the conditions it handles, including fill. A
-	// no-op offset style forces the general path without changing the
-	// output.
-	for _, text := range []string{"hello", "a\tb", "e\u0301x", "\U0001F469\u200d\U0001F4BB", ""} {
-		for _, offset := range []int{0, 1, 2, 10} {
-			fast := newFakeScreen(80, 25)
-			Render(Text(text, Fill(true), CursorAt(offset)), fast)
-
-			general := newFakeScreen(80, 25)
-			Render(Text(text, Fill(true), CursorAt(offset), OffsetStyleFunc(func(int) StyleFunc { return SameStyle })), general)
-
-			if !fast.frames[len(fast.frames)-1].Equal(general.frames[len(general.frames)-1]) {
-				t.Fatalf("fast path fill cursor-at output differs from general path for %q at offset %d", text, offset)
-			}
-		}
-	}
+	assertEqual("a", Cursor(true), Box{Top: 5, Left: 0, Bottom: 5, Right: 10})
 }
 
 func TestTextWrapRender(t *testing.T) {
