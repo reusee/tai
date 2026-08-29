@@ -7,101 +7,101 @@ import (
 const TheoryOfTaiUI = `
 taiui theory: UI = pure Element value derived from state.
 - The application holds its state outside the library and derives an
-  Element value from it; rendering interprets the element tree into a
-  Frame and presents the frame to each screen. A state change is a
-  rebuilt Element; the next render reflects the change. There is no
-  imperative element-update protocol and no dependency-injection
-  framework: per-component caching is not worth its complexity —
-  building a Frame is cheap and screens diff whole frames anyway.
-  Render context (boxes, styles, draw callbacks) is never stored;
-  screens are passed per call.
+Element value from it; rendering interprets the element tree into a
+Frame and presents the frame to each screen. A state change is a
+rebuilt Element; the next render reflects the change. There is no
+imperative element-update protocol and no dependency-injection
+framework: per-component caching is not worth its complexity —
+building a Frame is cheap and screens diff whole frames anyway.
+Render context (boxes, styles, draw callbacks) is never stored;
+screens are passed per call.
 - Elements are pure values: spec lists are resolved at construction
-  time into typed element fields, so rendering reads plain data and
-  never parses specs. Zero-argument function specs are evaluated
-  eagerly and expand recursively. Unknown specs fail at construction.
-  Dynamics that depend on state are expressed as functions that build
-  the element tree.
+time into typed element fields, so rendering reads plain data and
+never parses specs. Zero-argument function specs are evaluated
+eagerly and expand recursively. Unknown specs fail at construction.
+Dynamics that depend on state are expressed as functions that build
+the element tree.
 - The spec language is a marker-interface protocol: style and layout
-  specs, spec groups, and elements themselves all implement it, so spec
-  lists compose and nest. Bare strings are a shorthand for text lines
-  only, split at newline boundaries with CRLF normalized to LF.
-  Conditionals compose specs conditionally.
+specs, spec groups, and elements themselves all implement it, so spec
+lists compose and nest. Bare strings are a shorthand for text lines
+only, split at newline boundaries with CRLF normalized to LF.
+Conditionals compose specs conditionally.
 - Each render pass allocates a fresh frame per screen; frames are never
-  reused unless the screen opts in via FrameReleaser, because a screen
-  may retain the frame it presented. A screen implementing
-  FrameReleaser returns the frame's cells to an internal pool after
-  presenting and must not retain the frame. Frame comparison lets a
-  screen detect an unchanged frame and skip repainting, and reports the
-  changed cells or rows so a screen can repaint only damaged regions;
-  comparisons apply only to frames of equal dimensions, and a screen
-  repainting whole rows can reuse a buffer across presents. A nil
-  element renders an empty frame, clearing every screen. An element
-  with an empty box is skipped entirely: no child is rendered and no
-  cursor is recorded.
+reused unless the screen opts in via FrameReleaser, because a screen
+may retain the frame it presented. A screen implementing
+FrameReleaser returns the frame's cells to an internal pool after
+presenting and must not retain the frame. Frame comparison lets a
+screen detect an unchanged frame and skip repainting, and reports the
+changed rows so a screen can repaint only damaged regions;
+comparisons apply only to frames of equal dimensions, and a screen
+repainting whole rows can reuse a buffer across presents. A nil
+element renders an empty frame, clearing every screen. An element
+with an empty box is skipped entirely: no child is rendered and no
+cursor is recorded.
 - The box model (margin, border, padding, fill): the border is a
-  one-cell ring between margin and padding that shrinks the content box
-  by one cell per side; fill paints a background in the cells no child
-  occupies, so children render over it and wide grapheme clusters keep
-  their trailing columns. The border draws independently of fill and
-  stays visible without a painted background, clipped to the element
-  box so a negative margin never paints border glyphs outside it. A
-  title draws in the top border, clipped to the visible edge. A content
-  box whose border and padding exceed the box dimensions is treated as
-  empty and never leaves the element box.
+one-cell ring between margin and padding that shrinks the content box
+by one cell per side; fill paints a background in the cells no child
+occupies, so children render over it and wide grapheme clusters keep
+their trailing columns. The border draws independently of fill and
+stays visible without a painted background, clipped to the element
+box so a negative margin never paints border glyphs outside it. A
+title draws in the top border, clipped to the visible edge. A content
+box whose border and padding exceed the box dimensions is treated as
+empty and never leaves the element box.
 - Flex layout along an axis: each child receives a share of the box
-  proportional to its weight, tiling the content area without overlaps
-  or gaps; the last child absorbs rounding. The box model and fill
-  behave as in the box-model element; when the ring is empty, fill is a
-  no-op.
+proportional to its weight, tiling the content area without overlaps
+or gaps; the last child absorbs rounding. The box model and fill
+behave as in the box-model element; when the ring is empty, fill is a
+no-op.
 - Overlay stacks children in order, each into the full box; later
-  children draw over earlier ones. Overlay enables modals and popups:
-  the application derives the overlay from state, so a modal is part of
-  the element tree, not a separate layer.
+children draw over earlier ones. Overlay enables modals and popups:
+the application derives the overlay from state, so a modal is part of
+the element tree, not a separate layer.
 - Text provides multi-line rendering with horizontal and vertical
-  alignment and per-position style support. Lines are segmented into
-  grapheme clusters: a cluster renders as one cell carrying its base
-  and combining runes and advances by its display width, so combining
-  sequences and ZWJ emoji occupy their real columns. Width honors
-  RUNEWIDTH_EASTASIAN for ambiguous runes. A tab advances to the next
-  tab stop relative to the content area's left edge, painting the
-  skipped cells when fill is on; in wrapped text, tabs break like
-  spaces. With wrapping, lines word-wrap to the box width: breaks fall
-  at space runs, words wider than the box hard-break at cluster
-  boundaries, and a cluster never splits across lines. Alignment is
-  relative to the padded content area, applied per physical line, so
-  wrapped lines align independently; conventional rounding places the
-  extra column on the right and the extra row below. Fill paints the
-  content cells the text does not occupy, including residual gaps left
-  by clusters clipped at either edge. Rendering stops at the box's last
-  row; lines beyond it are never processed.
+alignment and per-position style support. Lines are segmented into
+grapheme clusters: a cluster renders as one cell carrying its base
+and combining runes and advances by its display width, so combining
+sequences and ZWJ emoji occupy their real columns. Width honors
+RUNEWIDTH_EASTASIAN for ambiguous runes. A tab advances to the next
+tab stop relative to the content area's left edge, painting the
+skipped cells when fill is on; in wrapped text, tabs break like
+spaces. With wrapping, lines word-wrap to the box width: breaks fall
+at space runs, words wider than the box hard-break at cluster
+boundaries, and a cluster never splits across lines. Alignment is
+relative to the padded content area, applied per physical line, so
+wrapped lines align independently; conventional rounding places the
+extra column on the right and the extra row below. Fill paints the
+content cells the text does not occupy, including residual gaps left
+by clusters clipped at either edge. Rendering stops at the box's last
+row; lines beyond it are never processed.
 - The scroll viewport renders its child into a virtually unbounded
-  column and crops to the visible window at the offset, clamped to the
-  content extent. Content is clipped to the window on both edges, so
-  content never spills onto the screen. With a scrollbar, the child
-  renders at the visible width, so wrapped text wraps within the
-  visible area. The scroll collects only the cells of the expected
-  window, re-collecting when the view falls outside the range, so a
-  tall virtual column never accumulates cells for rows outside it.
+column and crops to the visible window at the offset, clamped to the
+content extent. Content is clipped to the window on both edges, so
+content never spills onto the screen. With a scrollbar, the child
+renders at the visible width, so wrapped text wraps within the
+visible area. The scroll collects only the cells of the expected
+window, re-collecting when the view falls outside the range, so a
+tall virtual column never accumulates cells for rows outside it.
 - The list renders a vertical list of single-line items with a selected
-  index, highlighted; the view scrolls to keep the selection visible,
-  clamped to the content extent, rendering only the visible items in
-  O(window) time. Tab panes apply the same principle.
+index, highlighted; the view scrolls to keep the selection visible,
+clamped to the content extent, rendering only the visible items in
+O(window) time. Tab panes apply the same principle.
 - The canvas renders offscreen content: the content is data state, and
-  rendering is a pure read of it. Cells are stored by value, so a write
-  allocates nothing. Rendering snapshots the visible cells under a read
-  lock, then draws outside the lock, so a concurrent writer is blocked
-  only for the snapshot, never for the draw. A wide cluster covers its
-  trailing columns, so a stale cell left by a moved cluster never
-  corrupts the display; a wide cluster that would extend past the box's
-  right edge is not drawn — content never spills past its box.
+rendering is a pure read of it. Cells are stored by value, so a write
+allocates nothing. Rendering snapshots the visible cells under a read
+lock, then draws outside the lock, so a concurrent writer is blocked
+only for the snapshot, never for the draw. A wide cluster covers its
+trailing columns, so a stale cell left by a moved cluster never
+corrupts the display; a wide cluster that would extend past the box's
+right edge is not drawn — content never spills past its box.
 - The cursor is part of the render output: text records the cursor
-  position in the Frame, and screens position the terminal cursor
-  there. Inside a scroll viewport, the cursor is transformed from
-  content coordinates to window coordinates. Frame comparison includes
-  the cursor state, so a screen detects a cursor-only change and
-  repositions without repainting cells.
+position in the Frame, and screens position the terminal cursor
+there. Inside a scroll viewport, the cursor is transformed from
+content coordinates to window coordinates. Frame comparison includes
+the cursor state, so a screen detects a cursor-only change and
+repositions without repainting cells.
 - The exported API is a minimal facade: spec types, constructors, and
-  style helpers only.
+style helpers only.
 `
 
 const TheoryOfTUISupport = `
@@ -295,41 +295,9 @@ func (f Frame) Equal(o Frame) bool {
 	return true
 }
 
-// Dirty reports the maximal horizontal runs of cells that differ between
-// f and o, in row-major order; each reported Box is one row high. A
-// screen that keeps the last presented frame calls Dirty on the next
-// frame and repaints only the reported runs, mirroring damage-based
-// rendering in terminal libraries.
-func (f Frame) Dirty(o Frame) []Box {
-	if f.Width != o.Width || f.Height != o.Height || len(f.Cells) != len(o.Cells) {
-		return []Box{{Top: 0, Left: 0, Bottom: f.Height, Right: f.Width}}
-	}
-	var dirty []Box
-	for y := 0; y < f.Height; y++ {
-		start := -1
-		for x := 0; x < f.Width; x++ {
-			idx := y*f.Width + x
-			if frameCellEqual(f.Cells[idx], o.Cells[idx]) {
-				if start >= 0 {
-					dirty = append(dirty, Box{Top: y, Left: start, Bottom: y + 1, Right: x})
-					start = -1
-				}
-				continue
-			}
-			if start < 0 {
-				start = x
-			}
-		}
-		if start >= 0 {
-			dirty = append(dirty, Box{Top: y, Left: start, Bottom: y + 1, Right: f.Width})
-		}
-	}
-	return dirty
-}
-
 // DirtyRows reports the row indices that differ between f and o, in
-// ascending order. A screen that repaints whole rows uses it to avoid
-// the run-level detail of Dirty.
+// ascending order. A screen that repaints whole rows uses it to
+// determine which rows to repaint.
 func (f Frame) DirtyRows(o Frame) []int {
 	return f.DirtyRowsInto(o, nil)
 }

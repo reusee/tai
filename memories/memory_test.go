@@ -19,78 +19,68 @@ func (mockGenerator) Generate(context.Context, generators.State, *generators.Gen
 	return nil, nil
 }
 
-func TestParseMemoryUpdateSkipsNonMemoryBlocks(t *testing.T) {
-	text := "<<龘靐 continue\ncontinue content\n龘靐\n" +
-		"<<齉爩 memory\n<memory>\n  <memory-item>user likes Go</memory-item>\n</memory>\n齉爩\n"
-
-	update, err := parseMemoryUpdate(text)
-	if err != nil {
-		t.Fatal(err)
+func TestParseMemoryUpdate(t *testing.T) {
+	cases := []struct {
+		name    string
+		text    string
+		adds    []string
+		deletes []string
+	}{
+		{
+			name: "first block is memory",
+			text: "<<龘靐 memory\n<memory>\n  <memory-item>user likes Go</memory-item>\n</memory>\n龘靐\n",
+			adds: []string{"user likes Go"},
+		},
+		{
+			name: "no memory block",
+			text: "<<龘靐 continue\ncontinue content\n龘靐\n",
+		},
+		{
+			name: "skips non-memory blocks",
+			text: "<<龘靐 continue\ncontinue content\n龘靐\n" +
+				"<<齉爩 memory\n<memory>\n  <memory-item>user likes Go</memory-item>\n</memory>\n齉爩\n",
+			adds: []string{"user likes Go"},
+		},
+		{
+			name: "skips unclosed blocks",
+			text: "<<龘靐 finish\nSome summary.\n<<齉爩 memory\n<memory>\n  <memory-item>user likes Go</memory-item>\n</memory>\n齉爩\n",
+			adds: []string{"user likes Go"},
+		},
+		{
+			name: "multiple non-memory blocks",
+			text: "<<龘靐 summary\nsummary text\n龘靐\n" +
+				"<<齉爩 continue\ncontinue content\n齉爩\n" +
+				"<<麤黿 memory\n<memory>\n  <memory-item>item1</memory-item>\n  <memory-item>item2</memory-item>\n</memory>\n麤黿\n",
+			adds: []string{"item1", "item2"},
+		},
+		{
+			name:    "adds and deletes",
+			text:    "<<龘靐 memory\n<memory>\n  <memory-item>user likes Go</memory-item>\n  <memory-delete>user knows Python</memory-delete>\n</memory>\n龘靐\n",
+			adds:    []string{"user likes Go"},
+			deletes: []string{"user knows Python"},
+		},
 	}
-	if len(update.Adds) != 1 {
-		t.Fatalf("expected 1 memory item, got %d: %v", len(update.Adds), update.Adds)
-	}
-	if update.Adds[0] != "user likes Go" {
-		t.Fatalf("expected 'user likes Go', got %q", update.Adds[0])
-	}
-}
-
-func TestParseMemoryUpdateSkipsUnclosedBlocks(t *testing.T) {
-	text := "<<龘靐 finish\nSome summary.\n<<齉爩 memory\n<memory>\n  <memory-item>user likes Go</memory-item>\n</memory>\n齉爩\n"
-
-	update, err := parseMemoryUpdate(text)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(update.Adds) != 1 {
-		t.Fatalf("expected 1 memory item, got %d: %v", len(update.Adds), update.Adds)
-	}
-	if update.Adds[0] != "user likes Go" {
-		t.Fatalf("expected 'user likes Go', got %q", update.Adds[0])
-	}
-}
-
-func TestParseMemoryUpdateNoMemoryBlock(t *testing.T) {
-	text := "<<龘靐 continue\ncontinue content\n龘靐\n"
-
-	update, err := parseMemoryUpdate(text)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if update.Adds != nil || update.Deletes != nil {
-		t.Fatalf("expected no additions or deletions when no memory block exists, got %v / %v", update.Adds, update.Deletes)
-	}
-}
-
-func TestParseMemoryUpdateFirstBlockIsMemory(t *testing.T) {
-	text := "<<龘靐 memory\n<memory>\n  <memory-item>user likes Go</memory-item>\n</memory>\n龘靐\n"
-
-	update, err := parseMemoryUpdate(text)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(update.Adds) != 1 {
-		t.Fatalf("expected 1 memory item, got %d: %v", len(update.Adds), update.Adds)
-	}
-	if update.Adds[0] != "user likes Go" {
-		t.Fatalf("expected 'user likes Go', got %q", update.Adds[0])
-	}
-}
-
-func TestParseMemoryUpdateMultipleNonMemoryBlocks(t *testing.T) {
-	text := "<<龘靐 summary\nsummary text\n龘靐\n" +
-		"<<齉爩 continue\ncontinue content\n齉爩\n" +
-		"<<麤黿 memory\n<memory>\n  <memory-item>item1</memory-item>\n  <memory-item>item2</memory-item>\n</memory>\n麤黿\n"
-
-	update, err := parseMemoryUpdate(text)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(update.Adds) != 2 {
-		t.Fatalf("expected 2 memory items, got %d: %v", len(update.Adds), update.Adds)
-	}
-	if update.Adds[0] != "item1" || update.Adds[1] != "item2" {
-		t.Fatalf("expected ['item1', 'item2'], got %v", update.Adds)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			update, err := parseMemoryUpdate(tc.text)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(update.Adds) != len(tc.adds) || len(update.Deletes) != len(tc.deletes) {
+				t.Fatalf("got adds %v deletes %v, want adds %v deletes %v",
+					update.Adds, update.Deletes, tc.adds, tc.deletes)
+			}
+			for i, want := range tc.adds {
+				if update.Adds[i] != want {
+					t.Fatalf("adds[%d] = %q, want %q", i, update.Adds[i], want)
+				}
+			}
+			for i, want := range tc.deletes {
+				if update.Deletes[i] != want {
+					t.Fatalf("deletes[%d] = %q, want %q", i, update.Deletes[i], want)
+				}
+			}
+		})
 	}
 }
 
@@ -207,21 +197,6 @@ func TestParsePseudoCallDeletes(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-func TestParseMemoryUpdateWithDeletes(t *testing.T) {
-	text := "<<龘靐 memory\n<memory>\n  <memory-item>user likes Go</memory-item>\n  <memory-delete>user knows Python</memory-delete>\n</memory>\n龘靐\n"
-
-	update, err := parseMemoryUpdate(text)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(update.Adds) != 1 || update.Adds[0] != "user likes Go" {
-		t.Fatalf("expected additions ['user likes Go'], got %v", update.Adds)
-	}
-	if len(update.Deletes) != 1 || update.Deletes[0] != "user knows Python" {
-		t.Fatalf("expected deletions ['user knows Python'], got %v", update.Deletes)
 	}
 }
 

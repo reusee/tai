@@ -542,13 +542,6 @@ taiui cursor theory:
   change and repositions without repainting cells.
 `
 
-// wrapLine wraps a line to the given width. It is the unlimited form of
-// wrapLineLimited, used by tests and callers that need the full wrapped
-// result.
-func wrapLine(line string, width int, options displaywidth.Options) []string {
-	return wrapLineLimited(line, width, -1, options)
-}
-
 func wrapLineLimited(line string, width, limit int, options displaywidth.Options) []string {
 	iter := getGraphemeIter()
 	defer putGraphemeIter(iter)

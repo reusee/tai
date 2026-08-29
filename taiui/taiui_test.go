@@ -413,37 +413,6 @@ func TestFrameEqualSizeMismatch(t *testing.T) {
 	}
 }
 
-func TestFrameDirty(t *testing.T) {
-	a := newFrame(4, 3)
-	b := newFrame(4, 3)
-	if dirty := a.Dirty(b); len(dirty) != 0 {
-		t.Fatalf("expected no dirty runs for identical frames, got %v", dirty)
-	}
-
-	b.setCell(1, 0, 'x', nil, vt.BaseStyle)
-	dirty := a.Dirty(b)
-	if len(dirty) != 1 || dirty[0] != (Box{Top: 0, Left: 1, Bottom: 1, Right: 2}) {
-		t.Fatalf("expected one run at (1,0), got %v", dirty)
-	}
-
-	b.setCell(2, 0, 'y', nil, vt.BaseStyle)
-	dirty = a.Dirty(b)
-	if len(dirty) != 1 || dirty[0] != (Box{Top: 0, Left: 1, Bottom: 1, Right: 3}) {
-		t.Fatalf("expected adjacent runs merged, got %v", dirty)
-	}
-
-	b.setCell(3, 1, 'z', nil, vt.BaseStyle)
-	dirty = a.Dirty(b)
-	if len(dirty) != 2 {
-		t.Fatalf("expected two runs, got %v", dirty)
-	}
-
-	a = newFrame(3, 4)
-	if dirty := a.Dirty(b); len(dirty) != 1 || dirty[0] != (Box{Top: 0, Left: 0, Bottom: 4, Right: 3}) {
-		t.Fatalf("expected whole-frame run on size mismatch, got %v", dirty)
-	}
-}
-
 func TestVerticalScrollCombc(t *testing.T) {
 	screen := newFakeScreen(80, 25)
 	Render(Rect(
@@ -459,19 +428,34 @@ func TestVerticalScrollCombc(t *testing.T) {
 
 func TestWrapLine(t *testing.T) {
 	options := displaywidth.Options{}
-	if got := wrapLine("hello", 10, options); !sameStrings(got, []string{"hello"}) {
-		t.Fatalf("short line: got %q", got)
+	cases := []struct {
+		name  string
+		line  string
+		width int
+		want  []string
+	}{
+		{"short line", "hello", 10, []string{"hello"}},
+		{"exact fit", "hello", 5, []string{"hello"}},
+		{"space break", "hello world", 8, []string{"hello", "world"}},
+		{"empty line", "", 10, []string{""}},
+		// A word wider than the box after a short word: the short word
+		// flushes, then the wide word hard-breaks.
+		{"word wider than box", "ab abcdef", 4, []string{"ab", "abcd", "ef"}},
+		// Wide clusters hard-break at cluster boundaries: cluster(2) + 'x'(1)
+		// fits in 3 columns, then 'y' overflows to the next line. A cluster
+		// wider than the box occupies its own line.
+		{"wide cluster break", "\U0001F469\u200d\U0001F4BBxy", 3, []string{"\U0001F469\u200d\U0001F4BBx", "y"}},
+		{"wide cluster alone", "\U0001F469\u200d\U0001F4BB", 1, []string{"\U0001F469\u200d\U0001F4BB"}},
 	}
-	if got := wrapLine("hello", 5, options); !sameStrings(got, []string{"hello"}) {
-		t.Fatalf("exact fit: got %q", got)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := wrapLineLimited(tc.line, tc.width, -1, options); !sameStrings(got, tc.want) {
+				t.Fatalf("wrap(%q, %d) = %q, want %q", tc.line, tc.width, got, tc.want)
+			}
+		})
 	}
-	if got := wrapLine("hello world", 8, options); !sameStrings(got, []string{"hello", "world"}) {
-		t.Fatalf("space break: got %q", got)
-	}
-	if got := wrapLine("", 10, options); !sameStrings(got, []string{""}) {
-		t.Fatalf("empty line: got %q", got)
-	}
-	if got := wrapLine("hello", 0, options); len(got) != 0 {
+	// Zero width yields no lines at all.
+	if got := wrapLineLimited("hello", 0, -1, options); len(got) != 0 {
 		t.Fatalf("zero width: got %q", got)
 	}
 }
@@ -498,66 +482,6 @@ func TestWrapLineLimit(t *testing.T) {
 	long := strings.Repeat("word ", 100)
 	if got := wrapLineLimited(long, 5, 3, options); len(got) != 3 {
 		t.Fatalf("long line limit 3: got %d lines", len(got))
-	}
-}
-
-func TestWrapLinePreservesIndentation(t *testing.T) {
-	options := displaywidth.Options{}
-	// An indented code line that fits the box is returned unchanged:
-	// the wrap fast path never re-flows text that fits, so indentation
-	// survives in terminal output.
-	if got := wrapLine("    func main() {", 40, options); !sameStrings(got, []string{"    func main() {"}) {
-		t.Fatalf("indented fitting line: got %q", got)
-	}
-	// When a line wraps, the indentation stays on the first line and
-	// the whitespace at the wrap boundary is dropped; the continuation
-	// line starts at the left column.
-	if got := wrapLine("    hello world", 12, options); !sameStrings(got, []string{"    hello", "world"}) {
-		t.Fatalf("indented wrapped line: got %q", got)
-	}
-	// Runs of consecutive spaces between words survive in wrapped lines.
-	if got := wrapLine("ab  cd ef", 8, options); !sameStrings(got, []string{"ab  cd", "ef"}) {
-		t.Fatalf("double space in wrapped line: got %q", got)
-	}
-}
-
-func TestWrapLineCluster(t *testing.T) {
-	options := displaywidth.Options{}
-	// Wide clusters hard-break at cluster boundaries: cluster(2) + 'x'(1)
-	// fits in 3 columns, then 'y' overflows to the next line.
-	got := wrapLine("\U0001F469\u200d\U0001F4BBxy", 3, options)
-	if !sameStrings(got, []string{"\U0001F469\u200d\U0001F4BBx", "y"}) {
-		t.Fatalf("cluster break: got %q", got)
-	}
-	// A cluster wider than the box occupies its own line.
-	got = wrapLine("\U0001F469\u200d\U0001F4BB", 1, options)
-	if !sameStrings(got, []string{"\U0001F469\u200d\U0001F4BB"}) {
-		t.Fatalf("wide cluster alone: got %q", got)
-	}
-}
-
-func TestWrapLineWordWiderThanBox(t *testing.T) {
-	options := displaywidth.Options{}
-	// A word wider than the box after a short word: the short word
-	// flushes, then the wide word hard-breaks.
-	if got := wrapLine("ab abcdef", 4, options); !sameStrings(got, []string{"ab", "abcd", "ef"}) {
-		t.Fatalf("wide word after short word: got %q", got)
-	}
-}
-
-func TestWrapLineTab(t *testing.T) {
-	options := displaywidth.Options{}
-	// "a\tb" in an 8-column box: 'a' at column 0, the tab advances to
-	// column 8 (outside the box), so 'b' wraps to the next line. The
-	// tab itself is dropped at the wrap boundary, matching the
-	// whitespace-at-boundary rule.
-	if got := wrapLine("a\tb", 8, options); !sameStrings(got, []string{"a", "b"}) {
-		t.Fatalf("tab break: got %q", got)
-	}
-	// In a wider box the tab is preserved verbatim and expands to a tab
-	// stop at render time.
-	if got := wrapLine("a\tb", 80, options); !sameStrings(got, []string{"a\tb"}) {
-		t.Fatalf("fitting tab line: got %q", got)
 	}
 }
 
@@ -2058,55 +1982,44 @@ func TestBorderTitleStyle(t *testing.T) {
 	}
 }
 
-func TestWrapLineFastPath(t *testing.T) {
+func TestWrapLinePreservesWhitespace(t *testing.T) {
 	options := displaywidth.Options{}
-	// A line with no whitespace that fits the box is returned as-is:
-	// the fast path skips word splitting entirely.
-	if got := wrapLine("hello", 10, options); !sameStrings(got, []string{"hello"}) {
-		t.Fatalf("fast path: got %q", got)
+	// Wrapping preserves the source line's whitespace: a line that fits
+	// the box is returned unchanged — spaces, tabs, and indentation
+	// survive — and only the whitespace at a wrap boundary is dropped.
+	cases := []struct {
+		name  string
+		line  string
+		width int
+		want  []string
+	}{
+		{"fitting line with spaces", "hello world", 11, []string{"hello world"}},
+		{"fitting line with tab", "a\tb", 80, []string{"a\tb"}},
+		{"leading space", " hello", 10, []string{" hello"}},
+		{"trailing space", "hello ", 10, []string{"hello "}},
+		{"double space", "a  b", 10, []string{"a  b"}},
+		{"double space in wrapped line", "ab  cd ef", 8, []string{"ab  cd", "ef"}},
+		{"indented fitting line", "    func main() {", 40, []string{"    func main() {"}},
+		// When a line wraps, the indentation stays on the first line and
+		// the whitespace at the wrap boundary is dropped; the continuation
+		// line starts at the left column.
+		{"indented wrapped line", "    hello world", 12, []string{"    hello", "world"}},
+		{"leading tabs fitting", "\t\tfoo", 80, []string{"\t\tfoo"}},
+		{"tabs with words fitting", "\t\tfoo bar", 80, []string{"\t\tfoo bar"}},
+		// When the indentation would push the first word past the box,
+		// the leading whitespace is dropped and the word starts at the
+		// left column.
+		{"overflowing tabs dropped", "\t\tfoo bar", 8, []string{"foo bar"}},
+		// A tab that does not fit breaks at the tab boundary; the tab
+		// itself is dropped, matching the whitespace-at-boundary rule.
+		{"tab break", "a\tb", 8, []string{"a", "b"}},
 	}
-	// A line with no whitespace that exactly fits is also returned as-is.
-	if got := wrapLine("hello", 5, options); !sameStrings(got, []string{"hello"}) {
-		t.Fatalf("exact fit fast path: got %q", got)
-	}
-	// A line with no whitespace wider than the box still hard-breaks.
-	if got := wrapLine("hello", 3, options); !sameStrings(got, []string{"hel", "lo"}) {
-		t.Fatalf("hard break: got %q", got)
-	}
-	// A line with whitespace still wraps at the space.
-	if got := wrapLine("hello world", 8, options); !sameStrings(got, []string{"hello", "world"}) {
-		t.Fatalf("space break: got %q", got)
-	}
-}
-
-func TestWrapLineFastPathSpaces(t *testing.T) {
-	options := displaywidth.Options{}
-	// A line with internal spaces that fits the box is returned as-is:
-	// the fast path skips word splitting.
-	if got := wrapLine("hello world", 11, options); !sameStrings(got, []string{"hello world"}) {
-		t.Fatalf("fast path with spaces: got %q", got)
-	}
-	// A line with a tab that fits the box is returned unchanged: the
-	// tab is preserved and expands to a tab stop at render time.
-	if got := wrapLine("a\tb", 80, options); !sameStrings(got, []string{"a\tb"}) {
-		t.Fatalf("fitting tab line: got %q", got)
-	}
-	// A line with a tab that does not fit wraps at the tab boundary.
-	if got := wrapLine("a\tb", 8, options); !sameStrings(got, []string{"a", "b"}) {
-		t.Fatalf("tab line: got %q", got)
-	}
-	// Fitting lines keep their leading and trailing spaces: indentation
-	// must survive wrapping, so an indented code line is returned
-	// unchanged.
-	if got := wrapLine(" hello", 10, options); !sameStrings(got, []string{" hello"}) {
-		t.Fatalf("leading space: got %q", got)
-	}
-	if got := wrapLine("hello ", 10, options); !sameStrings(got, []string{"hello "}) {
-		t.Fatalf("trailing space: got %q", got)
-	}
-	// A line with consecutive spaces keeps them when it fits.
-	if got := wrapLine("a  b", 10, options); !sameStrings(got, []string{"a  b"}) {
-		t.Fatalf("double space: got %q", got)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := wrapLineLimited(tc.line, tc.width, -1, options); !sameStrings(got, tc.want) {
+				t.Fatalf("wrap(%q, %d) = %q, want %q", tc.line, tc.width, got, tc.want)
+			}
+		})
 	}
 }
 
@@ -2118,39 +2031,39 @@ func TestWrapCJKBreakAtAnyCluster(t *testing.T) {
 	// and the rest wraps. In a 4-column box, "ab" leaves two columns
 	// that "汉" fills (the boundary space is dropped), so "汉字" splits
 	// as "ab汉" + "字" instead of "ab" + "汉字".
-	got := wrapLine("ab 汉字", 4, options)
+	got := wrapLineLimited("ab 汉字", 4, -1, options)
 	want := []string{"ab汉", "字"}
 	if !sameStrings(got, want) {
-		t.Fatalf("wrapLine(\"ab 汉字\", 4) = %q, want %q", got, want)
+		t.Fatalf("wrap(%q, %d) = %q, want %q", "ab 汉字", 4, got, want)
 	}
 
 	// In a 3-column box neither "ab 汉" (5 columns) nor "ab汉" (4) fits
 	// with the leading text, so each Han character gets its own line.
-	got = wrapLine("ab 汉字", 3, options)
+	got = wrapLineLimited("ab 汉字", 3, -1, options)
 	want = []string{"ab", "汉", "字"}
 	if !sameStrings(got, want) {
-		t.Fatalf("wrapLine(\"ab 汉字\", 3) = %q, want %q", got, want)
+		t.Fatalf("wrap(%q, %d) = %q, want %q", "ab 汉字", 3, got, want)
 	}
 
 	// A pure Han line wraps at any cluster boundary when it exceeds the
 	// box width: two Han characters fill a 4-column line.
-	got = wrapLine("汉字测试", 4, options)
+	got = wrapLineLimited("汉字测试", 4, -1, options)
 	want = []string{"汉字", "测试"}
 	if !sameStrings(got, want) {
-		t.Fatalf("wrapLine(\"汉字测试\", 4) = %q, want %q", got, want)
+		t.Fatalf("wrap(%q, %d) = %q, want %q", "汉字测试", 4, got, want)
 	}
-	got = wrapLine("汉字测试", 3, options)
+	got = wrapLineLimited("汉字测试", 3, -1, options)
 	want = []string{"汉", "字", "测", "试"}
 	if !sameStrings(got, want) {
-		t.Fatalf("wrapLine(\"汉字测试\", 3) = %q, want %q", got, want)
+		t.Fatalf("wrap(%q, %d) = %q, want %q", "汉字测试", 3, got, want)
 	}
 
 	// Non-Han words remain unbreakable: a long word still hard-breaks
 	// only when it exceeds the box width.
-	got = wrapLine("ab cd", 3, options)
+	got = wrapLineLimited("ab cd", 3, -1, options)
 	want = []string{"ab", "cd"}
 	if !sameStrings(got, want) {
-		t.Fatalf("wrapLine(\"ab cd\", 3) = %q, want %q", got, want)
+		t.Fatalf("wrap(%q, %d) = %q, want %q", "ab cd", 3, got, want)
 	}
 }
 
@@ -2188,27 +2101,6 @@ func TestTextWrapCJKBreak(t *testing.T) {
 	// The trailing column of the wide '汉' cluster is blank.
 	if cell := screen.lastCell(3, 0); cell.Set {
 		t.Fatalf("expected the trailing column of '汉' blank, got %+v", cell)
-	}
-}
-
-func TestWrapLinePreservesTabs(t *testing.T) {
-	options := displaywidth.Options{}
-	// Fitting lines with leading tabs (Go indentation) are preserved
-	// verbatim: the wrap fast path returns a fitting line unchanged, so
-	// indentation never collapses to spaces.
-	if got := wrapLine("\t\tfoo", 80, options); !sameStrings(got, []string{"\t\tfoo"}) {
-		t.Fatalf("wrapLine(\"\\t\\tfoo\", 80) = %q", got)
-	}
-	// A fitting line with tabs anywhere keeps them verbatim.
-	if got := wrapLine("\t\tfoo bar", 80, options); !sameStrings(got, []string{"\t\tfoo bar"}) {
-		t.Fatalf("wrapLine(\"\\t\\tfoo bar\", 80) = %q", got)
-	}
-	// When the indentation would push the first word past the box, the
-	// leading whitespace is dropped and the word hard-breaks from the
-	// left column: the tabs cannot be preserved within the box, and the
-	// word itself fits.
-	if got := wrapLine("\t\tfoo bar", 8, options); !sameStrings(got, []string{"foo bar"}) {
-		t.Fatalf("wrapLine(\"\\t\\tfoo bar\", 8) = %q", got)
 	}
 }
 
