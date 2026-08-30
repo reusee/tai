@@ -13,6 +13,35 @@ import (
 
 type UserPrompt []generators.Part
 
+// TheoryOfUserPromptFileContext documents the two file-context regimes of
+// the UserPrompt provider. See the constant body for the rule.
+const TheoryOfUserPromptFileContext = `
+UserPrompt assembles file context under two regimes. Directory-scoped
+consumers (next, and the any default through the pipeline's own prompt
+assembly) treat an empty -file set as the current working directory:
+anytexts.PartsProvider.IterFiles replaces empty patterns with ".", so the
+whole directory enters the context without an explicit pattern. The ai
+command is a direct-conversation command: its Defs fork
+UserPromptDirectoryFallback to false, and Module.UserPrompt then skips the
+parts provider entirely when no -file pattern is given — no directory
+scan, no working directory hint, and no chat bracketing copy, because
+there is no context to bracket; the prompt is the system prompt restate
+alone and the command appends its user input marker after it. Explicit
+-file patterns behave identically in every command: the patterns are
+sorted for deterministic prompt bytes and rendered under the token budget.
+`
+
+// UserPromptDirectoryFallback selects the meaning of an empty -file set
+// for Module.UserPrompt: true passes empty patterns through to the parts
+// provider, whose IterFiles replaces them with "." (the whole current
+// working directory); false skips the provider entirely, so the user
+// prompt carries files only when the user names them with -file. The
+// default is true, preserving the directory-scoped commands (next); the
+// ai command forks the value to false because it is a
+// direct-conversation command. See TheoryOfUserPromptFileContext and
+// TheoryOfAiCommand.
+type UserPromptDirectoryFallback bool
+
 func (Module) UserPrompt(
 	partsProvider anytexts.PartsProvider,
 	getDefaultGenerator generators.GetDefaultGenerator,
@@ -20,29 +49,8 @@ func (Module) UserPrompt(
 	maxTokens flags.MaxTokens,
 	flagFiles flags.Files,
 	flagChats flags.Chats,
+	directoryFallback UserPromptDirectoryFallback,
 ) UserPrompt {
-
-	generator, err := getDefaultGenerator()
-	ce(err)
-
-	args := generator.Spec()
-	maxInputTokens := min(
-		args.ContextTokens,
-		int(maxTokens),
-	)
-	maxGenerateTokens := 8192
-	if args.MaxGenerateTokens != nil {
-		maxGenerateTokens = *args.MaxGenerateTokens
-	}
-	maxInputTokens -= maxGenerateTokens
-	systemPromptTokens, err := generator.CountTokens(string(systemPrompt))
-	ce(err)
-	// The system prompt is charged twice: once as the actual system
-	// prompt, and once for the verbatim restate appended at the end of
-	// the user prompt (components.SystemPromptRestate), which re-sends
-	// the full system prompt inside the user content. See
-	// components.TheoryOfComponents.
-	maxInputTokens -= systemPromptTokens * 2
 
 	// File patterns come from a map (flags.Files); Go map iteration
 	// order is randomized per range, so the keys must be sorted before
@@ -57,24 +65,58 @@ func (Module) UserPrompt(
 	patterns := slices.Collect(maps.Keys(flagFiles))
 	slices.Sort(patterns)
 
-	// The chat input precedes the parts provider content when -chat
-	// arguments are given: the model reads the task before the long file
-	// context, while the restate after the context re-exposes the rules
-	// immediately before generating. The part ends with a blank line so
-	// the context starts a fresh paragraph. See
-	// pipeline.TheoryOfChatBracketing and
-	// generators.TheoryOfContentUnitSeparation.
+	// File context is assembled only when a -file pattern is given or the
+	// directory fallback is enabled. With the fallback disabled (the ai
+	// command) an empty -file set means no file context at all: no
+	// directory scan, no working directory hint, and no chat bracketing
+	// copy. See TheoryOfUserPromptFileContext.
 	var parts []generators.Part
-	if chats := strings.Join(flagChats, "\n"); chats != "" {
-		parts = append(parts, generators.Text(chats+"\n\n"))
+	if len(patterns) > 0 || bool(directoryFallback) {
+
+		generator, err := getDefaultGenerator()
+		ce(err)
+
+		args := generator.Spec()
+		maxInputTokens := min(
+			args.ContextTokens,
+			int(maxTokens),
+		)
+		maxGenerateTokens := 8192
+		if args.MaxGenerateTokens != nil {
+			maxGenerateTokens = *args.MaxGenerateTokens
+		}
+		maxInputTokens -= maxGenerateTokens
+		systemPromptTokens, err := generator.CountTokens(string(systemPrompt))
+		ce(err)
+		// The system prompt is charged twice: once as the actual system
+		// prompt, and once for the verbatim restate appended at the end of
+		// the user prompt (components.SystemPromptRestate), which re-sends
+		// the full system prompt inside the user content. See
+		// components.TheoryOfComponents.
+		maxInputTokens -= systemPromptTokens * 2
+
+		// The chat input precedes the parts provider content when -chat
+		// arguments are given: the model reads the task before the long file
+		// context, while the restate after the context re-exposes the rules
+		// immediately before generating. The copy exists only when file
+		// context is assembled — it brackets the provider content; without
+		// file context there is nothing to bracket, and the command's user
+		// input marker (appended after the restate) is the only carrier of
+		// the -chat text. The part ends with a blank line so the context
+		// starts a fresh paragraph. See pipeline.TheoryOfChatBracketing and
+		// generators.TheoryOfContentUnitSeparation.
+		if chats := strings.Join(flagChats, "\n"); chats != "" {
+			parts = append(parts, generators.Text(chats+"\n\n"))
+		}
+		providerParts, err := partsProvider.Parts(
+			maxInputTokens,
+			generator.CountTokens,
+			patterns,
+		)
+		ce(err)
+		parts = append(parts, providerParts...)
+
 	}
-	providerParts, err := partsProvider.Parts(
-		maxInputTokens,
-		generator.CountTokens,
-		patterns,
-	)
-	ce(err)
-	parts = append(parts, providerParts...)
 
 	// The system prompt restate is the last user prompt part before the
 	// dynamic user input: the model re-reads the complete instructions
@@ -86,4 +128,8 @@ func (Module) UserPrompt(
 	parts = append(parts, components.SystemPromptRestate(string(systemPrompt)))
 
 	return UserPrompt(parts)
+}
+
+func (Module) UserPromptDirectoryFallback() UserPromptDirectoryFallback {
+	return true
 }

@@ -79,10 +79,15 @@ automated actions. See pipeline.TheoryOfIdleHandler and pipeline.TheoryOfLoops.
 User Prompt Ordering and Prefix Cache:
 The user prompt is assembled by the shared UserPrompt provider, the same
 anytexts.PartsProvider mechanism the next command uses, so this command
-carries no file pipeline of its own: the provider expands the -file
-patterns, renders every file with begin/end markers (read-only annotations
-included), applies the token budget derived from the spec's ContextTokens,
-and brackets the file context with the -chat input (see
+carries no file pipeline of its own. The ai command is a
+direct-conversation command: without -file patterns no file context is
+assembled — Module.UserPrompt skips the parts provider entirely (no
+directory scan, no working directory hint, no chat bracketing copy; see
+TheoryOfUserPromptFileContext), so the prompt is the system prompt restate
+followed by the command's user input marker. With -file patterns the
+provider expands them, renders every file with begin/end markers (read-only
+annotations included), applies the token budget derived from the spec's
+ContextTokens, and brackets the file context with the -chat input (see
 pipeline.TheoryOfChatBracketing), so the task precedes the context. The
 command scope forks SystemPrompt to the AI assistant system prompt, so the
 restate the provider appends repeats the prompt the session actually runs
@@ -121,6 +126,14 @@ var AICommand = Command{
 			prompt, err := getAISystemPrompt()
 			ce(err)
 			return SystemPrompt(prompt)
+		},
+
+		// The ai command is a direct-conversation command: without -file
+		// patterns its user prompt carries no file context — no directory
+		// scan and no working directory hint. See
+		// TheoryOfUserPromptFileContext.
+		func() UserPromptDirectoryFallback {
+			return false
 		},
 	},
 	Main: func(
