@@ -118,6 +118,45 @@ type CodesComponents struct {
 	components.ComponentSet
 }
 
+// NewIngestComponent returns the ingest block component shared by every
+// session that processes ingest blocks: the codes pipeline's
+// CodesComponents and the ai command's AIComponents. The component teaches
+// the kind through blocks.IngestBlockSystemPrompt — appending the
+// Go-specific lsp tag documentation when a language-server handler is
+// attached — and its Process function fetches the requested context through
+// blocks.ProcessIngestBlocks, appending it as user content so the next
+// generation runs with the fetched context. A nil handler keeps the lsp
+// section out of the prompt; an emitted lsp tag then returns an explicit
+// unavailability error part instead of being silently ignored. The caller's
+// RunOptions must carry the filesystem root and the HTTP client the
+// component's file and fetch tags need. See TheoryOfCodesComponents,
+// blocks.TheoryOfIngestBlocks, and cmd/tai.TheoryOfAIComponents.
+func NewIngestComponent(lspHandler blocks.LSPHandler) components.Component {
+	ingestPrompt := blocks.IngestBlockSystemPrompt
+	if lspHandler != nil {
+		ingestPrompt += gotools.LSPIngestTagSystemPrompt
+	}
+	return components.Component{
+		Kind:          "ingest",
+		PromptSection: ingestPrompt,
+		Process: func(ctx context.Context, pctx *components.ProcessContext) components.ProcessResult {
+			state, hasIngest, err := blocks.ProcessIngestBlocks(
+				pctx.Blocks, ctx, pctx.Root, pctx.HttpClient, lspHandler, pctx.State,
+			)
+			result := components.ProcessResult{
+				Err: err,
+			}
+			// Only set State when ingest blocks were found and fetched
+			// content was appended, so that result.State != nil reliably
+			// signals a state modification that triggers a new generation.
+			if hasIngest {
+				result.State = state
+			}
+			return result
+		},
+	}
+}
+
 func (Module) CodesComponents(
 	extra flags.ExtraSystemPrompt,
 	goExtra gotools.ExtraSystemPrompt,
@@ -227,36 +266,11 @@ func (Module) CodesComponents(
 	// model may request additional files and network resources
 	// mid-generation in every codes session. Processed before
 	// shell/continue so fetched context is available for the next
-	// generation. The session's language-server handler is attached
-	// when one resolves; its Go-specific lsp tag documentation is appended
-	// to the ingest prompt only then. A nil handler keeps the section out of
-	// the prompt; an emitted lsp tag then returns an explicit
-	// unavailability error part instead of being silently ignored.
-	// See blocks.TheoryOfIngestBlocks, gotools.TheoryOfGopls, and
-	// TheoryOfCodesComponents.
-	ingestPrompt := blocks.IngestBlockSystemPrompt
-	if lspHandler != nil {
-		ingestPrompt += gotools.LSPIngestTagSystemPrompt
-	}
-	comps = append(comps, components.Component{
-		Kind:          "ingest",
-		PromptSection: ingestPrompt,
-		Process: func(ctx context.Context, pctx *components.ProcessContext) components.ProcessResult {
-			state, hasIngest, err := blocks.ProcessIngestBlocks(
-				pctx.Blocks, ctx, pctx.Root, pctx.HttpClient, lspHandler, pctx.State,
-			)
-			result := components.ProcessResult{
-				Err: err,
-			}
-			// Only set State when ingest blocks were found and fetched
-			// content was appended, so that result.State != nil reliably
-			// signals a state modification that triggers a new generation.
-			if hasIngest {
-				result.State = state
-			}
-			return result
-		},
-	})
+	// generation. The shared constructor attaches the session's
+	// language-server handler and appends its Go-specific lsp tag
+	// documentation when one resolves. See NewIngestComponent,
+	// blocks.TheoryOfIngestBlocks, and TheoryOfCodesComponents.
+	comps = append(comps, NewIngestComponent(lspHandler))
 
 	// Common components: shell (conditional on flagShell) and continue.
 	// Reused from components.CommonComponents so that shell and continue

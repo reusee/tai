@@ -8,12 +8,13 @@ import (
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/memories"
+	"github.com/reusee/tai/pipeline"
 )
 
 const TheoryOfAIComponents = `
-The ai command uses the Component mechanism for shell and memory
-blocks. Shell components are processed in the generation loop, while memory
-blocks are processed after the loop by
+The ai command uses the Component mechanism for shell, ingest, and memory
+blocks. Shell and ingest components are processed in the generation loop,
+while memory blocks are processed after the loop by
 memories.UpdateMemoryFromBlock. The memory component's prompt includes the
 dynamic user profile text, read at Component construction time (provider
 resolution) rather than at prompt assembly time. BlockFormatSystemPrompt is a
@@ -27,7 +28,7 @@ which must be computed at call time.
 
 Disabled blocks are announced explicitly: the set carries
 components.DisabledBlocksComponent listing every kind this session cannot
-process — the pipeline kinds (change, go-test, go-src, ingest), the
+process — the pipeline kinds (change, go-test, go-src), the
 deliberately excluded continue (OnIdle is the sole input gateway), and
 conditionally shell (-shell off) and memory (-no-memory). Without the notice
 the model may emit these kinds from habit; the blocks would be silently
@@ -35,6 +36,16 @@ ignored while implying actions that never happened. The notice is static per
 configuration and placed before the config-derived extras and the dynamic
 memory section, keeping the cacheable prefix stable. See
 components.TheoryOfDisabledBlocks.
+
+The ingest component is shared with the codes pipeline through
+pipeline.NewIngestComponent: the ai session teaches and processes the kind
+identically, with the session's language-server handler attached so the
+Go-specific lsp tag documentation joins the prompt when the handler resolves.
+Fetched content is appended as user content and triggers the next generation,
+so context fetching is an automated action that runs before OnIdle prompts
+the user (see pipeline.TheoryOfIdleHandler). The command's RunOptions wiring
+for the component's file reads and fetches is documented in
+TheoryOfAiCommand.
 
 The memory component is appended last, after the static shell and
 extra prompt components, so that the dynamic user profile text — which
@@ -89,6 +100,7 @@ func (Module) AIComponents(
 	familyExtra flags.FamilyExtraSystemPrompt,
 	modelFamily generators.ModelFamily,
 	noMemory NoMemory,
+	lspHandler blocks.LSPHandler,
 ) (ret AIComponents) {
 	var comps components.ComponentSet
 
@@ -104,6 +116,17 @@ func (Module) AIComponents(
 	comps = append(comps, components.Component{
 		PromptSection: blocks.BlockFormatSystemPrompt,
 	})
+
+	// Ingest component: shared with the codes pipeline through
+	// pipeline.NewIngestComponent, so the ai session teaches and processes
+	// the kind identically — fetched context is appended as user content
+	// and triggers the next generation. Placed before the common
+	// components so fetched context precedes shell execution in the
+	// processing order. The constructor attaches the session's
+	// language-server handler and appends its Go-specific lsp tag
+	// documentation when one resolves. See TheoryOfAIComponents and
+	// blocks.TheoryOfIngestBlocks.
+	comps = append(comps, pipeline.NewIngestComponent(lspHandler))
 
 	// Common components: shell (conditional on flagShell) only. The
 	// continue component is deliberately filtered out: in the interactive
@@ -124,8 +147,8 @@ func (Module) AIComponents(
 	// Disabled-blocks notice: list the block kinds this session cannot
 	// process so the model does not emit them from habit — an unprocessed
 	// block is silently ignored while implying an action that never
-	// happened. The ai command processes only shell and memory blocks: the
-	// pipeline kinds (change, go-test, go-src, ingest) have no
+	// happened. The ai command processes shell, ingest, and memory blocks:
+	// the remaining pipeline kinds (change, go-test, go-src) have no
 	// processor here, and continue is deliberately excluded because
 	// OnIdle is the sole input gateway. Shell is listed when the flag is
 	// off, memory when -no-memory is set. The notice is static per
@@ -133,7 +156,7 @@ func (Module) AIComponents(
 	// dynamic memory section, keeping the cacheable prefix stable. See
 	// components.TheoryOfDisabledBlocks and TheoryOfAIComponents.
 	disabledKinds := []string{
-		"change", "continue", "go-test", "go-src", "ingest",
+		"change", "continue", "go-test", "go-src",
 	}
 	if !bool(flagShell) {
 		disabledKinds = append(disabledKinds, "shell")

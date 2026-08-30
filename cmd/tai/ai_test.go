@@ -230,6 +230,48 @@ func TestAIComponentsExcludesContinueComponent(t *testing.T) {
 	})
 }
 
+func TestAIComponentsIncludesIngestComponent(t *testing.T) {
+	dscope.New(
+		new(Module),
+	).Fork(
+		modes.ForTest(t),
+		func() generators.GetDefaultGenerator {
+			return func() (generators.Generator, error) {
+				return aiMockGenerator{}, nil
+			}
+		},
+	).Call(func(
+		comps AIComponents,
+	) {
+		// Ingest blocks are processed in the ai generation loop: the
+		// shared component (pipeline.NewIngestComponent) teaches the kind
+		// and fetches the requested context, so the disabled-blocks
+		// notice must not list ingest. See TheoryOfAIComponents and
+		// blocks.TheoryOfIngestBlocks.
+		sections := comps.PromptSections()
+		if !strings.Contains(sections, "Ingest Block Kind") {
+			t.Fatal("prompt sections must include the ingest block prompt")
+		}
+		var processable bool
+		for _, comp := range comps.Processable() {
+			if comp.Kind == "ingest" {
+				processable = true
+			}
+		}
+		if !processable {
+			t.Fatal("ai command must include a processable ingest component")
+		}
+		if strings.Contains(sections, "additional files and network resources are not fetched") {
+			t.Fatal("disabled-blocks notice must not list ingest; the ai command processes ingest blocks")
+		}
+		// The Go-specific lsp tag documentation joins the prompt when the
+		// session's language-server handler resolves.
+		if !strings.Contains(sections, "LSP Tag") {
+			t.Fatal("prompt sections must include the lsp tag documentation when the gopls handler resolves")
+		}
+	})
+}
+
 func TestNextSystemPromptListsDisabledBlocks(t *testing.T) {
 	dscope.New(
 		new(Module),
