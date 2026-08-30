@@ -11,35 +11,6 @@ import (
 	"github.com/reusee/tai/modes"
 )
 
-func TestFindGoModuleRoot(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module test\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	sub := filepath.Join(root, "a", "b")
-	if err := os.MkdirAll(sub, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if got := findGoModuleRoot(sub); got != root {
-		t.Fatalf("expected %q, got %q", root, got)
-	}
-	// A non-existent subdirectory still resolves from the same position.
-	if got := findGoModuleRoot(filepath.Join(sub, "missing")); got != root {
-		t.Fatalf("expected %q, got %q", root, got)
-	}
-	// The module root itself is returned directly.
-	if got := findGoModuleRoot(root); got != root {
-		t.Fatalf("expected %q, got %q", root, got)
-	}
-
-	// No go.mod anywhere above: empty result.
-	noMod := t.TempDir()
-	if got := findGoModuleRoot(noMod); got != "" {
-		t.Fatalf("expected empty, got %q", got)
-	}
-}
-
 func TestConfigsLoaderIncludesGoModuleRoot(t *testing.T) {
 	// The loader must discover tai.cue / .tai.cue files at the root of
 	// the Go module that contains the working directory. The working

@@ -8,6 +8,7 @@ import (
 
 	"cuelang.org/go/cue"
 	"github.com/reusee/tai/configs"
+	"github.com/reusee/tai/pathutil"
 )
 
 const TheoryOfHiddenPackages = `
@@ -217,29 +218,22 @@ func unhidePatternsForWorkingDirectory(patterns []string) []string {
 	return kept
 }
 
-// findModuleOfDir walks up from dir to the filesystem root looking for
-// the nearest go.mod, and returns its directory together with the module
-// path declared in it. Both results are empty when no go.mod is found or
-// the module path cannot be read: the nearest go.mod marks the module
-// boundary, so an unreadable module path must not fall through to an
-// outer module.
+// findModuleOfDir returns the directory of the nearest go.mod at or above
+// dir together with the module path declared in it. Both results are
+// empty when no go.mod is found or the module path cannot be read: the
+// nearest go.mod marks the module boundary, so an unreadable module path
+// must not fall through to an outer module. The walk itself is shared
+// with every other module-root consumer through pathutil.FindGoModuleRoot.
 func findModuleOfDir(dir string) (moduleRoot, modulePath string) {
-	dir = filepath.Clean(dir)
-	for {
-		goModPath := filepath.Join(dir, "go.mod")
-		if info, err := os.Stat(goModPath); err == nil && !info.IsDir() {
-			path := modulePathOfGoMod(goModPath)
-			if path == "" {
-				return "", ""
-			}
-			return dir, path
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return "", ""
-		}
-		dir = parent
+	moduleRoot, ok := pathutil.FindGoModuleRoot(dir)
+	if !ok {
+		return "", ""
 	}
+	modulePath = modulePathOfGoMod(filepath.Join(moduleRoot, "go.mod"))
+	if modulePath == "" {
+		return "", ""
+	}
+	return moduleRoot, modulePath
 }
 
 // modulePathOfGoMod reads the module path declared in the go.mod file at

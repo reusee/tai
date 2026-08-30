@@ -5,15 +5,17 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+
+	"github.com/reusee/tai/pathutil"
 )
 
 func TestDefaultCommandAutoDetection(t *testing.T) {
 	// Module.Command auto-detects the default command from the Go-module
 	// check: GoModuleCommand inside a Go module, AnyTextCommand outside
-	// one. dirHasGoModule finds the nearest go.mod walking up the
-	// directory tree. See TheoryOfCommandAutoDetection.
+	// one. pathutil.FindGoModuleRoot finds the nearest go.mod walking up
+	// the directory tree. See TheoryOfCommandAutoDetection.
 	dir := t.TempDir()
-	if dirHasGoModule(dir) {
+	if _, ok := pathutil.FindGoModuleRoot(dir); ok {
 		t.Fatal("empty temp dir must not be detected as a Go module")
 	}
 	sub := filepath.Join(dir, "sub")
@@ -23,7 +25,7 @@ func TestDefaultCommandAutoDetection(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/test\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if !dirHasGoModule(sub) {
+	if _, ok := pathutil.FindGoModuleRoot(sub); !ok {
 		t.Fatal("go.mod in a parent directory must be detected")
 	}
 	keys := Command{}.Keys()

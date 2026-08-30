@@ -3,11 +3,11 @@ package main
 import (
 	"context"
 	"os"
-	"path/filepath"
 
 	"github.com/reusee/tai/debugs"
 	"github.com/reusee/tai/gotools"
 	"github.com/reusee/tai/modes"
+	"github.com/reusee/tai/pathutil"
 	"github.com/reusee/tai/pipeline"
 	"github.com/reusee/tai/pipeline/codetypes"
 )
@@ -69,21 +69,6 @@ func (Module) InGoModule() InGoModule {
 	if err != nil {
 		return false
 	}
-	return InGoModule(dirHasGoModule(dir))
-}
-
-// dirHasGoModule walks up the directory tree from dir looking for a go.mod
-// file. It returns true if one is found, false if the filesystem root is
-// reached without finding one.
-func dirHasGoModule(dir string) bool {
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			return true
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return false
-		}
-		dir = parent
-	}
+	_, ok := pathutil.FindGoModuleRoot(dir)
+	return InGoModule(ok)
 }

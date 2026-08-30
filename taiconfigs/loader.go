@@ -7,6 +7,7 @@ import (
 
 	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/logs"
+	"github.com/reusee/tai/pathutil"
 )
 
 //go:embed schema.cue
@@ -55,7 +56,7 @@ func (Module) ConfigsLoader(
 	// defaults. When the working directory is the module root itself,
 	// the two paths coincide and the check is skipped to avoid a
 	// duplicate entry.
-	if moduleRoot := findGoModuleRoot(workingDir); moduleRoot != "" && moduleRoot != workingDir {
+	if moduleRoot, ok := pathutil.FindGoModuleRoot(workingDir); ok && moduleRoot != workingDir {
 		for _, filename := range filenames {
 			path := filepath.Join(moduleRoot, filename)
 			if _, err := os.Stat(path); err == nil {
@@ -88,25 +89,4 @@ func (Module) ConfigsLoader(
 		Schema:  schema,
 		Globals: configGlobals,
 	})
-}
-
-// findGoModuleRoot walks up the directory tree from dir looking for a
-// go.mod file and returns the absolute path of the directory containing
-// it. It returns "" when the filesystem root is reached without finding
-// one.
-func findGoModuleRoot(dir string) string {
-	dir, err := filepath.Abs(dir)
-	if err != nil {
-		dir = filepath.Clean(dir)
-	}
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			return dir
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return ""
-		}
-		dir = parent
-	}
 }
