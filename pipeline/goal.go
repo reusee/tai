@@ -36,7 +36,12 @@ signal but a declaration the next loop must verify. The runner carries
 goalDoneVerificationPrompt into that next loop, whose primary work is
 verification and correction: it re-reads the current filesystem state,
 checks the declaration and the changes, fixes the errors the check
-uncovers, and starts no unrelated new work. The verification is required
+uncovers, and starts no unrelated new work. Verification is a gap
+analysis, not only a correctness check: the loop compares the original
+goal from the user input against the current state, requirement by
+requirement, checking what was NOT done as well as what was done — a
+done block is warranted only when the analysis finds no gap, no
+incorrect change and no missing requirement. The verification is required
 because the filesystem may change while a loop runs: a loop that loaded
 todo.md containing task A cannot see task B added by the user during
 execution, so its done declaration may rest on stale context. A
@@ -137,8 +142,10 @@ configured, post-done loops keep the default model.
 
 // GoalSystemPrompt teaches the model the goal-directed multi-loop
 // protocol: work toward the goal across fresh loops and end the run by
-// emitting a done block from a loop that applies no change blocks. See
-// TheoryOfGoalMode.
+// emitting a done block from a loop that applies no change blocks. The
+// completion assessment is a gap analysis: what was NOT done is checked
+// against the original goal as well as the correctness of what was done.
+// See TheoryOfGoalMode.
 const GoalSystemPrompt = `
 **Goal-Directed Multi-Loop Execution:**
 
@@ -146,7 +153,7 @@ You are working toward a goal that may require multiple independent loops to ach
 
 **Rules:**
 - Work toward the goal described in the user input. Make concrete changes (code modifications, tests, documentation) to advance the goal.
-- After making changes, assess whether the goal has been fully achieved. Consider: Are all requested changes complete? Do tests pass? Is the code correct and well-structured?
+- After making changes, assess whether the goal has been fully achieved. The assessment is a gap analysis, not just a correctness check: verify what was NOT done as well as what was done — compare the original goal in the user input against the current state, requirement by requirement, and identify anything still missing. Consider: Are all requested changes complete? Do tests pass? Is the code correct and well-structured?
 - If the goal is NOT yet achieved, end your turn with a summary block. The system will start another loop with fresh context, allowing you to continue from the current filesystem state.
 - A loop that ends without applying any change block and without a done block ends the run without achieving the goal: the next loop would see the same filesystem state with nothing new to act on. Complete the goal's changes within the loop — chain generations with continue blocks as needed — before ending the turn.
 - If the goal IS achieved and this loop found nothing to correct, emit a done block, then end with a summary block.
@@ -154,6 +161,7 @@ You are working toward a goal that may require multiple independent loops to ach
 **Goal Completion Signal:**
 When you determine the goal is fully achieved, emit a done block (kind "done") whose body states the goal achievement.
 
+- Before emitting a done block, perform a gap analysis: enumerate the original goal's requirements and check each against the current filesystem state. The done block is warranted only when the analysis finds no gap — every requirement satisfied, nothing incorrect, nothing missing. Verifying the correctness of what was done is not sufficient; the completeness of what was not done must be verified too.
 - The run ends only when a loop emits a done block AND applies no change blocks in that same loop. A loop that applies change blocks never ends the run — even when it also emits a done block: its changes must be verified by the next loop, which re-reads the current filesystem state, checks the changes, and corrects any errors it finds.
 - A done block emitted together with change blocks is therefore not a completion signal: it asks the next loop to verify those changes, and the corrections made by a verification loop are verified in turn by the following loop. The cycle repeats until a loop examines the current state and finds nothing to correct — that loop emits a done block and applies no change blocks, ending the run.
 - Only emit a done block when the goal is genuinely achieved and this loop corrected nothing. If unsure, do NOT emit it; continue working in the next loop.
@@ -165,14 +173,18 @@ When you determine the goal is fully achieved, emit a done block (kind "done") w
 // immediately after a loop that emitted a done block while applying
 // change blocks. The declaration is not final: a loop that applied
 // change blocks never ends the run, so the next loop verifies the
-// declaration and the changes against the current filesystem state,
-// corrects the errors the check uncovers, and starts no unrelated new
+// declaration and the changes against the current filesystem state.
+// Verification is a gap analysis: the loop checks what was NOT done
+// against the original goal as well as the correctness of what was
+// done, corrects what the check uncovers, and starts no unrelated new
 // work. Only a loop that emits a done block and applies no change
 // blocks ends the run. See TheoryOfGoalMode.
 const goalDoneVerificationPrompt = `
 [System note: The previous goal loop applied change blocks and declared the goal achieved with a done block. The declaration is not final: a loop that applies change blocks never ends the run. Verification is the primary work of this loop: re-read the relevant files (including todo.md) against the CURRENT filesystem state and check whether every task is genuinely complete and every applied change is correct.
 
-If the check uncovers errors (incorrect or missing changes), fix them; corrections are part of verification, and the next loop will verify them in turn. If there is remaining work (e.g., new tasks were added while the previous loop ran), continue working on it in this loop. If the goal is genuinely achieved and nothing needs correction, emit a done block and apply no change blocks — only such a loop ends the run. Do not start unrelated new work beyond the check and its corrections.]`
+Verification must cover both what was done and what was NOT done: compare the original goal in the user input against the current state, requirement by requirement. Checking the correctness of the applied changes is not sufficient — enumerate the goal's requirements and confirm the current filesystem state satisfies each one, so no part of the goal is left unimplemented.
+
+If the check uncovers errors (incorrect or missing changes) or any gap — a requirement of the original goal that the current state does not satisfy — fix or complete it; corrections are part of verification, and the next loop will verify them in turn. If there is remaining work (e.g., new tasks were added while the previous loop ran), continue working on it in this loop. If the goal is genuinely achieved and the gap analysis finds no gap — every requirement satisfied, nothing incorrect, nothing missing — emit a done block and apply no change blocks — only such a loop ends the run. Do not start unrelated new work beyond the check and its corrections.]`
 
 // maxGoalIterations bounds the number of goal loops.
 const maxGoalIterations = 20

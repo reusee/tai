@@ -657,6 +657,12 @@ func TestGoalSystemPromptContent(t *testing.T) {
 	if !strings.Contains(GoalSystemPrompt, "applies no change blocks") {
 		t.Fatal("GoalSystemPrompt must state the change-free done termination rule")
 	}
+	if !strings.Contains(GoalSystemPrompt, "gap analysis") {
+		t.Fatal("GoalSystemPrompt must require a gap analysis before the done block")
+	}
+	if !strings.Contains(GoalSystemPrompt, "what was NOT done") {
+		t.Fatal("GoalSystemPrompt must require checking what was not done against the original goal")
+	}
 	if strings.Contains(GoalSystemPrompt, "second consecutive loop") {
 		t.Fatal("GoalSystemPrompt must not describe the removed two-done confirmation")
 	}
@@ -665,6 +671,18 @@ func TestGoalSystemPromptContent(t *testing.T) {
 	}
 	if strings.Contains(GoalSystemPrompt, "<<DELIMITER") {
 		t.Fatal("GoalSystemPrompt must not display the literal template marker")
+	}
+}
+
+func TestGoalDoneVerificationPromptContent(t *testing.T) {
+	if !strings.Contains(goalDoneVerificationPrompt, "what was NOT done") {
+		t.Fatal("the verification prompt must require checking what was not done")
+	}
+	if !strings.Contains(goalDoneVerificationPrompt, "gap") {
+		t.Fatal("the verification prompt must frame verification as a gap analysis")
+	}
+	if !strings.Contains(goalDoneVerificationPrompt, "original goal") {
+		t.Fatal("the verification prompt must compare the original goal against the current state")
 	}
 }
 
