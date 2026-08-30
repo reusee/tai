@@ -98,10 +98,6 @@ func (Module) ChatInput(logger logs.Logger) ChatInput {
 	}
 }
 
-// BuildChatPhase provider: reads the interactive line through the
-// injected ChatInput — the liner default in command-line mode, the TUI
-// input bar in TUI mode — so the chat phase never opens a second reader
-// on a terminal the display already owns. See TheoryOfChatInput.
 func (Module) BuildChatPhase(
 	buildGen generators.BuildGenerate,
 	chatInput ChatInput,
@@ -149,12 +145,14 @@ func (Module) BuildChatPhase(
 					for content := range state.Contents() {
 						next, err := output.AppendContent(content)
 						if err != nil {
+							out.Close()
 							return nil, nil, err
 						}
 						output = next.(generators.Output)
 					}
 					_, err = output.Flush()
 					if err != nil {
+						out.Close()
 						return nil, nil, err
 					}
 					err = out.Close()

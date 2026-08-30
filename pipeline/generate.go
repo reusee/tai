@@ -193,27 +193,29 @@ func buildUserPromptText(parts []generators.Part) string {
 const TheoryOfAttemptStatistics = `
 Attempt statistics are collected per attempt to provide visibility into
 token usage and duration. Each attempt produces a single AttemptStat
-entry with the 1-based attempt number within its generation; prompt,
-completion, thought, and cached token counts from the attempt's final
-usage; the duration (from OnAttemptStart to OnAttemptSuccess); and the
-summary from the attempt's summary blocks. Attempt management is
-decoupled from usage parts; the extraction rule lives in
-TheoryOfUsageLogging. Truncated attempts (no summary block) that are
-retried are recorded via OnAttemptTruncated with the summary synthesized
-by the retry process, so they appear as separate entries; the completing
-attempt itself is recorded by OnAttemptSuccess. At run end the collected
-statistics are printed to the generation output writer via a deferred
-call, so the table is still shown in command-line mode even when the
-session ends early due to an error; a live consumer reads the per-attempt
-usage from the run's EventUsage events instead (see
-TheoryOfUsageLogging). When the goal runner aggregates the statistics
-of every loop, it tags each entry with AttemptStat.Loop.
+entry with a 1-based attempt number that continues across the
+generations of one session; prompt, completion, thought, and cached
+token counts from the attempt's final usage; the duration (from
+OnAttemptStart to OnAttemptSuccess); and the summary from the attempt's
+summary blocks. Attempt management is decoupled from usage parts; the
+extraction rule lives in TheoryOfUsageLogging. Truncated attempts (no
+summary block) that are retried are recorded via OnAttemptTruncated
+with the summary synthesized by the retry process, so they appear as
+separate entries; the completing attempt itself is recorded by
+OnAttemptSuccess. At run end the collected statistics are printed to
+the generation output writer via a deferred call, so the table is still
+shown in command-line mode even when the session ends early due to an
+error; a live consumer reads the per-attempt usage from the run's
+EventUsage events instead (see TheoryOfUsageLogging). When the goal
+runner aggregates the statistics of every loop, it tags each entry with
+AttemptStat.Loop.
 `
 
 // AttemptStat records per-attempt token usage (prompt, completion,
 // thoughts, cached), running time, and summary for a single generation
-// attempt. The Attempt field is the 1-based attempt number within its
-// generation. The Loop field identifies the goal loop that produced the
+// attempt. The Attempt field is the 1-based attempt number, continuing
+// across the generations of one session (a codes run or one goal loop).
+// The Loop field identifies the goal loop that produced the
 // attempt when the statistics are aggregated across a goal run's loops;
 // it is zero for single-session runs (the auto-detected default, ai,
 // next). See TheoryOfAttemptStatistics.
@@ -250,7 +252,7 @@ func PrintAttemptStats(w io.Writer, stats []AttemptStat, title ...string) {
 	}
 
 	fmt.Fprintf(w, "\n=== %s ===\n", header)
-	fmt.Fprintf(w, "Total generations: %d\n\n", len(stats))
+	fmt.Fprintf(w, "Total attempts: %d\n\n", len(stats))
 	if hasLoop {
 		fmt.Fprintf(w, "%-6s %-8s %12s %12s %12s %12s %12s\n", "Loop", "Attempt", "Prompt", "Completion", "Thoughts", "Cached", "Duration")
 		fmt.Fprintf(w, "%-6s %-8s %12s %12s %12s %12s %12s\n", "-----", "-------", "------", "----------", "--------", "-------", "--------")

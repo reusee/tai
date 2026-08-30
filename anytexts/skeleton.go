@@ -155,7 +155,10 @@ func renderOutlineSymbols(symbols []gotreesitter.OutlineSymbol, depth int, lines
 // its level. The gotreesitter markdown grammar yields atx_heading
 // nodes for "# Title" lines and setext_heading nodes for underlined
 // titles; a "#" inside a fenced code block is not a heading node, so
-// fenced content never enters the outline. See TheoryOfContextSkeleton.
+// fenced content never enters the outline. A setext heading node spans
+// the title line and its underline: the underline determines the level
+// ('=' level 1, '-' level 2, per CommonMark) and is kept out of the
+// outline. See TheoryOfContextSkeleton.
 func markdownSkeleton(content []byte) (string, bool) {
 	entry := grammars.DetectLanguageByName("markdown")
 	if entry == nil {
@@ -171,10 +174,12 @@ func markdownSkeleton(content []byte) (string, bool) {
 	var lines []string
 	gotreesitter.Walk(tree.RootNode(), func(node *gotreesitter.Node, depth int) gotreesitter.WalkAction {
 		nodeType := node.Type(entry.Language())
+		headingText := string(node.Text(content))
+		titleLine, underline, hasUnderline := strings.Cut(headingText, "\n")
 		level := 0
 		switch nodeType {
 		case "atx_heading":
-			for _, r := range node.Text(content) {
+			for _, r := range headingText {
 				if r == '#' {
 					level++
 				} else {
@@ -182,14 +187,25 @@ func markdownSkeleton(content []byte) (string, bool) {
 				}
 			}
 		case "setext_heading":
-			level = 1
+			// The node text spans the title line and its underline
+			// (e.g. "Title\n====="). The underline sets the level —
+			// '=' level 1, '-' level 2 — and never enters the outline.
+			if hasUnderline {
+				if trimmed := strings.TrimSpace(underline); trimmed != "" {
+					if trimmed[0] == '-' {
+						level = 2
+					} else {
+						level = 1
+					}
+				}
+			}
 		default:
 			return gotreesitter.WalkContinue
 		}
 		if level == 0 || level > skeletonMaxHeadingDepth {
 			return gotreesitter.WalkContinue
 		}
-		title := strings.TrimSpace(strings.TrimLeft(string(node.Text(content)), "#"))
+		title := strings.TrimSpace(strings.TrimLeft(titleLine, "#"))
 		if title == "" {
 			return gotreesitter.WalkContinue
 		}

@@ -38,8 +38,8 @@ func TestPrintAttemptStats(t *testing.T) {
 		}
 		PrintAttemptStats(&buf, stats)
 		output := buf.String()
-		if !strings.Contains(output, "Total generations: 1") {
-			t.Fatalf("expected total generations 1, got: %s", output)
+		if !strings.Contains(output, "Total attempts: 1") {
+			t.Fatalf("expected total attempts 1, got: %s", output)
 		}
 		if !strings.Contains(output, "1000") {
 			t.Fatalf("expected prompt tokens 1000, got: %s", output)
@@ -58,8 +58,8 @@ func TestPrintAttemptStats(t *testing.T) {
 		}
 		PrintAttemptStats(&buf, stats)
 		output := buf.String()
-		if !strings.Contains(output, "Total generations: 3") {
-			t.Fatalf("expected total generations 3, got: %s", output)
+		if !strings.Contains(output, "Total attempts: 3") {
+			t.Fatalf("expected total attempts 3, got: %s", output)
 		}
 		// Totals: 111+222+333=666, 51+82+123=256, 21+32+53=106, 11+22+33=66
 		if !strings.Contains(output, "666") {

@@ -24,6 +24,29 @@ func TestSkeletonMarkdownHeadings(t *testing.T) {
 	}
 }
 
+// TestSkeletonMarkdownSetextHeading verifies that an underlined (setext)
+// heading enters the outline with its title only: the node text spans
+// the title line and its underline, and the underline must not leak
+// into the skeleton as an extra line. See TheoryOfContextSkeleton.
+func TestSkeletonMarkdownSetextHeading(t *testing.T) {
+	content := []byte("Title\n=====\n\ntext\n\nSubsection\n-----\nmore\n")
+	skeleton, ok := Skeleton("README.md", content)
+	if !ok {
+		t.Fatal("expected skeleton for markdown with setext headings")
+	}
+	if !strings.Contains(skeleton, "Title") {
+		t.Errorf("skeleton must contain the level-1 setext title, got:\n%s", skeleton)
+	}
+	if !strings.Contains(skeleton, "  Subsection") {
+		t.Errorf("skeleton must contain the level-2 setext title indented one level, got:\n%s", skeleton)
+	}
+	for _, underline := range []string{"=====", "-----"} {
+		if strings.Contains(skeleton, underline) {
+			t.Errorf("skeleton must not contain the setext underline %q, got:\n%s", underline, skeleton)
+		}
+	}
+}
+
 // TestSkeletonMarkdownFencedHashIsNotHeading verifies that a "#" line
 // inside a fenced code block does not enter the outline: the markdown
 // grammar parses fences as code nodes, not headings. See
