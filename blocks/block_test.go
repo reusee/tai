@@ -666,6 +666,49 @@ func TestParseFirstBlockClosingLineWithTrailingContent(t *testing.T) {
 	}
 }
 
+func TestParseFirstBlockLenientClosingMarker(t *testing.T) {
+	open := "<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nfunc Foo() {}\n"
+
+	// The lenient closing form — the delimiter followed by ">>",
+	// optionally separated by whitespace and surrounded by line
+	// whitespace, with or without a trailing newline — closes the block
+	// like the delimiter-alone line. See TheoryOfLenientClosingMarkers.
+	for _, closing := range []string{"龘靐>>\n", "龘靐 >>\n", "  龘靐>>  \n", "龘靐>>"} {
+		content := []byte(open + closing)
+		block, _, _, ok, err := ParseFirstBlock(content)
+		if err != nil {
+			t.Fatalf("closing %q: unexpected error: %v", closing, err)
+		}
+		if !ok {
+			t.Fatalf("closing %q: expected the block to parse", closing)
+		}
+		if block.Body != "func Foo() {}" {
+			t.Fatalf("closing %q: unexpected body %q", closing, block.Body)
+		}
+	}
+
+	// A single trailing ">" does not close the block: an incomplete
+	// lenient form keeps the block unclosed until the line completes,
+	// preserving the streaming guarantee. See TheoryOfLenientClosingMarkers.
+	_, _, _, ok, err := ParseFirstBlock([]byte(open + "龘靐>"))
+	if err == nil {
+		t.Fatal("expected an unclosed-block error for a single trailing '>'")
+	}
+	if ok {
+		t.Fatal("expected ok to be false for a single trailing '>'")
+	}
+
+	// The lenient form tolerates only the bare ">>": any further
+	// trailing text still leaves the block unclosed.
+	_, _, _, ok, err = ParseFirstBlock([]byte(open + "龘靐>> extra\n"))
+	if err == nil {
+		t.Fatal("expected an unclosed-block error for trailing text after '>>'")
+	}
+	if ok {
+		t.Fatal("expected ok to be false for trailing text after '>>'")
+	}
+}
+
 func TestParseFirstBlockEndMarkerNoTrailingNewline(t *testing.T) {
 	content := []byte("<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nfunc Foo() {}\n龘靐")
 	block, _, end, ok, err := ParseFirstBlock(content)

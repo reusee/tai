@@ -80,7 +80,10 @@ found, the block is unclosed. The closing marker line does not require a
 trailing newline: when the delimiter is the last content in the buffer, the
 parser extracts it from the remaining content, and an incomplete (still
 streaming) delimiter — a shorter extracted string — will not match, so the
-block remains unclosed until the full delimiter arrives.
+block remains unclosed until the full delimiter arrives. One lenient
+closing form is accepted: a line whose trimmed content is the delimiter
+followed by ">>", optionally separated by whitespace, closes the block like
+the exact form; see TheoryOfLenientClosingMarkers.
 
 BlockFormatSystemPrompt is itself the theory text for the delimiter
 selection policy, and TheoryOfBlockFormatGeneral owns the rarity rationale
@@ -104,8 +107,10 @@ close the outer block. The closing-marker scanner maintains a delimiter stack
 initialized with the outer block's delimiter. A line that starts with "<<" and
 contains a valid function-call header after the delimiter is treated as a nested opening
 only when its delimiter matches the outer block's delimiter; matching delimiters are
-pushed onto the stack. A line that is a delimiter alone on its own line pops the stack
-only if it matches the top; when the stack becomes empty, the outer block is closed.
+pushed onto the stack. A line that is a closing marker of the delimiter at the top of
+the stack — the delimiter alone on its own line, or the lenient delimiter+">>" form
+(see TheoryOfLenientClosingMarkers) — pops the stack; when the stack becomes empty,
+the outer block is closed.
 
 The header validation after the delimiter prevents false positives from content that
 starts with "<<" but is not a block opening.
@@ -115,7 +120,8 @@ const TheoryOfBlockFormat = `
 The parser uses a heredoc-style block format. The delimiter precedes the header:
 <<DELIMITER kind(param1="value1", ...) ... DELIMITER. The delimiter is extracted as the text
 between << and the first whitespace or ( character on the opening line. The closing marker
-is the delimiter alone on its own line.
+is the delimiter alone on its own line (with one lenient exception: a trailing ">>"; see
+TheoryOfLenientClosingMarkers).
 
 An opening marker whose line extends to the end of the content (no trailing newline)
 is a truncated block. The parser reports an unclosed-block error.
@@ -150,6 +156,28 @@ Nesting detection inside a block body remains strict: only line-start nested
 openings are tracked by the closing-marker stack. The prompts keep teaching
 the line-start rule unchanged; the leniency is a recovery path for
 nonconforming output, not an advertised format.
+`
+
+// TheoryOfLenientClosingMarkers documents the lenient acceptance of a
+// closing line carrying a trailing ">>" after the delimiter. See the
+// constant body for the rule and its rationale.
+const TheoryOfLenientClosingMarkers = `
+Models occasionally emit a closing line with a trailing ">>" glued to the
+delimiter — DELIMITER>> — mirroring the "<<" prefix of the opening marker.
+The parser accepts this shape silently: after trimming the line, a closing
+marker is the delimiter alone, or the delimiter followed by ">>",
+optionally separated by whitespace. The lenient form pops the delimiter
+stack like the exact form, so it closes nested blocks too, and the
+streaming guarantee is preserved: a partial trailing form — a single ">" —
+does not match, so a block streamed up to that byte stays unclosed until
+the line completes.
+
+Like the lenient opening markers and the attribute-only header, this is a
+recovery path for nonconforming output, not an advertised format: no
+prompt teaches it, and the delimiter-alone line remains the only taught
+closing form. Acceptance only widens what closes a block; any other
+trailing content still leaves the block unclosed and reported with
+collision hints.
 `
 
 const TheoryOfBareKinds = `
@@ -461,15 +489,35 @@ func nestedOpeningDelimiter(line string) (delimiter string, ok bool) {
 	return delimiter, true
 }
 
-// findClosingMarker searches for the delimiter alone on its own line within
-// the content starting from bodyStart. It uses a stack-based approach to
-// handle nested blocks: lines starting with "<<" that contain a valid XML
-// opening tag push their delimiter onto the stack, and a closing marker pops
-// the stack only if it matches the top. The outer block closes when the stack
-// becomes empty. See TheoryOfNestedBlockParsing.
+// isClosingMarkerLine reports whether a trimmed line closes a block of the
+// given delimiter: the delimiter alone, or — as a lenient exception — the
+// delimiter followed by ">>", optionally separated by whitespace. The
+// trailing form mirrors the "<<" prefix of the opening marker: a model
+// appending ">>" to the delimiter intends the block to close there. A
+// partial trailing form (a single ">") does not match, so streaming keeps
+// the block unclosed until the line completes. See
+// TheoryOfLenientClosingMarkers.
+func isClosingMarkerLine(trimmed []byte, delimiter string) bool {
+	if string(trimmed) == delimiter {
+		return true
+	}
+	rest, ok := bytes.CutPrefix(trimmed, []byte(delimiter))
+	if !ok {
+		return false
+	}
+	return string(bytes.TrimSpace(rest)) == ">>"
+}
+
+// findClosingMarker searches for the closing marker of the delimiter within
+// the content starting from bodyStart: a line whose trimmed content is the
+// delimiter alone, or — as a lenient exception — the delimiter followed by
+// ">>". See TheoryOfLenientClosingMarkers. It uses a stack-based approach
+// to handle nested blocks: lines starting with "<<" that contain a valid
+// XML opening tag push their delimiter onto the stack, and a closing marker
+// pops the stack only if it matches the top. The outer block closes when
+// the stack becomes empty. See TheoryOfNestedBlockParsing.
 func findClosingMarker(content []byte, bodyStart int, delimiter string) (bodyEnd, blockEnd int, found bool) {
 	stack := []string{delimiter}
-	delimLen := len(delimiter)
 	searchFrom := bodyStart
 	for {
 		lineEnd := bytes.IndexByte(content[searchFrom:], '\n')
@@ -497,12 +545,12 @@ func findClosingMarker(content []byte, bodyStart int, delimiter string) (bodyEnd
 			}
 		}
 
-		// Check for closing marker: the delimiter alone on its own line
-		// (with optional whitespace). Use byte-level trimming and a
-		// length pre-check to avoid string allocation for lines that
-		// cannot match the delimiter. See TheoryOfNestedBlockParsing.
+		// Check for closing marker: the delimiter alone on its own
+		// line (with optional whitespace), or the lenient
+		// delimiter+">>" form. See TheoryOfNestedBlockParsing and
+		// TheoryOfLenientClosingMarkers.
 		trimmed := bytes.TrimSpace(lineBytes)
-		if len(stack) > 0 && len(trimmed) == delimLen && string(trimmed) == stack[len(stack)-1] {
+		if len(stack) > 0 && isClosingMarkerLine(trimmed, stack[len(stack)-1]) {
 			stack = stack[:len(stack)-1]
 			if len(stack) == 0 {
 				bodyEnd = searchFrom
