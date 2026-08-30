@@ -348,7 +348,19 @@ func (Module) CreateHandoff(
 	getHandoffGenerators GetHandoffGenerators,
 	handoffDecorator HandoffStateDecorator,
 	handoffObserver HandoffObserver,
+	goalLoop GoalLoop,
 ) CreateHandoff {
+	// Goal mode bounds the handoff retries (maxHandoffConsecutiveFailures):
+	// the exhaustion error is fatal for the run, so the goal runner
+	// abandons the loop and carries the error into the next loop as
+	// corrective feedback. Non-goal sessions keep the retries unbounded
+	// (bound 0). The goal runner forks each loop's number into the loop's
+	// scope, so the bound resolves per loop. See TheoryOfHandoff and
+	// TheoryOfGoalMode.
+	maxConsecutiveFailures := 0
+	if goalLoop > 0 {
+		maxConsecutiveFailures = maxHandoffConsecutiveFailures
+	}
 	return func(
 		ctx context.Context,
 		incompleteText string,
@@ -357,7 +369,7 @@ func (Module) CreateHandoff(
 		if err != nil {
 			return nil, err
 		}
-		return createHandoff(ctx, logger, recorder, generators, incompleteText, handoffDecorator, handoffObserver)
+		return createHandoffWithBound(ctx, logger, recorder, generators, incompleteText, handoffDecorator, handoffObserver, maxConsecutiveFailures)
 	}
 }
 

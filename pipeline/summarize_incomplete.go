@@ -39,18 +39,26 @@ handoff instructions. Handoff generation retries without an attempt limit
 on failure or missing block; the loop exits only when a valid handoff block
 is produced or the context is cancelled. Cancellation is logged and the
 caller retries with empty handoff content, so the run continues rather than
-aborting; a caller that wants a bound must supply a cancellable context.
+aborting. The bounded caller is goal mode: a goal loop's handoff abandons
+after three consecutive failed attempts — a generation error or a response
+without a valid block — and the returned error is fatal for the run, so the
+goal runner abandons the loop and carries the error into the next loop as
+corrective feedback (see TheoryOfGoalMode). Three consecutive failures
+indicate severe model failure; unbounded retries would burn the loop's
+budget on a hopeless generation, while attended sessions keep the
+unbounded policy.
 
 The loop's event stream reports the handoff lifecycle as it happens:
 EventHandoffStart is emitted immediately before the handoff request is
 sent, and EventHandoff after the summary is produced, so a live consumer
 sees the request in progress rather than waiting for its result. The
 events carry the attempt attribution but no retry-budget figures:
-handoff generation itself retries without an attempt limit, so a budget
+handoff generation's retry policy is not the generation attempt budget
+(unbounded in attended sessions, bounded only in goal mode), so a budget
 display such as "attempt x/y" would misrepresent it. Handoff
 generation also applies the HandoffStateDecorator provider to its state
-when one is configured: the decorator observes every content part as it
-is appended, so a display front-end receives the model's text and
+when one is configured: the decorator observes every content part as it is
+appended, so a display front-end receives the model's text and
 reasoning thoughts carrying their roles and thinking state, and can
 highlight the handoff request per part and per thought. The captured
 handoff text is read from an inner buffer that excludes thoughts, so the
@@ -130,6 +138,15 @@ func (Module) HandoffObserver() HandoffObserver {
 // directly without handoff. See TheoryOfHandoff.
 const minHandoffLength = 100
 
+// maxHandoffConsecutiveFailures is the goal-mode bound on the handoff
+// retry loop: after this many consecutive failed attempts — a generation
+// error or a response without a valid handoff block — the handoff is
+// abandoned with an error that is fatal for the run, so the goal runner
+// abandons the loop and carries the error into the next loop as
+// corrective feedback. Non-goal sessions pass a zero bound and keep the
+// retries unbounded. See TheoryOfHandoff and TheoryOfGoalMode.
+const maxHandoffConsecutiveFailures = 3
+
 type HandoffRecorder interface {
 	Enabled() bool
 	SystemPrompt(prompt string)
@@ -200,7 +217,9 @@ func parseHandoffBlock(text string) (string, bool) {
 // CreateHandoff dscope function type: it summarizes truncated or failed
 // generation output into a self-contained handoff carried into the next
 // generation. The implementation stays a plain function so tests can call
-// it directly. See TheoryOfHandoff and TheoryOfDscopeBoundFunctions.
+// it directly. This is the default, unbounded form; goal mode uses the
+// bounded general form createHandoffWithBound. See TheoryOfHandoff and
+// TheoryOfDscopeBoundFunctions.
 func createHandoff(
 	ctx context.Context,
 	logger logs.Logger,
@@ -209,6 +228,28 @@ func createHandoff(
 	incompleteText string,
 	decorator HandoffStateDecorator,
 	observer HandoffObserver,
+) (*Handoff, error) {
+	return createHandoffWithBound(ctx, logger, recorder, handoffGenerators, incompleteText, decorator, observer, 0)
+}
+
+// createHandoffWithBound is the general form of createHandoff:
+// maxConsecutiveFailures bounds the retry loop. Zero keeps the retries
+// unbounded (the non-goal default); a positive bound abandons the handoff
+// after that many consecutive failed attempts — a generation error or a
+// response without a valid handoff block — with an error the codes
+// pipeline treats as fatal for the run, so a goal loop whose model cannot
+// produce a valid handoff is abandoned and the goal runner carries the
+// error into the next loop as corrective feedback. See TheoryOfHandoff
+// and TheoryOfGoalMode.
+func createHandoffWithBound(
+	ctx context.Context,
+	logger logs.Logger,
+	recorder HandoffRecorder,
+	handoffGenerators []generators.Generator,
+	incompleteText string,
+	decorator HandoffStateDecorator,
+	observer HandoffObserver,
+	maxConsecutiveFailures int,
 ) (*Handoff, error) {
 	if len(strings.TrimSpace(incompleteText)) < minHandoffLength {
 		return nil, nil
@@ -262,9 +303,31 @@ func createHandoff(
 	// attempts counts the started attempts; after the loop it is the
 	// completed-attempt count reported by the abort log and event.
 	attempts := 0
-	// Retries are unbounded: the loop exits only when a valid handoff
-	// block is produced or the context is cancelled, never on an
-	// attempt count. See TheoryOfHandoff.
+	// failures counts consecutive failed attempts: a generation error or
+	// a response without a valid handoff block. It feeds the bound check.
+	failures := 0
+
+	// handoffExhausted reports the abandonment when the bound is reached.
+	// The returned error becomes the run's terminal error and the next
+	// goal loop's corrective feedback, so its message states the attempt
+	// count and wraps the last failure cause. See TheoryOfHandoff.
+	handoffExhausted := func(failures int) error {
+		err := fmt.Errorf(
+			"handoff generation failed after %d consecutive attempts: %w",
+			failures, lastErr,
+		)
+		logger.ErrorContext(ctx, "handoff abandoned: consecutive-failure bound reached",
+			"attempts", failures,
+			"bound", maxConsecutiveFailures,
+			"err", err,
+		)
+		recordEvent("handoff abandoned after %d consecutive failed attempts: %v", failures, lastErr)
+		return err
+	}
+
+	// The loop exits when a valid handoff block is produced, the context
+	// is cancelled, or — with a positive bound — the consecutive-failure
+	// count reaches maxConsecutiveFailures. See TheoryOfHandoff.
 	for ctx.Err() == nil {
 		attempt := attempts
 		attempts++
@@ -284,6 +347,7 @@ func createHandoff(
 		outputText, thoughts, attemptUsage, err := runHandoffAttempt(ctx, generator, incompleteText, decorator)
 		if err != nil {
 			lastErr = err
+			failures++
 			logger.WarnContext(ctx, "handoff incomplete output: generation failed",
 				"attempt", attempt+1,
 				"model", generator.Spec().Model,
@@ -297,6 +361,9 @@ func createHandoff(
 			})
 			recordEvent("handoff attempt %d failed: model=%s generation error: %v",
 				attempt+1, generator.Spec().Model, err)
+			if maxConsecutiveFailures > 0 && failures >= maxConsecutiveFailures {
+				return nil, handoffExhausted(failures)
+			}
 			continue
 		}
 		totalUsage.Prompt.TokenCount += attemptUsage.Prompt.TokenCount
@@ -326,12 +393,16 @@ func createHandoff(
 			}, nil
 		}
 		lastErr = fmt.Errorf("no valid handoff block found in response")
+		failures++
 		logger.WarnContext(ctx, "handoff incomplete output: no valid handoff block found",
 			"attempt", attempt+1,
 			"model", generator.Spec().Model,
 		)
 		recordEvent("handoff attempt %d failed: model=%s no valid handoff block found",
 			attempt+1, generator.Spec().Model)
+		if maxConsecutiveFailures > 0 && failures >= maxConsecutiveFailures {
+			return nil, handoffExhausted(failures)
+		}
 	}
 	if lastErr != nil {
 		err := fmt.Errorf("handoff incomplete output aborted after %d attempts: %w", attempts, lastErr)

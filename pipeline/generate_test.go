@@ -663,6 +663,114 @@ func TestCreateHandoffRetriesWithoutLimit(t *testing.T) {
 	}
 }
 
+func TestCreateHandoffWithBoundAbandonsAfterConsecutiveFailures(t *testing.T) {
+	// Goal-mode bound: a model that fails every handoff attempt — whether
+	// by generation error or by responding without a valid handoff block —
+	// is abandoned after maxHandoffConsecutiveFailures consecutive
+	// failures, and the returned error states the consecutive count so the
+	// goal runner's next-loop feedback carries the cause. Two failures
+	// followed by a valid block still deliver within the bound. See
+	// TheoryOfHandoff.
+	longInput := strings.Repeat("long incomplete text ", 10)
+	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	errGen := &summarizeRetryMockGenerator{
+		errs: []error{
+			errors.New("failure 1"),
+			errors.New("failure 2"),
+			errors.New("failure 3"),
+		},
+	}
+	_, err := createHandoffWithBound(context.Background(), logger, nil, []generators.Generator{errGen}, longInput, nil, nil, maxHandoffConsecutiveFailures)
+	if err == nil {
+		t.Fatal("expected exhaustion error after 3 consecutive generation failures")
+	}
+	if errGen.calls != maxHandoffConsecutiveFailures {
+		t.Fatalf("expected %d handoff calls, got %d", maxHandoffConsecutiveFailures, errGen.calls)
+	}
+
+	noBlockGen := &summarizeRetryMockGenerator{
+		responses: []string{"no block 1", "no block 2", "no block 3", "no block 4"},
+	}
+	_, err = createHandoffWithBound(context.Background(), logger, nil, []generators.Generator{noBlockGen}, longInput, nil, nil, maxHandoffConsecutiveFailures)
+	if err == nil {
+		t.Fatal("expected exhaustion error after 3 consecutive responses without a valid handoff block")
+	}
+	if noBlockGen.calls != maxHandoffConsecutiveFailures {
+		t.Fatalf("expected %d handoff calls, got %d", maxHandoffConsecutiveFailures, noBlockGen.calls)
+	}
+	if !strings.Contains(err.Error(), "consecutive") {
+		t.Fatalf("expected error to state the consecutive failure count, got %q", err.Error())
+	}
+
+	recoveringGen := &summarizeRetryMockGenerator{
+		errs: []error{
+			errors.New("failure 1"),
+			errors.New("failure 2"),
+		},
+		responses: []string{
+			"", "", "<<黿鼍 handoff\nrecovered handoff text\n黿鼍",
+		},
+	}
+	handoff, err := createHandoffWithBound(context.Background(), logger, nil, []generators.Generator{recoveringGen}, longInput, nil, nil, maxHandoffConsecutiveFailures)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if handoff == nil || handoff.Summary != "recovered handoff text" {
+		t.Fatalf("expected recovered handoff within the bound, got %+v", handoff)
+	}
+}
+
+func TestCreateHandoffGoalLoopBoundsRetries(t *testing.T) {
+	// The provider gates the bound on the goal loop: a non-zero GoalLoop
+	// (a goal loop's scope) bounds the retries, while the default zero
+	// (non-goal sessions) keeps them unbounded. See TheoryOfHandoff and
+	// TheoryOfGoalMode.
+	longInput := strings.Repeat("long incomplete text ", 10)
+	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	goalGen := &summarizeRetryMockGenerator{
+		errs: []error{
+			errors.New("failure 1"),
+			errors.New("failure 2"),
+			errors.New("failure 3"),
+			errors.New("failure 4"),
+		},
+	}
+	create := Module{}.CreateHandoff(logger, nil, func() ([]generators.Generator, error) {
+		return []generators.Generator{goalGen}, nil
+	}, nil, nil, 1)
+	if _, err := create(context.Background(), longInput); err == nil {
+		t.Fatal("expected exhaustion error from the goal-mode bound")
+	}
+	if goalGen.calls != maxHandoffConsecutiveFailures {
+		t.Fatalf("expected %d handoff calls in goal mode, got %d", maxHandoffConsecutiveFailures, goalGen.calls)
+	}
+
+	plainGen := &summarizeRetryMockGenerator{
+		errs: []error{
+			errors.New("failure 1"),
+			errors.New("failure 2"),
+			errors.New("failure 3"),
+			errors.New("failure 4"),
+		},
+		responses: []string{"", "", "", "", "<<黿鼍 handoff\nunbounded handoff text\n黿鼍"},
+	}
+	create = Module{}.CreateHandoff(logger, nil, func() ([]generators.Generator, error) {
+		return []generators.Generator{plainGen}, nil
+	}, nil, nil, 0)
+	handoff, err := create(context.Background(), longInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if handoff == nil || handoff.Summary != "unbounded handoff text" {
+		t.Fatalf("expected unbounded handoff in non-goal mode, got %+v", handoff)
+	}
+	if plainGen.calls != 5 {
+		t.Fatalf("expected 5 handoff calls in non-goal mode, got %d", plainGen.calls)
+	}
+}
+
 func TestCreateHandoffLogsErrors(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
