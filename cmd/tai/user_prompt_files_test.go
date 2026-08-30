@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/reusee/dscope"
-	"github.com/reusee/tai/components"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/memories"
@@ -17,10 +16,12 @@ import (
 // the value the ai command's Defs install — an empty -file set assembles
 // no file context at all. The working directory contains an includable
 // file, so a provider call with empty patterns would scan it; the prompt
-// must instead be the system prompt restate alone, with no directory
-// content, no working directory hint, and no chat bracketing copy (there
-// is no context to bracket; the -chat text reaches the model through the
-// command's user input marker). See TheoryOfUserPromptFileContext.
+// must instead be empty, with no directory content, no working directory
+// hint, no chat bracketing copy (there is no context to bracket; the
+// -chat text reaches the model through the command's user input marker),
+// and no system prompt restate (an empty user prompt is trivially within
+// the restate threshold). See TheoryOfUserPromptFileContext and
+// components.SystemPromptRestateForUserPrompt.
 func TestUserPromptNoFilesSkipsDirectoryScan(t *testing.T) {
 	dir := t.TempDir()
 	oldWd, err := os.Getwd()
@@ -48,17 +49,9 @@ func TestUserPromptNoFilesSkipsDirectoryScan(t *testing.T) {
 		func() UserPromptDirectoryFallback { return false },
 	).Call(func(
 		userPrompt UserPrompt,
-		systemPrompt SystemPrompt,
 	) {
-		if len(userPrompt) != 1 {
-			t.Fatalf("expected only the restate part, got %d parts", len(userPrompt))
-		}
-		text, ok := userPrompt[0].(generators.Text)
-		if !ok {
-			t.Fatalf("user prompt part must be a text part, got %T", userPrompt[0])
-		}
-		if want := components.SystemPromptRestate(string(systemPrompt)); text != want {
-			t.Fatal("user prompt must be the system prompt restate alone")
+		if len(userPrompt) != 0 {
+			t.Fatalf("expected no user prompt parts, got %d", len(userPrompt))
 		}
 	})
 }
@@ -66,7 +59,9 @@ func TestUserPromptNoFilesSkipsDirectoryScan(t *testing.T) {
 // TestAICommandDefsForkNoDirectoryFallback verifies the wiring itself:
 // resolving UserPrompt from a scope with AICommand.Defs applied must show
 // the ai command's no-file regime, so removing the fork from the command
-// Defs fails here even if Module.UserPrompt keeps the capability.
+// Defs fails here even if Module.UserPrompt keeps the capability. The
+// prompt is empty: no file context is assembled, and an empty user prompt
+// is trivially within the restate threshold, so no restate appears.
 func TestAICommandDefsForkNoDirectoryFallback(t *testing.T) {
 	dir := t.TempDir()
 	oldWd, err := os.Getwd()
@@ -102,17 +97,9 @@ func TestAICommandDefsForkNoDirectoryFallback(t *testing.T) {
 		},
 	).Call(func(
 		userPrompt UserPrompt,
-		systemPrompt SystemPrompt,
 	) {
-		if len(userPrompt) != 1 {
-			t.Fatalf("expected only the restate part, got %d parts", len(userPrompt))
-		}
-		text, ok := userPrompt[0].(generators.Text)
-		if !ok {
-			t.Fatalf("user prompt part must be a text part, got %T", userPrompt[0])
-		}
-		if want := components.SystemPromptRestate(string(systemPrompt)); text != want {
-			t.Fatal("ai command user prompt must be the system prompt restate alone")
+		if len(userPrompt) != 0 {
+			t.Fatalf("expected no user prompt parts, got %d", len(userPrompt))
 		}
 	})
 }

@@ -30,12 +30,18 @@ sections never stick together.
 
 System prompt restate: the late reminder is the system prompt itself.
 SystemPromptRestate builds a user prompt part that repeats the full system
-prompt verbatim under a short re-read instruction. Every generation command
-appends it as the last user prompt part before the dynamic user input, so the
-model re-reads the complete rules immediately before generating. Because the
+prompt verbatim under a short re-read instruction. Generation commands append
+it as the last user prompt part before the dynamic user input, so the model
+re-reads the complete rules immediately before generating. Because the
 restate is assembled from the same text as the system prompt, the two can never
 drift out of sync: there is no shortened reminder to keep consistent with the
-full instructions.
+full instructions. The restate is thresholded: SystemPromptRestateForUserPrompt
+counts the tokens of the assembled user prompt and omits the restate within
+SystemPromptRestateThreshold, because the restate counters attention decay
+across long intervening content and a short user prompt leaves the system
+prompt close to the generation point. Token budgets still reserve the restate
+conservatively: the decision depends on the assembled size, which is known
+only after assembly.
 
 ProcessComponents is the shared function that iterates over Processable
 components in registration order, filtering blocks by each component's Kind
@@ -152,6 +158,14 @@ func (c ComponentSet) UserPromptParts() []generators.Part {
 // with it. See TheoryOfComponents.
 const systemPromptRestateHeader = "[System note: The system instructions are restated verbatim below. Re-read them carefully now — every rule in them applies in full to the response you are about to generate.]\n\n"
 
+// SystemPromptRestateThreshold is the user prompt token count at or below
+// which the verbatim system prompt restate is omitted. The restate buys
+// renewed attention to the rules across long intervening user content; a
+// user prompt within the threshold leaves the system prompt close to the
+// generation point, so repeating it verbatim would spend tokens without
+// effect. See TheoryOfComponents.
+const SystemPromptRestateThreshold = 4 << 10
+
 // SystemPromptRestate returns the user prompt part that repeats the full
 // system prompt verbatim under a short re-read instruction. The restate
 // gives the model a second, late exposure to the complete rules — the last
@@ -163,6 +177,40 @@ const systemPromptRestateHeader = "[System note: The system instructions are res
 func SystemPromptRestate(systemPrompt string) generators.Text {
 	prompt := strings.TrimRight(systemPrompt, " \t\n\r")
 	return generators.Text(systemPromptRestateHeader + prompt + "\n\n")
+}
+
+// SystemPromptRestateForUserPrompt decides the verbatim system prompt
+// restate for the assembled user prompt parts: it counts the tokens of the
+// parts' Text content and returns the restate parts when the count exceeds
+// SystemPromptRestateThreshold, or no parts when the count is within the
+// threshold — the system prompt is then still close to the generation
+// point, so the verbatim copy is omitted. The token count of the assembled
+// parts is returned alongside for the caller's logging. Only Text parts
+// are counted, matching the text content each assembly site contributes.
+// See TheoryOfComponents.
+func SystemPromptRestateForUserPrompt(
+	parts []generators.Part,
+	systemPrompt string,
+	countTokens func(string) (int, error),
+) (
+	restate []generators.Part,
+	tokens int,
+	err error,
+) {
+	var text strings.Builder
+	for _, part := range parts {
+		if t, ok := part.(generators.Text); ok {
+			text.WriteString(string(t))
+		}
+	}
+	tokens, err = countTokens(text.String())
+	if err != nil {
+		return nil, 0, err
+	}
+	if tokens <= SystemPromptRestateThreshold {
+		return nil, tokens, nil
+	}
+	return []generators.Part{SystemPromptRestate(systemPrompt)}, tokens, nil
 }
 
 // Processable returns the subset of components that have a Process function,

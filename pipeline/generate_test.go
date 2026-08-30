@@ -400,25 +400,6 @@ func TestReviewModelsFlagAndConfig(t *testing.T) {
 	}
 }
 
-func TestBuildUserPromptText(t *testing.T) {
-	// buildUserPromptText must concatenate only Text parts, in order,
-	// ignoring non-text parts, and produce exactly the string that repeated
-	// += over the Text parts would produce. See buildUserPromptText.
-	parts := []generators.Part{
-		generators.Text("``` begin of file a.go\n"),
-		generators.Thought("reasoning is not user prompt context"),
-		generators.Text("package a\n"),
-		generators.Text("``` end of file a.go\n"),
-	}
-	want := "``` begin of file a.go\npackage a\n``` end of file a.go\n"
-	if got := buildUserPromptText(parts); got != want {
-		t.Fatalf("buildUserPromptText() = %q, want %q", got, want)
-	}
-	if got := buildUserPromptText(nil); got != "" {
-		t.Fatalf("buildUserPromptText(nil) = %q, want empty", got)
-	}
-}
-
 func TestRunReviewSkipsWhenNoDiffs(t *testing.T) {
 	// When no change blocks were produced (empty diffs), the review loop
 	// must not initiate a generation session, even when the -review flag
@@ -1264,6 +1245,30 @@ func (chatBracketPartsProvider) Parts(
 	return []generators.Part{generators.Text("CHAT BRACKET CONTEXT\n\n")}, nil
 }
 
+// restateThresholdGenerator reports one token above the restate threshold
+// for every CountTokens call, so the assembled user prompt carries the
+// verbatim system prompt restate regardless of the mock content's real
+// size. The value mirrors components.SystemPromptRestateThreshold (4 << 10);
+// the literal keeps the test file free of a components import. The Spec
+// override pins a large context window so the doubled system-prompt charge
+// in the budget computation cannot exhaust the user prompt budget. See
+// components.SystemPromptRestateForUserPrompt.
+type restateThresholdGenerator struct {
+	debugOutputMockGenerator
+}
+
+func (restateThresholdGenerator) Spec() generators.Spec {
+	maxGenerateTokens := 1024
+	return generators.Spec{
+		ContextTokens:     1 << 20,
+		MaxGenerateTokens: &maxGenerateTokens,
+	}
+}
+
+func (restateThresholdGenerator) CountTokens(string) (int, error) {
+	return 4<<10 + 1, nil
+}
+
 func TestGenerateDebugPromptsWrittenToOutput(t *testing.T) {
 	// With -debug-codes, the assembled system and user prompts are dumped
 	// to the generation output writer, never to os.Stdout directly: a
@@ -1318,7 +1323,10 @@ func TestGenerateChatInputBracketsContext(t *testing.T) {
 	// content's parts and the appended chat content alike — so the state
 	// carries one user content with one text part whose byte order is the
 	// bracketing order: chat copy, provider context, restate, chat input.
-	// See TheoryOfChatBracketing.
+	// restateThresholdGenerator makes the assembled user prompt exceed the
+	// restate threshold, so the verbatim system prompt restate is present;
+	// with the mock's zero token counts the restate would be omitted. See
+	// TheoryOfChatBracketing and components.SystemPromptRestateForUserPrompt.
 	var capturedState generators.State
 	dscope.New(
 		modes.ForTest(t),
@@ -1326,10 +1334,11 @@ func TestGenerateChatInputBracketsContext(t *testing.T) {
 	).Fork(
 		func() codetypes.PartsProvider { return chatBracketPartsProvider{} },
 		func() flags.Chats { return flags.Chats{"do the task"} },
+		func() flags.MaxTokens { return flags.MaxTokens(1 << 20) },
 		func() *records.Recorder { return nil },
 		func() generators.GetDefaultGenerator {
 			return func() (generators.Generator, error) {
-				return &debugOutputMockGenerator{}, nil
+				return &restateThresholdGenerator{}, nil
 			}
 		},
 		func() Run {

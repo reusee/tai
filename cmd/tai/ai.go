@@ -83,8 +83,10 @@ carries no file pipeline of its own. The ai command is a
 direct-conversation command: without -file patterns no file context is
 assembled — Module.UserPrompt skips the parts provider entirely (no
 directory scan, no working directory hint, no chat bracketing copy; see
-TheoryOfUserPromptFileContext), so the prompt is the system prompt restate
-followed by the command's user input marker. With -file patterns the
+TheoryOfUserPromptFileContext), so the prompt is the thresholded system
+prompt restate followed by the command's user input marker — the restate
+is omitted when the assembled prompt sits within
+components.SystemPromptRestateThreshold. With -file patterns the
 provider expands them, renders every file with begin/end markers (read-only
 annotations included), applies the token budget derived from the spec's
 ContextTokens, and brackets the file context with the -chat input (see
@@ -96,7 +98,8 @@ marker, keeping reference material and the task request delineated. Static
 sections stay in the LLM prefix cache: when the user input changes across
 sessions, only the final marker changes, and the file context and the
 restate remain byte-identical — the restate varies only when the system
-prompt itself varies. This is the same dynamic-content-last principle that
+prompt itself varies or the prompt crosses
+components.SystemPromptRestateThreshold. This is the same dynamic-content-last principle that
 places the current time at the end of the system prompt (see
 AISystemPrompt) and the memory profile at the end of the system prompt
 sections (see TheoryOfAIComponents). See TheoryOfPrefixCaching in

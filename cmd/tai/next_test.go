@@ -300,8 +300,10 @@ func TestSystemPromptAndUserPromptChangeBlockPlacement(t *testing.T) {
 		t.Fatal(err)
 	}
 	// General-purpose tools must support file editing capabilities (change blocks)
-	// for any type of file, not exclusively Go files.
-	if err := os.WriteFile("test.md", []byte("# Title\n"), 0644); err != nil {
+	// for any type of file, not exclusively Go files. The fixture exceeds the
+	// restate threshold under restateThresholdMockGenerator's byte counting, so
+	// the assembled user prompt carries the verbatim restate.
+	if err := os.WriteFile("test.md", []byte(strings.Repeat("# data\n", 1024)), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -311,9 +313,11 @@ func TestSystemPromptAndUserPromptChangeBlockPlacement(t *testing.T) {
 		modes.ForTest(t),
 		func() generators.GetDefaultGenerator {
 			return func() (generators.Generator, error) {
-				return aiMockGenerator{}, nil
+				return restateThresholdMockGenerator{}, nil
 			}
 		},
+		func() flags.Files { return flags.Files{"test.md": true} },
+		func() flags.MaxTokens { return flags.MaxTokens(1 << 20) },
 	).Call(func(
 		systemPrompt SystemPrompt,
 		userPrompt UserPrompt,
@@ -350,7 +354,11 @@ func TestUserPromptEndsWithSystemPromptRestate(t *testing.T) {
 	if err := os.Chdir(dir); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile("test.md", []byte("# Title\n"), 0644); err != nil {
+	// The restate appears only when the assembled user prompt exceeds the
+	// restate threshold; restateThresholdMockGenerator counts one token
+	// per byte, so a fixture of 1024 lines crosses it with margin for the
+	// file markers and the working directory hint.
+	if err := os.WriteFile("test.md", []byte(strings.Repeat("# data\n", 1024)), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -360,9 +368,11 @@ func TestUserPromptEndsWithSystemPromptRestate(t *testing.T) {
 		modes.ForTest(t),
 		func() generators.GetDefaultGenerator {
 			return func() (generators.Generator, error) {
-				return aiMockGenerator{}, nil
+				return restateThresholdMockGenerator{}, nil
 			}
 		},
+		func() flags.Files { return flags.Files{"test.md": true} },
+		func() flags.MaxTokens { return flags.MaxTokens(1 << 20) },
 	).Call(func(
 		userPrompt UserPrompt,
 		systemPrompt SystemPrompt,
@@ -382,6 +392,52 @@ func TestUserPromptEndsWithSystemPromptRestate(t *testing.T) {
 		}
 		if want := components.SystemPromptRestate(string(systemPrompt)); text != want {
 			t.Fatal("user prompt must end with the verbatim system prompt restate")
+		}
+	})
+}
+
+// TestUserPromptBelowThresholdOmitsRestate verifies the short-prompt regime
+// of the restate threshold: a user prompt within
+// components.SystemPromptRestateThreshold tokens omits the verbatim restate,
+// because the system prompt is still close to the generation point.
+// userPromptMockGenerator counts zero tokens, so the assembled prompt stays
+// far below the threshold. See components.TheoryOfComponents.
+func TestUserPromptBelowThresholdOmitsRestate(t *testing.T) {
+	dir := t.TempDir()
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(oldWd)
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("test.md", []byte("# Title\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	dscope.New(
+		new(Module),
+	).Fork(
+		modes.ForTest(t),
+		func() generators.GetDefaultGenerator {
+			return func() (generators.Generator, error) {
+				return userPromptMockGenerator{}, nil
+			}
+		},
+		func() flags.Files { return flags.Files{"test.md": true} },
+		func() flags.MaxTokens { return flags.MaxTokens(1 << 20) },
+	).Call(func(
+		userPrompt UserPrompt,
+		systemPrompt SystemPrompt,
+	) {
+		if len(userPrompt) == 0 {
+			t.Fatal("user prompt must have the file context parts")
+		}
+		for _, part := range userPrompt {
+			if text, ok := part.(generators.Text); ok && text == components.SystemPromptRestate(string(systemPrompt)) {
+				t.Fatal("restate must be omitted for a user prompt within the threshold")
+			}
 		}
 	})
 }
@@ -489,6 +545,20 @@ func (userPromptMockGenerator) Spec() generators.Spec {
 		ContextTokens:     1 << 20,
 		MaxGenerateTokens: &maxGenerate,
 	}
+}
+
+// restateThresholdMockGenerator counts one token per byte, so a fixture
+// larger than components.SystemPromptRestateThreshold bytes makes the
+// assembled user prompt exceed the restate threshold and carry the verbatim
+// system prompt restate. It inherits the positive context window of
+// userPromptMockGenerator so the parts provider emits the file content. See
+// components.SystemPromptRestateForUserPrompt.
+type restateThresholdMockGenerator struct {
+	userPromptMockGenerator
+}
+
+func (restateThresholdMockGenerator) CountTokens(text string) (int, error) {
+	return len(text), nil
 }
 
 func TestSystemPromptIgnoreOrderDeterministic(t *testing.T) {

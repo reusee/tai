@@ -175,21 +175,6 @@ func countFuncsTokens(funcs []generators.FuncDecl, count func(string) (int, erro
 	return count(string(data))
 }
 
-// buildUserPromptText concatenates the Text parts of the user prompt parts
-// into a single string for token counting. It uses strings.Builder so the
-// accumulation is linear in the total context size: repeated += over
-// hundreds of file context parts would copy the accumulated string on every
-// iteration, which is quadratic for large contexts.
-func buildUserPromptText(parts []generators.Part) string {
-	var b strings.Builder
-	for _, part := range parts {
-		if text, ok := part.(generators.Text); ok {
-			b.WriteString(string(text))
-		}
-	}
-	return b.String()
-}
-
 const TheoryOfAttemptStatistics = `
 Attempt statistics are collected per attempt to provide visibility into
 token usage and duration. Each attempt produces a single AttemptStat
@@ -515,7 +500,9 @@ Chat bracketing: at user prompt assembly points backed by a parts
 provider, the chat input is placed before the parts provider content as
 well as after it. The pipeline prepends a copy of the joined -chat
 arguments before the provider parts and keeps appending the chat input
-itself after the system prompt restate, so the long file context is
+itself after the system prompt restate — or after the provider parts
+when the restate is omitted within
+components.SystemPromptRestateThreshold — so the long file context is
 bracketed by the user request on both sides: the model reads the task
 before the context — knowing what to look for while reading — and reads
 it again as the freshest input before generating. The prepended copy
@@ -525,8 +512,8 @@ at the head of the user content, so different chat inputs shift the file
 context in the request and forfeit user-content prefix reuse across
 tasks; comprehension is deliberately traded for cache. The next
 command's UserPrompt prepends the chat input the same way when given;
-its single-shot design has no trailing chat content, so the restate
-remains the last part.
+its single-shot design has no trailing chat content, so the restate,
+when present, remains the last part.
 `
 
 // GenerateWithResultWithStats runs the full codes generation pipeline
@@ -639,9 +626,12 @@ func (Module) GenerateWithResultWithStats(
 
 		// Calculate remaining budget for user content. The system prompt is
 		// charged twice: once as the actual system prompt, and once for
-		// the verbatim restate appended at the end of the user prompt
-		// (components.SystemPromptRestate), which re-sends the full
-		// system prompt inside the user content. See
+		// the verbatim restate that the user prompt carries when it
+		// exceeds the restate threshold
+		// (components.SystemPromptRestateForUserPrompt). The charge is
+		// unconditional and therefore conservative when the restate is
+		// omitted: whether the restate appears depends on the assembled
+		// size, which is known only after assembly. See
 		// components.TheoryOfComponents.
 		maxUserPromptTokens := maxInputTokens - systemPromptTokens*2 - funcTokens - 1000
 		if maxUserPromptTokens <= 0 {
@@ -660,8 +650,8 @@ func (Module) GenerateWithResultWithStats(
 		// the joined -chat arguments is prepended before the context so
 		// the model knows the task while reading it, and the chat input
 		// itself still follows the context after the restate. The
-		// prepended copy ends with a blank line so the context starts a
-		// fresh paragraph. See TheoryOfChatBracketing and
+		// prepended copy ends with a blank line so the context starts
+		// a fresh paragraph. See TheoryOfChatBracketing and
 		// generators.TheoryOfContentUnitSeparation.
 		var userPromptParts []generators.Part
 		if chats := strings.Join(flagChats, "\n"); chats != "" {
@@ -677,18 +667,24 @@ func (Module) GenerateWithResultWithStats(
 		userPromptParts = append(userPromptParts, comps.UserPromptParts()...)
 
 		// The system prompt restate is the last user prompt part before
-		// the dynamic chat input: the model re-reads the complete
-		// instructions verbatim immediately before generating, and the
-		// restate is built from the same text as the system prompt so the
-		// two can never diverge. See components.TheoryOfComponents.
-		userPromptParts = append(userPromptParts, components.SystemPromptRestate(string(systemPrompt)))
-
-		// Concatenate the text parts with strings.Builder for token counting.
-		userPromptText := buildUserPromptText(userPromptParts)
-		userPromptTokens, err := generator.CountTokens(userPromptText)
+		// the dynamic chat input, appended only when the assembled user
+		// prompt exceeds the restate threshold: the restate re-exposes
+		// the complete rules across long intervening content, and a user
+		// prompt within the threshold leaves the system prompt close to
+		// the generation point, so the verbatim copy is omitted. The
+		// token count returned alongside the decision parts covers the
+		// assembled user prompt without the restate and feeds the log
+		// below. See components.TheoryOfComponents and
+		// components.SystemPromptRestateThreshold.
+		restateParts, userPromptTokens, err := components.SystemPromptRestateForUserPrompt(
+			userPromptParts,
+			string(systemPrompt),
+			generator.CountTokens,
+		)
 		if err != nil {
 			return Result{}, nil, err
 		}
+		userPromptParts = append(userPromptParts, restateParts...)
 		logger.Info("user prompt ready",
 			"tokens", userPromptTokens,
 			"parts", len(userPromptParts),

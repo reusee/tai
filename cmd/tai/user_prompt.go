@@ -25,10 +25,12 @@ command is a direct-conversation command: its Defs fork
 UserPromptDirectoryFallback to false, and Module.UserPrompt then skips the
 parts provider entirely when no -file pattern is given — no directory
 scan, no working directory hint, and no chat bracketing copy, because
-there is no context to bracket; the prompt is the system prompt restate
-alone and the command appends its user input marker after it. Explicit
--file patterns behave identically in every command: the patterns are
-sorted for deterministic prompt bytes and rendered under the token budget.
+there is no context to bracket; the prompt is the thresholded system
+prompt restate alone — omitted when the assembled prompt sits within
+components.SystemPromptRestateThreshold — and the command appends its
+user input marker after it. Explicit -file patterns behave identically in
+every command: the patterns are sorted for deterministic prompt bytes and
+rendered under the token budget.
 `
 
 // UserPromptDirectoryFallback selects the meaning of an empty -file set
@@ -89,9 +91,12 @@ func (Module) UserPrompt(
 		systemPromptTokens, err := generator.CountTokens(string(systemPrompt))
 		ce(err)
 		// The system prompt is charged twice: once as the actual system
-		// prompt, and once for the verbatim restate appended at the end of
-		// the user prompt (components.SystemPromptRestate), which re-sends
-		// the full system prompt inside the user content. See
+		// prompt, and once for the verbatim restate that the user prompt
+		// carries when it exceeds the restate threshold
+		// (components.SystemPromptRestateForUserPrompt). The charge is
+		// unconditional and therefore conservative when the restate is
+		// omitted: whether the restate appears depends on the assembled
+		// size, which is known only after assembly. See
 		// components.TheoryOfComponents.
 		maxInputTokens -= systemPromptTokens * 2
 
@@ -116,16 +121,26 @@ func (Module) UserPrompt(
 		ce(err)
 		parts = append(parts, providerParts...)
 
-	}
+		// The system prompt restate is the last user prompt part before
+		// the dynamic user input, appended only when the assembled user
+		// prompt exceeds the restate threshold: the restate re-exposes
+		// the complete rules across long intervening content, and a user
+		// prompt within the threshold leaves the system prompt close to
+		// the generation point, so the verbatim copy is omitted and its
+		// tokens saved. The part ends with a blank line so the user input
+		// that follows starts a fresh paragraph. See
+		// components.TheoryOfComponents,
+		// components.SystemPromptRestateThreshold and
+		// generators.TheoryOfContentUnitSeparation.
+		restateParts, _, err := components.SystemPromptRestateForUserPrompt(
+			parts,
+			string(systemPrompt),
+			generator.CountTokens,
+		)
+		ce(err)
+		parts = append(parts, restateParts...)
 
-	// The system prompt restate is the last user prompt part before the
-	// dynamic user input: the model re-reads the complete instructions
-	// verbatim immediately before generating, and the restate is built
-	// from the same text as the system prompt so the two can never
-	// diverge. It ends with a blank line so the user input that follows
-	// starts a fresh paragraph. See components.TheoryOfComponents and
-	// generators.TheoryOfContentUnitSeparation.
-	parts = append(parts, components.SystemPromptRestate(string(systemPrompt)))
+	}
 
 	return UserPrompt(parts)
 }

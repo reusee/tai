@@ -64,6 +64,61 @@ func TestSystemPromptRestate(t *testing.T) {
 	}
 }
 
+func TestSystemPromptRestateForUserPrompt(t *testing.T) {
+	// countBytes is a deterministic stand-in tokenizer: one token per
+	// byte, so the threshold is crossed by fixture text larger than
+	// SystemPromptRestateThreshold bytes.
+	countBytes := func(text string) (int, error) {
+		return len(text), nil
+	}
+
+	t.Run("within threshold omits restate", func(t *testing.T) {
+		parts := []generators.Part{
+			generators.Text("short context\n"),
+			generators.Thought("reasoning is not counted"),
+		}
+		restate, tokens, err := SystemPromptRestateForUserPrompt(parts, "rules", countBytes)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(restate) != 0 {
+			t.Fatal("restate must be omitted for a user prompt within the threshold")
+		}
+		if want := len("short context\n"); tokens != want {
+			t.Fatalf("tokens = %d, want %d (Text parts only)", tokens, want)
+		}
+	})
+
+	t.Run("above threshold returns restate", func(t *testing.T) {
+		long := strings.Repeat("x", SystemPromptRestateThreshold+1)
+		parts := []generators.Part{generators.Text(long)}
+		restate, tokens, err := SystemPromptRestateForUserPrompt(parts, "rules", countBytes)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(restate) != 1 {
+			t.Fatalf("expected the restate part above the threshold, got %d parts", len(restate))
+		}
+		if restate[0] != SystemPromptRestate("rules") {
+			t.Fatal("restate part must be the verbatim system prompt restate")
+		}
+		if tokens != len(long) {
+			t.Fatalf("tokens = %d, want %d", tokens, len(long))
+		}
+	})
+
+	t.Run("count error propagates", func(t *testing.T) {
+		_, _, err := SystemPromptRestateForUserPrompt(
+			[]generators.Part{generators.Text("x")},
+			"rules",
+			func(string) (int, error) { return 0, generators.ErrRetryable },
+		)
+		if err == nil {
+			t.Fatal("count error must propagate")
+		}
+	})
+}
+
 func TestComponentSetProcessable(t *testing.T) {
 	comps := ComponentSet{
 		{Kind: "a", Process: func(ctx context.Context, pctx *ProcessContext) ProcessResult { return ProcessResult{} }},

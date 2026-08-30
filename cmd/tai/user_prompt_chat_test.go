@@ -16,8 +16,11 @@ func TestUserPromptChatInputPrecedesContext(t *testing.T) {
 	// arguments are prepended as the first user prompt part (ending with
 	// a blank line) so the model reads the task before the long file
 	// context. userPromptMockGenerator carries a positive context window
-	// so the parts provider emits the file content. See
-	// pipeline.TheoryOfChatBracketing.
+	// so the parts provider emits the file content, and counts zero
+	// tokens, so the assembled user prompt stays within the restate
+	// threshold and omits the verbatim system prompt restate. See
+	// pipeline.TheoryOfChatBracketing and
+	// components.SystemPromptRestateForUserPrompt.
 	dir := t.TempDir()
 	oldWd, err := os.Getwd()
 	if err != nil {
@@ -45,8 +48,8 @@ func TestUserPromptChatInputPrecedesContext(t *testing.T) {
 	).Call(func(
 		userPrompt UserPrompt,
 	) {
-		if len(userPrompt) < 3 {
-			t.Fatalf("expected chat input, file context, and restate, got %d parts", len(userPrompt))
+		if len(userPrompt) < 2 {
+			t.Fatalf("expected chat input and file context, got %d parts", len(userPrompt))
 		}
 		first, ok := userPrompt[0].(generators.Text)
 		if !ok || first != "do the next thing\n\n" {
@@ -55,6 +58,11 @@ func TestUserPromptChatInputPrecedesContext(t *testing.T) {
 		second, ok := userPrompt[1].(generators.Text)
 		if !ok || !strings.Contains(string(second), "# Title") {
 			t.Fatalf("second part must be the file context part, got %#v", userPrompt[1])
+		}
+		for _, part := range userPrompt {
+			if text, ok := part.(generators.Text); ok && strings.HasPrefix(string(text), "[System note:") {
+				t.Fatal("a user prompt within the restate threshold must omit the verbatim system prompt restate")
+			}
 		}
 	})
 }
