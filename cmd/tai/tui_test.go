@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gdamore/tcell/v3/color"
+	"github.com/reusee/dscope"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/pipeline"
@@ -125,8 +126,30 @@ func TestTuiCliFlagHandle(t *testing.T) {
 
 func TestTuiDefaultEnabled(t *testing.T) {
 	var m Module
-	if !bool(m.Tui()) {
-		t.Fatal("expected TUI mode by default")
+	// A terminal stdout keeps the TUI default.
+	if !bool(m.Tui(func() bool { return true })) {
+		t.Fatal("expected TUI mode when stdout is a terminal")
+	}
+	// A redirected stdout — a pipe to another program or a file —
+	// defaults to CLI. See TheoryOfDisplayMode.
+	if bool(m.Tui(func() bool { return false })) {
+		t.Fatal("expected CLI mode when stdout is redirected")
+	}
+}
+
+func TestTuiFlagOverridesRedirectedDefault(t *testing.T) {
+	// With stdout redirected (StdoutIsTerminal false), the -tui flag
+	// still selects the TUI: the flag fork overrides the provider's
+	// redirected default. See TheoryOfDisplayMode.
+	scope := dscope.New(dscope.Methods(new(Module))...).Fork(func() StdoutIsTerminal {
+		return func() bool { return false }
+	})
+	scope, err := flags.Parse(scope, []string{"-tui"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bool(scope.Get[Tui]()) {
+		t.Fatal("expected -tui to override the redirected default")
 	}
 }
 

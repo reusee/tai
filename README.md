@@ -74,7 +74,7 @@ tai next -file main.go chat "fix the nil pointer dereference in the init functio
 
 ### Terminal UI
 
-Every command runs in a terminal UI by default: an Output tab for model output, an Events tab for the generation event stream, and a Logs tab for log records. The `-cli` flag switches to plain command-line output.
+Every command runs in a terminal UI by default when stdout is a terminal: an Output tab for model output, an Events tab for the generation event stream, and a Logs tab for log records. When stdout is redirected to another program or a file (for example `tai next | tee .AI`), the default is plain command-line output: the TUI discards stdout, so a piped consumer would receive nothing. The `-tui` flag forces the TUI explicitly; the `-cli` flag switches to plain command-line output.
 ## Configuration
 
 Configuration is loaded from CUE files (`tai.cue` or `.tai.cue`) in the working directory, at the root of the Go module (when the working directory is inside a Go module), in the user config directory, and in `/etc`. Command-line flags override config file values.
@@ -125,7 +125,7 @@ Gemini, OpenAI, DeepSeek, Volcano Engine (Huoshan), Baidu, Tencent, Alibaba Clou
 | `-pkg` / `-load` | Add a Go package loading pattern (focus packages) |
 | `-ctx` / `-dep` | Add a context package pattern for dependency analysis |
 | `-match` | Match files by regex pattern for inclusion |
-| `-tui` | Use the terminal UI (the default) |
+| `-tui` | Force the terminal UI (the default when stdout is a terminal; a redirected stdout defaults to CLI) |
 | `-cli` | Use the plain command-line interface, disabling the TUI |
 
 ## Architecture

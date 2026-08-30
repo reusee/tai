@@ -346,32 +346,66 @@ TUI's pointer interaction. Each toggle records the new state as a log
 line in the Logs tab.
 `
 
-// Tui controls the terminal UI mode, which is the default for every
-// command. The -tui flag states the choice explicitly, and the -cli
-// flag disables the TUI for plain command-line output. See
-// TheoryOfDisplayMode.
+// Tui controls the terminal UI mode. The default is the TUI when stdout
+// is a terminal and CLI when stdout is redirected to another program or
+// a file, so piped consumers receive the generation output. The -tui
+// flag forces the TUI explicitly, and the -cli flag forces plain
+// command-line output. See TheoryOfDisplayMode.
 type Tui bool
 
 const TheoryOfDisplayMode = `
-Display mode policy: every command runs in the TUI by default. The -cli
-flag opts out to plain command-line output, where generation output
-writes to the real stdout instead of the TUI's redirected null device;
-the -tui flag states the TUI choice explicitly. The default lives in
-Module.Tui, and main routes the command through runWithTUI when the
-resolved Tui value is true. A newTUI failure (no usable terminal) falls
-back to the plain command-line path, so pipes and non-interactive
-environments degrade gracefully without the flag.
+Display mode policy: every command runs in the TUI by default when
+stdout is a terminal. When stdout is redirected to another program or a
+file (tai next | tee .AI), the default is CLI: TUI mode discards stdout
+— redirecting it to the null device and capturing output through state
+decorators — so a piped consumer would receive nothing. The -cli flag
+opts out to plain command-line output, where generation output writes
+to the real stdout instead of the TUI's redirected null device; the
+-tui flag states the TUI choice explicitly and overrides the redirected
+default. The default lives in Module.Tui, which consults the injected
+StdoutIsTerminal check so tests control the environment (under go test
+stdout is itself a pipe), and main routes the command through
+runWithTUI when the resolved Tui value is true. A newTUI failure (no
+usable terminal) falls back to the plain command-line path, so
+non-interactive environments degrade gracefully without the flag.
 `
 
-// Tui provides the display-mode default: the TUI is enabled unless
-// -cli disables it. See TheoryOfDisplayMode.
-func (Module) Tui() Tui { return true }
+// StdoutIsTerminal reports whether standard output is attached to a
+// terminal. The display-mode default consults it to detect a redirected
+// stdout — a pipe to another program or a file — where TUI mode would
+// discard the output the consumer expects. It is a dscope-injected
+// function type so tests control the environment. See
+// TheoryOfDisplayMode.
+type StdoutIsTerminal func() bool
+
+// Tui provides the display-mode default: the TUI when stdout is a
+// terminal, CLI when stdout is redirected, so piped consumers receive
+// the generation output instead of the TUI's discarded stdout. The -tui
+// and -cli flags override the default. See TheoryOfDisplayMode.
+func (Module) Tui(stdoutIsTerminal StdoutIsTerminal) Tui {
+	return Tui(stdoutIsTerminal())
+}
+
+// StdoutIsTerminal provides the production check: os.Stdout is a
+// terminal when its file mode has the character-device bit set; a pipe
+// or a regular file lacks the bit. /dev/null carries the bit, which is
+// harmless — redirecting to /dev/null discards the output either way.
+// See TheoryOfDisplayMode.
+func (Module) StdoutIsTerminal() StdoutIsTerminal {
+	return func() bool {
+		info, err := os.Stdout.Stat()
+		if err != nil {
+			return false
+		}
+		return info.Mode()&os.ModeCharDevice != 0
+	}
+}
 
 var _ generators.State = tuiOutputState{}
 
 func (t Tui) Handle(key string, args []string) (newDef any, remainArgs []string, err error) {
-	// -tui selects the TUI (the default); -cli selects plain
-	// command-line output.
+	// -tui selects the TUI; -cli selects plain command-line output.
+	// Either flag overrides the StdoutIsTerminal-derived default.
 	ret := Tui(key != "-cli")
 	return &ret, args, nil
 }
