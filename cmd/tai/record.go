@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 
+	"github.com/reusee/tai/apps"
 	"github.com/reusee/tai/modes"
 	"github.com/reusee/tai/records"
 )
@@ -26,11 +27,9 @@ run.
 See records.TheoryOfInteractionRecording.
 `
 
-var RecordCommand = Command{
-	Defs: []any{
-		modes.ForProduction(),
-	},
-	Main: func(
+var RecordCommand = apps.New("record",
+	"Record interaction sessions and analyze them for self-improvement",
+	func(
 		output Output,
 		sessionID records.SessionID,
 		analyze records.Analyze,
@@ -53,4 +52,5 @@ var RecordCommand = Command{
 
 		ce(listSessions(int(limit), output))
 	},
-}
+	modes.ForProduction(),
+)

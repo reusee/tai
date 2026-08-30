@@ -9,36 +9,44 @@ import (
 	"testing"
 
 	"github.com/reusee/dscope"
+	"github.com/reusee/tai/apps"
 	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/pipeline"
-	"github.com/reusee/tai/records"
 )
 
 func TestPingCommandRegistered(t *testing.T) {
 	dscope.New(
 		new(Module),
 	).Call(func(
-		cmd Command,
+		runner apps.Runner,
 	) {
-		keys := cmd.Keys()
+		// The default Runner is always present and registers no
+		// selection key: defaults carry no Description. See
+		// apps.TheoryOfApps.
+		if keys := runner.Keys(); len(keys) != 0 {
+			t.Fatalf("the default command must not register keys, got %v", keys)
+		}
+
+		keys := PingCommand.Keys()
 		if _, ok := keys["ping"]; !ok {
 			t.Fatal("ping command not registered in Keys()")
 		}
 
-		newValue, _, err := cmd.Handle("ping", nil)
+		newValue, _, err := PingCommand.Handle("ping", nil)
 		if err != nil {
 			t.Fatalf("Handle ping failed: %v", err)
 		}
-		// Handle returns *Command (a pointer), matching the flags.Flag convention
-		// where Handle returns a pointer to a typed value for scope.Fork.
-		// See flags.Flag.Handle documentation.
-		pingCmd, ok := newValue.(*Command)
+		// Handle returns *apps.Runner (a pointer to the type-erased
+		// interface), matching the flags.Flag convention where Handle
+		// returns a definition for scope.Fork. See flags.Flag.Handle
+		// documentation and apps.TheoryOfApps.
+		pingRunner, ok := newValue.(*apps.Runner)
 		if !ok {
-			t.Fatal("Handle ping did not return a *Command")
+			t.Fatal("Handle ping did not return an *apps.Runner")
 		}
-		if pingCmd.Main == nil {
+		if appMainPointer(*pingRunner) == 0 {
 			t.Fatal("PingCommand has no Main")
 		}
 	})
@@ -263,10 +271,9 @@ func TestPingCommandUsesRunLoop(t *testing.T) {
 		return func(yield func(pipeline.Event, error) bool) {}
 	}
 
-	mainFn, ok := PingCommand.Main.(func(Output, *records.Recorder, generators.GetDefaultGenerator, generators.BuildGenerate, pipeline.Run, RandomPingBlocks, flags.ExtraSystemPrompt, flags.FamilyExtraSystemPrompt, generators.ModelFamily, flags.Thoughts))
-	if !ok {
-		t.Fatalf("unexpected Main type: %T", PingCommand.Main)
-	}
+	// PingCommand is an apps.App whose Main field carries the concrete
+	// function type; the compiler checks the signature at the call.
+	mainFn := PingCommand.Main
 
 	// Capture stdout so the success verdict is asserted and does not
 	// pollute the test output.
@@ -361,10 +368,9 @@ func TestPingCommandInjectsExtraSystemPrompt(t *testing.T) {
 		return func(yield func(pipeline.Event, error) bool) {}
 	}
 
-	mainFn, ok := PingCommand.Main.(func(Output, *records.Recorder, generators.GetDefaultGenerator, generators.BuildGenerate, pipeline.Run, RandomPingBlocks, flags.ExtraSystemPrompt, flags.FamilyExtraSystemPrompt, generators.ModelFamily, flags.Thoughts))
-	if !ok {
-		t.Fatalf("unexpected Main type: %T", PingCommand.Main)
-	}
+	// PingCommand is an apps.App whose Main field carries the concrete
+	// function type; the compiler checks the signature at the call.
+	mainFn := PingCommand.Main
 
 	oldStdout := os.Stdout
 	r, w, err := os.Pipe()
@@ -433,10 +439,9 @@ func TestPingCommandThoughtsFlag(t *testing.T) {
 			}
 		}
 	}
-	mainFn, ok := PingCommand.Main.(func(Output, *records.Recorder, generators.GetDefaultGenerator, generators.BuildGenerate, pipeline.Run, RandomPingBlocks, flags.ExtraSystemPrompt, flags.FamilyExtraSystemPrompt, generators.ModelFamily, flags.Thoughts))
-	if !ok {
-		t.Fatalf("unexpected Main type: %T", PingCommand.Main)
-	}
+	// PingCommand is an apps.App whose Main field carries the concrete
+	// function type; the compiler checks the signature at the call.
+	mainFn := PingCommand.Main
 
 	noThoughts := false
 	for _, tc := range []struct {

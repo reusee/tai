@@ -7,6 +7,7 @@ import (
 	"slices"
 
 	"github.com/reusee/prompts"
+	"github.com/reusee/tai/apps"
 	"github.com/reusee/tai/changes"
 	"github.com/reusee/tai/components"
 	"github.com/reusee/tai/flags"
@@ -140,12 +141,9 @@ func (Module) SystemPrompt(
 	return
 }
 
-var NextCommand = Command{
-	Interactive: true,
-	Defs: []any{
-		modes.ForProduction(),
-	},
-	Main: func(
+var NextCommand = apps.New("next",
+	"Identify and execute the most valuable next step",
+	func(
 		getDefaultGenerator generators.GetDefaultGenerator,
 		systemPrompt SystemPrompt,
 		userPrompt UserPrompt,
@@ -249,4 +247,6 @@ var NextCommand = Command{
 		}
 
 	},
-}
+	modes.ForProduction(),
+	new(apps.Interactive(true)),
+)

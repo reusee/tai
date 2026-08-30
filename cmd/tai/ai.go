@@ -119,27 +119,9 @@ assistant text for memory parsing always excludes thoughts, so
 summarization never interferes with memory block extraction.
 `
 
-var AICommand = Command{
-	Interactive: true,
-	Defs: []any{
-		modes.ForProduction(),
-		new(apps.Name("cmd_ai")),
-
-		func(getAISystemPrompt AISystemPrompt) SystemPrompt {
-			prompt, err := getAISystemPrompt()
-			ce(err)
-			return SystemPrompt(prompt)
-		},
-
-		// The ai command is a direct-conversation command: without -file
-		// patterns its user prompt carries no file context — no directory
-		// scan and no working directory hint. See
-		// TheoryOfUserPromptFileContext.
-		func() UserPromptDirectoryFallback {
-			return false
-		},
-	},
-	Main: func(
+var AICommand = apps.New("ai",
+	"Start an interactive AI chat session with memory",
+	func(
 		logger logs.Logger,
 		comps AIComponents,
 		updateMemoryFromBlock memories.UpdateMemoryFromBlock,
@@ -239,4 +221,15 @@ var AICommand = Command{
 		ce(err)
 
 	},
-}
+	modes.ForProduction(),
+	new(apps.Name("cmd_ai")),
+	new(apps.Interactive(true)),
+	func(getAISystemPrompt AISystemPrompt) SystemPrompt {
+		prompt, err := getAISystemPrompt()
+		ce(err)
+		return SystemPrompt(prompt)
+	},
+	func() UserPromptDirectoryFallback {
+		return false
+	},
+)

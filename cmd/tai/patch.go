@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/reusee/tai/apps"
 	"github.com/reusee/tai/changes"
 )
 
@@ -15,8 +16,9 @@ the generation pipeline (see pipeline.TheoryOfStreamingApply) without wiring
 the full generation pipeline.
 `
 
-var PatchCommand = Command{
-	Main: func(
+var PatchCommand = apps.New("patch",
+	"Apply a boundary-delimited diff file to the working tree",
+	func(
 		output Output,
 		applyDiffFile changes.ApplyDiffFile,
 	) {
@@ -31,10 +33,8 @@ var PatchCommand = Command{
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
-			// The applied notice is written to the command Output writer so
-			// it is visible in the TUI's output tab. See
-			// TheoryOfCommandOutput.
+
 			fmt.Fprintf(output, "Applied %s %s\n", block.Op, block.Target)
 		}
 	},
-}
+)

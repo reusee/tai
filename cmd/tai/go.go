@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 
+	"github.com/reusee/tai/apps"
 	"github.com/reusee/tai/debugs"
 	"github.com/reusee/tai/gotools"
 	"github.com/reusee/tai/modes"
@@ -32,23 +33,8 @@ debugs infrastructure without running generation, useful for
 interactive debugging.
 `
 
-var GoModuleCommand = Command{
-	Defs: []any{
-		modes.ForProduction(),
-		func(
-			provider gotools.PartsProvider,
-		) codetypes.PartsProvider {
-			return provider
-		},
-		func(
-			comps pipeline.CodesComponents,
-			feedback pipeline.GoalFeedback,
-			summaries pipeline.GoalLoopSummaries,
-		) pipeline.SystemPrompt {
-			return pipeline.GoalSystemPromptText(comps, feedback, summaries)
-		},
-	},
-	Main: func(
+var GoModuleCommand = apps.New("go_module", "",
+	func(
 		goalRun pipeline.GoalRun,
 		output Output,
 		tap debugs.Tap,
@@ -60,7 +46,20 @@ var GoModuleCommand = Command{
 		}
 		goalRun(context.Background(), output)
 	},
-}
+	modes.ForProduction(),
+	func(
+		provider gotools.PartsProvider,
+	) codetypes.PartsProvider {
+		return provider
+	},
+	func(
+		comps pipeline.CodesComponents,
+		feedback pipeline.GoalFeedback,
+		summaries pipeline.GoalLoopSummaries,
+	) pipeline.SystemPrompt {
+		return pipeline.GoalSystemPromptText(comps, feedback, summaries)
+	},
+)
 
 type InGoModule bool
 

@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/reusee/dscope"
+	"github.com/reusee/tai/apps"
 	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/security"
@@ -22,6 +23,17 @@ func main() {
 	// includes the embedded schema and config globals; forking the module
 	// here keeps the configs package self-contained with its own default.
 	scope = scope.Fork(new(taiconfigs.Module))
+
+	// Register the selectable subcommand apps so flags.Parse lists their
+	// names and dispatches the selected one: each app carries its own
+	// selection key and usage description. See apps.TheoryOfApps.
+	scope = scope.Fork(
+		&NextCommand,
+		&AICommand,
+		&PatchCommand,
+		&PingCommand,
+		&RecordCommand,
+	)
 
 	// Load config file values before parsing flags so that command-line
 	// values can override config file values. configs.Load discovers all
@@ -43,8 +55,8 @@ func main() {
 		ce(err)
 	}
 
-	command := scope.Get[Command]()
-	if command.Main == nil {
+	runner, ok := scope.TryGet[apps.Runner]()
+	if !ok {
 		return
 	}
 
@@ -58,9 +70,9 @@ func main() {
 	scope = scope.Fork(eventRecorderDef)
 
 	if bool(scope.Get[Tui]()) {
-		runWithTUI(command, scope)
+		runWithTUI(runner, scope)
 		return
 	}
 
-	scope.Fork(command.Defs...).Call(command.Main)
+	runner.Call(runner.Scope(scope))
 }

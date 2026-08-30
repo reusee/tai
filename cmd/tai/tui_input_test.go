@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/reusee/dscope"
+	"github.com/reusee/tai/apps"
 	"github.com/reusee/tai/modes"
 	"github.com/reusee/tai/pipeline"
 	"github.com/reusee/tai/taiui"
@@ -644,27 +645,33 @@ func TestForkTUIDisplayRoutesChatInput(t *testing.T) {
 }
 
 // TestCommandInteractiveFlags pins the interactivity declaration: only
-// the commands that call pipeline.ChatInput while running — the ai
-// command's idle handler and the next command's chat phase — render the
-// chat input bar in TUI mode; every other command hides it. See
-// TheoryOfTUIChatInput.
+// the apps that call pipeline.ChatInput while running — the ai app's
+// idle handler and the next app's chat phase — render the chat input
+// bar in TUI mode; every other app hides it. Interactive apps fork
+// apps.Interactive(true) into their Defs, and the test reads the value
+// from each app's scope. See TheoryOfTUIChatInput and apps.TheoryOfApps.
 func TestCommandInteractiveFlags(t *testing.T) {
-	for name, command := range map[string]Command{
+	// The base must satisfy every app's Defs: Fork analyzes each
+	// definition's dependencies, so a provider def such as the ai app's
+	// AISystemPrompt fork fails on a base lacking its dependencies. The
+	// full cmd/tai Module provides them all, matching main().
+	base := dscope.New(dscope.Methods(new(Module))...)
+	for name, app := range map[string]apps.Runner{
 		"ai":   AICommand,
 		"next": NextCommand,
 	} {
-		if !command.Interactive {
+		if !bool(app.Scope(base).Get[apps.Interactive]()) {
 			t.Fatalf("command %s must declare itself interactive", name)
 		}
 	}
-	for name, command := range map[string]Command{
+	for name, app := range map[string]apps.Runner{
 		"default (go module)": GoModuleCommand,
 		"default (any text)":  AnyTextCommand,
 		"patch":               PatchCommand,
 		"ping":                PingCommand,
 		"record":              RecordCommand,
 	} {
-		if command.Interactive {
+		if bool(app.Scope(base).Get[apps.Interactive]()) {
 			t.Fatalf("command %s must not declare itself interactive", name)
 		}
 	}

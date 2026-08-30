@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/reusee/tai/anytexts"
+	"github.com/reusee/tai/apps"
 	"github.com/reusee/tai/modes"
 	"github.com/reusee/tai/pipeline"
 	"github.com/reusee/tai/pipeline/codetypes"
@@ -22,19 +23,8 @@ dynamic context, immediate apply, shell and continue blocks, and round
 statistics — wired through pipeline.Module in the dscope scope.
 `
 
-var AnyTextCommand = Command{
-	Defs: []any{
-		modes.ForProduction(),
-		func() anytexts.SkeletonFiles {
-			return true
-		},
-		func(
-			provider anytexts.PartsProvider,
-		) codetypes.PartsProvider {
-			return provider
-		},
-	},
-	Main: func(
+var AnyTextCommand = apps.New("any_text", "",
+	func(
 		generateWithResult pipeline.GenerateWithResult,
 		runReview pipeline.RunReview,
 	) {
@@ -46,4 +36,13 @@ var AnyTextCommand = Command{
 			panic(err)
 		}
 	},
-}
+	modes.ForProduction(),
+	func() anytexts.SkeletonFiles {
+		return true
+	},
+	func(
+		provider anytexts.PartsProvider,
+	) codetypes.PartsProvider {
+		return provider
+	},
+)

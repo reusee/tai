@@ -13,6 +13,7 @@ import (
 	"github.com/gdamore/tcell/v3/color"
 	"github.com/gdamore/tcell/v3/tty"
 	"github.com/reusee/dscope"
+	"github.com/reusee/tai/apps"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
@@ -197,9 +198,10 @@ pipeline.ChatInput to TUI.ChatInput, so both interactive chat paths
 the bar in TUI mode while plain command-line mode keeps the liner
 default. See pipeline.TheoryOfChatInput.
 
-Only interactive sessions render the bar: commands that call
-pipeline.ChatInput while running declare Command.Interactive, and
-runWithTUI copies it into TUI.interactive. The other commands (goal
+Only interactive sessions render the bar: apps that call
+pipeline.ChatInput while running fork apps.Interactive(true) into their
+Defs, and runWithTUI reads it from the app's scope into TUI.interactive.
+The other commands (goal
 mode, any, ping, patch, record) never read interactive input, so their
 TUI omits the bar entirely — the Output pane keeps its full height, a
 press on the bottom row drives ordinary tab interaction, and the help
@@ -622,8 +624,8 @@ type TUI struct {
 	// See TheoryOfTUI.
 	showHelp bool
 
-	// interactive reports whether this session's command supports
-	// multi-turn conversation (see Command.Interactive): only
+	// interactive reports whether this session's app supports
+	// multi-turn conversation (see apps.Interactive): only
 	// interactive sessions render the chat input bar and reserve its
 	// row; in the others the bar is not drawn, the Output pane keeps
 	// its full height, and clicks on the bottom row drive ordinary tab
@@ -1778,17 +1780,23 @@ func forkTUIDisplay(scope dscope.Scope, tui *TUI) dscope.Scope {
 	})
 }
 
-func runWithTUI(command Command, scope dscope.Scope) {
+func runWithTUI(runner apps.Runner, scope dscope.Scope) {
 	tui, err := newTUI()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "cannot start TUI: %v; continuing without TUI\n", err)
-		scope.Fork(command.Defs...).Call(command.Main)
+		runner.Call(runner.Scope(scope))
 		return
 	}
-	// The chat input bar renders only in interactive sessions: commands
+	// Layer the app's definitions onto the scope exactly once, before
+	// anything reads from it: each fork branch evaluates providers
+	// independently, so forking the same defs again would evaluate
+	// side-effecting providers twice. See apps.TheoryOfApps.
+	scope = runner.Scope(scope)
+	// The chat input bar renders only in interactive sessions: apps
 	// that never call pipeline.ChatInput have no use for the bar, so the
-	// Output pane keeps its full height. See TheoryOfTUIChatInput.
-	tui.interactive = command.Interactive
+	// Output pane keeps its full height. Interactive apps fork
+	// apps.Interactive(true) into their Defs. See TheoryOfTUIChatInput.
+	tui.interactive = bool(scope.Get[apps.Interactive]())
 	oldOut, oldErr := os.Stdout, os.Stderr
 
 	// The TUI is the display. Model output is captured from the
@@ -1805,7 +1813,7 @@ func runWithTUI(command Command, scope dscope.Scope) {
 	if err != nil {
 		_ = tui.Stop()
 		fmt.Fprintf(os.Stderr, "cannot open %s: %v; continuing without TUI\n", os.DevNull, err)
-		scope.Fork(command.Defs...).Call(command.Main)
+		runner.Call(scope)
 		return
 	}
 	os.Stdout = devNull
@@ -1814,7 +1822,7 @@ func runWithTUI(command Command, scope dscope.Scope) {
 		_ = devNull.Close()
 		_ = tui.Stop()
 		fmt.Fprintf(os.Stderr, "cannot create stderr pipe: %v; continuing without TUI\n", err)
-		scope.Fork(command.Defs...).Call(command.Main)
+		runner.Call(scope)
 		return
 	}
 	os.Stderr = pw
@@ -1845,7 +1853,7 @@ func runWithTUI(command Command, scope dscope.Scope) {
 	// what the model was asked. See TheoryOfTUI.
 	displayChatInput(tui, scope.Get[flags.Chats]())
 	runErr := tui.Run(func() {
-		scope.Fork(command.Defs...).Call(command.Main)
+		runner.Call(scope)
 	})
 	os.Stdout, os.Stderr = oldOut, oldErr
 	_ = pw.Close()

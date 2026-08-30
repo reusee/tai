@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/reusee/tai/apps"
 	"github.com/reusee/tai/pathutil"
 )
 
@@ -28,7 +29,20 @@ func TestDefaultCommandAutoDetection(t *testing.T) {
 	if _, ok := pathutil.FindGoModuleRoot(sub); !ok {
 		t.Fatal("go.mod in a parent directory must be detected")
 	}
-	keys := Command{}.Keys()
+	keys := make(map[string]string)
+	for _, app := range []apps.Runner{
+		NextCommand,
+		AICommand,
+		PatchCommand,
+		PingCommand,
+		RecordCommand,
+		GoModuleCommand,
+		AnyTextCommand,
+	} {
+		for key, desc := range app.Keys() {
+			keys[key] = desc
+		}
+	}
 	if _, ok := keys["go"]; ok {
 		t.Fatal("the go subcommand must be removed from Keys")
 	}
@@ -36,13 +50,20 @@ func TestDefaultCommandAutoDetection(t *testing.T) {
 		t.Fatal("the any subcommand must be removed from Keys")
 	}
 	inModule := Module{}.Command(true)
-	if inModule.Main == nil ||
-		reflect.ValueOf(inModule.Main).Pointer() != reflect.ValueOf(GoModuleCommand.Main).Pointer() {
+	if appMainPointer(inModule) != appMainPointer(GoModuleCommand) {
 		t.Fatal("the default command inside a Go module must be GoModuleCommand")
 	}
 	outside := Module{}.Command(false)
-	if outside.Main == nil ||
-		reflect.ValueOf(outside.Main).Pointer() != reflect.ValueOf(AnyTextCommand.Main).Pointer() {
+	if appMainPointer(outside) != appMainPointer(AnyTextCommand) {
 		t.Fatal("the default command outside a Go module must be AnyTextCommand")
 	}
+}
+
+// appMainPointer returns the code pointer of a Runner's main function,
+// identifying which app the Runner carries. Runner is type-erased and
+// exposes no Main accessor; the underlying App's Main field is exported,
+// so reflection reads it without executing anything. See
+// apps.TheoryOfApps.
+func appMainPointer(runner apps.Runner) uintptr {
+	return reflect.ValueOf(runner).FieldByName("Main").Pointer()
 }

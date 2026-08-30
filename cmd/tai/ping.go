@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/reusee/tai/apps"
 	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
@@ -271,11 +272,9 @@ func pingAttributesEqual(got, want map[string]string) bool {
 	return true
 }
 
-var PingCommand = Command{
-	Defs: []any{
-		modes.ForProduction(),
-	},
-	Main: func(
+var PingCommand = apps.New("ping",
+	"Test whether a model is reachable and can emit blocks in the required format",
+	func(
 		output Output,
 		recorder *records.Recorder,
 		getDefaultGenerator generators.GetDefaultGenerator,
@@ -292,25 +291,8 @@ var PingCommand = Command{
 		generator, err := getDefaultGenerator()
 		ce(err)
 
-		// Three block specs — each a kind, one to three random parameter
-		// pairs, and an exact body — are chosen at random on every run so
-		// the model cannot match the request from pattern memory; a
-		// correct emission demonstrates availability, block-generation
-		// ability, function-call header parameter ability (including
-		// escape sequences), and verbatim body fidelity.
-		// See TheoryOfPingCommand.
 		specs := randomPingBlocks()
 
-		// The block-format instructions live in the system prompt
-		// (blocks.BlockFormatSystemPrompt), so the user message
-		// (pingBlockPrompt) states only the test requirements — the
-		// kinds, their exact parameter pairs, and their exact bodies —
-		// without repeating the format description. The system prompt
-		// also carries the user-configured extra system prompts
-		// (extra_system_prompt and family_extra_system_prompt), so ping
-		// honors the same configuration as the other generation
-		// commands. Each prompt section is separated by a blank line so
-		// adjacent sections never stick together. See TheoryOfPingCommand.
 		systemPrompt := strings.TrimRight(blocks.BlockFormatSystemPrompt, " \t\n\r")
 		for _, e := range extra {
 			if e != "" {
@@ -337,9 +319,6 @@ var PingCommand = Command{
 			},
 		)
 
-		// The -thoughts flag governs whether reasoning thoughts are
-		// streamed to stdout, defaulting to shown; -no-thoughts hides
-		// them, matching the next command. See TheoryOfPingCommand.
 		showThoughts := true
 		if flagThoughts.Value != nil {
 			showThoughts = *flagThoughts.Value
@@ -373,14 +352,6 @@ var PingCommand = Command{
 		}
 		ce(err)
 
-		// Validate the emitted blocks after generation positionally:
-		// block i must match spec i in kind, attributes (compared by
-		// decoded value, so any equivalent escaping passes), and body,
-		// and no extra block may appear. A validation failure exits
-		// with status 1 so the command is scriptable: availability
-		// alone is not enough, the model must also emit the required
-		// blocks in the required format.
-		// See TheoryOfPingCommand.
 		if err := validatePingBlocks(result, specs); err != nil {
 			fmt.Fprintf(os.Stderr, "ping failed: %v\n", err)
 			if len(result.ParseErrors) > 0 {
@@ -390,9 +361,6 @@ var PingCommand = Command{
 			os.Exit(1)
 		}
 
-		// The verdict is written to the command Output writer so it is
-		// visible in the TUI's output tab instead of being discarded with
-		// stdout. See TheoryOfCommandOutput and TheoryOfPingCommand.
 		rendered := make([]string, len(specs))
 		for i, spec := range specs {
 			rendered[i] = formatPingBlockSpec(spec)
@@ -400,4 +368,5 @@ var PingCommand = Command{
 		fmt.Fprintf(output, "ping ok: model emitted %d blocks in order with exact parameters and bodies (%s)\n",
 			len(specs), strings.Join(rendered, ", "))
 	},
-}
+	modes.ForProduction(),
+)
