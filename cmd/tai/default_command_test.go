@@ -30,7 +30,7 @@ func TestDefaultCommandAutoDetection(t *testing.T) {
 		t.Fatal("go.mod in a parent directory must be detected")
 	}
 	keys := make(map[string]string)
-	for _, app := range []apps.Runner{
+	for _, app := range []apps.App{
 		NextCommand,
 		AICommand,
 		PatchCommand,
@@ -59,11 +59,10 @@ func TestDefaultCommandAutoDetection(t *testing.T) {
 	}
 }
 
-// appMainPointer returns the code pointer of a Runner's main function,
-// identifying which app the Runner carries. Runner is type-erased and
-// exposes no Main accessor; the underlying App's Main field is exported,
-// so reflection reads it without executing anything. See
-// apps.TheoryOfApps.
-func appMainPointer(runner apps.Runner) uintptr {
-	return reflect.ValueOf(runner).FieldByName("Main").Pointer()
+// appMainPointer returns the code pointer of an app's main function,
+// identifying which app an App value carries. The Main field is an any
+// holding the function, so Elem unwraps the interface before reading
+// the code pointer; nothing is executed. See apps.TheoryOfApps.
+func appMainPointer(app apps.App) uintptr {
+	return reflect.ValueOf(app).FieldByName("Main").Elem().Pointer()
 }

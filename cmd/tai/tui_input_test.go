@@ -656,7 +656,7 @@ func TestCommandInteractiveFlags(t *testing.T) {
 	// AISystemPrompt fork fails on a base lacking its dependencies. The
 	// full cmd/tai Module provides them all, matching main().
 	base := dscope.New(dscope.Methods(new(Module))...)
-	for name, app := range map[string]apps.Runner{
+	for name, app := range map[string]apps.App{
 		"ai":   AICommand,
 		"next": NextCommand,
 	} {
@@ -664,7 +664,7 @@ func TestCommandInteractiveFlags(t *testing.T) {
 			t.Fatalf("command %s must declare itself interactive", name)
 		}
 	}
-	for name, app := range map[string]apps.Runner{
+	for name, app := range map[string]apps.App{
 		"default (go module)": GoModuleCommand,
 		"default (any text)":  AnyTextCommand,
 		"patch":               PatchCommand,

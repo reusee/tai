@@ -25,15 +25,9 @@ func main() {
 	scope = scope.Fork(new(taiconfigs.Module))
 
 	// Register the selectable subcommand apps so flags.Parse lists their
-	// names and dispatches the selected one: each app carries its own
-	// selection key and usage description. See apps.TheoryOfApps.
-	scope = scope.Fork(
-		&NextCommand,
-		&AICommand,
-		&PatchCommand,
-		&PingCommand,
-		&RecordCommand,
-	)
+	// names and dispatches the selected one: the registry carries each
+	// app's selection key and usage description. See apps.TheoryOfApps.
+	scope = scope.Fork(&commands)
 
 	// Load config file values before parsing flags so that command-line
 	// values can override config file values. configs.Load discovers all
@@ -55,7 +49,7 @@ func main() {
 		ce(err)
 	}
 
-	runner, ok := scope.TryGet[apps.Runner]()
+	app, ok := scope.TryGet[apps.App]()
 	if !ok {
 		return
 	}
@@ -70,9 +64,9 @@ func main() {
 	scope = scope.Fork(eventRecorderDef)
 
 	if bool(scope.Get[Tui]()) {
-		runWithTUI(runner, scope)
+		runWithTUI(app, scope)
 		return
 	}
 
-	runner.Call(runner.Scope(scope))
+	app.Call(app.Scope(scope))
 }

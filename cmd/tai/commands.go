@@ -14,21 +14,31 @@ goal mode; outside one it is AnyTextCommand — the anytexts.PartsProvider
 (with skeletons) running a single generation session with review.
 `
 
-// Command provides the default Runner when no subcommand is given,
-// auto-detected from the environment: GoModuleCommand inside a Go module,
-// AnyTextCommand outside one. The selectable subcommands register their
-// own keys through apps.App. See TheoryOfCommandAutoDetection and
-// apps.TheoryOfApps.
+// Command provides the default App when no subcommand is given,
+// auto-detected from the environment: GoModuleCommand inside a Go
+// module, AnyTextCommand outside one. The selectable subcommands
+// register their own keys through the commands registry. See
+// TheoryOfCommandAutoDetection and apps.TheoryOfApps.
 func (Module) Command(
 	inGoModule InGoModule,
-) (ret apps.Runner) {
+) (ret apps.App) {
 	if inGoModule {
 		return GoModuleCommand
 	}
 	return AnyTextCommand
 }
 
-var (
-	_ apps.Runner = GoModuleCommand
-	_ flags.Flag  = AICommand
-)
+// commands registers the selectable subcommand apps. main forks the
+// registry into the scope as one definition; Apps carries the
+// command-line flag interface shape, so flags.Parse lists every app's
+// name and dispatches the selection by overriding the scope's App
+// definition. See apps.TheoryOfApps.
+var commands = apps.Apps{
+	NextCommand,
+	AICommand,
+	PatchCommand,
+	PingCommand,
+	RecordCommand,
+}
+
+var _ flags.Flag = commands

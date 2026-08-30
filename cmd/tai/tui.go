@@ -1780,18 +1780,18 @@ func forkTUIDisplay(scope dscope.Scope, tui *TUI) dscope.Scope {
 	})
 }
 
-func runWithTUI(runner apps.Runner, scope dscope.Scope) {
+func runWithTUI(app apps.App, scope dscope.Scope) {
 	tui, err := newTUI()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "cannot start TUI: %v; continuing without TUI\n", err)
-		runner.Call(runner.Scope(scope))
+		app.Call(app.Scope(scope))
 		return
 	}
 	// Layer the app's definitions onto the scope exactly once, before
 	// anything reads from it: each fork branch evaluates providers
 	// independently, so forking the same defs again would evaluate
 	// side-effecting providers twice. See apps.TheoryOfApps.
-	scope = runner.Scope(scope)
+	scope = app.Scope(scope)
 	// The chat input bar renders only in interactive sessions: apps
 	// that never call pipeline.ChatInput have no use for the bar, so the
 	// Output pane keeps its full height. Interactive apps fork
@@ -1813,7 +1813,7 @@ func runWithTUI(runner apps.Runner, scope dscope.Scope) {
 	if err != nil {
 		_ = tui.Stop()
 		fmt.Fprintf(os.Stderr, "cannot open %s: %v; continuing without TUI\n", os.DevNull, err)
-		runner.Call(scope)
+		app.Call(scope)
 		return
 	}
 	os.Stdout = devNull
@@ -1822,7 +1822,7 @@ func runWithTUI(runner apps.Runner, scope dscope.Scope) {
 		_ = devNull.Close()
 		_ = tui.Stop()
 		fmt.Fprintf(os.Stderr, "cannot create stderr pipe: %v; continuing without TUI\n", err)
-		runner.Call(scope)
+		app.Call(scope)
 		return
 	}
 	os.Stderr = pw
@@ -1853,7 +1853,7 @@ func runWithTUI(runner apps.Runner, scope dscope.Scope) {
 	// what the model was asked. See TheoryOfTUI.
 	displayChatInput(tui, scope.Get[flags.Chats]())
 	runErr := tui.Run(func() {
-		runner.Call(scope)
+		app.Call(scope)
 	})
 	os.Stdout, os.Stderr = oldOut, oldErr
 	_ = pw.Close()

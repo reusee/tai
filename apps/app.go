@@ -9,9 +9,9 @@ import (
 const TheoryOfApps = `
 An App is a self-contained application: a name, a usage description,
 a main function, the dscope modules that build its base scope, and the
-definitions layered on top. The type parameter is the main function's
-type; New infers it from the function value, so the Main field stays
-type-safe without spelling the function type at each use.
+definitions layered on top. Main holds the function value untyped: the
+scope resolves its parameters at call time, so one concrete App type
+describes every application and New takes the function value as-is.
 
 App unifies the two ways an application runs. Run builds a standalone
 scope from Modules, layers Name and Defs, and calls Main. A host that
@@ -22,14 +22,17 @@ applied exactly once per run: each fork branch evaluates providers
 independently, so layering the same defs twice evaluates side-effecting
 providers twice.
 
-App is also the subcommand mechanism. Its Keys and Handle signatures
-match the command-line flag interface shape: Keys registers Name as the
+Apps is the subcommand mechanism. A host holds the selectable
+subcommands as one Apps registry definition in the scope; Apps carries
+the command-line flag interface shape: Keys merges every app's
 selection key with Description as the usage text, and Handle selects
-the app by forking a Runner. An app with an empty Description is a
-default or internal app and registers no key. Runner is the type-erased
-interface over App instantiations — mains of different function types
-are different types, so the scope, flag parsing, and hosts exchange
-selected apps as Runner values.
+the app whose name matches the key, returning an *App definition that
+overrides the selected app in the scope. An app with an empty
+Description is a default or internal app and registers no key. The
+selected app is a scope definition of type App — the host's default
+provider supplies it and Handle's *App overrides it — so flag parsing
+and hosts such as display frontends exchange the selection as a plain
+App value.
 
 Interactive is a scope value, not an App field: an app that reads
 multi-turn interactive input while running forks Interactive(true) into
@@ -39,18 +42,18 @@ other configuration.
 
 // App is a self-contained application: its name and usage description,
 // the dscope modules that build its base scope, the definitions layered
-// on top, and the main function the scope calls. The type parameter is
-// the main function's type; New constructs an App without spelling the
-// function type. See TheoryOfApps.
-type App[Main any] struct {
+// on top, and the main function the scope calls. Main holds any
+// function value; New constructs an App without spelling the function
+// type. See TheoryOfApps.
+type App struct {
 	Name        Name
 	Description string
 	Modules     []dscope.Module
 	Defs        []any
-	Main        Main
+	Main        any
 }
 
-func (a App[Main]) Run() {
+func (a App) Run() {
 	var defs []any
 	for _, mod := range a.Modules {
 		defs = append(defs, mod)
@@ -58,37 +61,47 @@ func (a App[Main]) Run() {
 	scope := dscope.New(defs...)
 	scope = scope.Fork(&a.Name)
 	scope = scope.Fork(a.Defs...)
-	scope.Call(scope.Get[Main]())
+	scope.Call(a.Main)
 }
 
-// Runner is the type-erased interface to an App. Apps whose main
-// functions have different types are different App instantiations; the
-// scope, flag parsing, and hosts such as display frontends exchange
-// selected apps as Runner values. See TheoryOfApps.
-type Runner interface {
-	// Run runs the app standalone, building a scope from its Modules.
-	Run()
-	// Scope layers the app's Defs onto base and returns the resulting
-	// scope. Apply it exactly once per run; see TheoryOfApps.
-	Scope(base dscope.Scope) dscope.Scope
-	// Call invokes the app's main function with scope injection. The
-	// scope must already carry the app's definitions (see Scope).
-	Call(scope dscope.Scope)
-	// Keys registers the app as a selectable subcommand keyed by its
-	// name, mapping the name to its usage description. An app with an
-	// empty description registers no key.
-	Keys() map[string]string
-	// Handle selects this app for the given key, returning a *Runner
-	// definition that overrides the selected app in the scope.
-	Handle(key string, args []string) (newDef any, remainArgs []string, err error)
+// Apps is the registry of selectable subcommand apps, held in a scope
+// as one definition. It carries the command-line flag interface shape:
+// Keys merges every app's selection key, and Handle selects the app
+// whose name matches the key, returning an *App definition that
+// overrides the selected app in the scope. See TheoryOfApps.
+type Apps []App
+
+// Keys registers every selectable app as a subcommand keyed by its
+// name, with Description as the usage text. Apps with an empty
+// Description — defaults or internal apps — register no key.
+// See TheoryOfApps.
+func (as Apps) Keys() map[string]string {
+	keys := make(map[string]string)
+	for _, a := range as {
+		for key, desc := range a.Keys() {
+			keys[key] = desc
+		}
+	}
+	return keys
+}
+
+// Handle selects the app whose name matches the key and returns its
+// *App definition, overriding the selected app in the scope.
+// See TheoryOfApps.
+func (as Apps) Handle(key string, args []string) (newDef any, remainArgs []string, err error) {
+	for i := range as {
+		if newDef, remainArgs, err = as[i].Handle(key, args); err == nil {
+			return newDef, remainArgs, nil
+		}
+	}
+	return nil, args, fmt.Errorf("no app handles key %q", key)
 }
 
 // New returns an App with the given name, description, main function,
-// and definitions. The type of main determines the App's type
-// parameter, so the function value may be an anonymous function.
-// See TheoryOfApps.
-func New[Main any](name Name, description string, main Main, defs ...any) App[Main] {
-	return App[Main]{
+// and definitions. The main function value may be an anonymous
+// function. See TheoryOfApps.
+func New(name Name, description string, main any, defs ...any) App {
+	return App{
 		Name:        name,
 		Description: description,
 		Main:        main,
@@ -100,22 +113,20 @@ func New[Main any](name Name, description string, main Main, defs ...any) App[Ma
 // scope. It deliberately does not fork the app's Name: apps that need
 // their name in the scope fork it through their own Defs, and Run —
 // the standalone path — forks Name itself. See TheoryOfApps.
-func (a App[Main]) Scope(base dscope.Scope) dscope.Scope {
+func (a App) Scope(base dscope.Scope) dscope.Scope {
 	return base.Fork(a.Defs...)
 }
 
-var _ Runner = App[func()]{}
-
 // Call invokes the app's main function in scope, which must already
 // carry the app's definitions (see Scope). See TheoryOfApps.
-func (a App[Main]) Call(scope dscope.Scope) {
+func (a App) Call(scope dscope.Scope) {
 	scope.Call(a.Main)
 }
 
 // Keys registers the app as a selectable subcommand keyed by its name,
 // with Description as the usage text. An app with an empty Description
 // — a default or internal app — registers no key. See TheoryOfApps.
-func (a App[Main]) Keys() map[string]string {
+func (a App) Keys() map[string]string {
 	if a.Description == "" {
 		return nil
 	}
@@ -124,12 +135,11 @@ func (a App[Main]) Keys() map[string]string {
 	}
 }
 
-// Handle selects this app for the given key, returning a *Runner that
+// Handle selects this app for the given key, returning an *App that
 // overrides the selected app in the scope. See TheoryOfApps.
-func (a App[Main]) Handle(key string, args []string) (newDef any, remainArgs []string, err error) {
+func (a App) Handle(key string, args []string) (newDef any, remainArgs []string, err error) {
 	if key != string(a.Name) {
 		return nil, args, fmt.Errorf("app %q does not handle key %q", a.Name, key)
 	}
-	var runner Runner = a
-	return &runner, args, nil
+	return &a, args, nil
 }
