@@ -42,6 +42,12 @@ show only namespace-local processes, /sys is made read-only, and sensitive
 /proc paths are masked with bind-mounted /dev/null. The NO_NEW_PRIVS prctl
 flag prevents privilege escalation through exec, complementing the user
 namespace's capability restrictions.
+
+Landlock complements the mount hardening by re-enforcing the same
+write-containment policy at the LSM layer — an independent kernel
+enforcement plane that, once applied, the process cannot revoke. The layer
+is applied only on the hardened in-container path and is best-effort; see
+TheoryOfLandlock in landlock_linux.go.
 `
 
 // disableContainerEnv allows bypassing containerization entirely for debugging
@@ -172,6 +178,12 @@ func MaybeRunInContainer() {
 	if err := setupContainerFilesystem(); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: container filesystem setup incomplete: %v\n", err)
 	}
+
+	// Re-enforce the writable-set policy at the LSM layer as defense in
+	// depth. Runs after setupContainerFilesystem because
+	// landlock_restrict_self requires the NO_NEW_PRIVS flag it sets.
+	// Best-effort: unsupported kernels skip silently. See TheoryOfLandlock.
+	applyLandlockFilesystemPolicy()
 }
 
 // tmpfsMountData returns the mount data string for a tmpfs mount, applying

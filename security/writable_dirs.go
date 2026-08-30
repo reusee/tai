@@ -29,6 +29,11 @@ dirs, config dir, /tmp, /dev/shm) are cached via sync.OnceValue because
 they are determined by the environment and do not change during execution.
 IsWritablePath resolves the CWD fresh on every call and checks it before
 the cached static dirs, ensuring correctness even after CWD changes.
+
+The Landlock layer (see TheoryOfLandlock in landlock_linux.go) does not
+call WritableDirs: it consumes the pre-namespace-resolved environment
+values the mount setup consumed, so the two enforcement planes stay
+identical without re-running ` + "`go env`" + ` inside the container.
 `
 
 // WritableDirs returns the list of directories that the container
