@@ -34,6 +34,9 @@ func newTUIForTest() *TUI {
 		// timer assertions anchor on an explicitly set startTime. See
 		// TheoryOfEventTree.
 		startTime: time.Now(),
+		// The Events tab's event forest; the expand-hint color matches
+		// the log color of event lines. See TheoryOfEventTree.
+		events: taiui.EventTree{HintColor: outputColorLogLine},
 		// The default display policy shows raw thoughts, matching the
 		// non-TUI default; tests that exercise thought suppression set
 		// showThoughts to false explicitly. See TheoryOfTUI.
@@ -217,17 +220,17 @@ func TestTuiSignalsHasNoLimit(t *testing.T) {
 	tui.handleEvent(pipeline.Event{Kind: pipeline.EventAttemptCompleted, Attempt: 1, Summary: body.String()})
 	// The event node carries the emoji header line plus one line per
 	// summary line.
-	if len(tui.eventRoots) != 1 || len(tui.eventRoots[0].lines) != lines+1 {
-		t.Fatalf("expected 1 event node of %d lines plus the header, got %d nodes", lines, len(tui.eventRoots))
+	if len(tui.events.Roots) != 1 || len(tui.events.Roots[0].Lines) != lines+1 {
+		t.Fatalf("expected 1 event node of %d lines plus the header, got %d nodes", lines, len(tui.events.Roots))
 	}
-	if tui.eventRoots[0].lines[0].Text != "✅ [Attempt 1 complete]" {
-		t.Fatalf("expected the event header first, got %q", tui.eventRoots[0].lines[0].Text)
+	if tui.events.Roots[0].Lines[0].Text != "✅ [Attempt 1 complete]" {
+		t.Fatalf("expected the event header first, got %q", tui.events.Roots[0].Lines[0].Text)
 	}
-	if tui.eventRoots[0].lines[1].Text != "- line 0" {
-		t.Fatalf("expected the very first event line retained, got %q", tui.eventRoots[0].lines[1].Text)
+	if tui.events.Roots[0].Lines[1].Text != "- line 0" {
+		t.Fatalf("expected the very first event line retained, got %q", tui.events.Roots[0].Lines[1].Text)
 	}
-	if tui.eventRoots[0].lines[lines].Text != fmt.Sprintf("- line %d", lines-1) {
-		t.Fatalf("expected the last event line retained, got %q", tui.eventRoots[0].lines[lines].Text)
+	if tui.events.Roots[0].Lines[lines].Text != fmt.Sprintf("- line %d", lines-1) {
+		t.Fatalf("expected the last event line retained, got %q", tui.events.Roots[0].Lines[lines].Text)
 	}
 
 	tui2 := newTUIForTest()
@@ -235,8 +238,8 @@ func TestTuiSignalsHasNoLimit(t *testing.T) {
 	for i := 0; i < finishes; i++ {
 		tui2.handleEvent(pipeline.Event{Kind: pipeline.EventFinish, Detail: "stop"})
 	}
-	if len(tui2.eventRoots) != finishes {
-		t.Fatalf("expected %d finish nodes, got %d", finishes, len(tui2.eventRoots))
+	if len(tui2.events.Roots) != finishes {
+		t.Fatalf("expected %d finish nodes, got %d", finishes, len(tui2.events.Roots))
 	}
 }
 
@@ -556,180 +559,6 @@ func TestLogAltBG(t *testing.T) {
 			t.Fatalf("expected alternate lighter than base %#x, got %#x %#x %#x -> %#x %#x %#x",
 				base, r1, g1, b1, r2, g2, b2)
 		}
-	}
-}
-
-func TestTUIEventsAlternateBackgrounds(t *testing.T) {
-	tui := newTUIForTest()
-	tui.handleEvent(pipeline.Event{Kind: pipeline.EventFinish, Detail: "stop"})
-	usage := generators.Usage{}
-	usage.Prompt.TokenCount = 1
-	tui.handleEvent(pipeline.Event{Kind: pipeline.EventUsage, Attempt: 1, Usage: usage})
-
-	box := taiui.Box{Top: 0, Left: 0, Bottom: 10, Right: 80}
-	base := panelStyle.BaseBG
-	alt := taiui.AltBG(base)
-
-	// Each event renders one text line, so the two events produce two
-	// display lines: base, alt.
-	tui.tabs.Focus = -1
-	display := wrappedDisplay(tui, 1, box)
-	if len(display) != 2 {
-		t.Fatalf("expected 2 display lines, got %d", len(display))
-	}
-	for i, want := range []taiui.Color{base, alt} {
-		if display[i].BGColor != want {
-			t.Fatalf("line %d: expected shade %#v, got %#v", i, want, display[i].BGColor)
-		}
-	}
-
-	tui.tabs.Focus = 1
-	base = panelStyle.FocusBG
-	alt = taiui.AltBG(base)
-	display = wrappedDisplay(tui, 1, box)
-	for i, want := range []taiui.Color{base, alt} {
-		if display[i].BGColor != want {
-			t.Fatalf("focused line %d: expected shade %#v, got %#v", i, want, display[i].BGColor)
-		}
-	}
-}
-
-// TestTUIEventsTreeRendering verifies the Events tab's tree rendering: a
-// lifecycle event that arrives before its parent heals under it, the
-// depth-first display order is independent of arrival order, every
-// display line carries two Han-character widths of indent per depth, and
-// consecutive events alternate the two background shades. Every event's
-// first display line right-aligns its elapsed-time timer at the pane's
-// right edge. See TheoryOfEventTree and pipeline.TheoryOfLoopEvents.
-func TestTUIEventsTreeRendering(t *testing.T) {
-	tui := newTUIForTest()
-	// The box is wide enough that every rendered event line fits its
-	// depth-adjusted wrap width even with the timer zone reserved, so
-	// each event renders exactly one display line.
-	box := taiui.Box{Top: 0, Left: 0, Bottom: 20, Right: 100}
-
-	// Arrival order: the finish event (seq 4) precedes its attempt-start
-	// (seq 2), which precedes the loop-start (seq 1); the usage event
-	// (seq 3) arrives last. The healed forest must render in tree order.
-	tui.handleEvent(pipeline.Event{Loop: 1, Seq: 4, Parent: 2, Kind: pipeline.EventFinish, Detail: "length"})
-	tui.handleEvent(pipeline.Event{Loop: 1, Seq: 2, Parent: 1, Kind: pipeline.EventAttemptStart, Attempt: 1})
-	tui.handleEvent(pipeline.Event{Loop: 1, Seq: 1, Kind: pipeline.EventLoopStart})
-	tui.handleEvent(pipeline.Event{Loop: 1, Seq: 3, Parent: 2, Kind: pipeline.EventUsage, Attempt: 1})
-
-	if len(tui.eventRoots) != 1 {
-		t.Fatalf("expected one root after healing, got %d", len(tui.eventRoots))
-	}
-	root := tui.eventRoots[0]
-	if len(root.children) != 1 || root.children[0].seq != 2 {
-		t.Fatalf("expected the attempt under the loop branch, got %+v", root.children)
-	}
-	attempt := root.children[0]
-	if len(attempt.children) != 2 || attempt.children[0].seq != 3 || attempt.children[1].seq != 4 {
-		t.Fatalf("expected the attempt's children sorted by sequence, got %+v", attempt.children)
-	}
-
-	contentWidth := max(box.Width()-1, 1)
-	display := tui.eventsDisplay(contentWidth, panelStyle.BaseBG)
-	// Every display line carries two Han-character widths of indent per
-	// depth: the loop root at depth 0, the attempt at depth 1, its
-	// lifecycle events at depth 2.
-	depths := []int{0, 1, 2, 2}
-	wantOrder := []string{
-		"🌳 [Loop 1 start]",
-		"\u3000\u3000🚀 [loop 1 attempt 1 start]",
-		"\u3000\u3000\u3000\u3000📊 [Usage] loop 1 attempt 1: prompt 0, cached 0, completion 0, thoughts 0",
-		"\u3000\u3000\u3000\u3000🏁 [Finish: length]",
-	}
-	if len(display) != len(wantOrder) {
-		t.Fatalf("expected %d display lines, got %d", len(wantOrder), len(display))
-	}
-	base := panelStyle.BaseBG
-	alt := taiui.AltBG(base)
-	options := taiui.DisplayWidthOptions()
-	for i, want := range wantOrder {
-		if !strings.HasPrefix(display[i].Text, want) {
-			t.Fatalf("line %d: expected prefix %q, got %q", i, want, display[i].Text)
-		}
-		// All events arrived within the test's first second, so every
-		// timer reads +0:00 and right-aligns at the pane's right edge.
-		// See TheoryOfEventTree.
-		if !strings.HasSuffix(display[i].Text, "+0:00") {
-			t.Fatalf("line %d: expected the +0:00 timer suffix, got %q", i, display[i].Text)
-		}
-		if width := options.String(display[i].Text); width != contentWidth {
-			t.Fatalf("line %d: expected the timer right-aligned at width %d, got %d", i, contentWidth, width)
-		}
-		indent := strings.Repeat("\u3000", eventIndentHanWidth*depths[i])
-		if !strings.HasPrefix(display[i].Text, indent) || strings.HasPrefix(display[i].Text, indent+"\u3000") {
-			t.Fatalf("line %d: expected indent depth %d, got %q", i, depths[i], display[i].Text)
-		}
-		wantShade := base
-		if i%2 == 1 {
-			wantShade = alt
-		}
-		if display[i].BGColor != wantShade {
-			t.Fatalf("line %d: expected shade %v, got %v", i, wantShade, display[i].BGColor)
-		}
-	}
-
-	// A long summary body at depth 2 wraps within the width left by the
-	// indent, and every wrapped line keeps the depth-2 indent.
-	tui.handleEvent(pipeline.Event{Loop: 1, Seq: 5, Parent: 2, Kind: pipeline.EventThoughtSummary, Summary: strings.Repeat("word ", 40)})
-	display = tui.eventsDisplay(contentWidth, panelStyle.BaseBG)
-	if len(display) <= len(wantOrder)+1 {
-		t.Fatalf("expected wrapped thought summary lines, got %d", len(display))
-	}
-	for _, line := range display[len(wantOrder)+1:] {
-		if !strings.HasPrefix(line.Text, strings.Repeat("\u3000", 2*eventIndentHanWidth)) {
-			t.Fatalf("expected the depth-2 indent on %q", line.Text)
-		}
-	}
-}
-
-// TestTUIEventsElapsedTimer verifies the Events tab's elapsed-time
-// timer: each event records the duration from the session's start to
-// its arrival and right-aligns it at the pane's right edge of its first
-// display line, and a pane too narrow for the timer omits it. See
-// TheoryOfEventTree.
-func TestTUIEventsElapsedTimer(t *testing.T) {
-	tui := newTUIForTest()
-	// Anchor the start a whole number of minutes in the past, so the
-	// recorded elapsed floors to a deterministic stopwatch fragment.
-	tui.startTime = time.Now().Add(-time.Minute)
-	tui.handleEvent(pipeline.Event{Kind: pipeline.EventFinish, Detail: "stop"})
-
-	contentWidth := 79
-	display := tui.eventsDisplay(contentWidth, panelStyle.BaseBG)
-	if len(display) != 1 {
-		t.Fatalf("expected 1 display line, got %d", len(display))
-	}
-	if !strings.HasSuffix(display[0].Text, "+1:00") {
-		t.Fatalf("expected the +1:00 timer suffix, got %q", display[0].Text)
-	}
-	if width := taiui.DisplayWidthOptions().String(display[0].Text); width != contentWidth {
-		t.Fatalf("expected the timer right-aligned at width %d, got %d", contentWidth, width)
-	}
-
-	// A later event records a larger elapsed time, so the timer orders
-	// events by their arrival.
-	tui.startTime = time.Now().Add(-2 * time.Minute)
-	tui.handleEvent(pipeline.Event{Kind: pipeline.EventAttemptStart, Attempt: 1})
-	display = tui.eventsDisplay(contentWidth, panelStyle.BaseBG)
-	if !strings.HasSuffix(display[len(display)-1].Text, "+2:00") {
-		t.Fatalf("expected the +2:00 timer suffix on the later event, got %q", display[len(display)-1].Text)
-	}
-
-	// A pane too narrow for the timer zone omits the timer instead of
-	// colliding with the text.
-	for _, line := range tui.eventsDisplay(6, panelStyle.BaseBG) {
-		if strings.HasSuffix(line.Text, "+2:00") {
-			t.Fatalf("expected no timer on a narrow pane, got %q", line.Text)
-		}
-	}
-
-	// The stopwatch format carries hours beyond one.
-	if got := formatElapsed(3723 * time.Second); got != "+1:02:03" {
-		t.Fatalf("expected +1:02:03, got %q", got)
 	}
 }
 
@@ -1943,14 +1772,14 @@ func TestTuiStateAutoExpandTabs(t *testing.T) {
 	if tui.tabs.Focus != 0 {
 		t.Fatalf("auto-expand must not change an established focus, got %d", tui.tabs.Focus)
 	}
-	if len(tui.eventRoots) != 1 || len(tui.eventRoots[0].lines) != 2 {
-		t.Fatalf("expected one event node with header and summary lines, got %v", tui.eventRoots)
+	if len(tui.events.Roots) != 1 || len(tui.events.Roots[0].Lines) != 2 {
+		t.Fatalf("expected one event node with header and summary lines, got %v", tui.events.Roots)
 	}
-	if tui.eventRoots[0].lines[0].Text != "✅ [Attempt 1 complete]" {
-		t.Fatalf("expected the emoji header first in the event node, got %q", tui.eventRoots[0].lines[0].Text)
+	if tui.events.Roots[0].Lines[0].Text != "✅ [Attempt 1 complete]" {
+		t.Fatalf("expected the emoji header first in the event node, got %q", tui.events.Roots[0].Lines[0].Text)
 	}
-	if tui.eventRoots[0].lines[1].Text != "- done" {
-		t.Fatalf("expected the summary line after the header, got %q", tui.eventRoots[0].lines[1].Text)
+	if tui.events.Roots[0].Lines[1].Text != "- done" {
+		t.Fatalf("expected the summary line after the header, got %q", tui.events.Roots[0].Lines[1].Text)
 	}
 
 	tui2 := newTUIForTest()
@@ -2122,8 +1951,8 @@ func TestWithTUIOutputObserver(t *testing.T) {
 		t.Fatal("expected the finish event to clear the generating hint")
 	}
 	var events strings.Builder
-	for _, node := range tui.eventRoots {
-		for _, line := range node.lines {
+	for _, node := range tui.events.Roots {
+		for _, line := range node.Lines {
 			events.WriteString(line.Text)
 			events.WriteString("\n")
 		}
@@ -2141,11 +1970,11 @@ func TestTUIHandleEventRendersKinds(t *testing.T) {
 	tui := newTUIForTest()
 	tui.generating = true
 	tui.handleEvent(pipeline.Event{Kind: pipeline.EventFinish, Detail: "stop"})
-	if len(tui.eventRoots) != 1 || len(tui.eventRoots[0].lines) != 1 {
-		t.Fatalf("expected 1 event node of 1 line, got %v", tui.eventRoots)
+	if len(tui.events.Roots) != 1 || len(tui.events.Roots[0].Lines) != 1 {
+		t.Fatalf("expected 1 event node of 1 line, got %v", tui.events.Roots)
 	}
-	if tui.eventRoots[0].lines[0].Text != "🏁 [Finish: stop]" || tui.eventRoots[0].lines[0].Color != outputColorLogLine {
-		t.Fatalf("unexpected finish line: %+v", tui.eventRoots[0].lines[0])
+	if tui.events.Roots[0].Lines[0].Text != "🏁 [Finish: stop]" || tui.events.Roots[0].Lines[0].Color != outputColorLogLine {
+		t.Fatalf("unexpected finish line: %+v", tui.events.Roots[0].Lines[0])
 	}
 	if tui.generating {
 		t.Fatal("expected the finish event to clear the generating hint")
@@ -2154,7 +1983,7 @@ func TestTUIHandleEventRendersKinds(t *testing.T) {
 	usage := generators.Usage{}
 	usage.Prompt.TokenCount = 100
 	tui.handleEvent(pipeline.Event{Kind: pipeline.EventUsage, Attempt: 2, Detail: "error", Usage: usage})
-	last := tui.eventRoots[len(tui.eventRoots)-1].lines
+	last := tui.events.Roots[len(tui.events.Roots)-1].Lines
 	if last[0].Text != "📊 [Usage] attempt 2 (error): prompt 100, cached 0, completion 0, thoughts 0" {
 		t.Fatalf("unexpected usage line: %q", last[0].Text)
 	}
@@ -2167,14 +1996,14 @@ func TestTUIHandleEventRendersKinds(t *testing.T) {
 	measuredUsage.TimeToFirstToken = 300 * time.Millisecond // ttft 0.3s
 	measuredUsage.GenerateDuration = 200 * time.Millisecond // 20 tokens / 0.2s -> 100.0 tok/s
 	tui.handleEvent(pipeline.Event{Kind: pipeline.EventUsage, Attempt: 5, Usage: measuredUsage})
-	measuredLines := tui.eventRoots[len(tui.eventRoots)-1].lines
+	measuredLines := tui.events.Roots[len(tui.events.Roots)-1].Lines
 	wantMeasured := "📊 [Usage] attempt 5: prompt 0, cached 0, completion 20, thoughts 0, ttft 0.3s, 100.0 tok/s"
 	if measuredLines[0].Text != wantMeasured {
 		t.Fatalf("unexpected measured usage line: %q", measuredLines[0].Text)
 	}
 
 	tui.handleEvent(pipeline.Event{Kind: pipeline.EventThoughtSummary, Summary: "- point"})
-	last = tui.eventRoots[len(tui.eventRoots)-1].lines
+	last = tui.events.Roots[len(tui.events.Roots)-1].Lines
 	if last[0].Text != "💭 [Thought Summary]" || last[0].Color != outputColorThoughtLine {
 		t.Fatalf("unexpected thought summary header: %+v", last[0])
 	}
@@ -2183,19 +2012,19 @@ func TestTUIHandleEventRendersKinds(t *testing.T) {
 	}
 
 	tui.handleEvent(pipeline.Event{Kind: pipeline.EventAttemptStart, Attempt: 3})
-	last = tui.eventRoots[len(tui.eventRoots)-1].lines
+	last = tui.events.Roots[len(tui.events.Roots)-1].Lines
 	if last[0].Text != "🚀 [Attempt 3 start]" || last[0].Color != outputColorLogLine {
 		t.Fatalf("unexpected attempt start line: %+v", last[0])
 	}
 
 	tui.handleEvent(pipeline.Event{Kind: pipeline.EventRequest, Attempt: 3, Detail: "model model-a, temperature 0.5, effort high"})
-	last = tui.eventRoots[len(tui.eventRoots)-1].lines
+	last = tui.events.Roots[len(tui.events.Roots)-1].Lines
 	if last[0].Text != "📡 [Attempt 3 request] model model-a, temperature 0.5, effort high" || last[0].Color != outputColorLogLine {
 		t.Fatalf("unexpected request line: %+v", last[0])
 	}
 
 	tui.handleEvent(pipeline.Event{Kind: pipeline.EventAttemptCompleted, Attempt: 3})
-	last = tui.eventRoots[len(tui.eventRoots)-1].lines
+	last = tui.events.Roots[len(tui.events.Roots)-1].Lines
 	if last[0].Text != "✅ [Attempt 3 complete]" || last[0].Color != outputColorLogLine {
 		t.Fatalf("unexpected empty-summary completion line: %+v", last[0])
 	}
@@ -2204,71 +2033,15 @@ func TestTUIHandleEventRendersKinds(t *testing.T) {
 	// with the in-generation position over the retry budget.
 	// See TheoryOfLoopEvents.
 	tui.handleEvent(pipeline.Event{Kind: pipeline.EventTruncated, Attempt: 4, AttemptInGeneration: 1, MaxAttempts: 3, Detail: "missing completion"})
-	last = tui.eventRoots[len(tui.eventRoots)-1].lines
+	last = tui.events.Roots[len(tui.events.Roots)-1].Lines
 	if last[0].Text != "✂️ [Attempt 4 truncated (attempt 1/3): missing completion]" {
 		t.Fatalf("unexpected truncated line: %+v", last[0])
 	}
 
 	tui.handleEvent(pipeline.Event{Kind: pipeline.EventKind("custom-kind"), Detail: "note"})
-	last = tui.eventRoots[len(tui.eventRoots)-1].lines
+	last = tui.events.Roots[len(tui.events.Roots)-1].Lines
 	if last[0].Text != "❓ [Event custom-kind] note" || last[0].Color != outputColorLogLine {
 		t.Fatalf("unexpected generic event line: %+v", last[0])
-	}
-}
-
-// TestTUIHandoffCollapse verifies the Events tab's handoff collapse: a
-// handoff node collapses to its header plus an expand hint by default,
-// Enter toggles the most recent handoff node, and a mouse press on a
-// collapsed node's rows expands it while a press on an expanded node's
-// header row collapses it. See TheoryOfEventTree.
-func TestTUIHandoffCollapse(t *testing.T) {
-	tui := newTUIForTest()
-	tui.handleEvent(pipeline.Event{Kind: pipeline.EventHandoff, Summary: "line1\nline2\nline3"})
-	node := tui.eventRoots[0]
-	if !node.expandable || node.expanded {
-		t.Fatalf("expected one collapsed handoff node, got expandable=%v expanded=%v", node.expandable, node.expanded)
-	}
-	collapsed := tui.eventsDisplay(70, panelStyle.BaseBG)
-	if len(collapsed) != 2 || !strings.Contains(collapsed[0].Text, "[Handoff summary]") || !strings.Contains(collapsed[1].Text, "expand") {
-		t.Fatalf("expected the collapsed header and hint, got %+v", collapsed)
-	}
-
-	// Enter toggles the most recent handoff node.
-	tui.toggleLastHandoff()
-	if !node.expanded {
-		t.Fatal("expected the handoff node expanded after Enter")
-	}
-	expanded := tui.eventsDisplay(70, panelStyle.BaseBG)
-	if len(expanded) != 4 || !strings.Contains(expanded[1].Text, "line1") {
-		t.Fatalf("expected the full summary after expanding, got %+v", expanded)
-	}
-	tui.toggleLastHandoff()
-	if node.expanded {
-		t.Fatal("expected the handoff node collapsed after the second Enter")
-	}
-
-	// A mouse press on a collapsed node's rows expands it; a press on
-	// an expanded node's header row collapses it.
-	tui.width, tui.height = 80, 45
-	tui.tabs.Expanded = []bool{true, true, false}
-	tui.tabs.HasContent = []bool{true, true, false}
-	tui.tabs.Focus = 1
-	box := tui.tabs.Boxes(80, 45)[1]
-	tui.eventsDisplay(max(box.Width()-1, 1), panelStyle.BaseBG)
-	tui.handleMouseKey(fmt.Sprintf("mouse-left@%d,%d", box.Left, box.Top+1))
-	if !node.expanded {
-		t.Fatal("expected the press on the collapsed node to expand it")
-	}
-	tui.eventsDisplay(max(box.Width()-1, 1), panelStyle.BaseBG)
-	tui.handleMouseKey(fmt.Sprintf("mouse-left@%d,%d", box.Left, box.Top+1))
-	if node.expanded {
-		t.Fatal("expected the press on the expanded header to collapse it")
-	}
-
-	// Non-handoff events are never expandable.
-	tui.handleEvent(pipeline.Event{Kind: pipeline.EventAttemptStart, Attempt: 1})
-	if tui.eventRoots[len(tui.eventRoots)-1].expandable {
-		t.Fatal("expected the attempt-start node to be non-expandable")
 	}
 }
 
@@ -2284,7 +2057,7 @@ func TestTUIHandoffEventsRenderNoBudget(t *testing.T) {
 		AttemptInGeneration: 1,
 		MaxAttempts:         3,
 	})
-	start := tui.eventRoots[len(tui.eventRoots)-1].lines
+	start := tui.events.Roots[len(tui.events.Roots)-1].Lines
 	if start[0].Text != "🤝 [Handoff started]" {
 		t.Fatalf("unexpected handoff-start line: %q", start[0].Text)
 	}
@@ -2295,7 +2068,7 @@ func TestTUIHandoffEventsRenderNoBudget(t *testing.T) {
 		MaxAttempts:         3,
 		Summary:             "handoff body",
 	})
-	handoff := tui.eventRoots[len(tui.eventRoots)-1].lines
+	handoff := tui.events.Roots[len(tui.events.Roots)-1].Lines
 	if handoff[0].Text != "📝 [Handoff summary]" {
 		t.Fatalf("unexpected handoff line: %q", handoff[0].Text)
 	}

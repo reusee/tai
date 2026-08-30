@@ -577,17 +577,12 @@ type TUI struct {
 	tabs    *taiui.Tabs
 	scrolls [3]taiui.ScrollState
 
-	// eventRoots holds the top nodes of the Events tab's event forest
-	// in arrival order, and eventBySeq maps a run's (loop, sequence)
-	// pair to its node, so an event files under its parent however the
-	// events arrive. See TheoryOfEventTree.
-	eventRoots []*eventNode
-	eventBySeq map[eventSeqKey]*eventNode
-	// handoffRows records the display row ranges of the expandable
-	// handoff nodes in the last-rendered Events display, so a mouse
-	// press can find the node under the cursor. eventsDisplay rebuilds
-	// it on every call; guarded by mu. See TheoryOfEventTree.
-	handoffRows []handoffRowRange
+	// events is the Events tab's event forest: pipeline events are
+	// filed into it by their (loop, sequence) identity and rendered
+	// depth-first with cached wrapping, elapsed timers, and alternating
+	// shades. The tree mechanism lives in taiui; see
+	// taiui.TheoryOfEventTree and TheoryOfEventTree. Guarded by mu.
+	events taiui.EventTree
 
 	// startTime anchors the Events tab's elapsed-time timer: every
 	// event records the duration from startTime to its arrival, shown
@@ -747,11 +742,14 @@ func newTUI() (*TUI, error) {
 		// The Events tab's elapsed-time timer counts from the session's
 		// start. See TheoryOfEventTree.
 		startTime: time.Now(),
-		tty:       t,
-		screen:    taiui.NewTerminalScreen(t, width, height),
-		updateCh:  make(chan struct{}, 1),
-		width:     width,
-		height:    height,
+		// The Events tab's event forest; the expand-hint color matches
+		// the log color of event lines. See TheoryOfEventTree.
+		events:   taiui.EventTree{HintColor: outputColorLogLine},
+		tty:      t,
+		screen:   taiui.NewTerminalScreen(t, width, height),
+		updateCh: make(chan struct{}, 1),
+		width:    width,
+		height:   height,
 	}, nil
 }
 
@@ -1352,24 +1350,7 @@ func (t *TUI) handleMouseKey(key string) {
 func (t *TUI) toggleLastHandoff() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	var target *eventNode
-	var walk func(n *eventNode)
-	walk = func(n *eventNode) {
-		if n.expandable {
-			target = n
-		}
-		for _, child := range n.children {
-			walk(child)
-		}
-	}
-	for _, root := range t.eventRoots {
-		walk(root)
-	}
-	if target == nil {
-		return
-	}
-	target.expanded = !target.expanded
-	target.wrapped = nil
+	t.events.ToggleLastExpanded()
 }
 
 // toggleHandoffAtClick toggles a handoff node when a left press lands
@@ -1379,25 +1360,17 @@ func (t *TUI) toggleLastHandoff() {
 // accident. Presses outside the events pane's content area are no-ops.
 // See TheoryOfEventTree.
 func (t *TUI) toggleHandoffAtClick(x, y int) {
-	if !t.tabs.Expanded[1] || len(t.handoffRows) == 0 {
+	if !t.tabs.Expanded[1] {
 		return
 	}
 	box := t.tabs.Boxes(t.width, t.height)[1]
 	if x < box.Left || x >= box.Right || y <= box.Top || y >= box.Bottom {
 		return
 	}
-	row := t.scrolls[1].Offset + (y - box.Top - 1)
-	for _, r := range t.handoffRows {
-		if row < r.startRow || row >= r.endRow {
-			continue
-		}
-		n := r.node
-		if !n.expanded || row == r.startRow {
-			n.expanded = !n.expanded
-			n.wrapped = nil
-		}
-		return
-	}
+	// The press's screen row maps onto the tab's content row by
+	// dropping the label strip and re-adding the scroll offset; the
+	// tree owns the row-range matching. See taiui.TheoryOfEventTree.
+	t.events.ToggleAtRow(t.scrolls[1].Offset + (y - box.Top - 1))
 }
 
 // handleEvent renders one pipeline.Run event into the Events tab. It is
@@ -1422,7 +1395,17 @@ func (t *TUI) handleEvent(ev pipeline.Event) {
 	if t.tabs.AutoExpand(1) {
 		t.scrolls[1].Follow = true
 	}
-	t.addEventNode(ev, lines)
+	// A handoff summary with a body is the expandable node; the node's
+	// elapsed time anchors on the session's start. See
+	// taiui.TheoryOfEventTree.
+	t.events.Add(taiui.EventNode{
+		Run:        ev.Loop,
+		Seq:        ev.Seq,
+		ParentSeq:  ev.Parent,
+		Lines:      lines,
+		Expandable: ev.Kind == pipeline.EventHandoff && len(lines) > 1,
+		Elapsed:    time.Since(t.startTime),
+	})
 	t.mu.Unlock()
 	t.notify()
 }

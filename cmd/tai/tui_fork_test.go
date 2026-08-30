@@ -69,16 +69,16 @@ func TestForkTUIDisplayForwardsEventsToTUI(t *testing.T) {
 	var texts []string
 	// The events file into a tree: walk it depth-first so nested lines
 	// (e.g., the usage event under its attempt-start) are collected too.
-	var walk func(n *eventNode)
-	walk = func(n *eventNode) {
-		for _, line := range n.lines {
+	var walk func(n *taiui.EventNode)
+	walk = func(n *taiui.EventNode) {
+		for _, line := range n.Lines {
 			texts = append(texts, line.Text)
 		}
-		for _, child := range n.children {
+		for _, child := range n.Children {
 			walk(child)
 		}
 	}
-	for _, root := range tui.eventRoots {
+	for _, root := range tui.events.Roots {
 		walk(root)
 	}
 	joined := strings.Join(texts, "\n")
@@ -159,8 +159,8 @@ func TestForkTUIDisplayForwardsGoalEventsToTUI(t *testing.T) {
 	tui.mu.Lock()
 	defer tui.mu.Unlock()
 	var texts []string
-	for _, node := range tui.eventRoots {
-		for _, line := range node.lines {
+	for _, node := range tui.events.Roots {
+		for _, line := range node.Lines {
 			texts = append(texts, line.Text)
 		}
 	}
