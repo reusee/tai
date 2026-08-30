@@ -141,6 +141,7 @@ func (Module) SystemPrompt(
 }
 
 var NextCommand = Command{
+	Interactive: true,
 	Defs: []any{
 		modes.ForProduction(),
 	},
@@ -215,8 +216,8 @@ var NextCommand = Command{
 		// interactive session. Apply errors trigger a retry with the
 		// error message fed back as user content. The interaction
 		// recorder is passed explicitly so the session is captured when
-		// -record is enabled. The result is filled into result as the
-		// run progresses; the iterator yields the run's events, and the
+		// -record is enabled. The result is filled into result as the run
+		// progresses; the iterator yields the run's events, and the
 		// terminal error, if any, arrives with the final yield's error
 		// component. See pipeline.TheoryOfLoops and
 		// pipeline.TheoryOfLoopEvents.

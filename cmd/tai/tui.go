@@ -199,9 +199,16 @@ pipeline.ChatInput to TUI.ChatInput, so both interactive chat paths
 the bar in TUI mode while plain command-line mode keeps the liner
 default. See pipeline.TheoryOfChatInput.
 
-The bar is non-modal and always rendered as the bottom row of the
-Output tab — part of the tab's layout, never a screen-wide overlay —
-so the rest of the interface stays operable while typing: pointer
+Only interactive sessions render the bar: commands that call
+pipeline.ChatInput while running declare Command.Interactive, and
+runWithTUI copies it into TUI.interactive. The other commands (goal
+mode, any, ping, patch, record) never read interactive input, so their
+TUI omits the bar entirely — the Output pane keeps its full height, a
+press on the bottom row drives ordinary tab interaction, and the help
+overlay drops the input-bar entries. In an interactive session the bar
+is non-modal and rendered as the bottom row of the Output tab — part of
+the tab's layout, never a screen-wide overlay — so the rest of the
+interface stays operable while typing: pointer
 events route through the ordinary mouse path (wheel and drag scrolling,
 press-driven tab switching), and navigation keys (arrows, page keys,
 tab) fall through to the normal dispatch instead of being consumed.
@@ -236,10 +243,12 @@ The terminal cursor is shown while the bar is focused — the focused
 bar renders an Input element whose CursorAt records the editing
 position in the frame — and hidden on the focus-loss transition,
 written from render after the frame is presented so the sequence stays
-serial with the screen's output. The Output tab's scroll view shrinks
-by one row to make room for the bar (tuiPaneHeight), and the pane
-arithmetic — scroll updates, page scrolling, section jumps — uses the
-same adjusted height so the view and the layout never disagree.
+serial with the screen's output. The interactive Output tab's scroll
+view shrinks by one row to make room for the bar (tuiPaneHeight), and
+the pane arithmetic — scroll updates, page scrolling, section jumps —
+uses the same adjusted height so the view and the layout never
+disagree; a non-interactive Output pane keeps the full height because
+no row is reserved.
 `
 
 const TheoryOfTUIHandoff = `
@@ -301,13 +310,15 @@ focused) and records the origin of a drag-scroll. Presses outside every
 panel, middle and right presses, and no-button motion (mode 1003) are
 ignored.
 
-The Output tab's input row is the one press target with its own
-semantics: a left press on the chat input bar's row focuses the input
-instead of driving tab interaction (the Output tab takes the keyboard
-focus with it, so the scroll keys act on the pane the bar belongs to),
-and a left press anywhere else releases the input focus before the
-ordinary press handling runs. Wheel events never change the input
-focus. See TheoryOfTUIChatInput.
+In interactive sessions, the Output tab's input row is the one press
+target with its own semantics: a left press on the chat input bar's row
+focuses the input instead of driving tab interaction (the Output tab
+takes the keyboard focus with it, so the scroll keys act on the pane
+the bar belongs to), and a left press anywhere else releases the input
+focus before the ordinary press handling runs. Wheel events never
+change the input focus; a non-interactive session has no input row, so
+every press drives the ordinary tab interaction. See
+TheoryOfTUIChatInput.
 
 Drag-scrolling follows the pointer: holding the left button inside a
 scroll area and dragging up reveals earlier content, dragging down
@@ -581,13 +592,22 @@ type TUI struct {
 	// See TheoryOfTUI.
 	showHelp bool
 
-	// Chat input bar state, guarded by mu. The bar is always rendered
-	// as the bottom row of the Output tab; inputFocused reports whether
-	// it holds the keyboard. inputResult is non-nil while a ChatInput
-	// call is blocked on the generation goroutine (the model is idle);
-	// Enter delivers the typed line only then, and the pending line
-	// survives across calls so text typed while the model generated is
-	// sent with the next submit. See TheoryOfTUIChatInput.
+	// interactive reports whether this session's command supports
+	// multi-turn conversation (see Command.Interactive): only
+	// interactive sessions render the chat input bar and reserve its
+	// row; in the others the bar is not drawn, the Output pane keeps
+	// its full height, and clicks on the bottom row drive ordinary tab
+	// interaction. runWithTUI sets it. See TheoryOfTUIChatInput.
+	interactive bool
+
+	// Chat input bar state, guarded by mu. In interactive sessions the
+	// bar is rendered as the bottom row of the Output tab; inputFocused
+	// reports whether it holds the keyboard. inputResult is non-nil
+	// while a ChatInput call is blocked on the generation goroutine
+	// (the model is idle); Enter delivers the typed line only then, and
+	// the pending line survives across calls so text typed while the
+	// model generated is sent with the next submit. See
+	// TheoryOfTUIChatInput.
 	inputFocused bool
 	inputPrompt  string
 	inputLine    []rune
@@ -853,10 +873,12 @@ type chatInputViewSnapshot struct {
 
 // inputRowHit reports whether the given cell lies on the chat input
 // bar's row: the bottom row of the expanded Output tab's box, the same
-// row buildRoot renders the bar on. The caller holds t.mu. See
+// row buildRoot renders the bar on. The row exists only in interactive
+// sessions; in the others the bar is not rendered and the press falls
+// through to ordinary tab interaction. The caller holds t.mu. See
 // TheoryOfTUIChatInput.
 func (t *TUI) inputRowHit(x, y int) bool {
-	if !t.tabs.Expanded[0] {
+	if !t.interactive || !t.tabs.Expanded[0] {
 		return false
 	}
 	box := t.tabs.Boxes(t.width, t.height)[0]
@@ -1553,10 +1575,10 @@ func (t *TUI) pageScroll(direction int) {
 		return
 	}
 	// The scroll view is the panel box minus the one-row label strip,
-	// and the Output tab's input bar row on top of it; tuiPaneHeight
-	// applies both so the page size matches the rendered pane. See
-	// TheoryOfTUIChatInput.
-	paneHeight := tuiPaneHeight(idx, box)
+	// and the interactive Output tab's input bar row on top of it;
+	// tuiPaneHeight applies both so the page size matches the rendered
+	// pane. See TheoryOfTUIChatInput.
+	paneHeight := t.tuiPaneHeight(idx, box)
 	t.scrolls[idx].PageScroll(direction, paneHeight)
 }
 
@@ -1594,9 +1616,10 @@ func (t *TUI) jumpToTransition(direction int) {
 	// The anchor offset is clamped against the fresh display so a stale
 	// offset (e.g., the tail sentinel before the first render) anchors
 	// the jump at the content end. The pane height is the panel box
-	// minus its one-row label strip and the Output tab's input bar row,
-	// matching render's scroll updates. See TheoryOfTUIChatInput.
-	paneHeight := tuiPaneHeight(0, box)
+	// minus its one-row label strip and the interactive Output tab's
+	// input bar row, matching render's scroll updates. See
+	// TheoryOfTUIChatInput.
+	paneHeight := t.tuiPaneHeight(0, box)
 	offset := taiui.ClampOffset(t.scrolls[0].Offset, len(display), paneHeight)
 	// The stops come from taiui.TransitionJumpStops (each transition
 	// contributes the exit stop and the entry stop) and the selection —
@@ -1655,9 +1678,9 @@ func (t *TUI) render() {
 			continue
 		}
 		// tuiPaneHeight reserves every panel's one-row label strip plus
-		// the Output tab's input bar row, matching the boxes buildRoot
-		// renders. See TheoryOfTUIChatInput.
-		t.scrolls[idx].Update(len(displays[idx]), tuiPaneHeight(idx, boxes[idx]))
+		// the interactive Output tab's input bar row, matching the boxes
+		// buildRoot renders. See TheoryOfTUIChatInput.
+		t.scrolls[idx].Update(len(displays[idx]), t.tuiPaneHeight(idx, boxes[idx]))
 	}
 
 	taiui.Render(buildRoot(t, width, height, displays), t.screen)
@@ -1783,6 +1806,10 @@ func runWithTUI(command Command, scope dscope.Scope) {
 		scope.Fork(command.Defs...).Call(command.Main)
 		return
 	}
+	// The chat input bar renders only in interactive sessions: commands
+	// that never call pipeline.ChatInput have no use for the bar, so the
+	// Output pane keeps its full height. See TheoryOfTUIChatInput.
+	tui.interactive = command.Interactive
 	oldOut, oldErr := os.Stdout, os.Stderr
 
 	// The TUI is the display. Model output is captured from the

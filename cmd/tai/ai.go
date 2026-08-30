@@ -112,15 +112,11 @@ summarization never interferes with memory block extraction.
 `
 
 var AICommand = Command{
+	Interactive: true,
 	Defs: []any{
 		modes.ForProduction(),
 		new(apps.Name("cmd_ai")),
-		// In the ai command's scope, SystemPrompt is the AI assistant
-		// system prompt: the shared UserPrompt provider restates it and
-		// charges it to the token budget, so the restate must repeat the
-		// prompt the session actually runs on. Scopes without this fork
-		// keep the codes prompt from Module.SystemPrompt. See
-		// TheoryOfAiCommand.
+
 		func(getAISystemPrompt AISystemPrompt) SystemPrompt {
 			prompt, err := getAISystemPrompt()
 			ce(err)
@@ -151,13 +147,6 @@ var AICommand = Command{
 		input := strings.Join(flagChats, "\n")
 		logger.InfoContext(ctx, "input", "len", len(input))
 
-		// The user prompt comes from the shared UserPrompt provider — the
-		// same parts-provider mechanism the next command uses — so this
-		// command carries no file pipeline of its own. The provider
-		// expands the -file patterns, renders every file with begin/end
-		// markers, applies the token budget, and appends the system
-		// prompt restate; the user input marker follows so the task stays
-		// separated from the file context. See TheoryOfAiCommand.
 		parts := append([]generators.Part(userPrompt), generators.Text(
 			"\n``` begin of user input\n"+input+"\n``` end of user input\n",
 		))

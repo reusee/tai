@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"unicode/utf8"
 
 	"github.com/gdamore/tcell/v3/color"
@@ -53,17 +54,45 @@ func wrappedDisplay(t *TUI, idx int, box taiui.Box) []taiui.Line {
 }
 
 // tuiPaneHeight returns the scroll view height of tab idx's box: every
-// panel reserves its one-row label strip (taiui.PaneHeight), and the
-// Output tab reserves one more row for the chat input bar at its
-// bottom, so its scroll view is two rows shorter than the box. Every
-// pane-height consumer — the scroll updates in render, page scrolling,
-// and the section jumps — must use this helper so the view and the
-// layout never disagree. See TheoryOfTUIChatInput.
-func tuiPaneHeight(idx int, box taiui.Box) int {
-	if idx == 0 {
+// panel reserves its one-row label strip (taiui.PaneHeight), and an
+// interactive Output tab reserves one more row for the chat input bar
+// at its bottom, so its scroll view is two rows shorter than the box —
+// a non-interactive Output tab keeps the full pane height because the
+// bar is not rendered. Every pane-height consumer — the scroll updates
+// in render, page scrolling, and the section jumps — must use this
+// helper so the view and the layout never disagree. See
+// TheoryOfTUIChatInput.
+func (t *TUI) tuiPaneHeight(idx int, box taiui.Box) int {
+	if idx == 0 && t.interactive {
 		return max(box.Height()-2, 1)
 	}
 	return taiui.PaneHeight(box)
+}
+
+// helpLines returns the help overlay's key-binding lines for this
+// session: the full list in interactive sessions, and a variant without
+// the input bar's entries in the others — Enter's input clause and the
+// input-row click semantics describe a bar that is not rendered. See
+// TheoryOfTUIChatInput.
+func (t *TUI) helpLines() []string {
+	if t.interactive {
+		return tuiHelpLines
+	}
+	lines := make([]string, 0, len(tuiHelpLines))
+	for _, line := range tuiHelpLines {
+		key, _, _ := strings.Cut(line, "\t")
+		switch key {
+		case "enter":
+			lines = append(lines, "enter\ttoggle latest handoff summary")
+		case "click":
+			lines = append(lines, "click\tselect / toggle tab under cursor")
+		case "input bar":
+			// The bar is not rendered in non-interactive sessions.
+		default:
+			lines = append(lines, line)
+		}
+	}
+	return lines
 }
 
 var tuiHelpLines = []string{
@@ -93,11 +122,12 @@ func buildRoot(t *TUI, width, height int, displays [3][]taiui.Line) taiui.Elemen
 		}
 		box := boxes[i]
 		var inputBar taiui.Element
-		if i == 0 && t.tabs.Expanded[0] && box.Height() > 1 && box.Width() > 0 {
+		if i == 0 && t.interactive && t.tabs.Expanded[0] && box.Height() > 1 && box.Width() > 0 {
 			// The chat input bar is the bottom row of the Output tab's
 			// box: the panel above it shrinks by one row and the bar
 			// spans the tab's width, so the bar is part of the tab's
-			// layout rather than a screen-wide overlay. See
+			// layout rather than a screen-wide overlay. Interactive
+			// sessions only — the bar is not rendered otherwise. See
 			// TheoryOfTUIChatInput.
 			inputBar = chatInputBar(box, t.tabs.Focus == 0, t.inputFocused, t.inputPrompt, t.inputLine, t.inputCursor)
 			box.Bottom--
@@ -119,7 +149,7 @@ func buildRoot(t *TUI, width, height int, displays [3][]taiui.Line) taiui.Elemen
 		// The help overlay is centered over the tabs and lists the key
 		// bindings. It is derived from state like the quit confirmation
 		// bar: toggling showHelp re-renders the overlay.
-		root = taiui.Overlay(root, taiui.HelpOverlay(tuiHelpLines, 16, width, height))
+		root = taiui.Overlay(root, taiui.HelpOverlay(t.helpLines(), 16, width, height))
 	}
 	if t.quit.Pending() {
 		// A pending quit confirmation draws a confirmation bar over the

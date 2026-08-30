@@ -1,7 +1,10 @@
 package main
 
 import (
+	"fmt"
 	"io"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,6 +21,9 @@ func newChatInputTestTUI() *TUI {
 	return &TUI{
 		tabs:     taiui.NewTabs(3),
 		updateCh: make(chan struct{}, 1),
+		// The input-bar tests exercise interactive sessions, the only
+		// ones that render the bar. See TheoryOfTUIChatInput.
+		interactive: true,
 	}
 }
 
@@ -450,6 +456,29 @@ func TestTUIChatInputBarBottomRowOfOutputTab(t *testing.T) {
 	}
 }
 
+// TestTUIHelpLinesNonInteractive pins the non-interactive help overlay:
+// it must not describe the input bar that is not rendered. See
+// TheoryOfTUIChatInput.
+func TestTUIHelpLinesNonInteractive(t *testing.T) {
+	tui := newTUIForTest()
+	if lines := tui.helpLines(); !slices.Equal(lines, tuiHelpLines) {
+		t.Fatal("an interactive session must show the full help lines")
+	}
+	tui.interactive = false
+	lines := tui.helpLines()
+	for _, line := range lines {
+		if strings.HasPrefix(line, "input bar\t") {
+			t.Fatalf("non-interactive help must not describe the input bar, got %q", line)
+		}
+		if strings.Contains(line, "input row") {
+			t.Fatalf("non-interactive help must not describe the input row, got %q", line)
+		}
+	}
+	if !slices.Contains(lines, "enter\ttoggle latest handoff summary") {
+		t.Fatal("non-interactive help must document Enter's handoff binding")
+	}
+}
+
 // TestTUIChatInputBarBackgroundFollowsTabFocus pins the input bar's
 // background: the bar uses the Output tab's focused background while
 // the tab holds the focus, and the unfocused tab background — the same
@@ -489,6 +518,48 @@ func TestTUIChatInputBarBackgroundFollowsTabFocus(t *testing.T) {
 	}
 }
 
+// TestTUINonInteractivePaneAndInput pins the non-interactive pane
+// arithmetic and input handling: the Output pane keeps the full height
+// (only the label strip is reserved), and a press on the tab's bottom
+// row drives ordinary tab interaction instead of focusing the absent
+// input bar. See TheoryOfTUIChatInput.
+func TestTUINonInteractivePaneAndInput(t *testing.T) {
+	tui := newTUIForTest()
+	tui.tabs.Expanded = []bool{true, false, false}
+	tui.tabs.HasContent = []bool{true, false, false}
+	tui.tabs.Focus = 0
+	tui.width, tui.height = 80, 24
+
+	box := tui.tabs.Boxes(80, 24)[0]
+	tui.interactive = false
+	if got := tui.tuiPaneHeight(0, box); got != taiui.PaneHeight(box) {
+		t.Fatalf("non-interactive Output pane must keep the full height %d, got %d", taiui.PaneHeight(box), got)
+	}
+	tui.interactive = true
+	if got := tui.tuiPaneHeight(0, box); got != taiui.PaneHeight(box)-1 {
+		t.Fatalf("interactive Output pane must reserve the bar row (%d), got %d", taiui.PaneHeight(box)-1, got)
+	}
+
+	// The two collapsed strips leave the Output tab rows 0..21, so row
+	// 21 is the tab's bottom row — the input bar's row in interactive
+	// sessions. In a non-interactive session the press anchors an
+	// ordinary drag scroll and never focuses the input.
+	tui.interactive = false
+	tui.scrolls[0].MaxOffset = 100
+	tui.scrolls[0].Offset = 10
+	tui.handleMouseKey("mouse-left@5,21")
+	tui.mu.Lock()
+	focused := tui.inputFocused
+	tui.mu.Unlock()
+	if focused {
+		t.Fatal("a press on the bottom row must not focus the absent input bar")
+	}
+	tui.handleMouseKey("mouse-leftdrag@5,15")
+	if tui.scrolls[0].Offset != 16 {
+		t.Fatalf("expected the bottom-row press to anchor an ordinary drag scroll to offset 16, got %d", tui.scrolls[0].Offset)
+	}
+}
+
 func TestTUIChatInputQuitReleasesWaiter(t *testing.T) {
 	tu := newChatInputTestTUI()
 	done := make(chan error, 1)
@@ -508,6 +579,52 @@ func TestTUIChatInputQuitReleasesWaiter(t *testing.T) {
 	}
 }
 
+// TestTUINonInteractiveHidesInputBar pins the non-interactive layout:
+// without the bar the Output pane keeps its full height and the tab's
+// bottom row shows scroll content, while an interactive session shows
+// the input prompt there instead. See TheoryOfTUIChatInput.
+func TestTUINonInteractiveHidesInputBar(t *testing.T) {
+	tui := newTUIForTest()
+	tui.tabs.Expanded = []bool{true, false, false}
+	tui.tabs.HasContent = []bool{true, false, false}
+	tui.tabs.Focus = 0
+	tui.width, tui.height = 40, 10
+
+	display := make([]taiui.Line, 10)
+	for i := range display {
+		display[i] = taiui.Line{Text: fmt.Sprintf("%d", i)}
+	}
+	renderBottomRow := func(interactive bool) taiui.FrameCell {
+		tui.interactive = interactive
+		// Ten display lines: the non-interactive pane (7 rows) shows
+		// lines 3..9 and the interactive pane (6 rows) lines 4..9, so
+		// the pane's bottom row holds line 9 in both layouts.
+		offset := 4
+		if !interactive {
+			offset = 3
+		}
+		tui.scrolls[0] = taiui.ScrollState{Offset: offset}
+		screen := &panelTestScreen{width: 40, height: 10}
+		taiui.Render(buildRoot(tui, 40, 10, [3][]taiui.Line{display, nil, nil}), screen)
+		if len(screen.frames) == 0 {
+			t.Fatal("expected a rendered frame")
+		}
+		frame := screen.frames[len(screen.frames)-1]
+		// The two collapsed strips leave the Output tab rows 0..7, so
+		// row 7 is the tab's bottom row.
+		return frame.Cells[7*frame.Width+0]
+	}
+
+	interactiveCell := renderBottomRow(true)
+	if !interactiveCell.Set || interactiveCell.Rune != '>' {
+		t.Fatalf("expected the input bar prompt at the interactive bottom row, got %+v", interactiveCell)
+	}
+	nonInteractiveCell := renderBottomRow(false)
+	if !nonInteractiveCell.Set || nonInteractiveCell.Rune != '9' {
+		t.Fatalf("expected scroll content at the non-interactive bottom row, got %+v", nonInteractiveCell)
+	}
+}
+
 // TestForkTUIDisplayRoutesChatInput pins the TUI fork: pipeline.ChatInput
 // resolved from the display scope must be the TUI's input bar, not the
 // liner default — the liner default would open a second raw-mode reader
@@ -524,4 +641,31 @@ func TestForkTUIDisplayRoutesChatInput(t *testing.T) {
 	})
 	waitChatInputWaiting(t, tui)
 	tui.cancelChatInput()
+}
+
+// TestCommandInteractiveFlags pins the interactivity declaration: only
+// the commands that call pipeline.ChatInput while running — the ai
+// command's idle handler and the next command's chat phase — render the
+// chat input bar in TUI mode; every other command hides it. See
+// TheoryOfTUIChatInput.
+func TestCommandInteractiveFlags(t *testing.T) {
+	for name, command := range map[string]Command{
+		"ai":   AICommand,
+		"next": NextCommand,
+	} {
+		if !command.Interactive {
+			t.Fatalf("command %s must declare itself interactive", name)
+		}
+	}
+	for name, command := range map[string]Command{
+		"default (go module)": GoModuleCommand,
+		"default (any text)":  AnyTextCommand,
+		"patch":               PatchCommand,
+		"ping":                PingCommand,
+		"record":              RecordCommand,
+	} {
+		if command.Interactive {
+			t.Fatalf("command %s must not declare itself interactive", name)
+		}
+	}
 }

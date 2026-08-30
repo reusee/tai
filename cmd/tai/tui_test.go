@@ -37,6 +37,11 @@ func newTUIForTest() *TUI {
 		// non-TUI default; tests that exercise thought suppression set
 		// showThoughts to false explicitly. See TheoryOfTUI.
 		showThoughts: true,
+		// View tests pin the interactive layout — the chat input bar and
+		// its reserved row — matching the ai and next sessions; the
+		// non-interactive layout has its own tests. See
+		// TheoryOfTUIChatInput.
+		interactive: true,
 	}
 }
 

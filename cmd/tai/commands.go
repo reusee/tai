@@ -15,9 +15,20 @@ goal mode; outside one it is AnyTextCommand — the anytexts.PartsProvider
 (with skeletons) running a single generation session with review.
 `
 
+// Command is a tai subcommand: Defs forks the scope for the command's
+// providers and Main runs the command. It is also a flags.Flag, so
+// flags.Parse selects the subcommand by its name.
 type Command struct {
-	Defs []any
-	Main any
+	// Interactive reports whether the command supports multi-turn
+	// conversation: interactive commands call pipeline.ChatInput while
+	// running — the ai command's idle handler and the next command's
+	// chat phase. runWithTUI copies it into the TUI, which renders the
+	// chat input bar only in interactive sessions; every other command
+	// (goal mode, any, ping, patch, record) hides the bar and keeps the
+	// Output pane's full height. See TheoryOfTUIChatInput.
+	Interactive bool
+	Defs        []any
+	Main        any
 }
 
 // Command provides the default command when no subcommand is given,
