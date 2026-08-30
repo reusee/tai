@@ -9,8 +9,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/gdamore/tcell/v3/color"
 	"github.com/gdamore/tcell/v3/tty"
@@ -218,7 +216,10 @@ as characters while the bar is focused, and Esc (or Ctrl-C) releases
 the keyboard back to navigation without cancelling anything. The bar's
 background follows the Output tab's focus state, using the same focused
 and unfocused backgrounds as the tab panels, so a bar in an unfocused
-tab never reads as a focused element.
+tab never reads as a focused element. The editing state and the bar
+rendering come from the reusable taiui.InputBar (see
+taiui.TheoryOfInputBar); this TUI keeps only the focus policy, the
+delivery, and the blocked-wait protocol around it.
 
 Focus is pointer-driven: the bar takes focus ONLY when the user clicks
 its row, and it keeps focus after a submit, so a line typed while the
@@ -631,16 +632,17 @@ type TUI struct {
 
 	// Chat input bar state, guarded by mu. In interactive sessions the
 	// bar is rendered as the bottom row of the Output tab; inputFocused
-	// reports whether it holds the keyboard. inputResult is non-nil
-	// while a ChatInput call is blocked on the generation goroutine
-	// (the model is idle); Enter delivers the typed line only then, and
-	// the pending line survives across calls so text typed while the
-	// model generated is sent with the next submit. See
-	// TheoryOfTUIChatInput.
+	// reports whether it holds the keyboard, and inputBar carries the
+	// reusable editing state (prompt, line, cursor) of taiui.InputBar —
+	// the line editing and bar rendering live in the library, while
+	// focus, delivery, and the blocked-wait protocol stay here.
+	// inputResult is non-nil while a ChatInput call is blocked on the
+	// generation goroutine (the model is idle); Enter delivers the
+	// typed line only then, and the pending line survives across calls
+	// so text typed while the model generated is sent with the next
+	// submit. See TheoryOfTUIChatInput and taiui.TheoryOfInputBar.
 	inputFocused bool
-	inputPrompt  string
-	inputLine    []rune
-	inputCursor  int
+	inputBar     taiui.InputBar
 	inputResult  chan chatInputResult
 	// wasInputFocused tracks the input focus across renders to write
 	// the terminal cursor visibility sequence exactly on the
@@ -773,7 +775,7 @@ func (t *TUI) ChatInput(prompt string) (string, error) {
 	// and the terminal cursor stays hidden until the click. The pending
 	// typed line is preserved, so text typed before the click is
 	// submitted with the first Enter. See TheoryOfTUIChatInput.
-	t.inputPrompt = prompt
+	t.inputBar.Prompt = prompt
 	t.inputResult = ch
 	t.mu.Unlock()
 	t.notify()
@@ -798,7 +800,7 @@ func (t *TUI) handleChatInputKey(key string) bool {
 		// consumed so it never triggers the unfocused Enter binding.
 		// See TheoryOfTUIChatInput.
 		if t.inputResult != nil {
-			t.deliverInputLocked(chatInputResult{line: string(t.inputLine), ok: true})
+			t.deliverInputLocked(chatInputResult{line: t.inputBar.Line(), ok: true})
 		}
 	case key == "esc", key == "ctrl-c":
 		// Release the keyboard back to navigation; the blocked
@@ -806,60 +808,20 @@ func (t *TUI) handleChatInputKey(key string) bool {
 		// reaches a waiting input only through the quit path. See
 		// TheoryOfTUIChatInput.
 		t.inputFocused = false
-	case key == "backspace":
-		if t.inputCursor > 0 {
-			t.inputLine = append(t.inputLine[:t.inputCursor-1], t.inputLine[t.inputCursor:]...)
-			t.inputCursor--
-		}
-	case key == "delete":
-		if t.inputCursor < len(t.inputLine) {
-			t.inputLine = append(t.inputLine[:t.inputCursor], t.inputLine[t.inputCursor+1:]...)
-		}
-	case key == "left":
-		if t.inputCursor > 0 {
-			t.inputCursor--
-		}
-	case key == "right":
-		if t.inputCursor < len(t.inputLine) {
-			t.inputCursor++
-		}
-	case key == "home", key == "ctrl-a":
-		t.inputCursor = 0
-	case key == "end", key == "ctrl-e":
-		t.inputCursor = len(t.inputLine)
-	case key == "space":
-		t.insertInputRune(' ')
 	default:
-		// ReadKeys emits printable ASCII and decoded multi-byte
-		// characters (CJK, emoji) as the character itself; a single
-		// printable rune inserts at the cursor, so keys that double as
-		// navigation bindings (q, 1..3, s, [, ]) are typed as text.
-		// Every other key — arrows, page keys, tab, function keys —
-		// falls through to the normal dispatch, so the TUI stays
-		// operable while typing. See TheoryOfTUIChatInput.
-		if r, size := utf8.DecodeRuneInString(key); len(key) > 0 && size == len(key) && unicode.IsPrint(r) {
-			t.insertInputRune(r)
-			return true
-		}
-		return false
+		// Line-editing keys edit the pending line through the reusable
+		// taiui.InputBar; keys that are not line editing (arrows, page
+		// keys, tab, function keys) return false and fall through to
+		// the normal dispatch, so the TUI stays operable while typing.
+		// See TheoryOfTUIChatInput and taiui.TheoryOfInputBar.
+		return t.inputBar.HandleKey(key)
 	}
 	return true
 }
 
-// insertInputRune inserts one rune at the input cursor, shifting the
-// rest of the line. The caller holds t.mu. See TheoryOfTUIChatInput.
-func (t *TUI) insertInputRune(r rune) {
-	t.inputLine = append(t.inputLine, 0)
-	copy(t.inputLine[t.inputCursor+1:], t.inputLine[t.inputCursor:])
-	t.inputLine[t.inputCursor] = r
-	t.inputCursor++
-}
-
 func (t *TUI) deliverInputLocked(res chatInputResult) {
 	ch := t.inputResult
-	t.inputPrompt = ""
-	t.inputLine = nil
-	t.inputCursor = 0
+	t.inputBar.Reset()
 	t.inputResult = nil
 	// The bar keeps its focus after the delivery, so typing continues
 	// right into the next round. See TheoryOfTUIChatInput.

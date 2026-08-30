@@ -108,11 +108,13 @@ const TheoryOfTUISupport = `
 taiui TUI support theory:
 - The TUI content mechanisms (colored line buffers, wrapped colored
   lines, alternating log backgrounds, and grouped colored text
-  elements) and the tab state machine (auto-expansion, focus order,
-  weighted panel layout, and collapsed strips) live in this library so
-  any project can build a terminal UI on top of taiui's rendering. They
-  are pure state and rendering: they do not depend on generators,
-  blocks, or any application-specific model.
+  elements), the tab state machine (auto-expansion, focus order,
+  weighted panel layout, and collapsed strips), and the single-line
+  input bar (prompt, line editing, and bar rendering; see
+  TheoryOfInputBar) live in this library so any project can build a
+  terminal UI on top of taiui's rendering. They are pure state and
+  rendering: they do not depend on generators, blocks, or any
+  application-specific model.
 `
 
 const TheoryOfCellComparison = `

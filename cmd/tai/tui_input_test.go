@@ -165,7 +165,7 @@ func TestTUIChatInputTypingKeepsNavigation(t *testing.T) {
 		t.Fatal("handleKey must not quit while typing")
 	}
 	tu.mu.Lock()
-	line := string(tu.inputLine)
+	line := tu.inputBar.Line()
 	tu.mu.Unlock()
 	if line != "1" {
 		t.Fatalf("key 1 should type into the input line, got %q", line)
@@ -262,7 +262,7 @@ func TestTUIChatInputEnterWaitsForIdle(t *testing.T) {
 	}
 	tu.handleKey("enter")
 	tu.mu.Lock()
-	line := string(tu.inputLine)
+	line := tu.inputBar.Line()
 	waiting := tu.inputResult != nil
 	tu.mu.Unlock()
 	if waiting {
@@ -321,7 +321,7 @@ func TestTUIChatInputMouseFocusAndBlur(t *testing.T) {
 	tu.handleKey("a")
 	tu.mu.Lock()
 	focused := tu.inputFocused
-	line := string(tu.inputLine)
+	line := tu.inputBar.Line()
 	tu.mu.Unlock()
 	if !focused || line != "a" {
 		t.Fatalf("expected a focused bar with line %q, got focused=%v line=%q", "a", focused, line)
@@ -333,7 +333,7 @@ func TestTUIChatInputMouseFocusAndBlur(t *testing.T) {
 	tu.handleKey("b")
 	tu.mu.Lock()
 	focused = tu.inputFocused
-	line = string(tu.inputLine)
+	line = tu.inputBar.Line()
 	tu.mu.Unlock()
 	if focused {
 		t.Fatal("a press outside the input row must release the input focus")
