@@ -412,7 +412,7 @@ func renderPanel(p _Panel, box Box, style Style, draw drawFunc, cursor cursorFun
 	if p.focus {
 		headerStyle = withAttrOn(headerStyle, true, vt.Bold)
 	}
-	renderListLine("  "+p.label+"  ", Box{
+	renderListLine(p.label, Box{
 		Top:    box.Top,
 		Left:   box.Left,
 		Bottom: box.Top + 1,
@@ -485,12 +485,11 @@ func renderPanel(p _Panel, box Box, style Style, draw drawFunc, cursor cursorFun
 }
 
 // CollapsedPanel renders a collapsed tab as a thin strip showing the
-// tab's key and title. In a narrow column the label is written
-// vertically; in a short row it is written horizontally. An unseen tab
-// carries a red-circle emoji right after the label. The one-column
-// vertical strip cannot hold the two-column emoji — it would be
-// clipped entirely — so the mark falls back to a red background cell
-// there.
+// tab's title. In a narrow column the label is written vertically; in
+// a short row it is written horizontally. An unseen tab carries a
+// red-circle emoji right after the label. The one-column vertical
+// strip cannot hold the two-column emoji — it would be clipped
+// entirely — so the mark falls back to a red background cell there.
 func CollapsedPanel(box Box, label string, focus, unseen bool, style PanelStyle) Element {
 	base := style.BaseBG
 	if focus {
@@ -528,12 +527,11 @@ func CollapsedPanel(box Box, label string, focus, unseen bool, style PanelStyle)
 			BGColor(style.UnseenDotBG),
 		))
 	}
-	labelText := "  " + label + "  "
+	labelText := label
 	if unseen {
 		// The unseen mark is the red-circle emoji: a colored glyph
-		// replacing the label's trailing padding, adjacent to the
-		// label, where the former background dot sat.
-		labelText = "  " + label + "🔴"
+		// right after the label, where the former background dot sat.
+		labelText = label + "🔴"
 	}
 	return Rect(
 		Box(box),

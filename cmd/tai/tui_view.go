@@ -99,11 +99,11 @@ func buildRoot(t *TUI, width, height int, displays [3][]taiui.Line) taiui.Elemen
 			// spans the tab's width, so the bar is part of the tab's
 			// layout rather than a screen-wide overlay. See
 			// TheoryOfTUIChatInput.
-			inputBar = chatInputBar(box, t.inputFocused, t.inputPrompt, t.inputLine, t.inputCursor)
+			inputBar = chatInputBar(box, t.tabs.Focus == 0, t.inputFocused, t.inputPrompt, t.inputLine, t.inputCursor)
 			box.Bottom--
 		}
 		panel := taiui.TabPanel(
-			box, i+1, tabNames[i], label, highlight,
+			box, tabNames[i], label, highlight,
 			t.tabs.Expanded[i], t.tabs.Focus == i, t.tabs.Unseen[i],
 			displays[i], t.scrolls[i], panelStyle,
 		)
@@ -130,7 +130,7 @@ func buildRoot(t *TUI, width, height int, displays [3][]taiui.Line) taiui.Elemen
 	return root
 }
 
-func chatInputBar(box taiui.Box, focused bool, prompt string, line []rune, cursor int) taiui.Element {
+func chatInputBar(box taiui.Box, tabFocused, focused bool, prompt string, line []rune, cursor int) taiui.Element {
 	if prompt == "" {
 		prompt = ">> "
 	}
@@ -138,17 +138,24 @@ func chatInputBar(box taiui.Box, focused bool, prompt string, line []rune, curso
 	// A focused bar shows the bright text and the terminal cursor at
 	// the editing position (the Input element records it in the frame);
 	// an unfocused bar keeps the text in a dimmer foreground so the
-	// focus state is visible at a glance. See TheoryOfTUIChatInput.
+	// focus state is visible at a glance. The bar's background follows
+	// the Output tab's focus state, so an unfocused tab shows the bar
+	// in the same unfocused background as the panel above it. See
+	// TheoryOfTUIChatInput.
 	var input taiui.Element
 	if focused {
 		input = taiui.Input(text, utf8.RuneCountInString(prompt)+cursor, taiui.FGColor(color.PaletteColor(15)))
 	} else {
 		input = taiui.Text(text, taiui.FGColor(color.PaletteColor(8)))
 	}
+	bg := panelStyle.BaseBG
+	if tabFocused {
+		bg = panelStyle.FocusBG
+	}
 	return taiui.Rect(
 		taiui.Box{Top: box.Bottom - 1, Left: box.Left, Bottom: box.Bottom, Right: box.Right},
 		taiui.Fill(true),
-		taiui.BGColor(taiui.HexColor(tabFocusBG)),
+		taiui.BGColor(bg),
 		input,
 	)
 }

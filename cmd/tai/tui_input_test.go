@@ -450,6 +450,45 @@ func TestTUIChatInputBarBottomRowOfOutputTab(t *testing.T) {
 	}
 }
 
+// TestTUIChatInputBarBackgroundFollowsTabFocus pins the input bar's
+// background: the bar uses the Output tab's focused background while
+// the tab holds the focus, and the unfocused tab background — the same
+// one the panel above it uses — when another tab is focused. See
+// TheoryOfTUIChatInput.
+func TestTUIChatInputBarBackgroundFollowsTabFocus(t *testing.T) {
+	renderBarCell := func(focus int) taiui.FrameCell {
+		tui := newTUIForTest()
+		tui.tabs.Expanded = []bool{true, true, false}
+		tui.tabs.HasContent = []bool{true, true, false}
+		tui.tabs.Focus = focus
+		screen := &panelTestScreen{width: 40, height: 10}
+		taiui.Render(buildRoot(tui, 40, 10, [3][]taiui.Line{}), screen)
+		if len(screen.frames) == 0 {
+			t.Fatal("expected a rendered frame")
+		}
+		frame := screen.frames[len(screen.frames)-1]
+		for _, cell := range frame.Cells {
+			if cell.Set && cell.Rune == '>' {
+				return cell
+			}
+		}
+		t.Fatal("expected the input bar prompt in the frame")
+		return taiui.FrameCell{}
+	}
+
+	focusedCell := renderBarCell(0)
+	wantR, wantG, wantB := panelStyle.FocusBG.RGB()
+	if r, g, b := focusedCell.Style.Bg().RGB(); r != wantR || g != wantG || b != wantB {
+		t.Fatalf("expected the focused tab background on the input bar, got %#x %#x %#x", r, g, b)
+	}
+
+	unfocusedCell := renderBarCell(1)
+	wantR, wantG, wantB = panelStyle.BaseBG.RGB()
+	if r, g, b := unfocusedCell.Style.Bg().RGB(); r != wantR || g != wantG || b != wantB {
+		t.Fatalf("expected the unfocused tab background on the input bar, got %#x %#x %#x", r, g, b)
+	}
+}
+
 func TestTUIChatInputQuitReleasesWaiter(t *testing.T) {
 	tu := newChatInputTestTUI()
 	done := make(chan error, 1)

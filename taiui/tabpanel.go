@@ -1,15 +1,13 @@
 package taiui
 
-import "fmt"
-
 const TheoryOfTabPanel = `
 taiui tab panel theory:
 - TabPanel builds the element of one tab in a tabbed panel layout: a
-  collapsed tab renders its CollapsedPanel strip keyed by its number
-  ("1 Output"), an expanded tab renders its Panel with the current
-  label, highlight, content lines, and scroll view. The key/title pair
-  decouples the persistent strip label from the dynamic panel label,
-  which may carry status suffixes such as "(generating...)".
+  collapsed tab renders its CollapsedPanel strip with the tab title,
+  an expanded tab renders its Panel with the current label, highlight,
+  content lines, and scroll view. The title/label pair decouples the
+  persistent strip label from the dynamic panel label, which may carry
+  status suffixes such as "(generating...)".
 - An unseen collapsed tab renders a red-circle emoji right after its
   label, marking content that arrived while the tab was collapsed; the
   one-column vertical strip falls back to a red background cell,
@@ -20,19 +18,18 @@ taiui tab panel theory:
 `
 
 // TabPanel builds the element of one tab: a collapsed strip or an
-// expanded panel, laid out by Tabs.Boxes. key and title form the
-// collapsed strip's label ("1 Output"); label is the expanded panel's
-// title. unseen paints the red-circle unseen emoji on the collapsed
-// strip. It returns nil for a degenerate box, which layouts skip. See
-// TheoryOfTabPanel.
-func TabPanel(box Box, key int, title, label string, highlight, expanded, focus, unseen bool, lines []Line, scroll ScrollState, style PanelStyle) Element {
+// expanded panel, laid out by Tabs.Boxes. title is the collapsed
+// strip's label; label is the expanded panel's title. unseen paints
+// the red-circle unseen emoji on the collapsed strip. It returns nil
+// for a degenerate box, which layouts skip. See TheoryOfTabPanel.
+func TabPanel(box Box, title, label string, highlight, expanded, focus, unseen bool, lines []Line, scroll ScrollState, style PanelStyle) Element {
 	if box.Width() <= 0 || box.Height() <= 0 {
 		return nil
 	}
 	if !expanded {
 		return CollapsedPanel(
 			box,
-			fmt.Sprintf("%d %s", key, title),
+			title,
 			focus,
 			unseen,
 			style,

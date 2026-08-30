@@ -208,7 +208,10 @@ tab) fall through to the normal dispatch instead of being consumed.
 Only printable runes and line-editing keys are consumed by the bar;
 keys that double as navigation bindings (q, 1..3, s, [, ]) are typed
 as characters while the bar is focused, and Esc (or Ctrl-C) releases
-the keyboard back to navigation without cancelling anything.
+the keyboard back to navigation without cancelling anything. The bar's
+background follows the Output tab's focus state, using the same focused
+and unfocused backgrounds as the tab panels, so a bar in an unfocused
+tab never reads as a focused element.
 
 Focus is pointer-driven: the bar takes focus ONLY when the user clicks
 its row, and it keeps focus after a submit, so a line typed while the

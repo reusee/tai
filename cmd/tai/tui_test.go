@@ -386,9 +386,9 @@ func TestTUIPanelTitleHighlightedDuringRequest(t *testing.T) {
 	tui := newTUIForTest()
 	tui.writeLogs([]byte("level=INFO msg=generating name=model\n"))
 	frame := renderTitle(tui, false)
-	cell := frame.Cells[2]
+	cell := frame.Cells[0]
 	if cell.Rune != 'O' {
-		t.Fatalf("expected title 'O' at (2,0), got %v", cell.Rune)
+		t.Fatalf("expected title 'O' at (0,0), got %v", cell.Rune)
 	}
 	wantR, wantG, wantB := color.PaletteColor(int(tabActiveLabelFg)).RGB()
 	if r, g, b := cell.Style.Fg().RGB(); r != wantR || g != wantG || b != wantB {
@@ -397,9 +397,9 @@ func TestTUIPanelTitleHighlightedDuringRequest(t *testing.T) {
 
 	idle := newTUIForTest()
 	idleFrame := renderTitle(idle, false)
-	idleCell := idleFrame.Cells[2]
+	idleCell := idleFrame.Cells[0]
 	if idleCell.Rune != 'O' {
-		t.Fatalf("expected title 'O' at (2,0), got %v", idleCell.Rune)
+		t.Fatalf("expected title 'O' at (0,0), got %v", idleCell.Rune)
 	}
 	if r, g, b := idleCell.Style.Fg().RGB(); r == wantR && g == wantG && b == wantB {
 		t.Fatal("expected the idle title to keep the ordinary foreground color")

@@ -138,23 +138,23 @@ func TestCollapsedPanelUnseenDot(t *testing.T) {
 	style := testPanelStyle()
 
 	t.Run("Horizontal", func(t *testing.T) {
-		element := CollapsedPanel(Box{Top: 0, Left: 0, Bottom: 1, Right: 20}, "2 Summary", false, true, style)
+		element := CollapsedPanel(Box{Top: 0, Left: 0, Bottom: 1, Right: 20}, "Summary", false, true, style)
 		screen := newFakeScreen(20, 1)
 		Render(element, screen)
 		if len(screen.frames) == 0 {
 			t.Fatal("expected a rendered frame")
 		}
 		frame := screen.frames[len(screen.frames)-1]
-		// The label "  2 Summary" ends at column 10; the red-circle
-		// emoji sits right after it, occupying columns 11 and 12.
-		cell := frame.Cells[11]
+		// The label "Summary" ends at column 6; the red-circle emoji
+		// sits right after it, occupying columns 7 and 8.
+		cell := frame.Cells[7]
 		if cell.Rune != '🔴' {
-			t.Fatalf("expected the red-circle emoji at (11,0), got %v", cell.Rune)
+			t.Fatalf("expected the red-circle emoji at (7,0), got %v", cell.Rune)
 		}
 	})
 
 	t.Run("Vertical", func(t *testing.T) {
-		element := CollapsedPanel(Box{Top: 0, Left: 0, Bottom: 12, Right: 1}, "2 Summary", false, true, style)
+		element := CollapsedPanel(Box{Top: 0, Left: 0, Bottom: 12, Right: 1}, "Summary", false, true, style)
 		screen := newFakeScreen(1, 12)
 		Render(element, screen)
 		if len(screen.frames) == 0 {
@@ -163,16 +163,16 @@ func TestCollapsedPanelUnseenDot(t *testing.T) {
 		frame := screen.frames[len(screen.frames)-1]
 		// The one-column strip cannot hold the two-column emoji, so the
 		// mark falls back to a red background cell right below the
-		// label, which occupies rows 0..8.
-		cell := frame.Cells[9*frame.Width]
+		// label, which occupies rows 0..6.
+		cell := frame.Cells[7*frame.Width]
 		wantR, wantG, wantB := style.UnseenDotBG.RGB()
 		if r, g, b := cell.Style.Bg().RGB(); r != wantR || g != wantG || b != wantB {
-			t.Fatalf("expected the unseen dot background at (0,9), got %#x %#x %#x", r, g, b)
+			t.Fatalf("expected the unseen dot background at (0,7), got %#x %#x %#x", r, g, b)
 		}
 	})
 
 	t.Run("NoDotWithoutUnseen", func(t *testing.T) {
-		element := CollapsedPanel(Box{Top: 0, Left: 0, Bottom: 1, Right: 20}, "2 Summary", false, false, style)
+		element := CollapsedPanel(Box{Top: 0, Left: 0, Bottom: 1, Right: 20}, "Summary", false, false, style)
 		screen := newFakeScreen(20, 1)
 		Render(element, screen)
 		frame := screen.frames[len(screen.frames)-1]
@@ -347,8 +347,8 @@ func TestPanelRenders(t *testing.T) {
 		t.Fatal("expected a rendered frame")
 	}
 	frame := screen.frames[len(screen.frames)-1]
-	if cell := frame.Cells[2]; cell.Rune != 'O' {
-		t.Fatalf("expected title 'O' at (2,0), got %v", cell.Rune)
+	if cell := frame.Cells[0]; cell.Rune != 'O' {
+		t.Fatalf("expected title 'O' at (0,0), got %v", cell.Rune)
 	}
 	if cell := frame.Cells[1*frame.Width]; cell.Rune != 'c' {
 		t.Fatalf("expected content at (0,1), got %v", cell.Rune)
@@ -363,34 +363,28 @@ func TestCollapsedPanelRendering(t *testing.T) {
 	style := testPanelStyle()
 
 	t.Run("Horizontal", func(t *testing.T) {
-		element := CollapsedPanel(Box{Top: 0, Left: 0, Bottom: 1, Right: 12}, "1 Output", false, false, style)
+		element := CollapsedPanel(Box{Top: 0, Left: 0, Bottom: 1, Right: 12}, "Output", false, false, style)
 		screen := newFakeScreen(12, 1)
 		Render(element, screen)
 		if len(screen.frames) == 0 {
 			t.Fatal("expected a rendered frame")
 		}
 		frame := screen.frames[len(screen.frames)-1]
-		if cell := frame.Cells[2]; cell.Rune != '1' {
-			t.Fatalf("expected '1' at (2,0), got %v", cell.Rune)
-		}
-		if cell := frame.Cells[4]; cell.Rune != 'O' {
-			t.Fatalf("expected 'O' at (4,0), got %v", cell.Rune)
+		if cell := frame.Cells[0]; cell.Rune != 'O' {
+			t.Fatalf("expected 'O' at (0,0), got %v", cell.Rune)
 		}
 	})
 
 	t.Run("Vertical", func(t *testing.T) {
-		element := CollapsedPanel(Box{Top: 0, Left: 0, Bottom: 8, Right: 1}, "1 Output", false, false, style)
+		element := CollapsedPanel(Box{Top: 0, Left: 0, Bottom: 8, Right: 1}, "Output", false, false, style)
 		screen := newFakeScreen(1, 8)
 		Render(element, screen)
 		if len(screen.frames) == 0 {
 			t.Fatal("expected a rendered frame")
 		}
 		frame := screen.frames[len(screen.frames)-1]
-		if cell := frame.Cells[0]; cell.Rune != '1' {
-			t.Fatalf("expected '1' at (0,0), got %v", cell.Rune)
-		}
-		if cell := frame.Cells[2*frame.Width]; cell.Rune != 'O' {
-			t.Fatalf("expected 'O' at (0,2), got %v", cell.Rune)
+		if cell := frame.Cells[0]; cell.Rune != 'O' {
+			t.Fatalf("expected 'O' at (0,0), got %v", cell.Rune)
 		}
 	})
 }
