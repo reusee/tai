@@ -20,6 +20,10 @@ When building tool declarations for API requests, functions from state layers
 and config files are merged into a single list and sorted globally by name.
 Global sorting ensures that adding a function from any source inserts it at its
 natural alphabetical position, shifting only the functions that follow.
+Config-provided declarations are deduplicated by name at accumulation time,
+keeping the first occurrence: config roots are ordered from most local to most
+global, so the first occurrence is the most local definition. Duplicate tool
+names would waste prompt tokens and may be rejected by the model API.
 `
 
 type FuncMap struct {
