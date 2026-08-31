@@ -624,15 +624,21 @@ func computeFocusPackageDoc(
 }
 
 // focusTestNamesSection lists the test function names of a focus
-// package: top-level Test, Benchmark, Fuzz, and Example functions
-// declared in the package's test files. Names — not bodies — are included
-// in the focus documentation block so the model can discover and fetch
-// potentially related test code with go-src blocks naming a function,
-// without paying the token cost of every test body up front. Names are
+// package, grouped by the test file containing them: top-level Test,
+// Benchmark, Fuzz, and Example functions declared in the package's test
+// files. Names — not bodies — are included in the focus documentation
+// block so the model can discover and fetch potentially related test
+// code with go-src blocks naming a function, without paying the token
+// cost of every test body up front. Grouping by file shows the file
+// path to use in change blocks when modifying a test. A test file that
+// declares no matching function contributes no line — the file-names
+// section already lists it — so a package without test functions omits
+// the section entirely. File paths are sorted and each file's names are
 // deduplicated and sorted for deterministic output. See
 // TheoryOfVisibilityAllocation.
 func focusTestNamesSection(lp *LogicalPackage) string {
-	var names []string
+	namesByPath := map[string][]string{}
+	var paths []string
 	for _, f := range lp.Files {
 		if !f.IsTestFile || f.AstFile == nil {
 			continue
@@ -647,19 +653,24 @@ func focusTestNamesSection(lp *LogicalPackage) string {
 				strings.HasPrefix(name, "Benchmark") ||
 				strings.HasPrefix(name, "Fuzz") ||
 				strings.HasPrefix(name, "Example") {
-				names = append(names, name)
+				if _, ok := namesByPath[f.Path]; !ok {
+					paths = append(paths, f.Path)
+				}
+				namesByPath[f.Path] = append(namesByPath[f.Path], name)
 			}
 		}
 	}
-	if len(names) == 0 {
+	if len(paths) == 0 {
 		return ""
 	}
-	slices.Sort(names)
-	names = slices.Compact(names)
+	slices.Sort(paths)
 	var b strings.Builder
-	b.WriteString("\nTest functions in this package (fetch a test's source with a go-src block naming the function):\n")
-	for _, name := range names {
-		b.WriteString("- " + name + "\n")
+	b.WriteString("\nTest functions in this package, grouped by file (fetch a test's source with a go-src block naming the function):\n")
+	for _, path := range paths {
+		names := namesByPath[path]
+		slices.Sort(names)
+		names = slices.Compact(names)
+		b.WriteString("- " + path + ": " + strings.Join(names, ", ") + "\n")
 	}
 	return b.String()
 }

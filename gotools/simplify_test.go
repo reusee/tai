@@ -2,6 +2,8 @@ package gotools
 
 import (
 	"bytes"
+	"go/parser"
+	"go/token"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -186,6 +188,61 @@ func BenchmarkExported(b *testing.B) {
 			t.Fatalf("non-Go focus file contents must not appear in the initial context:\n%s", got)
 		}
 	})
+}
+
+func TestFocusTestNamesGroupedByFile(t *testing.T) {
+	// Test names in the focus package block are grouped by the test file
+	// containing them, so the model knows the file path to use in a
+	// change block when modifying a test. Files sort by path; each
+	// file's names are sorted. A test file that declares no test
+	// function contributes no line, and a package with no test functions
+	// omits the section entirely. See TheoryOfVisibilityAllocation.
+	lp := &LogicalPackage{PkgPath: "pkg"}
+	for _, tc := range []struct {
+		path string
+		src  string
+	}{
+		{"b_test.go", "package pkg\n\nfunc TestOne(t *testing.T) {}\n"},
+		{"a_test.go", "package pkg\n\nfunc TestTwo(t *testing.T) {}\nfunc TestOne(t *testing.T) {}\n"},
+		{"c_test.go", "package pkg\n\nfunc helperOnly(x int) {}\n"},
+	} {
+		fset := token.NewFileSet()
+		astFile, err := parser.ParseFile(fset, tc.path, tc.src, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lp.Files = append(lp.Files, &File{
+			Path:       tc.path,
+			IsTestFile: true,
+			AstFile:    astFile,
+		})
+	}
+	got := focusTestNamesSection(lp)
+	want := "\nTest functions in this package, grouped by file (fetch a test's source with a go-src block naming the function):\n" +
+		"- a_test.go: TestOne, TestTwo\n" +
+		"- b_test.go: TestOne\n"
+	if got != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+	}
+
+	// A package whose test files declare no test functions omits the
+	// section: no dangling header, no empty group lines.
+	fset := token.NewFileSet()
+	astFile, err := parser.ParseFile(fset, "d_test.go", "package pkg\n\nfunc helper(x int) {}\n", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	empty := &LogicalPackage{
+		PkgPath: "pkg",
+		Files: []*File{{
+			Path:       "d_test.go",
+			IsTestFile: true,
+			AstFile:    astFile,
+		}},
+	}
+	if got := focusTestNamesSection(empty); got != "" {
+		t.Fatalf("expected no section for a package without test functions, got:\n%s", got)
+	}
 }
 
 func TestSimplifySingleFile(t *testing.T) {
