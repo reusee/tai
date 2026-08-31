@@ -371,6 +371,12 @@ stdout is itself a pipe), and main routes the command through
 runWithTUI when the resolved Tui value is true. A newTUI failure (no
 usable terminal) falls back to the plain command-line path, so
 non-interactive environments degrade gracefully without the flag.
+Terminal acquisition is part of the same entry gate as the check:
+tryOpenTty tries stdin/stdout and then /dev/tty, retrying each backend
+once, so a transient start failure (an interleaved signal or a previous
+session's teardown racing setup) or a non-terminal stdin no longer
+drops an otherwise interactive session to the command line for that
+invocation.
 `
 
 // StdoutIsTerminal reports whether standard output is attached to a
@@ -701,15 +707,12 @@ type TUI struct {
 	height   int
 }
 
+// ttyOpener opens one tty backend for the TUI.
+type ttyOpener func() (tty.Tty, error)
+
 func newTUI() (*TUI, error) {
-	t, err := tty.NewStdIoTty()
+	t, err := tryOpenTty([]ttyOpener{tty.NewStdIoTty, tty.NewDevTty})
 	if err != nil {
-		t, err = tty.NewDevTty()
-		if err != nil {
-			return nil, err
-		}
-	}
-	if err := t.Start(); err != nil {
 		return nil, err
 	}
 	width, height := 80, 25
@@ -755,6 +758,30 @@ func newTUI() (*TUI, error) {
 		width:    width,
 		height:   height,
 	}, nil
+}
+
+// tryOpenTty acquires a terminal for the TUI: stdin/stdout first, then
+// /dev/tty, each backend retried once. The raw-mode ioctls of a session
+// start can fail transiently — an interleaved signal delivering EINTR, or
+// a previous session's teardown racing this one's setup — and a stdin that
+// happens not to be a terminal must still fall through to /dev/tty. A
+// single failure therefore never disables the TUI for the whole
+// invocation; only when every attempt fails does the caller fall back to
+// the command line. See TheoryOfDisplayMode.
+func tryOpenTty(openers []ttyOpener) (tty.Tty, error) {
+	for _, open := range openers {
+		for retry := 0; retry < 2; retry++ {
+			t, err := open()
+			if err != nil {
+				continue
+			}
+			if err := t.Start(); err != nil {
+				continue
+			}
+			return t, nil
+		}
+	}
+	return nil, fmt.Errorf("no usable terminal to start TUI")
 }
 
 // Writer returns the writer that appends to the TUI output buffer.
