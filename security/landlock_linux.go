@@ -31,6 +31,16 @@ handling them would deny reading project files and executing toolchain
 binaries. IOCTL_DEV is excluded because terminal libraries ioctl
 /dev/tty.
 
+Two terminal devices join the allow-list beside the directories: /dev/null,
+which the TUI opens for writing to discard stdout, and /dev/tty, which the
+TTY fallback opens read-write. Landlock requires the write-file right to
+open any file for writing, including character devices, while the mount
+layer's read-only checks do not reach them — without the rules the two
+layers diverge and the TUI cannot start inside the container. Each device
+carries a single-right (write-file) rule covering one file, so write
+containment over directories is unchanged; the whole /dev tree is not
+allow-listed, which would expose block devices.
+
 Rights beyond the running kernel's ABI are dropped from the handled set
 (TRUNCATE needs ABI 3, REFER ABI 2); the mount layer already enforces
 those accesses, so an older kernel degrades to the mount-only behavior.
@@ -175,6 +185,16 @@ func landlockWritableDirs(cwd string) []string {
 	return dirs
 }
 
+// landlockWritableDevices returns the terminal device files the ruleset
+// must allow writing to: the null device, which the TUI opens to discard
+// stdout, and the controlling terminal, which the TTY fallback opens
+// read-write. The mount layer permits both, so the LSM layer must too;
+// a device rule carries only the write-file right, so it does not widen
+// write containment beyond a directory rule. See TheoryOfLandlock.
+func landlockWritableDevices() []string {
+	return []string{os.DevNull, "/dev/tty"}
+}
+
 // applyLandlockFilesystemPolicy re-enforces the mount sandbox's
 // write-containment at the LSM layer. Best-effort: a kernel without
 // Landlock is skipped silently, like setNoNewPrivs; a failure after the
@@ -197,9 +217,10 @@ func applyLandlockFilesystemPolicy() {
 }
 
 // landlockEnforceWriteContainment creates the ruleset, allow-lists the
-// writable directories, and restricts the process. It returns an error
-// instead of enforcing partially: a missing rule would deny writes the
-// mount layer allows, so any rule failure aborts enforcement.
+// writable directories and terminal devices, and restricts the process.
+// It returns an error instead of enforcing partially: a missing rule
+// would deny writes the mount layer allows, so any rule failure aborts
+// enforcement.
 func landlockEnforceWriteContainment(abiVersion int) error {
 	handled := landlockHandledAccesses(abiVersion)
 
@@ -222,6 +243,18 @@ func landlockEnforceWriteContainment(abiVersion int) error {
 	for _, dir := range landlockWritableDirs(cwd) {
 		if err := landlockAllowBeneath(rulesetFd, handled, dir); err != nil {
 			return fmt.Errorf("allow %s: %w", dir, err)
+		}
+	}
+	// Terminal devices: opening a file for writing requires the
+	// write-file right regardless of the file type, and the mount layer
+	// already permits the null device (the TUI discards stdout into it)
+	// and the controlling terminal (the TTY fallback opens it
+	// read-write). Allow-listing both keeps the LSM layer consistent
+	// with the mount layer; see landlockWritableDevices and
+	// TheoryOfLandlock.
+	for _, dev := range landlockWritableDevices() {
+		if err := landlockAllowBeneath(rulesetFd, landlockAccessFSWriteFile, dev); err != nil {
+			return fmt.Errorf("allow %s: %w", dev, err)
 		}
 	}
 

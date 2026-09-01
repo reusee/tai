@@ -84,6 +84,15 @@ func TestLandlockWritableDirsMirrorsMountWritableSet(t *testing.T) {
 	}
 }
 
+func TestLandlockWritableDevicesIncludeTerminalDevices(t *testing.T) {
+	devices := landlockWritableDevices()
+	for _, want := range []string{"/dev/null", "/dev/tty"} {
+		if !slices.Contains(devices, want) {
+			t.Errorf("missing terminal device %s in %v", want, devices)
+		}
+	}
+}
+
 func TestApplyLandlockFilesystemPolicyDisabledByEnv(t *testing.T) {
 	t.Setenv(disableLandlockEnv, "1")
 	// Returns before any syscall; the test process must not be restricted.
