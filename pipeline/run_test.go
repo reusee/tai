@@ -283,6 +283,51 @@ func TestRunParseErrorCorrectionWithComponents(t *testing.T) {
 	})
 }
 
+// TestRunParseErrorFeedbackInstructsContinuingTask verifies that the
+// parse-error correction feedback tells the model to resume the original
+// task after re-emitting the corrected blocks. See TheoryOfLoops.
+func TestRunParseErrorFeedbackInstructsContinuingTask(t *testing.T) {
+	withRun(t, func(run Run) {
+		callCount := 0
+		phaseBuilder := func(g generators.Generator) generators.Phase {
+			callCount++
+			if callCount == 1 {
+				return appendPhaseWithFlush("<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nfunc Foo() {}\n")
+			}
+			return appendPhaseWithFlush("<<龘靐 summary\nDone.\n龘靐\n")
+		}
+
+		result, err := runOnce(run, RunOptions{
+			Generator:    nil,
+			InitialState: generators.NewPrompts("", nil),
+			Components:   nil,
+			PhaseBuilder: phaseBuilder,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if callCount != 2 {
+			t.Fatalf("expected 2 rounds (1 parse-error correction round), got %d", callCount)
+		}
+
+		foundContinuation := false
+		for c := range result.FinalState.Contents() {
+			if c.Role == generators.RoleUser {
+				for _, p := range c.Parts {
+					if text, ok := p.(generators.Text); ok {
+						if strings.Contains(string(text), "CONTINUE the original task") {
+							foundContinuation = true
+						}
+					}
+				}
+			}
+		}
+		if !foundContinuation {
+			t.Fatal("expected continuation instruction in parse-error feedback")
+		}
+	})
+}
+
 func TestRunParseErrorCorrectionCumulativeBound(t *testing.T) {
 	// When components keep triggering generations, a model that
 	// persistently emits malformed blocks must not restart the
@@ -1390,6 +1435,58 @@ func TestRunRetryOnApplyErrorGuidance(t *testing.T) {
 		}
 		if !foundGuidance {
 			t.Fatal("expected ApplyError guidance in retry feedback")
+		}
+	})
+}
+
+// TestRunRetryFeedbackInstructsContinuingTask verifies that the error-retry
+// feedback tells the model to resume the original task after correction, so
+// a corrected response does not end the generation and strand the remaining
+// plan. See TheoryOfLoops.
+func TestRunRetryFeedbackInstructsContinuingTask(t *testing.T) {
+	withRun(t, func(run Run) {
+		callCount := 0
+		phaseBuilder := func(g generators.Generator) generators.Phase {
+			callCount++
+			if callCount == 1 {
+				return appendThenErrorPhase(
+					"partial model output",
+					&changes.ApplyError{Err: errors.New("apply change block MODIFY Foo: parse error")},
+				)
+			}
+			return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
+		}
+
+		result, err := runOnce(run, RunOptions{
+			Generator:    nil,
+			InitialState: generators.NewPrompts("", nil),
+			Components:   nil,
+			PhaseBuilder: phaseBuilder,
+			RetryOnError: true,
+			MaxRetries:   3,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if callCount != 2 {
+			t.Fatalf("expected 2 calls (retry once), got %d", callCount)
+		}
+
+		foundContinuation := false
+		for c := range result.FinalState.Contents() {
+			if c.Role != generators.RoleUser {
+				continue
+			}
+			for _, p := range c.Parts {
+				if text, ok := p.(generators.Text); ok {
+					if strings.Contains(string(text), "continue the ORIGINAL task") {
+						foundContinuation = true
+					}
+				}
+			}
+		}
+		if !foundContinuation {
+			t.Fatal("expected continuation instruction in error retry feedback")
 		}
 	})
 }

@@ -131,6 +131,17 @@ retry.
 Retry feedback states the current attempt number (e.g., "retry attempt
 1 of 3") so the model knows how much budget remains and can prioritize
 correcting the error.
+
+Continuity after correction: both the error-retry feedback
+(errorRetryPrefix, covering change-block apply errors) and the
+parse-error correction feedback (formatParseErrors) instruct the model
+to resume the original task after fixing the fault. The correction round
+is part of the same generation flow, not a fresh start: a model that
+fixes the block, emits the summary, and stops ends the generation with
+only its summaries as cross-loop context, so in goal mode the next loop
+restarts from a nearly empty picture — the observed "forgot the task"
+failure. The correction feedback therefore carries the resume directive
+verbatim in the same note.
 `
 
 const TheoryOfUsageLogging = `
@@ -163,7 +174,7 @@ summing intermediate usage snapshots that may be emitted by streaming
 providers (e.g., Gemini's streaming UsageMetadata).
 `
 
-const errorRetryPrefix = "[System note: An error occurred: %s. This is retry attempt %d of %d. The failed attempt's output was discarded — its structured blocks were NOT applied. If the intended modifications are extensive, partition the work across multiple rounds using continue blocks rather than emitting all changes at once. Re-emit every block you intend to take effect, then correct the issue and continue.]\n\n"
+const errorRetryPrefix = "[System note: An error occurred: %s. This is retry attempt %d of %d. The failed attempt's output was discarded — its structured blocks were NOT applied. If the intended modifications are extensive, partition the work across multiple rounds using continue blocks rather than emitting all changes at once. Re-emit every block you intend to take effect, then correct the issue and continue the ORIGINAL task: the retry exists only to repair this error, not to restart the work — resume the original task exactly where the failed attempt stopped, continue the remaining plan, and do not treat the correction itself as the task's completion.]\n\n"
 
 const defaultMaxRetries = 3
 
@@ -1595,13 +1606,16 @@ func isAbnormalFinishReason(reason string) bool {
 // budget explicit so the model knows when it is on its final attempt and
 // that persistently malformed blocks will be silently dropped. The full
 // error text — block kind, delimiter, collision hints, and partial
-// content — gives the model a concrete target for correction. See
-// TheoryOfParseErrorCollection.
+// content — gives the model a concrete target for correction. After the
+// correction, the model must resume the original task: the correction
+// round is part of the same work, and ending after the fix would strand
+// the remaining plan in a fresh goal loop with no other context. See
+// TheoryOfParseErrorCollection and TheoryOfLoops.
 func formatParseErrors(errors []*blocks.BlockParseError, attempt, maxAttempts int) string {
 	var sb strings.Builder
 	sb.WriteString("[System note: The following blocks in your previous output could not be parsed and were not applied. Re-emit ONLY the corrected versions of these blocks. Do NOT re-emit any other blocks — they were applied successfully and re-emitting them would duplicate changes. ")
 	fmt.Fprintf(&sb, "This is correction attempt %d of %d; if the corrected blocks remain malformed after the final attempt, they will be silently dropped. ", attempt, maxAttempts)
-	sb.WriteString("After re-emitting the corrected blocks, end your response with a summary block.]\n\n")
+	sb.WriteString("After re-emitting the corrected blocks, CONTINUE the original task exactly where it stopped before the malformed blocks: the correction is not the completion of the task. Then end your response with a summary block.]\n\n")
 	for _, parseErr := range errors {
 		sb.WriteString(parseErr.Error())
 		sb.WriteString("\n\n")
