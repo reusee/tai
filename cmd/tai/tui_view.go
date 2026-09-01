@@ -104,6 +104,7 @@ var tuiHelpLines = []string{
 	"[ / ]\tjump to previous / next section start or end",
 	"enter\tsend the input line when focused; toggle latest handoff otherwise",
 	"click\tselect / toggle tab under cursor; click the input row to focus input",
+	"events row\tclick to jump the Output tab to that event's output section",
 	"wheel / drag\tscroll pane under cursor",
 	"m\ttoggle mouse reporting (off: select & copy in the terminal)",
 	"q / Ctrl-C\tquit (press again to confirm)",

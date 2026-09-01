@@ -309,9 +309,12 @@ the focused tab's strip collapses it and moves the focus to the expanded
 tab that was last focused; pressing another tab's strip takes the focus
 without collapsing and keeps that tab's current view. A press inside an
 expanded tab's scroll area focuses the tab (when it was not already
-focused) and records the origin of a drag-scroll. Presses outside every
-panel, middle and right presses, and no-button motion (mode 1003) are
-ignored.
+focused) and records the origin of a drag-scroll. A left press on an
+Events row additionally jumps the Output tab to the output section the
+row's event owns, so every event row reaches its attempt's output (see
+TheoryOfTUIOutputSections); the same press still toggles a handoff
+node. Presses outside every panel, middle and right presses, and
+no-button motion (mode 1003) are ignored.
 
 In interactive sessions, the Output tab's input row is the one press
 target with its own semantics: a left press on the chat input bar's row
@@ -508,6 +511,10 @@ func (s tuiOutputState) Flush() (generators.State, error) {
 	// the completion signal of one generation, so the output of
 	// consecutive generations is separated as well. See TheoryOfTUI.
 	s.tui.ensureOutputNewline()
+	// The attempt has ended: a pending section owner whose output never
+	// appeared must not open a section at the next, unrelated content.
+	// See TheoryOfTUIOutputSections.
+	s.tui.clearPendingOutputOwner()
 	return tuiOutputState{upstream: newUpstream, tui: s.tui}, nil
 }
 
@@ -682,6 +689,19 @@ type TUI struct {
 	// Output tab. It is false until the first part is written, so the
 	// first output never gets a leading blank line separator.
 	hasOutput bool
+
+	// outputSections organizes the Output tab's stream into sections:
+	// each records the source-line index in the output buffer where the
+	// section begins, so navigation can scroll the pane to a section's
+	// first display line. eventSections binds a pipeline event's
+	// (run, sequence) identity to the section the event's attempt
+	// wrote, and pendingOwner carries an attempt-start event's identity
+	// to the next visible content part, which then opens the event's
+	// section. All three are guarded by mu. See
+	// TheoryOfTUIOutputSections.
+	outputSections []outputSection
+	eventSections  map[outputSectionOwner]int
+	pendingOwner   *outputSectionOwner
 
 	// mouse is the pointer interaction state over the tab layout: wheel
 	// scrolling, press-driven tab switching, and drag-scrolling anchored
@@ -961,14 +981,43 @@ func (t *TUI) captureContent(content *generators.Content) {
 	t.notify()
 }
 
-// writeOutputPart writes one output part to the Output tab, inserting a
-// blank line separator when the output switches roles or switches between
-// thinking and non-thinking content. The section state (hasOutput,
+// writeOutputPart writes one output part to the Output tab, starting a
+// new output section and inserting a blank line separator when the
+// output switches roles or switches between thinking and non-thinking
+// content, and also when a pending attempt-start event marks the start
+// of a new attempt's output. The section state (hasOutput,
 // lastOutputRole, lastWasThought) is only accessed by the generation
-// goroutine via captureContent, so it is read and written without a lock.
+// goroutine via captureContent, so it is read and written without a
+// lock; the section bookkeeping also read by the pointer handlers is
+// guarded by mu. See TheoryOfTUIOutputSections.
 func (t *TUI) writeOutputPart(role generators.Role, color taiui.Color, isThought bool, text string) {
+	// Consume a pending attempt-start event even when the role does
+	// not switch: consecutive attempts sharing one role still open
+	// separate sections, so each attempt's output is addressable.
+	var owner *outputSectionOwner
+	t.mu.Lock()
+	if t.pendingOwner != nil {
+		owner = t.pendingOwner
+		t.pendingOwner = nil
+	}
+	t.mu.Unlock()
+
+	newSection := false
 	if t.hasOutput && (role != t.lastOutputRole || isThought != t.lastWasThought) {
 		t.separateOutput()
+		newSection = true
+	}
+	if owner != nil && !newSection {
+		if t.hasOutput {
+			t.separateOutput()
+		}
+		newSection = true
+	}
+	if !t.hasOutput {
+		newSection = true
+	}
+	if newSection {
+		t.beginOutputSection(owner)
 	}
 	t.writeColored(color, []byte(text))
 	t.lastOutputRole = role
@@ -1325,6 +1374,12 @@ func (t *TUI) handleMouseKey(key string) {
 		// keyboard back to navigation. See TheoryOfTUIChatInput.
 		t.inputFocused = false
 		t.mouse.Press(t.tabs, t.scrolls[:], t.width, t.height, x, y)
+		// A press on an event's display rows jumps the Output tab to
+		// the section the event's attempt wrote. The jump runs before
+		// the handoff toggle so it maps rows of the last-rendered
+		// tree, the same ranges the toggle consumes. See
+		// TheoryOfTUIOutputSections.
+		t.jumpToEventAtClick(x, y)
 		// A press on a handoff node's display rows toggles its
 		// expansion. See TheoryOfEventTree.
 		t.toggleHandoffAtClick(x, y)
@@ -1382,6 +1437,13 @@ func (t *TUI) handleEvent(ev pipeline.Event) {
 	// returned. A new request's "generating" log re-sets it.
 	if ev.Kind == pipeline.EventFinish {
 		t.generating = false
+	}
+	// An attempt start opens the output section the attempt's streamed
+	// content will fill: the next visible content part begins a section
+	// owned by this event, so the Events tab can jump to the attempt's
+	// output. See TheoryOfTUIOutputSections.
+	if ev.Kind == pipeline.EventAttemptStart {
+		t.pendingOwner = &outputSectionOwner{run: ev.Loop, seq: ev.Seq}
 	}
 	if t.tabs.AutoExpand(1) {
 		t.scrolls[1].Follow = true

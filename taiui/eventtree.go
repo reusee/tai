@@ -48,6 +48,10 @@ taiui event tree theory:
   node: any row of a collapsed node expands it; the header row of an
   expanded node collapses it, so clicking inside a long expanded body
   never collapses it by accident.
+- Display records the display row range of every node on the same
+  walk, and NodeAtRow maps a row onto the node whose range contains
+  it, so consumers can act on any node under a press, not only the
+  expandable ones.
 `
 
 // eventRowRange maps one expandable node onto its display row range in
@@ -114,11 +118,6 @@ func (n *EventNode) displayLines(hintColor Color) []Line {
 	return []Line{n.Lines[0], hint}
 }
 
-// EventTree is the event forest of an event-stream view: nodes filed by
-// (run, sequence) identity, rendered depth-first with cached wrapping.
-// Its zero value is empty and ready for use. The caller serializes
-// access (typically a single-threaded render loop); the tree performs
-// no locking of its own. See TheoryOfEventTree.
 type EventTree struct {
 	// Roots holds the top nodes of the forest in arrival order.
 	Roots []*EventNode
@@ -128,6 +127,11 @@ type EventTree struct {
 
 	bySeq      map[eventSeqKey]*EventNode
 	expandRows []eventRowRange
+	// nodeRows maps every rendered node onto its display row range as
+	// recorded by the last Display, so consumers can locate the node
+	// under a pointer press for any node (NodeAtRow), not only the
+	// expandable ones covered by expandRows (ToggleAtRow).
+	nodeRows []eventRowRange
 }
 
 // Add files one node into the forest: under its parent when the parent
@@ -172,20 +176,12 @@ func sortChildren(n *EventNode) {
 	})
 }
 
-// Display walks the forest depth-first and returns the view's display
-// lines: each node's lines wrapped within the width left by its
-// indent, shaded alternately by display order. Each node's wrapped
-// lines are cached by width, depth, and shade, so a frame re-wraps only
-// nodes that are new or repositioned. The display-width options derive
-// once per pass and thread into the node wrapping, so the environment
-// is scanned once per frame. The display row ranges of the expandable
-// nodes are recorded for pointer hit-testing (ToggleAtRow). See
-// TheoryOfEventTree.
 func (t *EventTree) Display(contentWidth int, base Color) []Line {
 	alt := AltBG(base)
 	options := DisplayWidthOptions()
 	var out []Line
 	t.expandRows = t.expandRows[:0]
+	t.nodeRows = t.nodeRows[:0]
 	index := 0
 	var walk func(n *EventNode, depth int)
 	walk = func(n *EventNode, depth int) {
@@ -205,6 +201,7 @@ func (t *EventTree) Display(contentWidth int, base Color) []Line {
 		if n.Expandable {
 			t.expandRows = append(t.expandRows, eventRowRange{node: n, startRow: start, endRow: len(out)})
 		}
+		t.nodeRows = append(t.nodeRows, eventRowRange{node: n, startRow: start, endRow: len(out)})
 		for _, child := range n.Children {
 			walk(child, depth+1)
 		}
@@ -257,6 +254,21 @@ func (t *EventTree) ToggleAtRow(row int) {
 		}
 		return
 	}
+}
+
+// NodeAtRow returns the node whose recorded display row range contains
+// row, for any node — expandable or not — as recorded by the last
+// Display; a row outside every range returns nil. It lets consumers map
+// a pointer press onto a node without knowing node internals, the way
+// ToggleAtRow maps one onto expandable nodes. See TheoryOfEventTree.
+func (t *EventTree) NodeAtRow(row int) *EventNode {
+	for _, r := range t.nodeRows {
+		if row < r.startRow || row >= r.endRow {
+			continue
+		}
+		return r.node
+	}
+	return nil
 }
 
 // formatElapsed renders an elapsed duration as a stopwatch fragment:

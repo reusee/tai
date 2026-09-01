@@ -14,8 +14,9 @@ Events tab integration theory (cmd/tai):
   node: it collapses to its header plus the expand hint, so a long
   recovery note does not flood the tail view. Enter maps to
   ToggleLastExpanded; a left press maps the screen cell to a display
-  row (dropping the label strip, re-adding the scroll offset) and
-  calls ToggleAtRow.
+  row (dropping the label strip, re-adding the scroll offset), jumps
+  the Output tab to the output section the row's event wrote (see
+  TheoryOfTUIOutputSections), and calls ToggleAtRow.
 - Every event records the duration from the TUI session's start to its
   arrival as the node's elapsed time.
 `
