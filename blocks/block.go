@@ -37,15 +37,6 @@ mechanical emission-time self-check — because models occasionally violate
 the abstract rule but can execute a concrete check; naming the common
 violation shapes (prose run-on, list bullets, code fences) tells the model
 where the risk concentrates.
-
-Unclosed block detection: an opening marker at line start without a
-matching closing line is a malformed block; the parser reports an error
-rather than silently skipping it.
-
-Delimiter rule centralization: the delimiter rules live only in
-BlockFormatSystemPrompt. Individual kind prompts describe only their
-kind-specific semantics. The deferred-execution contract is centralized the
-same way; see TheoryOfDeferredExecution.
 `
 
 const TheoryOfDeferredExecution = `
@@ -271,38 +262,6 @@ type Block struct {
 // start) returns a BlockParseError. During streaming, this indicates
 // incomplete output that may be completed by subsequent chunks.
 func ParseFirstBlock(content []byte) (block Block, start int, end int, ok bool, err error) {
-	return parseFirstBlock(content)
-}
-
-// ParseBlocks parses all complete blocks from content in order. Blocks whose
-// opening marker omits the XML opening tag are parsed with an empty Kind;
-// such blocks can only be located by iterating all blocks, not by filtering
-// by kind. Unclosed blocks are skipped so that complete blocks following
-// them are still found. See TheoryOfKindlessBlocks.
-func ParseBlocks(content []byte) ([]Block, error) {
-	var blocks []Block
-	remaining := content
-	for len(remaining) > 0 {
-		block, _, end, ok, err := ParseFirstBlock(remaining)
-		if err != nil {
-			// Unclosed block: skip past its opening marker and continue
-			// scanning for subsequent complete blocks.
-			if end > 0 && end <= len(remaining) {
-				remaining = remaining[end:]
-				continue
-			}
-			return blocks, err
-		}
-		if !ok {
-			break
-		}
-		blocks = append(blocks, block)
-		remaining = remaining[end:]
-	}
-	return blocks, nil
-}
-
-func parseFirstBlock(content []byte) (block Block, start int, end int, ok bool, err error) {
 	searchFrom := 0
 	for {
 		idx := bytes.Index(content[searchFrom:], []byte("<<"))
@@ -362,6 +321,34 @@ func parseFirstBlock(content []byte) (block Block, start int, end int, ok bool, 
 
 		searchFrom = idx + 1
 	}
+}
+
+// ParseBlocks parses all complete blocks from content in order. Blocks whose
+// opening marker omits the XML opening tag are parsed with an empty Kind;
+// such blocks can only be located by iterating all blocks, not by filtering
+// by kind. Unclosed blocks are skipped so that complete blocks following
+// them are still found. See TheoryOfKindlessBlocks.
+func ParseBlocks(content []byte) ([]Block, error) {
+	var blocks []Block
+	remaining := content
+	for len(remaining) > 0 {
+		block, _, end, ok, err := ParseFirstBlock(remaining)
+		if err != nil {
+			// Unclosed block: skip past its opening marker and continue
+			// scanning for subsequent complete blocks.
+			if end > 0 && end <= len(remaining) {
+				remaining = remaining[end:]
+				continue
+			}
+			return blocks, err
+		}
+		if !ok {
+			break
+		}
+		blocks = append(blocks, block)
+		remaining = remaining[end:]
+	}
+	return blocks, nil
 }
 
 func tryParseBlock(content []byte, openingLine string, lineEnd, blockStart int) (result blockParseResult, matched bool) {

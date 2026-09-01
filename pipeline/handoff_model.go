@@ -46,29 +46,13 @@ func (Module) GetHandoffGenerator(
 type GetHandoffGenerators func() ([]generators.Generator, error)
 
 func (Module) GetHandoffGenerators(
-	handoffModel flags.HandoffModel,
-	fastModel flags.FastModelName,
-	defaultGenerator generators.GetDefaultGenerator,
-	getGenerator generators.GetGenerator,
+	getHandoffGenerator GetHandoffGenerator,
 ) GetHandoffGenerators {
 	return func() ([]generators.Generator, error) {
-		var name string
-		if handoffModel != "" {
-			name = string(handoffModel)
-		} else if fastModel != "" {
-			name = string(fastModel)
-		}
-		if name == "" {
-			gen, err := defaultGenerator()
-			if err != nil {
-				return nil, err
-			}
-			return []generators.Generator{gen}, nil
-		}
-		gen, err := getGenerator(name)
+		generator, err := getHandoffGenerator()
 		if err != nil {
 			return nil, err
 		}
-		return []generators.Generator{gen}, nil
+		return []generators.Generator{generator}, nil
 	}
 }

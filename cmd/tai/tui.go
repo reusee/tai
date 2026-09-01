@@ -187,16 +187,11 @@ const logsMaxBoxHeight = 3
 
 const TheoryOfTUIChatInput = `
 TUI mode replaces the liner-based chat prompt with the TUI's own input
-bar: the terminal has exactly one input reader (taiui.ReadKeys), and a
-liner prompt would open a second raw-mode reader on the same tty,
-racing for keystrokes and resetting the terminal mode under the TUI —
-the reported "TUI slows down and cannot switch tabs after ai output"
-was exactly that race, because the ai command's idle handler prompted
-with liner once the first generation finished. forkTUIDisplay forks
-pipeline.ChatInput to TUI.ChatInput, so both interactive chat paths
-(the ai command's OnIdle handler and the next command's chat phase) get
-the bar in TUI mode while plain command-line mode keeps the liner
-default. See pipeline.TheoryOfChatInput.
+bar: forkTUIDisplay forks pipeline.ChatInput to TUI.ChatInput, so both
+interactive chat paths (the ai command's OnIdle handler and the next
+command's chat phase) get the bar in TUI mode while plain command-line
+mode keeps the liner default. The one-reader-per-terminal rationale
+lives in pipeline.TheoryOfChatInput.
 
 Only interactive sessions render the bar: apps that call
 pipeline.ChatInput while running fork apps.Interactive(true) into their

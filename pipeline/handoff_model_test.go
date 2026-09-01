@@ -87,87 +87,30 @@ func TestGetHandoffGeneratorSelection(t *testing.T) {
 	})
 }
 
+// TestGetHandoffGenerators covers the wrapper's own contract: the resolved
+// handoff generator is returned as a single-element slice and its resolution
+// error is propagated. The model-selection chain (handoff model, fast model,
+// default) is covered by TestGetHandoffGeneratorSelection.
 func TestGetHandoffGenerators(t *testing.T) {
 	m := new(Module)
 
-	var resolved []string
-	get := func(name string) (generators.Generator, error) {
-		resolved = append(resolved, name)
+	fn := m.GetHandoffGenerators(func() (generators.Generator, error) {
 		return &mockSummarizerGenerator{}, nil
+	})
+	gens, err := fn()
+	if err != nil {
+		t.Fatal(err)
 	}
-	defaultGen := func() (generators.Generator, error) {
-		resolved = append(resolved, "default")
-		return &mockSummarizerGenerator{}, nil
+	if len(gens) != 1 {
+		t.Fatalf("expected 1 generator, got %d", len(gens))
 	}
 
-	t.Run("SingleModel", func(t *testing.T) {
-		resolved = nil
-		fn := m.GetHandoffGenerators(
-			flags.HandoffModel("model-a"),
-			flags.FastModelName(""),
-			defaultGen,
-			get,
-		)
-		gens, err := fn()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(gens) != 1 {
-			t.Fatalf("expected 1 generator, got %d", len(gens))
-		}
-		if len(resolved) != 1 || resolved[0] != "model-a" {
-			t.Fatalf("expected model-a resolved, got %v", resolved)
-		}
+	fn = m.GetHandoffGenerators(func() (generators.Generator, error) {
+		return nil, errors.New("bad")
 	})
-
-	t.Run("SingleModelFromFast", func(t *testing.T) {
-		resolved = nil
-		fn := m.GetHandoffGenerators(
-			flags.HandoffModel(""),
-			flags.FastModelName("fast-model"),
-			defaultGen,
-			get,
-		)
-		gens, err := fn()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(gens) != 1 {
-			t.Fatalf("expected 1 generator, got %d", len(gens))
-		}
-	})
-
-	t.Run("DefaultFallback", func(t *testing.T) {
-		resolved = nil
-		fn := m.GetHandoffGenerators(
-			flags.HandoffModel(""),
-			flags.FastModelName(""),
-			defaultGen,
-			get,
-		)
-		gens, err := fn()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(gens) != 1 {
-			t.Fatalf("expected 1 generator from default, got %d", len(gens))
-		}
-	})
-
-	t.Run("ResolutionError", func(t *testing.T) {
-		getErr := func(name string) (generators.Generator, error) {
-			return nil, errors.New("bad")
-		}
-		fn := m.GetHandoffGenerators(
-			flags.HandoffModel("bad"),
-			flags.FastModelName(""),
-			defaultGen,
-			getErr,
-		)
-		if _, err := fn(); err == nil {
-			t.Fatal("expected error for unresolvable model")
-		}
-	})
+	if _, err := fn(); err == nil {
+		t.Fatal("expected error propagation from the handoff generator")
+	}
 }
 
 func TestGetDefaultSummarizerUsesHandoffGenerator(t *testing.T) {

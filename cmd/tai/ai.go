@@ -58,27 +58,17 @@ are processed after each attempt via the OnAttemptSuccess hook, which calls
 memories.UpdateMemoryFromBlock before the user is prompted for the next input.
 
 Ingest Blocks:
-Ingest blocks let the model request additional context mid-conversation:
-files within the working directory, network resources, and glob discovery.
-The component is shared with the codes pipeline (pipeline.NewIngestComponent)
-and carries the session's language-server handler, so the Go-specific lsp tag
-documentation joins the prompt when the handler resolves. Fetched content is
-appended as user content and triggers the next generation before OnIdle
-prompts the user — context fetching is an automated action, processed ahead
-of interactive input (see pipeline.TheoryOfIdleHandler). The loop's
-RunOptions carries the filesystem root (the working directory) and the
-scoped HTTP client for the component's file reads and fetches. See
-blocks.TheoryOfIngestBlocks and TheoryOfAIComponents.
+Ingest blocks let the model request additional context mid-conversation. The
+component is shared with the codes pipeline and wired through the Component
+mechanism (see TheoryOfAIComponents and blocks.TheoryOfIngestBlocks); this
+loop's RunOptions carries the filesystem root (the working directory) and the
+scoped HTTP client the component's file reads and fetches need.
 
 Block Collection:
-Blocks are collected by a BlockHandler callback set on ParserState during
-generation. The handler appends each parsed block to an external collectedBlocks
-slice. After generation, collectedBlocks are passed to ProcessComponents, which
-filters by kind and dispatches to the appropriate component. Remaining blocks
-(not matched by any component) are carried forward to the next cycle. This
-eliminates the need for ParserState to store blocks or for reconciliation
-between the state chain and block storage. See blocks.TheoryOfParserState and
-components.TheoryOfComponents.
+A BlockHandler on ParserState appends each parsed block to an external
+collectedBlocks slice; after generation, ProcessComponents filters by kind
+and dispatches, and remaining blocks are carried forward to the next cycle.
+See blocks.TheoryOfParserState and components.TheoryOfComponents.
 
 Automated Actions Before Interactive Input:
 The generation loop processes automated actions (shell and ingest blocks) and
@@ -121,16 +111,7 @@ generators/state_func_map.go.
 
 Thought Summarization:
 The -summarize-thoughts flag wires pipeline.NewThoughtsSummarize around the
-output layers, mirroring the generation pipeline: when enabled, the stdout
-Output layer suppresses raw thoughts and the summarizer writes periodic
-summaries to the generation output stream (os.Stdout), and each summary also
-flows to the run's event stream as an EventThoughtSummary, which the TUI
-renders in its Events tab (see pipeline.TheoryOfThoughtsSummarize and
-pipeline.TheoryOfLoopEvents). In TUI mode the tuiOutputState decorator still
-streams raw thoughts to the Output tab, so both streams are visible
-concurrently. The buf layer that captures
-assistant text for memory parsing always excludes thoughts, so
-summarization never interferes with memory block extraction.
+output layers (see pipeline.TheoryOfThoughtsSummarize).
 `
 
 var AICommand = apps.New("ai",

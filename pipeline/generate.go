@@ -488,10 +488,6 @@ established — and presents them to the retry attempt with guidance on task
 partitioning. The retry therefore continues from the model's conclusions and
 completes a manageable subset of changes first, using continue blocks for
 remaining work to prevent exceeding output limits again. See TheoryOfHandoff.
-
-This handoff is transient error recovery. The condensed content is injected
-into one retry request and does not persist as compressed history. The system does
-not compress conversation. See TheoryOfContextPhilosophy.
 `
 
 // GenerateWithResult wraps GenerateWithResultWithStats, discarding the

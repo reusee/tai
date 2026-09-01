@@ -52,13 +52,7 @@ the pipeline. The -no-apply flag disables change block application,
 causing blocks to be parsed but not applied to disk.
 
 The -summarize-thoughts flag wires pipeline.NewThoughtsSummarize around the
-output layer, mirroring the generation pipeline: when enabled (and thoughts are
-not hidden), the stdout Output layer suppresses raw thoughts and the
-summarizer writes periodic summaries to the generation output stream
-(os.Stdout), and each summary also flows to the run's event stream as an
-EventThoughtSummary, which the TUI renders in its Events tab. In TUI mode the
-tuiOutputState decorator still streams raw thoughts to the Output tab. See
-pipeline.TheoryOfThoughtsSummarize.
+output layer, mirroring the ai command (see pipeline.TheoryOfThoughtsSummarize).
 
 The user prompt places the -chat arguments before the parts provider content
 when given, following pipeline.TheoryOfChatBracketing.

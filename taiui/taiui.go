@@ -38,25 +38,14 @@ repainting whole rows can reuse a buffer across presents. A nil
 element renders an empty frame, clearing every screen. An element
 with an empty box is skipped entirely: no child is rendered and no
 cursor is recorded.
-- The box model (margin, border, padding, fill): the border is a
-one-cell ring between margin and padding that shrinks the content box
-by one cell per side; fill paints a background in the cells no child
-occupies, so children render over it and wide grapheme clusters keep
-their trailing columns. The border draws independently of fill and
-stays visible without a painted background, clipped to the element
-box so a negative margin never paints border glyphs outside it. A
-title draws in the top border, clipped to the visible edge. A content
-box whose border and padding exceed the box dimensions is treated as
-empty and never leaves the element box.
+- A content box whose border and padding exceed the box dimensions is
+treated as empty and never leaves the element box; the box model
+itself is TheoryOfBoxModel.
 - Flex layout along an axis: each child receives a share of the box
 proportional to its weight, tiling the content area without overlaps
 or gaps; the last child absorbs rounding. The box model and fill
 behave as in the box-model element; when the ring is empty, fill is a
 no-op.
-- Overlay stacks children in order, each into the full box; later
-children draw over earlier ones. Overlay enables modals and popups:
-the application derives the overlay from state, so a modal is part of
-the element tree, not a separate layer.
 - Text provides multi-line rendering with horizontal and vertical
 alignment and per-position style support. Lines are segmented into
 grapheme clusters: a cluster renders as one cell carrying its base
@@ -82,10 +71,6 @@ renders at the visible width, so wrapped text wraps within the
 visible area. The scroll collects only the cells of the expected
 window, re-collecting when the view falls outside the range, so a
 tall virtual column never accumulates cells for rows outside it.
-- The list renders a vertical list of single-line items with a selected
-index, highlighted; the view scrolls to keep the selection visible,
-clamped to the content extent, rendering only the visible items in
-O(window) time. Tab panes apply the same principle.
 - The canvas renders offscreen content: the content is data state, and
 rendering is a pure read of it. Cells are stored by value, so a write
 allocates nothing. Rendering snapshots the visible cells under a read
@@ -94,12 +79,6 @@ only for the snapshot, never for the draw. A wide cluster covers its
 trailing columns, so a stale cell left by a moved cluster never
 corrupts the display; a wide cluster that would extend past the box's
 right edge is not drawn — content never spills past its box.
-- The cursor is part of the render output: text records the cursor
-position in the Frame, and screens position the terminal cursor
-there. Inside a scroll viewport, the cursor is transformed from
-content coordinates to window coordinates. Frame comparison includes
-the cursor state, so a screen detects a cursor-only change and
-repositions without repainting cells.
 - The exported API is a minimal facade: spec types, constructors, and
 style helpers only.
 `

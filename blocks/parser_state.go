@@ -170,7 +170,7 @@ func (s *ParserState) AppendContent(content *generators.Content) (generators.Sta
 
 	buf := newBuf
 	for {
-		block, _, end, ok, err := parseFirstBlock(buf)
+		block, _, end, ok, err := ParseFirstBlock(buf)
 		if err != nil {
 			// Unclosed block: incomplete, wait for more output.
 			break
@@ -241,7 +241,7 @@ func (s *ParserState) Flush() (generators.State, error) {
 	buf := slices.Clone(s.buf)
 	parseErrors := slices.Clone(s.parseErrors)
 	for {
-		block, _, end, ok, err := parseFirstBlock(buf)
+		block, _, end, ok, err := ParseFirstBlock(buf)
 		if err != nil {
 			// Malformed block: collect the parse error and skip past
 			// its opening marker so subsequent block markers are still

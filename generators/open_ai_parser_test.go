@@ -288,57 +288,62 @@ func TestOpenAIParserMultipleToolCalls(t *testing.T) {
 }
 
 func TestOpenAIParserTextAndToolCall(t *testing.T) {
-	parser := new(OpenAIParser)
-
-	// Role and text
-	_, err := parser.Input(ChatCompletionStreamChoiceDelta{
-		Role:    string(RoleAssistant),
-		Content: "Here is the tool call: ",
-	})
-	if err != nil {
-		t.Fatal(err)
+	toolCall := ToolCall{
+		ID:   "call_123",
+		Type: "function",
+		Function: FunctionCall{
+			Name:      "test_func",
+			Arguments: `{}`,
+		},
 	}
-
-	// Tool call
-	_, err = parser.Input(ChatCompletionStreamChoiceDelta{
-		ToolCalls: []ToolCall{
-			{
-				ID:   "call_123",
-				Type: "function",
-				Function: FunctionCall{
-					Name:      "test_func",
-					Arguments: `{}`,
-				},
+	for _, tt := range []struct {
+		name   string
+		deltas []ChatCompletionStreamChoiceDelta
+	}{
+		{
+			name: "text and tool call in separate deltas",
+			deltas: []ChatCompletionStreamChoiceDelta{
+				{Role: string(RoleAssistant), Content: "Here is the tool call: "},
+				{ToolCalls: []ToolCall{toolCall}},
 			},
 		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	contents, err := parser.End()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(contents) != 1 {
-		t.Fatalf("expected 1 content, got %d", len(contents))
-	}
-	content := contents[0]
-	if len(content.Parts) != 2 {
-		t.Fatalf("expected 2 parts, got %d", len(content.Parts))
-	}
-
-	text, ok := content.Parts[0].(Text)
-	if !ok || text != "Here is the tool call: " {
-		t.Errorf("unexpected part 0: %+v", content.Parts)
-	}
-
-	funcCall, ok := content.Parts[1].(FuncCall)
-	if !ok {
-		t.Fatalf("part 1 is not FuncCall: %+v", content.Parts)
-	}
-	if funcCall.Name != "test_func" {
-		t.Errorf("unexpected funcCall: %+v", funcCall)
+		{
+			name: "text and tool call in one delta",
+			deltas: []ChatCompletionStreamChoiceDelta{
+				{Role: string(RoleAssistant), Content: "Here is the tool call: ", ToolCalls: []ToolCall{toolCall}},
+			},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := new(OpenAIParser)
+			for _, delta := range tt.deltas {
+				if _, err := parser.Input(delta); err != nil {
+					t.Fatal(err)
+				}
+			}
+			contents, err := parser.End()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(contents) != 1 {
+				t.Fatalf("expected 1 content, got %d", len(contents))
+			}
+			content := contents[0]
+			if len(content.Parts) != 2 {
+				t.Fatalf("expected 2 parts, got %d", len(content.Parts))
+			}
+			text, ok := content.Parts[0].(Text)
+			if !ok || text != "Here is the tool call: " {
+				t.Errorf("unexpected part 0: %+v", content.Parts)
+			}
+			funcCall, ok := content.Parts[1].(FuncCall)
+			if !ok {
+				t.Fatalf("part 1 is not FuncCall: %+v", content.Parts)
+			}
+			if funcCall.Name != "test_func" {
+				t.Errorf("unexpected funcCall: %+v", funcCall)
+			}
+		})
 	}
 }
 
@@ -632,54 +637,6 @@ func TestOpenAIParserSingleDeltaMultipleToolCalls(t *testing.T) {
 	}
 	if !reflect.DeepEqual(funcCall2.Arguments, map[string]any{"b": float64(2)}) {
 		t.Errorf("unexpected args for funcCall2: %+v", funcCall2.Arguments)
-	}
-}
-
-func TestOpenAIParserDeltaWithContentAndToolCall(t *testing.T) {
-	parser := new(OpenAIParser)
-
-	// Delta with both content and a tool call
-	_, err := parser.Input(ChatCompletionStreamChoiceDelta{
-		Role:    string(RoleAssistant),
-		Content: "Here is the tool call: ",
-		ToolCalls: []ToolCall{
-			{
-				ID:   "call_123",
-				Type: "function",
-				Function: FunctionCall{
-					Name:      "test_func",
-					Arguments: `{}`,
-				},
-			},
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	contents, err := parser.End()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(contents) != 1 {
-		t.Fatalf("expected 1 content, got %d", len(contents))
-	}
-	content := contents[0]
-	if len(content.Parts) != 2 {
-		t.Fatalf("expected 2 parts, got %d", len(content.Parts))
-	}
-
-	text, ok := content.Parts[0].(Text)
-	if !ok || text != "Here is the tool call: " {
-		t.Errorf("unexpected part 0: %+v", content.Parts)
-	}
-
-	funcCall, ok := content.Parts[1].(FuncCall)
-	if !ok {
-		t.Fatalf("part 1 is not FuncCall: %+v", content.Parts)
-	}
-	if funcCall.Name != "test_func" {
-		t.Errorf("unexpected funcCall: %+v", funcCall)
 	}
 }
 
