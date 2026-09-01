@@ -35,15 +35,18 @@ updated pointer. The flag takes no argument; the prompt is fixed.
 const TheoryOfAlignFlag = `
 The align flag appends a fixed alignment-check prompt to the chat messages
 (Chats). The prompt instructs the model to check whether the system theory
-(theory constants and specifications) matches the implementation, and to
-report inconsistencies without modifying anything: an inconsistency may come
-from outdated theory or from a faulty implementation, and only the user can
-decide which side to correct. It is an additional key on the Chats flag
-type, registered as the bare word "align" like "chat"; Parse matches
-arguments verbatim, so the invocation carries no leading dash. It composes
-with chat flags in any argument order: each Handle invocation reads the
-current Chats value from the scope, appends its contribution, and forks an
-updated pointer. The flag takes no argument; the prompt is fixed.
+(theory constants and specifications) matches the implementation. On
+inconsistency, the model writes the report to _alignment.md and touches
+nothing else: an inconsistency may come from outdated theory or from a
+faulty implementation, and only the user can decide which side to correct.
+When everything matches, _alignment.md is not created or changed, so an
+absent or untouched file means the theory and the implementation align.
+It is an additional key on the Chats flag type, registered as the bare
+word "align" like "chat"; Parse matches arguments verbatim, so the
+invocation carries no leading dash. It composes with chat flags in any
+argument order: each Handle invocation reads the current Chats value from
+the scope, appends its contribution, and forks an updated pointer. The
+flag takes no argument; the prompt is fixed.
 `
 
 // cleanPrompt is the fixed task directive the clean flag appends to the
@@ -52,7 +55,7 @@ const cleanPrompt = "Delete redundant code and mechanisms. Merge and simplify du
 
 // alignPrompt is the fixed task directive the align flag appends to the
 // chat messages. See TheoryOfAlignFlag.
-const alignPrompt = "Check whether the system theory (theory constants and specifications) matches the implementation. On inconsistency, report it without modifying anything: the inconsistency may come from outdated theory or from a faulty implementation, and the user decides how to resolve it."
+const alignPrompt = "Check whether the system theory (theory constants and specifications) matches the implementation. On inconsistency, write the report to _alignment.md without modifying anything else: the inconsistency may come from outdated theory or from a faulty implementation, and the user decides how to resolve it. When everything matches, do not create or change _alignment.md."
 
 type Chats []string
 
