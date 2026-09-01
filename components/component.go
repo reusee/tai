@@ -122,6 +122,29 @@ type Component struct {
 // ComponentSet is an ordered collection of Component.
 type ComponentSet []Component
 
+// KnownKinds returns the membership test for block kinds this component
+// set makes available: every component that declares a Kind (processable
+// or prompt-only) plus the given extra kinds — kinds the session
+// processes outside the component loop (e.g. "done" by the goal runner).
+// The pipeline's unknown-block-kind feedback consults the result so a
+// model emitting a kind the session cannot process is corrected instead
+// of silently ignored. See TheoryOfComponents and
+// pipeline.TheoryOfUnknownBlockKinds.
+func (c ComponentSet) KnownKinds(extra ...string) func(kind string) bool {
+	known := make(map[string]bool, len(c)+len(extra))
+	for _, comp := range c {
+		if comp.Kind != "" {
+			known[comp.Kind] = true
+		}
+	}
+	for _, kind := range extra {
+		known[kind] = true
+	}
+	return func(kind string) bool {
+		return known[kind]
+	}
+}
+
 // PromptSections returns the concatenated system prompt sections from all
 // components that have a non-empty PromptSection, in registration order.
 // Each section's trailing whitespace is trimmed and sections are joined

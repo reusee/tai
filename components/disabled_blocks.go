@@ -9,10 +9,14 @@ const TheoryOfDisabledBlocks = `
 A component set teaches the model only the block kinds it processes. Models
 still emit untaught kinds from training priors or from context that mentions
 them (documentation, examples, other sessions). An unprocessed block is
-silently ignored: it is never executed, applied, or answered, and it
-triggers no new round — so the wasted output also implies an action that
-never happened (the model may emit a shell block and then reason as if the
-command had run).
+never executed, applied, or answered — the wasted output implies an action
+that never happened (the model may emit a shell block and then reason as if
+the command had run). Sessions that configure
+pipeline.RunOptions.KnownBlockKinds turn the notice's declaration into
+runtime enforcement: the loop feeds back a correction error for every
+collected block whose kind is not available (see
+pipeline.TheoryOfUnknownBlockKinds); without the predicate the block is
+dropped silently, as before.
 
 DisabledBlocksNotice closes the gap by explicitly listing the kinds that
 are NOT available in the current session, each with a replacement behavior;

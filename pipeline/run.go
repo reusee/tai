@@ -134,14 +134,25 @@ correcting the error.
 
 Continuity after correction: both the error-retry feedback
 (errorRetryPrefix, covering change-block apply errors) and the
-parse-error correction feedback (formatParseErrors) instruct the model
-to resume the original task after fixing the fault. The correction round
-is part of the same generation flow, not a fresh start: a model that
-fixes the block, emits the summary, and stops ends the generation with
-only its summaries as cross-loop context, so in goal mode the next loop
-restarts from a nearly empty picture — the observed "forgot the task"
-failure. The correction feedback therefore carries the resume directive
-verbatim in the same note.
+block-correction feedback (formatParseErrors, formatUnknownKindFeedback)
+instruct the model to resume the original task after fixing the fault.
+The correction round is part of the same generation flow, not a fresh
+start: a model that fixes the block, emits the summary, and stops ends
+the generation with only its summaries as cross-loop context, so in goal
+mode the next loop restarts from a nearly empty picture — the observed
+"forgot the task" failure. The correction feedback therefore carries
+the resume directive verbatim in the same note.
+
+Unknown-block-kind correction: an attempt that completes with collected
+blocks whose kind the session cannot process — an unknown kind, a kind
+disabled by configuration, or a kindless block — triggers a correction
+round when RunOptions.KnownBlockKinds is configured, mirroring the
+parse-error feedback: the loop reports the unprocessed blocks
+immediately after the attempt and instructs the model not to re-emit
+them (the kind itself is the fault), to use the kind's stated
+replacement behavior, and to resume the original task. The two
+categories share one correction decision and one budget; see
+TheoryOfUnknownBlockKinds.
 `
 
 const TheoryOfUsageLogging = `
@@ -313,16 +324,20 @@ type loopState struct {
 }
 
 // buildContinueReason describes why the generation loop continues to
-// the next generation: the kinds of blocks processed by components,
-// the parse-error feedback, or a component's state modification. See
-// TheoryOfLoops.
-func buildContinueReason(triggeredKinds []string, parseErrorFeedback bool) string {
+// the next generation: the kinds of blocks processed by components, the
+// parse-error feedback, the unknown-block-kind feedback, or a
+// component's state modification. See TheoryOfLoops and
+// TheoryOfUnknownBlockKinds.
+func buildContinueReason(triggeredKinds []string, parseErrorFeedback bool, unknownKindFeedback bool) string {
 	var reasons []string
 	if len(triggeredKinds) > 0 {
 		reasons = append(reasons, strings.Join(triggeredKinds, ", ")+" blocks")
 	}
 	if parseErrorFeedback {
 		reasons = append(reasons, "parse error feedback")
+	}
+	if unknownKindFeedback {
+		reasons = append(reasons, "unknown block kind feedback")
 	}
 	if len(reasons) == 0 {
 		return "component modified the generation state"
@@ -333,12 +348,13 @@ func buildContinueReason(triggeredKinds []string, parseErrorFeedback bool) strin
 // runGeneration executes one generation: the attempt loop (initial
 // attempt plus retries for missing completion or post-output errors)
 // followed by the success tail (summary synthesis, OnAttemptSuccess,
-// usage recording, completion reporting, parse-error feedback, component
-// processing, and idle handling). Each attempt is one pass through the
-// phase chain; its lifecycle events — attempt start, request
-// parameters, finish, truncation, handoff, usage, completion — are
-// constructed and yielded the moment their facts are known. See
-// TheoryOfLoops and TheoryOfLoopEvents.
+// usage recording, completion reporting, correction feedback (parse
+// errors and unknown block kinds), component processing, and idle
+// handling). Each attempt is one pass through the phase chain; its
+// lifecycle events — attempt start, request parameters, finish,
+// truncation, handoff, usage, completion — are constructed and yielded
+// the moment their facts are known. See TheoryOfLoops,
+// TheoryOfLoopEvents, and TheoryOfUnknownBlockKinds.
 func (ls *loopState) runGeneration() (generationResult, error) {
 	var collectedBlocks []blocks.Block
 	var generationSummaries []string
@@ -391,7 +407,7 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 		// The request event precedes the attempt's request: it
 		// describes the actual generation parameters — the model and
 		// the effective temperature, reasoning effort, and token
-		// limits — resolved from the generator spec and the flag
+		// limits — resolved from the generator spec with the flag
 		// overrides, mirroring the generators' flag-over-spec
 		// precedence. Unlike the generators' "generating" log, which
 		// records the spec's effort even when the flag overrides it,
@@ -852,17 +868,27 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 
 	ls.state = phaseState
 
-	// Parse error handling.
-	var parseErrorParts []generators.Part
+	// Correction feedback: parse errors and unknown block kinds are
+	// both unprocessable output — a malformed block cannot be parsed, a
+	// well-formed block of an unavailable kind cannot take effect — so
+	// they share one decision and one correction budget. Unknown kinds
+	// are computed from the collected blocks; summary blocks were
+	// already extracted above, so the summary kind never reaches the
+	// predicate. See TheoryOfUnknownBlockKinds.
+	var unknownKinds []blocks.Block
+	if ls.opts.KnownBlockKinds != nil {
+		unknownKinds = unknownKindBlocks(collectedBlocks, ls.opts.KnownBlockKinds)
+	}
+	var correctionParts []generators.Part
 	var generationUncorrected []*blocks.BlockParseError
-	parseErrorParts, ls.parseErrorCorrections, ls.skipOnAttemptStart, generationUncorrected =
-		decideParseErrorFeedback(generationParseErrors, ls.parseErrorCorrections)
+	correctionParts, ls.parseErrorCorrections, ls.skipOnAttemptStart, generationUncorrected =
+		decideBlockCorrectionFeedback(generationParseErrors, unknownKinds, ls.parseErrorCorrections)
 	if len(generationUncorrected) > 0 {
 		ls.uncorrectedParseErrors = appendUncorrectedParseErrors(ls.uncorrectedParseErrors, generationUncorrected)
 	}
 	if ls.rec != nil && ls.rec.Enabled() {
-		if len(parseErrorParts) > 0 {
-			ls.rec.Event("decision", fmt.Sprintf("parse error correction attempt %d/%d: %d malformed block(s) fed back to the model", ls.parseErrorCorrections, maxParseErrorCorrections, len(generationParseErrors)))
+		if len(correctionParts) > 0 {
+			ls.rec.Event("decision", fmt.Sprintf("block correction attempt %d/%d: %d malformed block(s) and %d unavailable-kind block(s) fed back to the model", ls.parseErrorCorrections, maxParseErrorCorrections, len(generationParseErrors), len(unknownKinds)))
 		} else if len(generationUncorrected) > 0 {
 			ls.rec.Event("decision", fmt.Sprintf("parse error correction budget exhausted: %d malformed block(s) recorded as uncorrected", len(generationUncorrected)))
 		}
@@ -870,11 +896,11 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 
 	// Single-shot mode: no component processing.
 	if len(ls.opts.Components) == 0 {
-		if len(parseErrorParts) > 0 {
+		if len(correctionParts) > 0 {
 			var aerr error
 			ls.state, aerr = ls.state.AppendContent(&generators.Content{
 				Role:  generators.RoleUser,
-				Parts: parseErrorParts,
+				Parts: correctionParts,
 			})
 			if aerr != nil {
 				ls.recordAttemptError(aerr)
@@ -883,7 +909,7 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 			ls.emitEvent(Event{
 				Kind:    EventComponentsTriggered,
 				Attempt: ls.attempt,
-				Detail:  buildContinueReason(nil, true),
+				Detail:  buildContinueReason(nil, len(generationParseErrors) > 0, len(unknownKinds) > 0),
 			})
 			return generationResult{
 				state:        ls.state,
@@ -913,14 +939,14 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 	}
 	ls.remainingBlocks = append(ls.remainingBlocks, generationRemaining...)
 
-	if len(parseErrorParts) > 0 {
-		combinedParts = append(parseErrorParts, combinedParts...)
+	if len(correctionParts) > 0 {
+		combinedParts = append(correctionParts, combinedParts...)
 		triggered = true
 	}
 
 	if triggered {
 		// The continue reason states why the next generation starts:
-		// the kinds of blocks processed by components, the parse-error
+		// the kinds of blocks processed by components, the correction
 		// feedback, or a component's state modification. A user-part
 		// count is misleading here: a component that triggers through
 		// a state modification alone (e.g., ingest appending fetched
@@ -940,7 +966,7 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 				triggeredKinds = append(triggeredKinds, comp.Kind)
 			}
 		}
-		continueReason := buildContinueReason(triggeredKinds, len(parseErrorParts) > 0)
+		continueReason := buildContinueReason(triggeredKinds, len(generationParseErrors) > 0, len(unknownKinds) > 0)
 		if len(combinedParts) > 0 {
 			var aerr error
 			ls.state, aerr = ls.state.AppendContent(&generators.Content{
@@ -1224,6 +1250,19 @@ type RunOptions struct {
 	// BlockHandler processes blocks during streaming. May be nil.
 	// If consumed is true, the block is not passed to ProcessComponents.
 	BlockHandler BlockHandler
+	// KnownBlockKinds reports whether a block kind is processable in
+	// this session. When non-nil, the loop checks every collected block
+	// — after summary extraction, so the summary kind never reaches the
+	// predicate — and feeds back a correction error for each block whose
+	// kind the predicate rejects, so a model emitting a kind the session
+	// cannot process (an unknown or disabled kind) is corrected instead
+	// of silently ignored; the feedback shares the parse-error
+	// correction budget. When nil, no unknown-kind check happens and
+	// collected blocks are trusted. Callers derive the predicate from
+	// their ComponentSet via ComponentSet.KnownKinds, adding kinds
+	// processed outside the component loop. See
+	// TheoryOfUnknownBlockKinds.
+	KnownBlockKinds func(kind string) bool
 	// PhaseBuilder builds the phase chain for each generation.
 	PhaseBuilder func(generators.Generator) generators.Phase
 	// Root is the filesystem root for ProcessComponents. Optional.
@@ -1621,36 +1660,6 @@ func formatParseErrors(errors []*blocks.BlockParseError, attempt, maxAttempts in
 		sb.WriteString("\n\n")
 	}
 	return sb.String()
-}
-
-// decideParseErrorFeedback decides whether to feed parse errors back to
-// the model for self-correction. The correction budget is cumulative per
-// run: it resets only when a generation produces no parse errors
-// (returning a reset counter), so a model that persistently emits
-// malformed blocks cannot restart the correction cycle indefinitely when
-// other components keep triggering generations. When the budget is
-// exhausted, no feedback is produced and the generation's parse errors
-// are returned as uncorrected so the caller can record them in
-// Result.ParseErrors. See TheoryOfLoops.
-func decideParseErrorFeedback(
-	generationParseErrors []*blocks.BlockParseError,
-	correctionCount int,
-) (
-	feedback []generators.Part,
-	correctionCountOut int,
-	skipOnAttemptStart bool,
-	uncorrected []*blocks.BlockParseError,
-) {
-	if len(generationParseErrors) == 0 {
-		return nil, 0, false, nil
-	}
-	if correctionCount < maxParseErrorCorrections {
-		correctionCount++
-		return []generators.Part{
-			generators.Text(formatParseErrors(generationParseErrors, correctionCount, maxParseErrorCorrections)),
-		}, correctionCount, true, nil
-	}
-	return nil, correctionCount, false, generationParseErrors
 }
 
 // appendUncorrectedParseErrors appends parse errors to the accumulated

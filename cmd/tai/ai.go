@@ -171,9 +171,6 @@ var AICommand = apps.New("ai",
 
 		onIdle := buildChatIdle(generator, nil)
 
-		// The filesystem root serves the ingest component's file and glob
-		// tags; the scoped HTTP client serves its fetch tags.
-		// See TheoryOfAiCommand and blocks.TheoryOfIngestBlocks.
 		root, err := os.OpenRoot(".")
 		ce(err)
 		defer root.Close()
@@ -214,9 +211,14 @@ var AICommand = apps.New("ai",
 				}
 				return nil
 			},
-			OnIdle:     onIdle,
-			Root:       root,
-			HTTPClient: httpClient,
+			// Unknown-kind correction: the ai session processes shell,
+			// ingest, and memory blocks (memory post-loop); every other
+			// kind is fed back for correction. See
+			// pipeline.TheoryOfUnknownBlockKinds.
+			KnownBlockKinds: comps.KnownKinds(),
+			OnIdle:          onIdle,
+			Root:            root,
+			HTTPClient:      httpClient,
 		}, &result) {
 			if e != nil {
 				err = e

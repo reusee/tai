@@ -790,6 +790,12 @@ func (Module) GenerateWithResultWithStats(
 			InitialState: state,
 			Components:   comps.ComponentSet,
 			BlockHandler: blockHandler,
+			// Unknown-kind correction: the session's processable kinds
+			// are the component set's declared kinds plus "done" — the
+			// goal runner's completion contract, checked in
+			// Result.RemainingBlocks when goal mode runs this pipeline.
+			// See TheoryOfUnknownBlockKinds.
+			KnownBlockKinds: comps.KnownKinds("done"),
 			PhaseBuilder: func(g generators.Generator) generators.Phase {
 				return buildGenerate(g, nil)(nil)
 			},
