@@ -678,6 +678,12 @@ func TestGoalSystemPromptContent(t *testing.T) {
 	if !strings.Contains(GoalSystemPrompt, "what was NOT done") {
 		t.Fatal("GoalSystemPrompt must require checking what was not done against the original goal")
 	}
+	if !strings.Contains(GoalSystemPrompt, "Inquiry tasks are goals too") {
+		t.Fatal("GoalSystemPrompt must state that inquiry tasks also end with a done block")
+	}
+	if !strings.Contains(GoalSystemPrompt, "a summary block alone never ends the run") {
+		t.Fatal("GoalSystemPrompt must state that a summary alone never ends the run for inquiry work")
+	}
 	if strings.Contains(GoalSystemPrompt, "second consecutive loop") {
 		t.Fatal("GoalSystemPrompt must not describe the removed two-done confirmation")
 	}
