@@ -157,36 +157,50 @@ func TestParseFirstBoundaryChangeBlockNonGoFileRestriction(t *testing.T) {
 		}
 	})
 
-	t.Run("ModifyFails", func(t *testing.T) {
+	t.Run("ModifyOnUnregisteredFileFails", func(t *testing.T) {
+		content := "<<龘靐 change(op=\"MODIFY\", target=\"someDecl\", file-path=\"/test.zqx\")\nModified\n龘靐\n"
+		_, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
+		if err == nil {
+			t.Fatal("expected error for MODIFY on a file without a registered grammar")
+		}
+		if ok {
+			t.Fatal("expected ok=false for MODIFY on a file without a registered grammar")
+		}
+	})
+
+	t.Run("ModifyOnRegisteredNonGoFileValidates", func(t *testing.T) {
 		content := "<<龘靐 change(op=\"MODIFY\", target=\"someHeading\", file-path=\"/test.md\")\n# Modified\n龘靐\n"
-		_, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
-		if err == nil {
-			t.Fatal("expected error for MODIFY on non-Go file")
+		h, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
 		}
-		if ok {
-			t.Fatal("expected ok=false for MODIFY on non-Go file")
+		if !ok {
+			t.Fatal("expected ok for MODIFY on a registered non-Go file")
 		}
-	})
-
-	t.Run("AddBeforeFails", func(t *testing.T) {
-		content := "<<龘靐 change(op=\"ADD_BEFORE\", target=\"someHeading\", file-path=\"/test.md\")\nnew content\n龘靐\n"
-		_, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
-		if err == nil {
-			t.Fatal("expected error for ADD_BEFORE on non-Go file")
-		}
-		if ok {
-			t.Fatal("expected ok=false for ADD_BEFORE on non-Go file")
+		if h.Op != "MODIFY" {
+			t.Fatalf("expected MODIFY, got %s", h.Op)
 		}
 	})
 
-	t.Run("AddAfterFails", func(t *testing.T) {
-		content := "<<龘靐 change(op=\"ADD_AFTER\", target=\"someHeading\", file-path=\"/test.md\")\nnew content\n龘靐\n"
+	t.Run("AddBeforeOnUnregisteredFileFails", func(t *testing.T) {
+		content := "<<龘靐 change(op=\"ADD_BEFORE\", target=\"someDecl\", file-path=\"/test.zqx\")\nnew content\n龘靐\n"
 		_, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
 		if err == nil {
-			t.Fatal("expected error for ADD_AFTER on non-Go file")
+			t.Fatal("expected error for ADD_BEFORE on a file without a registered grammar")
 		}
 		if ok {
-			t.Fatal("expected ok=false for ADD_AFTER on non-Go file")
+			t.Fatal("expected ok=false for ADD_BEFORE on a file without a registered grammar")
+		}
+	})
+
+	t.Run("AddAfterOnUnregisteredFileFails", func(t *testing.T) {
+		content := "<<龘靐 change(op=\"ADD_AFTER\", target=\"someDecl\", file-path=\"/test.zqx\")\nnew content\n龘靐\n"
+		_, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
+		if err == nil {
+			t.Fatal("expected error for ADD_AFTER on a file without a registered grammar")
+		}
+		if ok {
+			t.Fatal("expected ok=false for ADD_AFTER on a file without a registered grammar")
 		}
 	})
 
@@ -204,14 +218,28 @@ func TestParseFirstBoundaryChangeBlockNonGoFileRestriction(t *testing.T) {
 		}
 	})
 
-	t.Run("DeleteSpecificFails", func(t *testing.T) {
-		content := "<<龘靐 change(op=\"DELETE\", target=\"someHeading\", file-path=\"/test.md\")\n龘靐\n"
+	t.Run("DeleteSpecificOnUnregisteredFileFails", func(t *testing.T) {
+		content := "<<龘靐 change(op=\"DELETE\", target=\"someDecl\", file-path=\"/test.zqx\")\n龘靐\n"
 		_, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
 		if err == nil {
-			t.Fatal("expected error for DELETE with specific target on non-Go file")
+			t.Fatal("expected error for DELETE with a specific target on a file without a registered grammar")
 		}
 		if ok {
-			t.Fatal("expected ok=false for DELETE with specific target on non-Go file")
+			t.Fatal("expected ok=false for DELETE with a specific target on a file without a registered grammar")
+		}
+	})
+
+	t.Run("DeleteSpecificOnRegisteredFileValidates", func(t *testing.T) {
+		content := "<<龘靐 change(op=\"DELETE\", target=\"someHeading\", file-path=\"/test.md\")\n龘靐\n"
+		h, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !ok {
+			t.Fatal("expected ok for DELETE by outline path on a registered non-Go file")
+		}
+		if h.Target != "someHeading" {
+			t.Fatalf("unexpected target: %s", h.Target)
 		}
 	})
 

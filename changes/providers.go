@@ -89,6 +89,13 @@ type ApplyFileLevelOp func(store FileStore, path string, h ChangeBlock) (bool, e
 // text files.
 type ApplyTextLevelOp func(store FileStore, path string, src []byte, h ChangeBlock) error
 
+// ApplyTreeStructuredOp handles MODIFY, ADD_BEFORE, ADD_AFTER, and DELETE
+// with a specific target for non-Go files backed by a gotreesitter grammar.
+// The target addresses a definition by outline path; edits apply at line
+// boundaries and the result is re-parsed for validity before writing. See
+// TheoryOfTreeStructuredEdits.
+type ApplyTreeStructuredOp func(store FileStore, path string, src []byte, h ChangeBlock) error
+
 // ApplyGoModification handles structural Go file modifications (MODIFY,
 // ADD_BEFORE, ADD_AFTER, DELETE, special targets). ParseAndFormat and
 // ApplySpecialTargetModify are captured from the dscope scope.
@@ -268,6 +275,17 @@ func (Module) ApplyTextLevelOp() ApplyTextLevelOp {
 	}
 }
 
+// ApplyTreeStructuredOp provider.
+func (Module) ApplyTreeStructuredOp() ApplyTreeStructuredOp {
+	return func(store FileStore, path string, src []byte, h ChangeBlock) error {
+		newContent, err := applyTreeStructuredEdit(src, path, h)
+		if err != nil {
+			return err
+		}
+		return store.WriteFile(path, finalizeContent(newContent), 0644)
+	}
+}
+
 // ApplyGoModification provider: captures ParseAndFormat and
 // ApplySpecialTargetModify from the dscope scope.
 func (Module) ApplyGoModification(
@@ -356,11 +374,13 @@ func (Module) ApplyGoModification(
 
 // ApplyChangeBlockStore provider: the main entry point for applying a single
 // change block to a FileStore. Path resolution, file-level ops, text-level
-// ops, non-Go handling, and Go modification are delegated to focused
-// dscope-provided functions.
+// ops, tree-structured ops on grammar-registered non-Go files, non-Go
+// handling, and Go modification are delegated to focused dscope-provided
+// functions.
 func (Module) ApplyChangeBlockStore(
 	applyFileLevelOp ApplyFileLevelOp,
 	applyTextLevelOp ApplyTextLevelOp,
+	applyTreeStructuredOp ApplyTreeStructuredOp,
 	applyGoModification ApplyGoModification,
 ) ApplyChangeBlockStore {
 	return func(store FileStore, h ChangeBlock) error {
@@ -401,6 +421,16 @@ func (Module) ApplyChangeBlockStore(
 				return err
 			}
 			return applyTextLevelOp(store, path, src, h)
+		}
+
+		// Tree-structured operations: grammar-registered non-Go files
+		// support edits addressed by outline path. See
+		// TheoryOfTreeStructuredEdits.
+		if !isGoFile(path) && isTreeStructuredTarget(path) && isTreeStructuredOperation(h.Op, h.Target) {
+			if err != nil {
+				return err
+			}
+			return applyTreeStructuredOp(store, path, src, h)
 		}
 
 		// Non-Go file handling
