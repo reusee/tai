@@ -254,28 +254,35 @@ func TestRunGoalParseErrorsOverturnDoneDeclaration(t *testing.T) {
 	}
 }
 
-func TestRunGoalStopsWhenLoopAppliesNoChanges(t *testing.T) {
-	output := &bytes.Buffer{}
+// TestRunGoalChangeFreeLoopWithoutDoneContinues verifies the corrected
+// termination rule: a loop that applied no change blocks and emitted no
+// done block is a model output failure, not a terminal state — the run
+// continues with corrective feedback into a fresh loop, and the done
+// block remains the only run exit. See TheoryOfGoalMode.
+func TestRunGoalChangeFreeLoopWithoutDoneContinues(t *testing.T) {
 	calls := 0
+	var feedbacks []GoalFeedback
 	result := RunGoal(context.Background(), GoalOptions{
-		Output: output,
+		Output: &bytes.Buffer{},
 		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries, _ string) (Result, []AttemptStat, error) {
 			calls++
-			return Result{}, nil, nil
+			feedbacks = append(feedbacks, feedback)
+			if calls == 1 {
+				// The silent loop: no changes, no done block.
+				return Result{}, nil, nil
+			}
+			return doneResult(), nil, nil
 		},
 		Review: noopReview,
 	})
-	if calls != 1 {
-		t.Fatalf("ran %d loops, want 1", calls)
+	if calls != 2 {
+		t.Fatalf("ran %d loops, want 2: the silent loop must continue into the next loop", calls)
 	}
-	if result.LoopsRun != 1 {
-		t.Fatalf("LoopsRun = %d, want 1", result.LoopsRun)
+	if !result.Achieved {
+		t.Fatal("the run must end achieved on the later change-free done block")
 	}
-	if result.Achieved {
-		t.Fatal("the runner must not report achievement without a confirmed done block")
-	}
-	if !strings.Contains(output.String(), "applied no change blocks") {
-		t.Fatal("output must report the no-change completion")
+	if !strings.Contains(string(feedbacks[1]), "NO change blocks and NO done block") {
+		t.Fatalf("the loop after the silent loop must carry the model-output-failure feedback, got %q", feedbacks[1])
 	}
 }
 
@@ -415,40 +422,45 @@ func TestRunGoalContinuesWhenLoopAppliesChanges(t *testing.T) {
 	}
 }
 
-// TestRunGoalChangeFreeLoopWithoutDoneEndsRun verifies the uniform
-// termination rule: the run ends on any loop that applied no change
-// blocks, and the done block decides the outcome. A loop that applied
-// no change blocks without a done block — including a verification loop
-// that corrects nothing but forgets the done block — ends the run
-// unachieved. See TheoryOfGoalMode.
-func TestRunGoalChangeFreeLoopWithoutDoneEndsRun(t *testing.T) {
-	output := &bytes.Buffer{}
+// TestRunGoalSilentVerificationLoopContinues verifies that a silent loop
+// does not end the run even when it follows a done declaration: the
+// declaration stays pending (the silent loop verified nothing), the run
+// continues with corrective feedback, and a later change-free done block
+// achieves the goal. See TheoryOfGoalMode.
+func TestRunGoalSilentVerificationLoopContinues(t *testing.T) {
 	calls := 0
+	var feedbacks []GoalFeedback
 	result := RunGoal(context.Background(), GoalOptions{
-		Output: output,
+		Output: &bytes.Buffer{},
 		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries, _ string) (Result, []AttemptStat, error) {
 			calls++
-			if calls == 1 {
+			feedbacks = append(feedbacks, feedback)
+			switch calls {
+			case 1:
 				// The declaring loop carries applied changes; a done
 				// block without changes would end the run directly. See
 				// TheoryOfGoalMode.
 				return doneWithChangesResult(), nil, nil
+			case 2:
+				// The verification loop goes silent: no changes, no
+				// done block — a model output failure.
+				return Result{}, nil, nil
 			}
-			return Result{}, nil, nil
+			return doneResult(), nil, nil
 		},
 		Review: noopReview,
 	})
-	// Loop 1 declares done with changes; loop 2 verifies, corrects
-	// nothing, and omits the done block, so the change-free stop ends
-	// the run unachieved.
-	if calls != 2 {
-		t.Fatalf("ran %d loops, want 2", calls)
+	if calls != 3 {
+		t.Fatalf("ran %d loops, want 3: the silent verification loop must continue", calls)
 	}
-	if result.Achieved {
-		t.Fatal("the runner must not report achievement without a done block on the change-free loop")
+	if !result.Achieved {
+		t.Fatal("the run must end achieved on the later change-free done block")
 	}
-	if !strings.Contains(output.String(), "applied no change blocks") {
-		t.Fatal("output must report the no-change completion")
+	if !strings.Contains(string(feedbacks[1]), "Verification is the primary work") {
+		t.Fatalf("the loop after the declaration must carry the verification prompt, got %q", feedbacks[1])
+	}
+	if !strings.Contains(string(feedbacks[2]), "NO change blocks and NO done block") {
+		t.Fatalf("the loop after the silent verification loop must carry the model-output-failure feedback, got %q", feedbacks[2])
 	}
 }
 
@@ -652,7 +664,10 @@ func TestGoalSystemPromptContent(t *testing.T) {
 		t.Fatal("GoalSystemPrompt must describe the done block kind")
 	}
 	if !strings.Contains(GoalSystemPrompt, "without applying any change block") {
-		t.Fatal("GoalSystemPrompt must state the no-change loop termination rule")
+		t.Fatal("GoalSystemPrompt must address a loop that ends without applying any change block")
+	}
+	if !strings.Contains(GoalSystemPrompt, "does NOT end the run") {
+		t.Fatal("GoalSystemPrompt must state that a change-free loop without a done block continues the run")
 	}
 	if !strings.Contains(GoalSystemPrompt, "applies no change blocks") {
 		t.Fatal("GoalSystemPrompt must state the change-free done termination rule")
