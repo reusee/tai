@@ -310,11 +310,11 @@ tab that was last focused; pressing another tab's strip takes the focus
 without collapsing and keeps that tab's current view. A press inside an
 expanded tab's scroll area focuses the tab (when it was not already
 focused) and records the origin of a drag-scroll. Inside the Events
-pane, a left press is inert unless it lands on the finish line's 👉
-jump marker, which jumps the Output tab to the section the finish's
-attempt wrote (see TheoryOfTUIOutputSections); a press on a handoff
-node's rows still toggles it. Presses outside every panel, middle and
-right presses, and no-button motion (mode 1003) are ignored.
+pane, a left press is inert unless it lands on the attempt-start line's
+👉 jump marker, which jumps the Output tab to the section that attempt
+wrote (see TheoryOfTUIOutputSections); a press on a handoff node's rows
+still toggles it. Presses outside every panel, middle and right presses,
+and no-button motion (mode 1003) are ignored.
 
 In interactive sessions, the Output tab's input row is the one press
 target with its own semantics: a left press on the chat input bar's row
@@ -1374,8 +1374,8 @@ func (t *TUI) handleMouseKey(key string) {
 		// keyboard back to navigation. See TheoryOfTUIChatInput.
 		t.inputFocused = false
 		t.mouse.Press(t.tabs, t.scrolls[:], t.width, t.height, x, y)
-		// A press on the finish line's jump marker jumps the Output
-		// tab to the section the finish's attempt wrote; presses
+		// A press on the attempt-start line's jump marker jumps the
+		// Output tab to the section that attempt wrote; presses
 		// elsewhere in the Events pane are inert. The jump runs before
 		// the handoff toggle so it maps rows of the last-rendered
 		// tree, the same ranges the toggle consumes. See
@@ -1507,9 +1507,9 @@ func loopPrefix(loop int, attemptLabel string) string {
 	return attemptLabel
 }
 
-// eventJumpMarker is appended to the Events tab's finish line: a press
-// on the marker's cells is the only Events-tab press that jumps the
-// Output tab to the attempt's output section. See
+// eventJumpMarker is appended to the Events tab's attempt-start line:
+// a press on the marker's cells is the only Events-tab press that
+// jumps the Output tab to the attempt's output section. See
 // TheoryOfTUIOutputSections.
 const eventJumpMarker = "👉"
 
@@ -1517,7 +1517,7 @@ const eventJumpMarker = "👉"
 // line of every event starts with the kind's emoji (eventEmoji) followed
 // by a bracketed label — one display style shared by all kinds, so event
 // types are recognized at a glance and no style mixes brackets with
-// banner equals. The finish line ends with the jump marker
+// banner equals. The attempt start line ends with the jump marker
 // (eventJumpMarker): its cells are the only Events-tab press that jumps
 // the Output tab (see TheoryOfTUIOutputSections). A completed attempt
 // with no summary (single-shot commands like ai produce empty summaries)
@@ -1541,7 +1541,10 @@ func eventLines(ev pipeline.Event) []taiui.Line {
 	}
 	switch ev.Kind {
 	case pipeline.EventAttemptStart:
-		return eventLog(ev.Kind, fmt.Sprintf("[%s start]",
+		// The jump marker ends the line: only a press on its cells
+		// jumps the Output tab to the attempt's output section. See
+		// TheoryOfTUIOutputSections.
+		return eventLog(ev.Kind, fmt.Sprintf("[%s start] "+eventJumpMarker,
 			loopPrefix(ev.Loop, fmt.Sprintf("Attempt %d", ev.Attempt))))
 	case pipeline.EventRequest:
 		return eventLog(ev.Kind, fmt.Sprintf("[%s request] %s",
@@ -1586,10 +1589,7 @@ func eventLines(ev pipeline.Event) []taiui.Line {
 			ev.Usage.Thoughts.TokenCount,
 		)+ev.Usage.SpeedSuffix())
 	case pipeline.EventFinish:
-		// The jump marker ends the line: only a press on its cells
-		// jumps the Output tab to the attempt's output section. See
-		// TheoryOfTUIOutputSections.
-		return eventLog(ev.Kind, "[Finish: "+ev.Detail+"] "+eventJumpMarker)
+		return eventLog(ev.Kind, "[Finish: "+ev.Detail+"]")
 	case pipeline.EventThoughtSummary:
 		return append(
 			[]taiui.Line{{Text: eventEmoji[ev.Kind] + " [Thought Summary]", Color: outputColorThoughtLine}},

@@ -53,10 +53,11 @@ func TestTUIEventClickJumpsToOutputSection(t *testing.T) {
 		tu.writeOutputPart(generators.RoleModel, taiui.NoColor, false, "filler line\n")
 	}
 	tu.events.Add(taiui.EventNode{Run: 1, Seq: 1, Lines: []taiui.Line{{Text: "loop"}}})
-	tu.events.Add(taiui.EventNode{Run: 1, Seq: 2, ParentSeq: 1, Lines: []taiui.Line{{Text: "attempt start"}}})
+	tu.events.Add(taiui.EventNode{Run: 1, Seq: 2, ParentSeq: 1,
+		Lines: []taiui.Line{{Text: "🚀 [loop 1 attempt 1 start] " + eventJumpMarker}}})
 	tu.events.Add(taiui.EventNode{Run: 1, Seq: 3, ParentSeq: 2, Lines: []taiui.Line{{Text: "usage-unique"}}})
 	tu.events.Add(taiui.EventNode{Run: 1, Seq: 4, ParentSeq: 2,
-		Lines: []taiui.Line{{Text: "🏁 [Finish: stop] " + eventJumpMarker}}})
+		Lines: []taiui.Line{{Text: "🏁 [Finish: stop]"}}})
 	tu.eventSections[outputSectionOwner{run: 1, seq: 2}] = 1
 
 	boxes := tu.tabs.Boxes(tu.width, tu.height)
@@ -69,7 +70,7 @@ func TestTUIEventClickJumpsToOutputSection(t *testing.T) {
 		}
 	}
 	if row < 0 {
-		t.Fatal("finish row with the jump marker not found")
+		t.Fatal("attempt-start row with the jump marker not found")
 	}
 	start, end, ok := markerColumnRange(display[row].Text, taiui.DisplayWidthOptions())
 	if !ok || end <= start {
@@ -78,11 +79,11 @@ func TestTUIEventClickJumpsToOutputSection(t *testing.T) {
 	box := boxes[1]
 	y := box.Top + 1 + row
 	if y >= box.Bottom {
-		t.Fatalf("finish row %d beyond the pane", y)
+		t.Fatalf("attempt-start row %d beyond the pane", y)
 	}
 
 	// A press on the jump marker jumps the Output tab to the section
-	// the finish's attempt wrote.
+	// the attempt wrote.
 	tu.jumpToEventAtClick(box.Left+start, y)
 	want := tu.outputSectionDisplayTop(tu.outputSections[1].startLine, boxes[0])
 	if want <= 0 {
@@ -98,8 +99,8 @@ func TestTUIEventClickJumpsToOutputSection(t *testing.T) {
 		t.Fatal("jump must focus the expanded Output tab")
 	}
 
-	// A press off the marker, and a press on a row without the marker,
-	// never jump.
+	// A press off the marker, a press on a row without the marker, and
+	// a press on the finish line never jump.
 	tu.scrolls[0].Offset = 0
 	tu.scrolls[0].Follow = true
 	tu.jumpToEventAtClick(box.Left+2, y)
@@ -119,5 +120,19 @@ func TestTUIEventClickJumpsToOutputSection(t *testing.T) {
 	tu.jumpToEventAtClick(box.Left+2, box.Top+1+usageRow)
 	if tu.scrolls[0].Offset != 0 || !tu.scrolls[0].Follow {
 		t.Fatal("a press on a row without the marker must not jump")
+	}
+	finishRow := -1
+	for i, line := range display {
+		if strings.Contains(line.Text, "[Finish: stop]") {
+			finishRow = i
+			break
+		}
+	}
+	if finishRow < 0 {
+		t.Fatal("finish row not found")
+	}
+	tu.jumpToEventAtClick(box.Left+2, box.Top+1+finishRow)
+	if tu.scrolls[0].Offset != 0 || !tu.scrolls[0].Follow {
+		t.Fatal("a press on the finish line must not jump")
 	}
 }

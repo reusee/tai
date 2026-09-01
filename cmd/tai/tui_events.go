@@ -15,9 +15,9 @@ Events tab integration theory (cmd/tai):
   recovery note does not flood the tail view. Enter maps to
   ToggleLastExpanded; a left press maps the screen cell to a display
   row (dropping the label strip, re-adding the scroll offset): a press
-  on the finish line's 👉 jump marker jumps the Output tab to the
-  output section the attempt wrote (see TheoryOfTUIOutputSections),
-  and every press calls ToggleAtRow.
+  on the attempt-start line's 👉 jump marker jumps the Output tab to
+  the output section that attempt wrote (see
+  TheoryOfTUIOutputSections), and every press calls ToggleAtRow.
 - Every event records the duration from the TUI session's start to its
   arrival as the node's elapsed time.
 `

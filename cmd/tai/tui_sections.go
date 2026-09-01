@@ -20,21 +20,22 @@ Output tab sections and event-to-output navigation theory (cmd/tai):
   records the source-line index where it starts in the output buffer,
   so a section is an append-only slice of the stream.
 
-- The finish line carries the 👉 jump marker (eventJumpMarker): a left
-  press on the marker's cells jumps the Output tab's view to the
-  section the finish's attempt wrote — the only Events-tab press that
+- The attempt-start line carries the 👉 jump marker (eventJumpMarker):
+  a left press on the marker's cells jumps the Output tab's view to
+  the section the attempt wrote — the only Events-tab press that
   jumps. The press maps onto an event node through
-  taiui.EventTree.NodeAtRow, and only a finish node — its header ends
-  with the marker — is eligible; the marker's cell range is then
-  located in the pane's wrapped display line, measured cluster by
-  cluster with the same width options the renderer uses, so the press
-  must land on the marker's own columns. Presses on other rows, other
-  columns, rows without a node, and finishes whose chain owns no
-  section are no-ops. The node or its nearest section-owning ancestor
-  selects the section. Mirroring jumpToTransition, the jump expands
-  and focuses the Output tab when needed and stops following the tail;
-  the live tail resumes only when the view reaches the latest row. The
-  display geometry is recomputed on the click path only, not per frame.
+  taiui.EventTree.NodeAtRow, and only an attempt-start node — its
+  header ends with the marker — is eligible; the marker's cell range
+  is then located in the pane's wrapped display line, measured cluster
+  by cluster with the same width options the renderer uses, so the
+  press must land on the marker's own columns. Presses on other rows,
+  other columns, rows without a node, and attempt starts whose attempt
+  produced no visible output are no-ops. The node or its nearest
+  section-owning ancestor selects the section. Mirroring
+  jumpToTransition, the jump expands and focuses the Output tab when
+  needed and stops following the tail; the live tail resumes only
+  when the view reaches the latest row. The display geometry is
+  recomputed on the click path only, not per frame.
 
 - The scroll target is the display line where the section's first
   source line begins: the source lines before the section start are
@@ -88,9 +89,9 @@ func (t *TUI) clearPendingOutputOwner() {
 
 // jumpToEventAtClick scrolls the Output tab to the output section of
 // the pressed event — but only when the press lands on the jump
-// marker that ends the finish line's text: presses elsewhere in the
-// Events pane, on rows without a node, and events whose chain owns no
-// section are no-ops. Called with t.mu held, like
+// marker that ends the attempt-start line's text: presses elsewhere in
+// the Events pane, on rows without a node, and events whose chain owns
+// no section are no-ops. Called with t.mu held, like
 // toggleHandoffAtClick.
 func (t *TUI) jumpToEventAtClick(x, y int) {
 	if !t.tabs.Expanded[1] {
@@ -105,8 +106,8 @@ func (t *TUI) jumpToEventAtClick(x, y int) {
 	// same mapping toggleHandoffAtClick uses.
 	row := t.scrolls[1].Offset + (y - box.Top - 1)
 	node := t.events.NodeAtRow(row)
-	// Only the finish line's jump marker is clickable: a press on any
-	// other row never jumps. See TheoryOfTUIOutputSections.
+	// Only the attempt-start line's jump marker is clickable: a press
+	// on any other row never jumps. See TheoryOfTUIOutputSections.
 	if node == nil || !nodeHasJumpMarker(node) {
 		return
 	}
@@ -140,9 +141,9 @@ func (t *TUI) eventDisplayLine(row int, box taiui.Box) (taiui.Line, bool) {
 }
 
 // nodeHasJumpMarker reports whether the node's header line ends with
-// the jump marker: only finish lines carry it, so only their presses
-// are eligible for the section jump. The check runs on the node's
-// source line, which carries no elapsed-timer suffix.
+// the jump marker: only attempt-start lines carry it, so only their
+// presses are eligible for the section jump. The check runs on the
+// node's source line, which carries no elapsed-timer suffix.
 func nodeHasJumpMarker(node *taiui.EventNode) bool {
 	return len(node.Lines) > 0 && strings.HasSuffix(node.Lines[0].Text, " "+eventJumpMarker)
 }

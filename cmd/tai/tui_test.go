@@ -1973,7 +1973,7 @@ func TestTUIHandleEventRendersKinds(t *testing.T) {
 	if len(tui.events.Roots) != 1 || len(tui.events.Roots[0].Lines) != 1 {
 		t.Fatalf("expected 1 event node of 1 line, got %v", tui.events.Roots)
 	}
-	if tui.events.Roots[0].Lines[0].Text != "🏁 [Finish: stop] "+eventJumpMarker || tui.events.Roots[0].Lines[0].Color != outputColorLogLine {
+	if tui.events.Roots[0].Lines[0].Text != "🏁 [Finish: stop]" || tui.events.Roots[0].Lines[0].Color != outputColorLogLine {
 		t.Fatalf("unexpected finish line: %+v", tui.events.Roots[0].Lines[0])
 	}
 	if tui.generating {
@@ -2013,7 +2013,7 @@ func TestTUIHandleEventRendersKinds(t *testing.T) {
 
 	tui.handleEvent(pipeline.Event{Kind: pipeline.EventAttemptStart, Attempt: 3})
 	last = tui.events.Roots[len(tui.events.Roots)-1].Lines
-	if last[0].Text != "🚀 [Attempt 3 start]" || last[0].Color != outputColorLogLine {
+	if last[0].Text != "🚀 [Attempt 3 start] "+eventJumpMarker || last[0].Color != outputColorLogLine {
 		t.Fatalf("unexpected attempt start line: %+v", last[0])
 	}
 
@@ -2087,7 +2087,7 @@ func TestTUIEventLinesRenderGoalLoopPrefix(t *testing.T) {
 	usage.Prompt.TokenCount = 100
 
 	startLines := eventLines(pipeline.Event{Kind: pipeline.EventAttemptStart, Loop: 3, Attempt: 2})
-	if startLines[0].Text != "🚀 [loop 3 attempt 2 start]" {
+	if startLines[0].Text != "🚀 [loop 3 attempt 2 start] "+eventJumpMarker {
 		t.Fatalf("unexpected goal-loop attempt start line: %q", startLines[0].Text)
 	}
 
@@ -2102,7 +2102,7 @@ func TestTUIEventLinesRenderGoalLoopPrefix(t *testing.T) {
 	}
 
 	plain := eventLines(pipeline.Event{Kind: pipeline.EventAttemptStart, Attempt: 2})
-	if plain[0].Text != "🚀 [Attempt 2 start]" {
+	if plain[0].Text != "🚀 [Attempt 2 start] "+eventJumpMarker {
 		t.Fatalf("unexpected non-goal attempt start line: %q", plain[0].Text)
 	}
 }
