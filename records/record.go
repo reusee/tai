@@ -22,10 +22,10 @@ import (
 )
 
 const TheoryOfInteractionRecording = `
-The records package implements the self-improvement mechanism described in
-todo.md: every interaction of the tai command can be recorded in detail into
-a single sqlite database file, and recorded sessions can be fed back to the
-model for analysis and improvement.
+The records package implements the self-improvement mechanism: every
+interaction of the tai command can be recorded in detail into a single
+sqlite database file, and recorded sessions can be fed back to the model
+for analysis and improvement.
 
 Recording is centralized in the unified generation loop (pipeline.Run), which is
 used by every generation command (ai, next, and the auto-detected default), so one

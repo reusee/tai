@@ -56,6 +56,12 @@ func TestGoSrcPromptsPreferGoSrcOverIngest(t *testing.T) {
 	}
 }
 
+func TestGoSrcPromptsEncourageBatchFetch(t *testing.T) {
+	if !strings.Contains(GoSrcBlockSystemPrompt, "Batch fetches: collect every symbol you expect to need into one go-src block") {
+		t.Fatal("go-src prompt must teach batching every needed symbol into one block to minimize fetching rounds")
+	}
+}
+
 func TestGoSrcPromptsDescribeSnapshotAndFilePath(t *testing.T) {
 	// The go-src prompt must teach three facts about resolution results:
 	// prefer the import-path qualifier, the resolved source names the

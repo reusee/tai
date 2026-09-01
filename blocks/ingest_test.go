@@ -593,6 +593,12 @@ func TestIngestBlockPromptsRequireSummary(t *testing.T) {
 	}
 }
 
+func TestIngestBlockPromptsEncourageBatching(t *testing.T) {
+	if !strings.Contains(IngestBlockSystemPrompt, "Batch requests: put every file, fetch, and glob request you need into a single ingest block") {
+		t.Fatal("ingest prompt must teach batching every request into one block to minimize context-fetching rounds")
+	}
+}
+
 func TestReadContextFileAbsolutePath(t *testing.T) {
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)

@@ -43,9 +43,9 @@ state, requirement by requirement, checking what was NOT done as well
 as what was done — a done block is warranted only when the analysis
 finds no gap, no incorrect change and no missing requirement. The
 verification is required because the filesystem may change while a loop
-runs: a loop that loaded todo.md containing task A cannot see task B
-added by the user during execution, so its done declaration may rest on
-stale context. A verification loop's own corrections are new changes
+runs: a loop cannot see requirements the user added while it ran, so
+its done declaration may rest on stale context. A verification loop's
+own corrections are new changes
 that the following loop verifies in turn, so the cycle repeats until a
 loop examines the current state and finds nothing to correct: that loop
 emits a done block and applies no change blocks, and the run ends
@@ -142,14 +142,14 @@ sticky however the corrections unfold. When no review model is
 configured, post-done loops keep the default model.
 `
 
-// GoalSystemPrompt teaches the model the goal-directed multi-loop
-// protocol: work toward the goal across fresh loops and end the run by
-// emitting a done block from a loop that applies no change blocks — the
-// done block is the run's only exit. A loop that ends with neither
-// change blocks nor a done block is a model output failure and never
-// ends the run. The completion assessment is a gap analysis: what was
-// NOT done is checked against the original goal as well as the
-// correctness of what was done. See TheoryOfGoalMode.
+// GoalSystemPrompt teaches the model the goal-directed multi-loop protocol:
+// work toward the goal across fresh loops and end the run by emitting a
+// done block from a loop that applies no change blocks — the done block
+// is the run's only exit. A loop that ends with neither change blocks
+// nor a done block is a model output failure and never ends the run.
+// The completion assessment is a gap analysis: what was NOT done is checked
+// against the original goal as well as the correctness of what was done.
+// See TheoryOfGoalMode.
 const GoalSystemPrompt = `
 **Goal-Directed Multi-Loop Execution:**
 
@@ -158,6 +158,7 @@ You are working toward a goal that may require multiple independent loops to ach
 **Rules:**
 - Work toward the goal described in the user input. Make concrete changes (code modifications, tests, documentation) to advance the goal.
 - After making changes, assess whether the goal has been fully achieved. The assessment is a gap analysis, not just a correctness check: verify what was NOT done as well as what was done — compare the original goal in the user input against the current state, requirement by requirement, and identify anything still missing. Consider: Are all requested changes complete? Do tests pass? Is the code correct and well-structured?
+- Economize rounds without sacrificing correctness: each response is one model round. Batch context fetches — every symbol you need in one go-src block, every file in one ingest block — and emit change blocks together with the go-test blocks that verify them in the same response, so each round completes as much work as possible.
 - If the goal is NOT yet achieved, end your turn with a summary block. The system will start another loop with fresh context, allowing you to continue from the current filesystem state.
 - A loop that ends without applying any change block and without emitting a done block does NOT end the run: that combination is a model output failure — the loop produced neither progress nor the completion signal, typically because something went severely wrong inside that loop's own conversation history. The system starts another loop with corrective feedback and a fresh context, so every loop must end one of two ways: change blocks applied, or a done block when the gap analysis finds no gap. Complete the goal's changes within the loop — chain generations with continue blocks as needed — before ending the turn.
 - If the goal IS achieved and this loop found nothing to correct, emit a done block, then end with a summary block.
@@ -184,7 +185,7 @@ When you determine the goal is fully achieved, emit a done block (kind "done") w
 // work. Only a loop that emits a done block and applies no change
 // blocks ends the run. See TheoryOfGoalMode.
 const goalDoneVerificationPrompt = `
-[System note: The previous goal loop applied change blocks and declared the goal achieved with a done block. The declaration is not final: a loop that applies change blocks never ends the run. Verification is the primary work of this loop: re-read the relevant files (including todo.md) against the CURRENT filesystem state and check whether every task is genuinely complete and every applied change is correct.
+[System note: The previous goal loop applied change blocks and declared the goal achieved with a done block. The declaration is not final: a loop that applies change blocks never ends the run. Verification is the primary work of this loop: re-read the relevant files against the CURRENT filesystem state and check whether every task is genuinely complete and every applied change is correct.
 
 Verification must cover both what was done and what was NOT done: compare the original goal in the user input against the current state, requirement by requirement. Checking the correctness of the applied changes is not sufficient — enumerate the goal's requirements and confirm the current filesystem state satisfies each one, so no part of the goal is left unimplemented.
 
@@ -202,7 +203,7 @@ If the check uncovers errors (incorrect or missing changes) or any gap — a req
 const goalNoDoneFeedbackPrompt = `
 [System note: The previous goal loop ended with NO change blocks and NO done block. That combination is a model output failure: the loop produced neither progress nor the completion signal the protocol requires, which usually means something went severely wrong inside that loop's own conversation history — a defect that cannot be repaired from within it. This loop starts fresh: the corrupted history is gone, and the current filesystem state is the only ground truth.
 
-Redo the assessment from scratch: re-read the relevant files (including todo.md) against the original goal in the user input, requirement by requirement — checking what was NOT done as well as the correctness of what was done. If any requirement is unmet, or any applied change is incorrect or incomplete, fix or complete it with change blocks. If — and only if — the gap analysis finds no gap (every requirement satisfied, nothing incorrect, nothing missing), emit a done block: emitting the done block is the only way the goal run ends. Never end a loop with neither change blocks nor a done block.]`
+Redo the assessment from scratch: re-read the relevant files against the original goal in the user input, requirement by requirement — checking what was NOT done as well as the correctness of what was done. If any requirement is unmet, or any applied change is incorrect or incomplete, fix or complete it with change blocks. If — and only if — the gap analysis finds no gap (every requirement satisfied, nothing incorrect, nothing missing), emit a done block: emitting the done block is the only way the goal run ends. Never end a loop with neither change blocks nor a done block.]`
 
 // maxGoalIterations bounds the number of goal loops.
 const maxGoalIterations = 20

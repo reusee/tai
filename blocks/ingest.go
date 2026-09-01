@@ -84,6 +84,7 @@ Use the "ingest" kind to request additional context needed to complete the task.
 
 **Rules:**
 - The order of XML tags determines the order of context parts in the response.
+- Batch requests: put every file, fetch, and glob request you need into a single ingest block — multiple tags, one per line. All tags in one block are fetched together in one round, so plan the complete request list before emitting instead of spreading requests across rounds.
 - This block is strictly read-only. It must not produce any side effects.
 - After the last ingest block's closing line, emit the summary block IMMEDIATELY, then end the response and wait for the system to provide the requested context.
 - The ingest block is NOT a completion signal. MUST still emit a summary block in the same round, after the ingest block. Every round must end with a summary block.

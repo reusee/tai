@@ -689,6 +689,12 @@ func TestGoalSystemPromptContent(t *testing.T) {
 	}
 }
 
+func TestGoalSystemPromptEconomizesRounds(t *testing.T) {
+	if !strings.Contains(GoalSystemPrompt, "Economize rounds") {
+		t.Fatal("goal prompt must teach round economy: batch context fetches and emit change blocks with their go-test verification in one response")
+	}
+}
+
 func TestGoalDoneVerificationPromptContent(t *testing.T) {
 	if !strings.Contains(goalDoneVerificationPrompt, "what was NOT done") {
 		t.Fatal("the verification prompt must require checking what was not done")
