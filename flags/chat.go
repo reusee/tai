@@ -32,9 +32,27 @@ current Chats value from the scope, appends its contribution, and forks an
 updated pointer. The flag takes no argument; the prompt is fixed.
 `
 
+const TheoryOfAlignFlag = `
+The align flag appends a fixed alignment-check prompt to the chat messages
+(Chats). The prompt instructs the model to check whether the system theory
+(theory constants and specifications) matches the implementation, and to
+report inconsistencies without modifying anything: an inconsistency may come
+from outdated theory or from a faulty implementation, and only the user can
+decide which side to correct. It is an additional key on the Chats flag
+type, registered as the bare word "align" like "chat"; Parse matches
+arguments verbatim, so the invocation carries no leading dash. It composes
+with chat flags in any argument order: each Handle invocation reads the
+current Chats value from the scope, appends its contribution, and forks an
+updated pointer. The flag takes no argument; the prompt is fixed.
+`
+
 // cleanPrompt is the fixed task directive the clean flag appends to the
 // chat messages. See TheoryOfCleanFlag.
 const cleanPrompt = "Delete redundant code and mechanisms. Merge and simplify duplicate tests. Delete theory text content that duplicates other theory texts."
+
+// alignPrompt is the fixed task directive the align flag appends to the
+// chat messages. See TheoryOfAlignFlag.
+const alignPrompt = "Check whether the system theory (theory constants and specifications) matches the implementation. On inconsistency, report it without modifying anything: the inconsistency may come from outdated theory or from a faulty implementation, and the user decides how to resolve it."
 
 type Chats []string
 
@@ -49,6 +67,7 @@ func (c Chats) Keys() map[string]string {
 		"chat":   "Add a chat message to the conversation",
 		"-stdin": "Add standard input content to the chat messages",
 		"clean":  "Add the code cleanup prompt to the chat messages",
+		"align":  "Add the theory-implementation alignment check prompt to the chat messages",
 	}
 }
 
@@ -69,6 +88,9 @@ func (c Chats) Handle(key string, args []string) (newDef any, remainArgs []strin
 		return &ret, args, nil
 	case "clean":
 		ret := append(slices.Clone(c), cleanPrompt)
+		return &ret, args, nil
+	case "align":
+		ret := append(slices.Clone(c), alignPrompt)
 		return &ret, args, nil
 	}
 	panic("key not handle: " + key)
