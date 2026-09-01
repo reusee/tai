@@ -219,10 +219,17 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 		return nil, err
 	}
 
-	url := o.spec.BaseURL + "/chat/completions"
+	// Trim a trailing slash from BaseURL so both "http://host" and
+	// "http://host/" produce the same request path. A trailing slash
+	// would otherwise yield "//chat/completions", which many providers
+	// reject. The trim is applied once here so both URL branches below
+	// share it.
+	baseURL := strings.TrimSuffix(o.spec.BaseURL, "/")
+
+	url := baseURL + "/chat/completions"
 	if o.spec.IsAzure != nil && *o.spec.IsAzure {
 		url = fmt.Sprintf("%s/openai/deployments/%s/chat/completions?api-version=%s",
-			strings.TrimSuffix(o.spec.BaseURL, "/"),
+			baseURL,
 			o.spec.Model,
 			o.spec.APIVersion,
 		)

@@ -506,6 +506,62 @@ func TestOpenAINonStreamingArrayContent(t *testing.T) {
 	})
 }
 
+func TestOpenAIBaseURLTrailingSlash(t *testing.T) {
+	// A base_url with a trailing slash must still produce a correctly
+	// formed request path: a trailing slash previously yielded
+	// "//chat/completions", which providers reject.
+	var gotPath string
+	response := ChatCompletionResponse{
+		Choices: []ChatCompletionChoice{
+			{
+				Message:      ChatCompletionMessage{Role: "assistant", Content: "ok"},
+				FinishReason: "stop",
+			},
+		},
+	}
+	body, err := json.Marshal(response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Write(body)
+	}))
+	defer server.Close()
+
+	dscope.New(
+		modes.ForTest(t),
+		new(Module),
+	).Fork(
+		func() nets.HTTPClient {
+			return nets.HTTPClient{server.Client()}
+		},
+	).Call(func(
+		newOpenAI NewOpenAI,
+	) {
+		disableTools := true
+		openai := newOpenAI(Spec{
+			BaseURL:      server.URL + "/",
+			Model:        "test-model",
+			DisableTools: &disableTools,
+		}, "test-key")
+
+		state := NewPrompts("", []*Content{
+			{Role: RoleUser, Parts: []Part{Text("hi")}},
+		})
+
+		if _, err := openai.Generate(context.Background(), state, &GenerateOptions{
+			NonStreaming: true,
+		}); err != nil {
+			t.Fatal(err)
+		}
+
+		if gotPath != "/chat/completions" {
+			t.Fatalf("unexpected request path %q, want /chat/completions", gotPath)
+		}
+	})
+}
+
 func TestOpenAIPreservedThinkingRequestKwargs(t *testing.T) {
 	// PreservedThinking must be forwarded to the server as
 	// chat_template_kwargs: {"preserve_thinking": true} in the request
