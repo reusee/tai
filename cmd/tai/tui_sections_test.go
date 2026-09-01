@@ -55,27 +55,35 @@ func TestTUIEventClickJumpsToOutputSection(t *testing.T) {
 	tu.events.Add(taiui.EventNode{Run: 1, Seq: 1, Lines: []taiui.Line{{Text: "loop"}}})
 	tu.events.Add(taiui.EventNode{Run: 1, Seq: 2, ParentSeq: 1, Lines: []taiui.Line{{Text: "attempt start"}}})
 	tu.events.Add(taiui.EventNode{Run: 1, Seq: 3, ParentSeq: 2, Lines: []taiui.Line{{Text: "usage-unique"}}})
+	tu.events.Add(taiui.EventNode{Run: 1, Seq: 4, ParentSeq: 2,
+		Lines: []taiui.Line{{Text: "🏁 [Finish: stop] " + eventJumpMarker}}})
 	tu.eventSections[outputSectionOwner{run: 1, seq: 2}] = 1
 
 	boxes := tu.tabs.Boxes(tu.width, tu.height)
 	display := tu.events.Display(max(boxes[1].Width()-1, 1), panelStyle.BaseBG)
 	row := -1
 	for i, line := range display {
-		if strings.Contains(line.Text, "usage-unique") {
+		if strings.Contains(line.Text, eventJumpMarker) {
 			row = i
 			break
 		}
 	}
 	if row < 0 {
-		t.Fatal("usage row not found")
+		t.Fatal("finish row with the jump marker not found")
+	}
+	start, end, ok := markerColumnRange(display[row].Text, taiui.DisplayWidthOptions())
+	if !ok || end <= start {
+		t.Fatalf("marker column range not found in %q", display[row].Text)
 	}
 	box := boxes[1]
 	y := box.Top + 1 + row
 	if y >= box.Bottom {
-		t.Fatalf("usage row %d beyond the pane", y)
+		t.Fatalf("finish row %d beyond the pane", y)
 	}
-	tu.jumpToEventAtClick(box.Left+2, y)
 
+	// A press on the jump marker jumps the Output tab to the section
+	// the finish's attempt wrote.
+	tu.jumpToEventAtClick(box.Left+start, y)
 	want := tu.outputSectionDisplayTop(tu.outputSections[1].startLine, boxes[0])
 	if want <= 0 {
 		t.Fatal("section top must be below the content start")
@@ -88,5 +96,28 @@ func TestTUIEventClickJumpsToOutputSection(t *testing.T) {
 	}
 	if tu.tabs.Focus != 0 || !tu.tabs.Expanded[0] {
 		t.Fatal("jump must focus the expanded Output tab")
+	}
+
+	// A press off the marker, and a press on a row without the marker,
+	// never jump.
+	tu.scrolls[0].Offset = 0
+	tu.scrolls[0].Follow = true
+	tu.jumpToEventAtClick(box.Left+2, y)
+	if tu.scrolls[0].Offset != 0 || !tu.scrolls[0].Follow {
+		t.Fatal("a press off the marker must not jump")
+	}
+	usageRow := -1
+	for i, line := range display {
+		if strings.Contains(line.Text, "usage-unique") {
+			usageRow = i
+			break
+		}
+	}
+	if usageRow < 0 {
+		t.Fatal("usage row not found")
+	}
+	tu.jumpToEventAtClick(box.Left+2, box.Top+1+usageRow)
+	if tu.scrolls[0].Offset != 0 || !tu.scrolls[0].Follow {
+		t.Fatal("a press on a row without the marker must not jump")
 	}
 }

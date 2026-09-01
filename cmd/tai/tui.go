@@ -309,12 +309,12 @@ the focused tab's strip collapses it and moves the focus to the expanded
 tab that was last focused; pressing another tab's strip takes the focus
 without collapsing and keeps that tab's current view. A press inside an
 expanded tab's scroll area focuses the tab (when it was not already
-focused) and records the origin of a drag-scroll. A left press on an
-Events row additionally jumps the Output tab to the output section the
-row's event owns, so every event row reaches its attempt's output (see
-TheoryOfTUIOutputSections); the same press still toggles a handoff
-node. Presses outside every panel, middle and right presses, and
-no-button motion (mode 1003) are ignored.
+focused) and records the origin of a drag-scroll. Inside the Events
+pane, a left press is inert unless it lands on the finish line's 👉
+jump marker, which jumps the Output tab to the section the finish's
+attempt wrote (see TheoryOfTUIOutputSections); a press on a handoff
+node's rows still toggles it. Presses outside every panel, middle and
+right presses, and no-button motion (mode 1003) are ignored.
 
 In interactive sessions, the Output tab's input row is the one press
 target with its own semantics: a left press on the chat input bar's row
@@ -1374,8 +1374,9 @@ func (t *TUI) handleMouseKey(key string) {
 		// keyboard back to navigation. See TheoryOfTUIChatInput.
 		t.inputFocused = false
 		t.mouse.Press(t.tabs, t.scrolls[:], t.width, t.height, x, y)
-		// A press on an event's display rows jumps the Output tab to
-		// the section the event's attempt wrote. The jump runs before
+		// A press on the finish line's jump marker jumps the Output
+		// tab to the section the finish's attempt wrote; presses
+		// elsewhere in the Events pane are inert. The jump runs before
 		// the handoff toggle so it maps rows of the last-rendered
 		// tree, the same ranges the toggle consumes. See
 		// TheoryOfTUIOutputSections.
@@ -1506,21 +1507,30 @@ func loopPrefix(loop int, attemptLabel string) string {
 	return attemptLabel
 }
 
+// eventJumpMarker is appended to the Events tab's finish line: a press
+// on the marker's cells is the only Events-tab press that jumps the
+// Output tab to the attempt's output section. See
+// TheoryOfTUIOutputSections.
+const eventJumpMarker = "👉"
+
 // eventLines renders one pipeline event as Events-tab lines. The first
 // line of every event starts with the kind's emoji (eventEmoji) followed
 // by a bracketed label — one display style shared by all kinds, so event
 // types are recognized at a glance and no style mixes brackets with
-// banner equals. A completed attempt with no summary (single-shot
-// commands like ai produce empty summaries) shows a completion line; a
-// completed attempt with a summary shows the same header followed by the
-// summary body. An unknown kind shows a generic event line, so no
-// pipeline event type is silently dropped. Log-style events use the log
-// color; the thought summary header uses the thought color; summary
-// bodies stay plain. The attempt start, request, completion, and usage
-// lines attribute the attempt to its goal loop via loopPrefix; non-goal
-// runs keep the bare attempt labels. The loop-start event renders the
-// line that roots its goal loop's branch. The goal event renders its
-// message lines in the log color, the emoji on the first line.
+// banner equals. The finish line ends with the jump marker
+// (eventJumpMarker): its cells are the only Events-tab press that jumps
+// the Output tab (see TheoryOfTUIOutputSections). A completed attempt
+// with no summary (single-shot commands like ai produce empty summaries)
+// shows a completion line; a completed attempt with a summary shows the
+// same header followed by the summary body. An unknown kind shows a
+// generic event line, so no pipeline event type is silently dropped.
+// Log-style events use the log color; the thought summary header uses
+// the thought color; summary bodies stay plain. The attempt start,
+// request, completion, and usage lines attribute the attempt to its
+// goal loop via loopPrefix; non-goal runs keep the bare attempt labels.
+// The loop-start event renders the line that roots its goal loop's
+// branch. The goal event renders its message lines in the log color,
+// the emoji on the first line.
 func eventLines(ev pipeline.Event) []taiui.Line {
 	// The "attempt x/y" budget display uses the in-generation
 	// position, pairing with MaxAttempts; hand-constructed events
@@ -1576,7 +1586,10 @@ func eventLines(ev pipeline.Event) []taiui.Line {
 			ev.Usage.Thoughts.TokenCount,
 		)+ev.Usage.SpeedSuffix())
 	case pipeline.EventFinish:
-		return eventLog(ev.Kind, "[Finish: "+ev.Detail+"]")
+		// The jump marker ends the line: only a press on its cells
+		// jumps the Output tab to the attempt's output section. See
+		// TheoryOfTUIOutputSections.
+		return eventLog(ev.Kind, "[Finish: "+ev.Detail+"] "+eventJumpMarker)
 	case pipeline.EventThoughtSummary:
 		return append(
 			[]taiui.Line{{Text: eventEmoji[ev.Kind] + " [Thought Summary]", Color: outputColorThoughtLine}},

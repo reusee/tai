@@ -478,7 +478,7 @@ func TestTUIHelpLinesNonInteractive(t *testing.T) {
 	if !slices.Contains(lines, "enter\ttoggle latest handoff summary") {
 		t.Fatal("non-interactive help must document Enter's handoff binding")
 	}
-	if !slices.Contains(lines, "events row\tclick to jump the Output tab to that event's output section") {
+	if !slices.Contains(lines, "events row\tclick 👉 on a finish line to jump the Output tab to its output section") {
 		t.Fatal("help must document the events-row click jump")
 	}
 }

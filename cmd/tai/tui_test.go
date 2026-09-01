@@ -1973,7 +1973,7 @@ func TestTUIHandleEventRendersKinds(t *testing.T) {
 	if len(tui.events.Roots) != 1 || len(tui.events.Roots[0].Lines) != 1 {
 		t.Fatalf("expected 1 event node of 1 line, got %v", tui.events.Roots)
 	}
-	if tui.events.Roots[0].Lines[0].Text != "🏁 [Finish: stop]" || tui.events.Roots[0].Lines[0].Color != outputColorLogLine {
+	if tui.events.Roots[0].Lines[0].Text != "🏁 [Finish: stop] "+eventJumpMarker || tui.events.Roots[0].Lines[0].Color != outputColorLogLine {
 		t.Fatalf("unexpected finish line: %+v", tui.events.Roots[0].Lines[0])
 	}
 	if tui.generating {

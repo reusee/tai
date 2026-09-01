@@ -1,6 +1,9 @@
 package main
 
 import (
+	"strings"
+
+	"github.com/clipperhouse/displaywidth"
 	"github.com/reusee/tai/taiui"
 )
 
@@ -17,15 +20,21 @@ Output tab sections and event-to-output navigation theory (cmd/tai):
   records the source-line index where it starts in the output buffer,
   so a section is an append-only slice of the stream.
 
-- A left press on an Events row scrolls the Output tab's view to the
-  section the pressed event's attempt wrote. The press maps onto an
-  event node through taiui.EventTree.NodeAtRow; the node or its nearest
-  section-owning ancestor selects the section, so every event of an
-  attempt (request, finish, usage) reaches the attempt's output, and an
-  event with no output (an attempt that produced nothing) is a no-op.
-  Mirroring jumpToTransition, the jump expands and focuses the Output
-  tab when needed and stops following the tail; the live tail resumes
-  only when the view reaches the latest row.
+- The finish line carries the 👉 jump marker (eventJumpMarker): a left
+  press on the marker's cells jumps the Output tab's view to the
+  section the finish's attempt wrote — the only Events-tab press that
+  jumps. The press maps onto an event node through
+  taiui.EventTree.NodeAtRow, and only a finish node — its header ends
+  with the marker — is eligible; the marker's cell range is then
+  located in the pane's wrapped display line, measured cluster by
+  cluster with the same width options the renderer uses, so the press
+  must land on the marker's own columns. Presses on other rows, other
+  columns, rows without a node, and finishes whose chain owns no
+  section are no-ops. The node or its nearest section-owning ancestor
+  selects the section. Mirroring jumpToTransition, the jump expands
+  and focuses the Output tab when needed and stops following the tail;
+  the live tail resumes only when the view reaches the latest row. The
+  display geometry is recomputed on the click path only, not per frame.
 
 - The scroll target is the display line where the section's first
   source line begins: the source lines before the section start are
@@ -78,9 +87,10 @@ func (t *TUI) clearPendingOutputOwner() {
 }
 
 // jumpToEventAtClick scrolls the Output tab to the output section of
-// the event whose display rows the press landed on. Rows outside the
-// Events pane's content area, rows without a node, and events whose
-// chain owns no section are no-ops. Called with t.mu held, like
+// the pressed event — but only when the press lands on the jump
+// marker that ends the finish line's text: presses elsewhere in the
+// Events pane, on rows without a node, and events whose chain owns no
+// section are no-ops. Called with t.mu held, like
 // toggleHandoffAtClick.
 func (t *TUI) jumpToEventAtClick(x, y int) {
 	if !t.tabs.Expanded[1] {
@@ -93,11 +103,66 @@ func (t *TUI) jumpToEventAtClick(x, y int) {
 	// The press's screen row maps onto the tab's content row by
 	// dropping the label strip and re-adding the scroll offset, the
 	// same mapping toggleHandoffAtClick uses.
-	node := t.events.NodeAtRow(t.scrolls[1].Offset + (y - box.Top - 1))
-	if node == nil {
+	row := t.scrolls[1].Offset + (y - box.Top - 1)
+	node := t.events.NodeAtRow(row)
+	// Only the finish line's jump marker is clickable: a press on any
+	// other row never jumps. See TheoryOfTUIOutputSections.
+	if node == nil || !nodeHasJumpMarker(node) {
+		return
+	}
+	line, ok := t.eventDisplayLine(row, box)
+	if !ok {
+		return
+	}
+	start, end, hasMarker := markerColumnRange(line.Text, taiui.DisplayWidthOptions())
+	pressCol := x - box.Left
+	if !hasMarker || pressCol < start || pressCol >= end {
 		return
 	}
 	t.showOutputSection(t.sectionOfEventNode(node))
+}
+
+// eventDisplayLine returns the Events pane's wrapped display line at
+// the given content row. The tree recomputes its display with the same
+// width and shade the pane renders with, so the line's text and column
+// layout match what is on screen. Click path only — never per frame.
+func (t *TUI) eventDisplayLine(row int, box taiui.Box) (taiui.Line, bool) {
+	contentWidth := max(box.Width()-1, 1)
+	base := panelStyle.BaseBG
+	if t.tabs.Focus == 1 {
+		base = panelStyle.FocusBG
+	}
+	display := t.events.Display(contentWidth, base)
+	if row < 0 || row >= len(display) {
+		return taiui.Line{}, false
+	}
+	return display[row], true
+}
+
+// nodeHasJumpMarker reports whether the node's header line ends with
+// the jump marker: only finish lines carry it, so only their presses
+// are eligible for the section jump. The check runs on the node's
+// source line, which carries no elapsed-timer suffix.
+func nodeHasJumpMarker(node *taiui.EventNode) bool {
+	return len(node.Lines) > 0 && strings.HasSuffix(node.Lines[0].Text, " "+eventJumpMarker)
+}
+
+// markerColumnRange returns the cell-column range of the jump marker
+// within text, measured cluster by cluster with the given width
+// options — the same measurement the renderer uses, so multi-column
+// emoji line up with the pressed cell. ok is false when the marker is
+// absent from the text.
+func markerColumnRange(text string, options displaywidth.Options) (start, end int, ok bool) {
+	iter := options.StringGraphemes(text)
+	col := 0
+	for iter.Next() {
+		width := iter.Width()
+		if iter.Value() == eventJumpMarker {
+			return col, col + width, true
+		}
+		col += width
+	}
+	return 0, 0, false
 }
 
 // sectionOfEventNode resolves the output section an event row maps to:
