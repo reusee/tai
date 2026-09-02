@@ -176,6 +176,24 @@ Models may emit block opening markers with a bare kind when no parameters are ne
 <<DELIMITER kind instead of <<DELIMITER kind(). Both forms are accepted on equal footing.
 `
 
+const TheoryOfOpFunctionNameHeaders = `
+Models sometimes emit change blocks with an operation name as the header's
+function name: <<DELIMITER MODIFY(op="MODIFY", target=..., file-path=...)
+instead of <<DELIMITER change(op="MODIFY", ...). After the header parses,
+tryParseBlock rewrites such a block: when the function name is one of the
+change operation names (changeOpKinds), the kind becomes "change", and a
+missing or empty op attribute is derived from the function name; an
+explicit non-empty op attribute takes precedence. The bare form
+(<<DELIMITER MODIFY) is normalized the same way: an operation name is never
+a valid kind of another block, so the rewrite is unambiguous.
+
+The operation set is mirrored in this package because changes imports
+blocks and the reverse import would cycle. This is a recovery path for
+nonconforming output, not an advertised format: no prompt teaches the
+op-name form, and the change-kind function-call form remains the only
+taught form.
+`
+
 const TheoryOfKindlessBlocks = `
 Models sometimes emit blocks whose opening marker omits the XML opening tag:
 <<DELIMITER ... DELIMITER with no kind or attributes. The parser accepts these blocks
@@ -186,6 +204,22 @@ specific kind (e.g., the thought summarizer looking for a summary block) should
 first search the parsed blocks by kind and fall back to the first block only when no
 kinded block is found, since a kindless block is often the intended output.
 `
+
+// changeOpKinds is the set of change operation names that models sometimes
+// emit as a block header's function name instead of the change kind. The
+// set mirrors the op values of the change block format. See
+// TheoryOfOpFunctionNameHeaders.
+var changeOpKinds = map[string]bool{
+	"MODIFY":        true,
+	"ADD_BEFORE":    true,
+	"ADD_AFTER":     true,
+	"DELETE":        true,
+	"RENAME":        true,
+	"WRITE":         true,
+	"REPLACE":       true,
+	"INSERT_BEFORE": true,
+	"INSERT_AFTER":  true,
+}
 
 // blockParseResult holds the outcome of attempting to parse a block in one
 // format. When matched is true, the format was recognized and the result
@@ -351,6 +385,24 @@ func ParseBlocks(content []byte) ([]Block, error) {
 	return blocks, nil
 }
 
+// normalizeOpFunctionNameHeader rewrites a block whose header function name
+// is a change operation name into a change block: the kind becomes "change"
+// and a missing or empty op attribute is derived from the function name,
+// while an explicit non-empty op attribute takes precedence. Other kinds are
+// returned unchanged. See TheoryOfOpFunctionNameHeaders.
+func normalizeOpFunctionNameHeader(kind string, attrs map[string]string) (string, map[string]string) {
+	if !changeOpKinds[kind] {
+		return kind, attrs
+	}
+	if attrs == nil {
+		attrs = make(map[string]string)
+	}
+	if attrs["op"] == "" {
+		attrs["op"] = kind
+	}
+	return "change", attrs
+}
+
 func tryParseBlock(content []byte, openingLine string, lineEnd, blockStart int) (result blockParseResult, matched bool) {
 	delimiter := extractDelimiter(openingLine)
 	if delimiter == "" {
@@ -387,6 +439,10 @@ func tryParseBlock(content []byte, openingLine string, lineEnd, blockStart int) 
 			}
 			return
 		}
+		// Rewrite a header whose function name is a change operation
+		// name into a change block, so the change component routes it
+		// like the taught form. See TheoryOfOpFunctionNameHeaders.
+		kind, attrs = normalizeOpFunctionNameHeader(kind, attrs)
 	}
 
 	matched = true

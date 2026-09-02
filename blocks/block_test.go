@@ -930,6 +930,113 @@ func TestParseFirstBlockAttributeOnly(t *testing.T) {
 	})
 }
 
+func TestParseFirstBlockOpFunctionName(t *testing.T) {
+	t.Run("FunctionCallForm", func(t *testing.T) {
+		content := []byte("<<天鳳 MODIFY(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nfunc Foo() {}\n天鳳\n")
+		block, _, _, ok, err := ParseFirstBlock(content)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !ok {
+			t.Fatal("expected block to be found")
+		}
+		if block.Kind != "change" {
+			t.Fatalf("expected kind change, got %q", block.Kind)
+		}
+		if block.Attributes["op"] != "MODIFY" {
+			t.Fatalf("expected op MODIFY, got %q", block.Attributes["op"])
+		}
+		if block.Attributes["target"] != "Foo" || block.Attributes["file-path"] != "/test.go" {
+			t.Fatalf("unexpected attributes: %+v", block.Attributes)
+		}
+		if block.Body != "func Foo() {}" {
+			t.Fatalf("unexpected body: %q", block.Body)
+		}
+	})
+
+	t.Run("OpDerivedFromFunctionName", func(t *testing.T) {
+		content := []byte("<<天鳳 MODIFY(target=\"Foo\", file-path=\"/test.go\")\nfunc Foo() {}\n天鳳\n")
+		block, _, _, ok, err := ParseFirstBlock(content)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !ok {
+			t.Fatal("expected block to be found")
+		}
+		if block.Kind != "change" {
+			t.Fatalf("expected kind change, got %q", block.Kind)
+		}
+		if block.Attributes["op"] != "MODIFY" {
+			t.Fatalf("expected derived op MODIFY, got %q", block.Attributes["op"])
+		}
+	})
+
+	t.Run("ExplicitOpTakesPrecedence", func(t *testing.T) {
+		content := []byte("<<天鳳 MODIFY(op=\"WRITE\", file-path=\"/test.txt\")\ncontent\n天鳳\n")
+		block, _, _, ok, err := ParseFirstBlock(content)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !ok {
+			t.Fatal("expected block to be found")
+		}
+		if block.Attributes["op"] != "WRITE" {
+			t.Fatalf("expected explicit op WRITE, got %q", block.Attributes["op"])
+		}
+	})
+
+	t.Run("BareFunctionName", func(t *testing.T) {
+		content := []byte("<<天鳳 MODIFY\nfunc Foo() {}\n天鳳\n")
+		block, _, _, ok, err := ParseFirstBlock(content)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !ok {
+			t.Fatal("expected block to be found")
+		}
+		if block.Kind != "change" {
+			t.Fatalf("expected kind change, got %q", block.Kind)
+		}
+		if block.Attributes["op"] != "MODIFY" {
+			t.Fatalf("expected derived op MODIFY, got %q", block.Attributes["op"])
+		}
+	})
+
+	t.Run("OtherKindsUntouched", func(t *testing.T) {
+		content := []byte("<<天鳳 ingest(pattern=\"*.go\")\n<pattern=\"*.go\" />\n天鳳\n")
+		block, _, _, ok, err := ParseFirstBlock(content)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !ok {
+			t.Fatal("expected block to be found")
+		}
+		if block.Kind != "ingest" {
+			t.Fatalf("expected kind ingest, got %q", block.Kind)
+		}
+		if _, hasOp := block.Attributes["op"]; hasOp {
+			t.Fatalf("expected no op attribute, got %+v", block.Attributes)
+		}
+	})
+
+	t.Run("ParseBlocks", func(t *testing.T) {
+		content := []byte("<<天鳳 MODIFY(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nfunc Foo() {}\n天鳳\n<<齉爩 summary\ndone\n齉爩\n")
+		blocks, err := ParseBlocks(content)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(blocks) != 2 {
+			t.Fatalf("expected 2 blocks, got %d", len(blocks))
+		}
+		if blocks[0].Kind != "change" || blocks[0].Attributes["op"] != "MODIFY" {
+			t.Fatalf("unexpected first block: %+v", blocks[0])
+		}
+		if blocks[1].Kind != "summary" {
+			t.Fatalf("unexpected second block: %+v", blocks[1])
+		}
+	})
+}
+
 func TestParseFirstBlockMultipleBlocksWithNoTrailingNewline(t *testing.T) {
 	content := []byte("<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nfunc Foo() {}\n龘靐\n<<齉爩 change(op=\"MODIFY\", target=\"Bar\", file-path=\"/test.go\")\nfunc Bar() {}\n齉爩")
 
