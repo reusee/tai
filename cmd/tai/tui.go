@@ -698,6 +698,26 @@ type TUI struct {
 	eventSections  map[outputSectionOwner]int
 	pendingOwner   *outputSectionOwner
 
+	// thoughtsCollapsed reports whether the Output tab renders thought
+	// sections collapsed to one display row. See
+	// TheoryOfTUIThoughtsCollapse.
+	thoughtsCollapsed bool
+	// Collapsed-projection state of the Output tab, guarded by mu. See
+	// TheoryOfTUIThoughtsCollapse. collapsedWidth keys the caches: a
+	// content-width change resets them. collapsedDisplay holds the
+	// stable display rows; collapsedCounts holds one display-row count
+	// per section (1 for a thought section); collapsedWrapped is the
+	// left-to-right source-line pointer of the incremental wrap; and
+	// collapsedTailRows counts the tail rows appended after the
+	// sections' rows. sectionedLines is the high-water mark of
+	// sectioned output lines.
+	collapsedWidth    int
+	collapsedDisplay  []taiui.Line
+	collapsedCounts   []int
+	collapsedWrapped  int
+	collapsedTailRows int
+	sectionedLines    int
+
 	// mouse is the pointer interaction state over the tab layout: wheel
 	// scrolling, press-driven tab switching, and drag-scrolling anchored
 	// to the press origin. Its zero value is inert. See
@@ -984,7 +1004,9 @@ func (t *TUI) captureContent(content *generators.Content) {
 // lastOutputRole, lastWasThought) is only accessed by the generation
 // goroutine via captureContent, so it is read and written without a
 // lock; the section bookkeeping also read by the pointer handlers is
-// guarded by mu. See TheoryOfTUIOutputSections.
+// guarded by mu. sectionedLines, the sectioned high-water mark the
+// collapsed projection reads, is guarded by mu too. See
+// TheoryOfTUIOutputSections and TheoryOfTUIThoughtsCollapse.
 func (t *TUI) writeOutputPart(role generators.Role, color taiui.Color, isThought bool, text string) {
 	// Consume a pending attempt-start event even when the role does
 	// not switch: consecutive attempts sharing one role still open
@@ -1012,9 +1034,23 @@ func (t *TUI) writeOutputPart(role generators.Role, color taiui.Color, isThought
 		newSection = true
 	}
 	if newSection {
-		t.beginOutputSection(owner)
+		t.beginOutputSection(owner, isThought)
 	}
 	t.writeColored(color, []byte(text))
+	// Record the sectioned high-water mark: every line the buffer holds
+	// after this append, including a trailing partial line, belongs to a
+	// section. Lines appended outside this path (command output, stderr)
+	// stay outside and render in full when collapsed. Locked because the
+	// render loop reads the mark. See TheoryOfTUIThoughtsCollapse.
+	t.mu.Lock()
+	covered := len(t.output.CompletedLines())
+	if t.output.HasPartial() {
+		covered++
+	}
+	if covered > t.sectionedLines {
+		t.sectionedLines = covered
+	}
+	t.mu.Unlock()
 	t.lastOutputRole = role
 	t.lastWasThought = isThought
 	t.hasOutput = true
@@ -1110,6 +1146,17 @@ func (t *TUI) toggleHelp() {
 	t.showHelp = !t.showHelp
 }
 
+// toggleThoughtsCollapse switches the Output tab between the full and
+// the collapsed display of thought sections. Collapse is a display
+// projection: the output buffer and the expanded wrap cache are
+// untouched, so toggling back re-reveals every line. See
+// TheoryOfTUIThoughtsCollapse.
+func (t *TUI) toggleThoughtsCollapse() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.thoughtsCollapsed = !t.thoughtsCollapsed
+}
+
 // cycleFocus advances the focus to the next expanded tab after the
 // current one, wrapping around. Collapsed tabs are skipped.
 func (t *TUI) cycleFocus() {
@@ -1184,6 +1231,8 @@ func (t *TUI) handleKey(key string) bool {
 		t.toggleSplit()
 	case key == "mouse":
 		t.toggleMouse()
+	case key == "thoughts":
+		t.toggleThoughtsCollapse()
 	case key == "prev-transition":
 		t.jumpToTransition(-1)
 	case key == "next-transition":
@@ -1254,6 +1303,8 @@ func mapTUIKey(key string) string {
 		return "split"
 	case "m", "M":
 		return "mouse"
+	case "t", "T":
+		return "thoughts"
 	case "?":
 		return "help"
 	case "[":

@@ -28,13 +28,18 @@ func outputTabLabel(finished bool, generating bool, handoff bool) (label string,
 }
 
 // wrappedDisplay computes the wrapped, colored lines of one expanded tab
-// from its content and box: the Output and Logs tabs wrap incrementally
-// through their taiui.WrapCache, the Events tab walks its event tree
-// (taiui.EventTree). See TheoryOfTUI and TheoryOfEventTree.
+// from its content and box: the Output tab renders the collapsed thought
+// projection or wraps incrementally through its taiui.WrapCache, the
+// Logs tab wraps through its cache, and the Events tab walks its event
+// tree (taiui.EventTree). See TheoryOfTUI, TheoryOfTUIThoughtsCollapse
+// and TheoryOfEventTree.
 func wrappedDisplay(t *TUI, idx int, box taiui.Box) []taiui.Line {
 	contentWidth := max(box.Width()-1, 1)
 	switch idx {
 	case 0:
+		if t.thoughtsCollapsed {
+			return t.collapsedOutputDisplay(contentWidth)
+		}
 		return t.outputCache.Colored(t.output, contentWidth)
 	case 1:
 		base := panelStyle.BaseBG
@@ -98,6 +103,7 @@ var tuiHelpLines = []string{
 	"1 / 2 / 3\tselect tab; press focused tab again to collapse",
 	"tab\tcycle focus among expanded tabs",
 	"s\ttoggle vertical / horizontal split",
+	"t\tcollapse / expand thought sections in the Output tab",
 	"up / down\tscroll focused pane",
 	"page up / down\tscroll focused pane by page",
 	"home / end\tjump to start / end of focused pane",

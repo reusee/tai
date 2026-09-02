@@ -39,16 +39,169 @@ Output tab sections and event-to-output navigation theory (cmd/tai):
 
 - The scroll target is the display line where the section's first
   source line begins: the source lines before the section start are
-  wrapped with the same wrapping the Output pane's display uses, so the
-  offset indexes into the wrapped display identically. The wrap runs on
-  the click path only, not per frame.
+  wrapped with the same wrapping the Output pane's display uses, so
+  the offset indexes into the wrapped display identically. The wrap
+  runs on the click path only, not per frame. In the collapsed thought
+  projection the offset derives from the cached per-section row counts
+  instead; see TheoryOfTUIThoughtsCollapse.
 `
+
+// collapsedThoughtRow renders one source line as the collapsed row of a
+// thought section: the line truncated to the content width, keeping the
+// line's color, so the row never exceeds one display column.
+func collapsedThoughtRow(line taiui.Line, contentWidth int) taiui.Line {
+	return taiui.Line{
+		Text:  displaywidth.TruncateString(line.Text, contentWidth, "…"),
+		Color: line.Color,
+	}
+}
+
+const TheoryOfTUIThoughtsCollapse = `
+Output tab thought collapse theory (cmd/tai):
+
+- The t key toggles thoughtsCollapsed. When on, every thought section
+  of the Output tab renders as exactly one display row: a closed
+  section shows its first source line, and a still-streaming section —
+  a generation or handoff request in flight — shows its newest
+  sectioned line, so a long thinking phase keeps a live single-row
+  view of the newest reasoning while the earlier lines stay hidden.
+  Non-thought sections render in full, and lines appended outside any
+  section (command output, stderr) always render in full.
+- Collapse is a display projection, never a buffer change: the output
+  buffer and the expanded wrap cache are untouched, so toggling the
+  mode off re-reveals every line. See TheoryOfTUINoTruncation.
+- The projection wraps each source line at most once per content
+  width: the prefix, the closed sections, the last section, and the
+  tail are wrapped incrementally behind a single left-to-right
+  pointer, and only the unprocessed suffix is wrapped per frame; a
+  thought section's single row is the one transient row, overwritten
+  in place as the newest line changes. A content-width change resets
+  the caches.
+- Section jumps (showOutputSection) derive a section's display row
+  from the cached per-section row counts, so a click on an
+  attempt-start marker lands on the collapsed section's row.
+`
+
+// collapsedOutputDisplay renders the Output tab's collapsed projection:
+// prefix and tail lines in full, non-thought sections in full, and each
+// thought section as one row — its first source line when closed, its
+// newest sectioned line while output is still streaming into it. Every
+// source line is wrapped at most once per content width: the regions
+// behind a single left-to-right pointer are cached and only the
+// unprocessed suffix is wrapped per frame. See
+// TheoryOfTUIThoughtsCollapse.
+func (t *TUI) collapsedOutputDisplay(contentWidth int) []taiui.Line {
+	lines := t.output.Lines()
+	sections := t.outputSections
+
+	if t.collapsedWidth != contentWidth {
+		// A content-width change invalidates every wrapped row; the
+		// wrap loop below rebuilds the projection from the start, so
+		// every section registers with a zeroed count slot and no
+		// section is finalized here.
+		t.collapsedWidth = contentWidth
+		t.collapsedDisplay = t.collapsedDisplay[:0]
+		t.collapsedCounts = t.collapsedCounts[:0]
+		t.collapsedWrapped = 0
+		t.collapsedTailRows = 0
+		for len(t.collapsedCounts) < len(sections) {
+			t.collapsedCounts = append(t.collapsedCounts, 0)
+		}
+	} else {
+		// Fold the previously last section into its closed form and
+		// register every section the cache does not know yet.
+		for len(t.collapsedCounts) < len(sections) {
+			n := len(t.collapsedCounts)
+			if n > 0 {
+				t.finalizeCollapsedSection(n-1, sections[n].startLine, lines, contentWidth)
+			}
+			t.collapsedCounts = append(t.collapsedCounts, 0)
+		}
+	}
+
+	// Wrap the unprocessed suffix region by region: the prefix before
+	// the first section, every closed section, the last section's
+	// territory, and the tail. The buffer is append-only and the
+	// pointer advances left to right, so appended rows keep source
+	// order.
+	for t.collapsedWrapped < len(lines) {
+		from := t.collapsedWrapped
+		var to int
+		switch {
+		case len(sections) == 0 || from < sections[0].startLine:
+			// Prefix: lines before the first section render in full.
+			to = len(lines)
+			if len(sections) > 0 {
+				to = sections[0].startLine
+			}
+			t.collapsedDisplay = taiui.WrapLinesColoredInto(
+				lines[from:to], contentWidth, t.collapsedDisplay)
+		case from < sections[len(sections)-1].startLine:
+			// A closed section: a thought section renders one row, a
+			// non-thought section in full.
+			i := 0
+			for i < len(sections)-1 && sections[i+1].startLine <= from {
+				i++
+			}
+			to = sections[i+1].startLine
+			if sections[i].isThought {
+				if to > sections[i].startLine {
+					t.collapsedDisplay = append(t.collapsedDisplay,
+						collapsedThoughtRow(lines[sections[i].startLine], contentWidth))
+					t.collapsedCounts[i] = 1
+				}
+			} else {
+				before := len(t.collapsedDisplay)
+				t.collapsedDisplay = taiui.WrapLinesColoredInto(
+					lines[from:to], contentWidth, t.collapsedDisplay)
+				t.collapsedCounts[i] += len(t.collapsedDisplay) - before
+			}
+		case from < t.sectionedLines:
+			// The last section's territory: a thought section's lines
+			// stay hidden under its single row, a non-thought section
+			// renders in full.
+			to = t.sectionedLines
+			if !sections[len(sections)-1].isThought {
+				before := len(t.collapsedDisplay)
+				t.collapsedDisplay = taiui.WrapLinesColoredInto(
+					lines[from:to], contentWidth, t.collapsedDisplay)
+				t.collapsedCounts[len(sections)-1] += len(t.collapsedDisplay) - before
+			}
+		default:
+			// Tail: lines appended outside any section render in full.
+			to = len(lines)
+			before := len(t.collapsedDisplay)
+			t.collapsedDisplay = taiui.WrapLinesColoredInto(
+				lines[from:to], contentWidth, t.collapsedDisplay)
+			t.collapsedTailRows += len(t.collapsedDisplay) - before
+		}
+		t.collapsedWrapped = to
+	}
+
+	// The collapsed row of a thought last section: its first line when
+	// closed, its newest sectioned line while streaming.
+	if last := len(sections) - 1; last >= 0 && sections[last].isThought {
+		secEnd := t.sectionedLines
+		if secEnd > sections[last].startLine {
+			row := lines[sections[last].startLine]
+			if t.collapsedThoughtsOpen() {
+				row = lines[secEnd-1]
+			}
+			t.placeCollapsedRow(collapsedThoughtRow(row, contentWidth))
+		}
+	}
+
+	return t.collapsedDisplay
+}
 
 // outputSection is one section of the Output tab's content: the index
 // in the output line buffer at which the section's first source line
-// begins. The section spans to the next section's start.
+// begins, and whether the section carries reasoning thoughts, which
+// the collapsed display reduces to one row. The section spans to the
+// next section's start.
 type outputSection struct {
 	startLine int
+	isThought bool
 }
 
 // outputSectionOwner identifies the pipeline event that owns a
@@ -59,19 +212,62 @@ type outputSectionOwner struct {
 	seq int
 }
 
+// finalizeCollapsedSection folds the previously last section into its
+// closed form when a newer section opens: a non-thought section keeps
+// its rows, absorbs the tail rows, and wraps any unprocessed trailing
+// lines; a thought section drops the tail rows hidden under its
+// collapsed row and freezes that row to the section's first line. See
+// TheoryOfTUIThoughtsCollapse.
+func (t *TUI) finalizeCollapsedSection(idx int, spanEnd int, lines []taiui.Line, contentWidth int) {
+	if t.outputSections[idx].isThought {
+		// Tail rows are hidden under the collapsed row.
+		t.collapsedDisplay = t.collapsedDisplay[:len(t.collapsedDisplay)-t.collapsedTailRows]
+		t.collapsedTailRows = 0
+		// The collapsed row freezes to the section's first line.
+		if t.collapsedCounts[idx] == 1 {
+			t.collapsedDisplay[len(t.collapsedDisplay)-1] =
+				collapsedThoughtRow(lines[t.outputSections[idx].startLine], contentWidth)
+		}
+	} else {
+		t.collapsedCounts[idx] += t.collapsedTailRows
+		t.collapsedTailRows = 0
+		if t.collapsedWrapped < spanEnd {
+			before := len(t.collapsedDisplay)
+			t.collapsedDisplay = taiui.WrapLinesColoredInto(
+				lines[t.collapsedWrapped:spanEnd], contentWidth, t.collapsedDisplay)
+			t.collapsedCounts[idx] += len(t.collapsedDisplay) - before
+		}
+	}
+	t.collapsedWrapped = spanEnd
+}
+
 // beginOutputSection records a new section starting at the next source
 // line the output buffer will create — the line the caller is about to
-// write — and, when the section is owned by an event, binds the event
-// to it for the Events tab's click-to-jump mapping. Guarded by mu.
-func (t *TUI) beginOutputSection(owner *outputSectionOwner) {
+// write — marks whether the section carries reasoning thoughts, and,
+// when the section is owned by an event, binds the event to it for the
+// Events tab's click-to-jump mapping. Guarded by mu.
+func (t *TUI) beginOutputSection(owner *outputSectionOwner, isThought bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.eventSections == nil {
 		t.eventSections = make(map[outputSectionOwner]int)
 	}
+	// Separator blank lines and any lines appended outside the
+	// sectioned path since the last content belong to the closing
+	// section's span: the high-water mark covers them so the collapsed
+	// projection treats them as sectioned. See
+	// TheoryOfTUIThoughtsCollapse.
+	covered := len(t.output.CompletedLines())
+	if t.output.HasPartial() {
+		covered++
+	}
+	if covered > t.sectionedLines {
+		t.sectionedLines = covered
+	}
 	idx := len(t.outputSections)
 	t.outputSections = append(t.outputSections, outputSection{
 		startLine: len(t.output.CompletedLines()),
+		isThought: isThought,
 	})
 	if owner != nil {
 		t.eventSections[*owner] = idx
@@ -85,6 +281,16 @@ func (t *TUI) clearPendingOutputOwner() {
 	t.mu.Lock()
 	t.pendingOwner = nil
 	t.mu.Unlock()
+}
+
+// collapsedThoughtsOpen reports whether the last thought section is
+// still receiving output: a generation or handoff request is in
+// flight. A partial trailing line alone does not count — output stops
+// arriving once the request ends, so the row freezes to the section's
+// first line. The caller holds t.mu. See
+// TheoryOfTUIThoughtsCollapse.
+func (t *TUI) collapsedThoughtsOpen() bool {
+	return t.generating || t.handoff
 }
 
 // jumpToEventAtClick scrolls the Output tab to the output section of
@@ -148,6 +354,18 @@ func nodeHasJumpMarker(node *taiui.EventNode) bool {
 	return len(node.Lines) > 0 && strings.HasSuffix(node.Lines[0].Text, " "+eventJumpMarker)
 }
 
+// collapsedSectionTop returns the display offset at which section idx's
+// content begins in the collapsed projection: the prefix rows plus the
+// display rows of every earlier section. The caller holds t.mu. See
+// TheoryOfTUIThoughtsCollapse.
+func (t *TUI) collapsedSectionTop(idx int) int {
+	rest := 0
+	for _, count := range t.collapsedCounts[min(idx, len(t.collapsedCounts)):] {
+		rest += count
+	}
+	return len(t.collapsedDisplay) - t.collapsedTailRows - rest
+}
+
 // markerColumnRange returns the cell-column range of the jump marker
 // within text, measured cluster by cluster with the given width
 // options — the same measurement the renderer uses, so multi-column
@@ -206,6 +424,27 @@ func findEventNode(roots []*taiui.EventNode, run, seq int) *taiui.EventNode {
 	return nil
 }
 
+// placeCollapsedRow writes the collapsed row of the last thought
+// section: the row slot is created before any tail rows when the
+// section receives its first content, then overwritten in place as the
+// newest line changes. See TheoryOfTUIThoughtsCollapse.
+func (t *TUI) placeCollapsedRow(row taiui.Line) {
+	K := len(t.collapsedCounts) - 1
+	if t.collapsedCounts[K] == 0 {
+		at := len(t.collapsedDisplay) - t.collapsedTailRows
+		if t.collapsedTailRows > 0 {
+			t.collapsedDisplay = append(t.collapsedDisplay, taiui.Line{})
+			copy(t.collapsedDisplay[at+1:], t.collapsedDisplay[at:])
+			t.collapsedDisplay[at] = row
+		} else {
+			t.collapsedDisplay = append(t.collapsedDisplay, row)
+		}
+		t.collapsedCounts[K] = 1
+		return
+	}
+	t.collapsedDisplay[len(t.collapsedDisplay)-t.collapsedTailRows-1] = row
+}
+
 // showOutputSection scrolls the Output tab's view so the section's
 // first display line lands at the top of the pane. The jump result
 // must be visible: the Output tab is expanded and focused when needed,
@@ -227,7 +466,13 @@ func (t *TUI) showOutputSection(idx int) {
 	if len(display) == 0 {
 		return
 	}
+	// The collapsed projection reindexes the sections: the offset
+	// derives from the cached per-section row counts instead of
+	// wrapping the source lines. See TheoryOfTUIThoughtsCollapse.
 	offset := t.outputSectionDisplayTop(t.outputSections[idx].startLine, box)
+	if t.thoughtsCollapsed {
+		offset = t.collapsedSectionTop(idx)
+	}
 	t.scrolls[0].Offset = taiui.ClampOffset(offset, len(display), t.tuiPaneHeight(0, box))
 	t.scrolls[0].Follow = false
 }
