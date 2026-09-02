@@ -48,6 +48,16 @@ blocks to re-apply. During Flush the handler is not called for unclosed blocks â
 they are incomplete (e.g., truncated output) and applying them would produce
 errors. When the apply flag is disabled, no handler is set and all blocks are
 collected, preserving the no-apply behavior.
+
+Applied-change feedback: the loop records the change blocks the handler
+applied without error during the successful attempt and, when
+RunOptions.FeedbackAppliedChangeBlocks is set, feeds them back as user
+content listing each applied op, target, and file, so the model verifies
+its emitted output against what took effect and corrects any mismatch in
+the next round. The record resets with each attempt, mirroring the
+MemoryStore reset, so a failed attempt's blocks never reach the report.
+The codes pipeline enables the feedback; the single-shot next command,
+which runs no components, does not. See TheoryOfLoops.
 `
 
 const maxRetriesForMissingSummary = 3
@@ -790,6 +800,12 @@ func (Module) GenerateWithResultWithStats(
 			InitialState: state,
 			Components:   comps.ComponentSet,
 			BlockHandler: blockHandler,
+			// Applied-change verification: after a successful attempt
+			// that applied change blocks, the loop feeds back the
+			// applied list so the model verifies its output against
+			// what took effect and corrects any mismatch.
+			// See TheoryOfStreamingApply.
+			FeedbackAppliedChangeBlocks: true,
 			// Unknown-kind correction: the session's processable kinds
 			// are the component set's declared kinds plus "done" â€” the
 			// goal runner's completion contract, checked in

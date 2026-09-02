@@ -583,6 +583,162 @@ func TestRunBlockHandlerConsumed(t *testing.T) {
 	})
 }
 
+// TestRunAppliedChangeBlocksFeedback verifies that change blocks consumed
+// by the BlockHandler during a successful attempt are fed back as user
+// content listing the applied op, target, and file, and that the feedback
+// alone schedules the next generation. See TheoryOfStreamingApply.
+func TestRunAppliedChangeBlocksFeedback(t *testing.T) {
+	withRun(t, func(run Run) {
+		callCount := 0
+		phaseBuilder := func(g generators.Generator) generators.Phase {
+			callCount++
+			if callCount == 1 {
+				return appendPhase("<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/x/a.go\")\nfunc Foo() {}\n龘靐\n<<贞观 summary\nChanges applied.\n贞观\n")
+			}
+			return appendPhase("<<贞观 summary\nVerified.\n贞观\n")
+		}
+		comps := components.ComponentSet{
+			{
+				Kind: "change",
+				Process: func(ctx context.Context, pctx *components.ProcessContext) components.ProcessResult {
+					t.Fatal("consumed change blocks must not reach components")
+					return components.ProcessResult{}
+				},
+			},
+		}
+		var feedbackDetail string
+		var result Result
+		for ev, err := range run(context.Background(), RunOptions{
+			Generator:    nil,
+			InitialState: generators.NewPrompts("", nil),
+			Components:   comps,
+			BlockHandler: func(block blocks.Block) (bool, error) {
+				return block.Kind == "change", nil
+			},
+			PhaseBuilder:                phaseBuilder,
+			FeedbackAppliedChangeBlocks: true,
+		}, &result) {
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if ev.Kind == EventComponentsTriggered && strings.Contains(ev.Detail, "applied change block feedback") {
+				feedbackDetail = ev.Detail
+			}
+		}
+		if callCount != 2 {
+			t.Fatalf("expected 2 generations, got %d", callCount)
+		}
+		if feedbackDetail == "" {
+			t.Fatal("expected components-triggered event naming the applied change block feedback")
+		}
+		var hasFeedback bool
+		for c := range result.FinalState.Contents() {
+			for _, p := range c.Parts {
+				if text, ok := p.(generators.Text); ok {
+					if strings.Contains(string(text), "applied to the working tree") &&
+						strings.Contains(string(text), "MODIFY Foo in /x/a.go") {
+						hasFeedback = true
+					}
+				}
+			}
+		}
+		if !hasFeedback {
+			t.Fatal("expected applied-change feedback listing the applied block in state")
+		}
+	})
+}
+
+// TestRunAppliedChangeBlocksFeedbackDisabled verifies that without the
+// FeedbackAppliedChangeBlocks flag, consumed change blocks do not trigger
+// a verification round. See TheoryOfStreamingApply.
+func TestRunAppliedChangeBlocksFeedbackDisabled(t *testing.T) {
+	withRun(t, func(run Run) {
+		callCount := 0
+		phaseBuilder := func(g generators.Generator) generators.Phase {
+			callCount++
+			if callCount == 1 {
+				return appendPhase("<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/x/a.go\")\nfunc Foo() {}\n龘靐\n<<贞观 summary\nChanges applied.\n贞观\n")
+			}
+			return appendPhase("<<贞观 summary\nVerified.\n贞观\n")
+		}
+		_, err := runOnce(run, RunOptions{
+			Generator:    nil,
+			InitialState: generators.NewPrompts("", nil),
+			Components: components.ComponentSet{
+				{
+					Kind: "shell",
+					Process: func(ctx context.Context, pctx *components.ProcessContext) components.ProcessResult {
+						return components.ProcessResult{}
+					},
+				},
+			},
+			BlockHandler: func(block blocks.Block) (bool, error) {
+				return block.Kind == "change", nil
+			},
+			PhaseBuilder: phaseBuilder,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if callCount != 1 {
+			t.Fatalf("expected 1 generation without the feedback flag, got %d", callCount)
+		}
+	})
+}
+
+// TestRunAppliedChangeBlocksResetOnRetry verifies that change blocks
+// consumed by a failed (truncated) attempt never reach the applied-change
+// feedback: the per-attempt record resets with each attempt, mirroring
+// the MemoryStore reset. See TheoryOfStreamingApply.
+func TestRunAppliedChangeBlocksResetOnRetry(t *testing.T) {
+	withRun(t, func(run Run) {
+		callCount := 0
+		phaseBuilder := func(g generators.Generator) generators.Phase {
+			callCount++
+			if callCount == 1 {
+				// Consumed change block without a summary block: the
+				// attempt is truncated and retried.
+				return appendPhase("<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/x/a.go\")\nfunc Foo() {}\n龘靐\n")
+			}
+			return appendPhase("<<贞观 summary\nDone.\n贞观\n")
+		}
+		result, err := runOnce(run, RunOptions{
+			Generator:    nil,
+			InitialState: generators.NewPrompts("", nil),
+			Components: components.ComponentSet{
+				{
+					Kind: "shell",
+					Process: func(ctx context.Context, pctx *components.ProcessContext) components.ProcessResult {
+						return components.ProcessResult{}
+					},
+				},
+			},
+			BlockHandler: func(block blocks.Block) (bool, error) {
+				return block.Kind == "change", nil
+			},
+			PhaseBuilder:                phaseBuilder,
+			RetryOnMissingCompletion:    true,
+			MaxRetries:                  3,
+			FeedbackAppliedChangeBlocks: true,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if callCount != 2 {
+			t.Fatalf("expected 2 attempts within one generation, got %d", callCount)
+		}
+		for c := range result.FinalState.Contents() {
+			for _, p := range c.Parts {
+				if text, ok := p.(generators.Text); ok {
+					if strings.Contains(string(text), "applied to the working tree") {
+						t.Fatal("the truncated attempt's consumed blocks must not reach the applied-change feedback")
+					}
+				}
+			}
+		}
+	})
+}
+
 func TestRunPhaseError(t *testing.T) {
 	withRun(t, func(run Run) {
 		expectedErr := errors.New("phase failed")
