@@ -175,21 +175,25 @@ func buildRoot(t *TUI, width, height int, displays [3][]taiui.Line) taiui.Elemen
 	return root
 }
 
-// outputPanelView builds the expanded Output tab: the content panel
-// shifted right of the control column, the column's background, and one
-// control glyph per visible section. The caller holds t.mu. See
+// outputPanelView builds the expanded Output tab: the full-width
+// content panel whose content rows are indented past the control
+// column, the column's background over the content rows, and one
+// control glyph per visible section. The title row spans the full box
+// width and is not part of the column. The caller holds t.mu. See
 // TheoryOfOutputControls.
 func (t *TUI) outputPanelView(box taiui.Box, display []taiui.Line, label string, highlight bool) taiui.Element {
-	panelBox := box
-	panelBox.Left += controlColumnWidth
-	panel := taiui.TabPanel(panelBox, tabNames[0], label, highlight,
-		t.tabs.Expanded[0], t.tabs.Focus == 0, t.tabs.Unseen[0], display, t.scrolls[0], panelStyle)
+	panel := taiui.TabPanel(box, tabNames[0], label, highlight,
+		t.tabs.Expanded[0], t.tabs.Focus == 0, t.tabs.Unseen[0], display, t.scrolls[0], panelStyle,
+		taiui.ContentIndent(controlColumnWidth))
 	base := panelStyle.BaseBG
 	if t.tabs.Focus == 0 {
 		base = panelStyle.FocusBG
 	}
+	// The control column is part of the content area: it paints the
+	// content rows only, leaving the title row to the panel's centered
+	// label. See TheoryOfOutputControls.
 	children := []any{panel, taiui.Rect(
-		taiui.Box{Top: box.Top, Left: box.Left, Bottom: box.Bottom, Right: box.Left + controlColumnWidth},
+		taiui.Box{Top: box.Top + 1, Left: box.Left, Bottom: box.Bottom, Right: box.Left + controlColumnWidth},
 		taiui.Fill(true),
 		taiui.BGColor(base),
 	)}

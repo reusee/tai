@@ -1,6 +1,8 @@
 package taiui
 
 import (
+	"fmt"
+
 	"github.com/clipperhouse/displaywidth"
 	"github.com/gdamore/tcell/v3/vt"
 )
@@ -363,15 +365,28 @@ type _Panel struct {
 	focus     bool
 	follow    bool
 	style     PanelStyle
+	// contentIndent shifts the content rows' left edge from the box's
+	// left edge; the title row spans the full box width. See
+	// ContentIndent.
+	contentIndent int
 }
 
 func (_Panel) element() {}
 
+// ContentIndent indents a panel's content rows by the given column
+// count from the box's left edge; the title row always spans the full
+// box width. Callers that draw controls or markers beside the content
+// reserve the indent strip themselves. See TheoryOfTabPanel.
+type ContentIndent int
+
+func (ContentIndent) spec() {}
+
 // Panel renders an expanded tab: a one-row label strip pinned to the
 // top and a scroll view spanning the remaining rows. It renders visible
-// items directly in O(window) time. See TheoryOfTabs.
-func Panel(box Box, label string, highlight bool, lines []Line, offset int, focus, follow bool, style PanelStyle) _Panel {
-	return _Panel{
+// items directly in O(window) time. The specs configure the panel; see
+// ContentIndent. See TheoryOfTabs.
+func Panel(box Box, label string, highlight bool, lines []Line, offset int, focus, follow bool, style PanelStyle, specs ...any) _Panel {
+	p := _Panel{
 		box:       box,
 		label:     label,
 		highlight: highlight,
@@ -380,6 +395,26 @@ func Panel(box Box, label string, highlight bool, lines []Line, offset int, focu
 		focus:     focus,
 		follow:    follow,
 		style:     style,
+	}
+	for _, spec := range specs {
+		p.applySpec(spec)
+	}
+	return p
+}
+
+// applySpec interprets one spec value into _Panel fields. Unknown
+// specs fail at construction, like every element built from a spec
+// list.
+func (p *_Panel) applySpec(spec any) {
+	switch v := spec.(type) {
+	case Specs:
+		for _, s := range v {
+			p.applySpec(s)
+		}
+	case ContentIndent:
+		p.contentIndent = max(int(v), 0)
+	default:
+		panic(fmt.Errorf("unknown spec %#v", spec))
 	}
 }
 
@@ -407,22 +442,32 @@ func renderPanel(p _Panel, box Box, style Style, draw drawFunc, cursor cursorFun
 	iter := getGraphemeIter()
 	defer putGraphemeIter(iter)
 
-	// Header row
+	// Header row: the label centers across the full box width, and the
+	// row is filled first so the centered label never leaves an
+	// unpainted gap on either side.
 	headerStyle := style.WithBg(base).WithFg(labelFg)
 	if p.focus {
 		headerStyle = withAttrOn(headerStyle, true, vt.Bold)
 	}
+	for x := box.Left; x < box.Right; x++ {
+		draw(x, box.Top, ' ', nil, headerStyle)
+	}
+	labelX := box.Left + max((box.Width()-lineWidth(options, p.label, iter))/2, 0)
 	renderListLine(p.label, Box{
 		Top:    box.Top,
-		Left:   box.Left,
+		Left:   labelX,
 		Bottom: box.Top + 1,
 		Right:  box.Right,
-	}, headerStyle, true, draw, options, iter)
+	}, headerStyle, false, draw, options, iter)
 
 	scrollHeight := box.Height() - 1
 	if scrollHeight <= 0 {
 		return
 	}
+
+	// The content rows start at the indent, leaving the strip between
+	// the box's left edge and the content to the caller.
+	contentLeft := box.Left + p.contentIndent
 
 	contentHeight := len(p.lines)
 	fromY := p.offset
@@ -453,7 +498,7 @@ func renderPanel(p _Panel, box Box, style Style, draw drawFunc, cursor cursorFun
 		}
 		renderListLine(line.Text, Box{
 			Top:    row,
-			Left:   box.Left,
+			Left:   contentLeft,
 			Bottom: row + 1,
 			Right:  contentRight,
 		}, lineStyle, true, draw, options, iter)
@@ -462,7 +507,7 @@ func renderPanel(p _Panel, box Box, style Style, draw drawFunc, cursor cursorFun
 	// Empty rows below content
 	emptyStyle := style.WithBg(base)
 	for y := box.Top + 1 + max(0, contentHeight-fromY); y < box.Bottom; y++ {
-		for x := box.Left; x < contentRight; x++ {
+		for x := contentLeft; x < contentRight; x++ {
 			draw(x, y, ' ', nil, emptyStyle)
 		}
 	}

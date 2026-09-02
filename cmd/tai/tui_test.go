@@ -417,9 +417,11 @@ func TestTUIPanelTitleHighlightedDuringRequest(t *testing.T) {
 	tui := newTUIForTest()
 	tui.writeLogs([]byte("level=INFO msg=generating name=model\n"))
 	frame := renderTitle(tui, false)
+	// The generating label is wider than the 12-wide box: centering
+	// clamps to the left edge and the label clips at the box's right.
 	cell := frame.Cells[0]
 	if cell.Rune != 'O' {
-		t.Fatalf("expected title 'O' at (0,0), got %v", cell.Rune)
+		t.Fatalf("expected the clipped generating title to start at (0,0), got %v", cell.Rune)
 	}
 	wantR, wantG, wantB := color.PaletteColor(int(tabActiveLabelFg)).RGB()
 	if r, g, b := cell.Style.Fg().RGB(); r != wantR || g != wantG || b != wantB {
@@ -428,9 +430,10 @@ func TestTUIPanelTitleHighlightedDuringRequest(t *testing.T) {
 
 	idle := newTUIForTest()
 	idleFrame := renderTitle(idle, false)
-	idleCell := idleFrame.Cells[0]
+	// The plain 6-wide "Output" label centers in the 12-wide box: column 3.
+	idleCell := idleFrame.Cells[3]
 	if idleCell.Rune != 'O' {
-		t.Fatalf("expected title 'O' at (0,0), got %v", idleCell.Rune)
+		t.Fatalf("expected centered title 'O' at (3,0), got %v", idleCell.Rune)
 	}
 	if r, g, b := idleCell.Style.Fg().RGB(); r == wantR && g == wantG && b == wantB {
 		t.Fatal("expected the idle title to keep the ordinary foreground color")

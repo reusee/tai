@@ -12,6 +12,11 @@ taiui tab panel theory:
   label, marking content that arrived while the tab was collapsed; the
   one-column vertical strip falls back to a red background cell,
   because the two-column emoji cannot fit.
+- The panel's title row centers its label across the full box width,
+  filled edge to edge. An optional ContentIndent spec indents the
+  content rows from the box's left edge, reserving the strip for
+  callers that draw controls beside the content; the title row never
+  carries the indent.
 - PaneHeight derives the scroll view height from the panel box: the
   one-row label strip pinned to the top leaves box height minus one row
   for content, never less than one.
@@ -20,9 +25,10 @@ taiui tab panel theory:
 // TabPanel builds the element of one tab: a collapsed strip or an
 // expanded panel, laid out by Tabs.Boxes. title is the collapsed
 // strip's label; label is the expanded panel's title. unseen paints
-// the red-circle unseen emoji on the collapsed strip. It returns nil
-// for a degenerate box, which layouts skip. See TheoryOfTabPanel.
-func TabPanel(box Box, title, label string, highlight, expanded, focus, unseen bool, lines []Line, scroll ScrollState, style PanelStyle) Element {
+// the red-circle unseen emoji on the collapsed strip. The specs apply
+// to the expanded panel; a collapsed strip ignores them. It returns
+// nil for a degenerate box, which layouts skip. See TheoryOfTabPanel.
+func TabPanel(box Box, title, label string, highlight, expanded, focus, unseen bool, lines []Line, scroll ScrollState, style PanelStyle, specs ...any) Element {
 	if box.Width() <= 0 || box.Height() <= 0 {
 		return nil
 	}
@@ -44,6 +50,7 @@ func TabPanel(box Box, title, label string, highlight, expanded, focus, unseen b
 		focus,
 		scroll.Follow,
 		style,
+		specs...,
 	)
 }
 

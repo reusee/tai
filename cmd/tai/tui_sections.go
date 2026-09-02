@@ -47,10 +47,12 @@ Output tab sections and event-to-output navigation theory (cmd/tai):
 const TheoryOfOutputControls = `
 Output tab control column theory (cmd/tai):
 
-- The Output tab reserves a control column at its left edge, one Han
-  character wide. The content panel renders two cells to the right, so
-  no content hides under the controls, and the column's background
-  follows the tab's focus state like the panel's own.
+- The Output tab reserves a control column beside its content rows,
+  one Han character wide: the panel's content is indented past the
+  column (taiui.ContentIndent), so no content hides under the controls,
+  and the column's background follows the tab's focus state like the
+  panel's own. The title row spans the full box width and is not part
+  of the column.
 - Every section carries a fold control: the unicode triangle ▾ while
   the section is expanded, ▸ while collapsed, drawn in the default
   foreground so it never competes with the content. A press on the

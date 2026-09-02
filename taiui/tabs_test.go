@@ -347,8 +347,13 @@ func TestPanelRenders(t *testing.T) {
 		t.Fatal("expected a rendered frame")
 	}
 	frame := screen.frames[len(screen.frames)-1]
-	if cell := frame.Cells[0]; cell.Rune != 'O' {
-		t.Fatalf("expected title 'O' at (0,0), got %v", cell.Rune)
+	// The title centers across the full box width: a 6-wide label in a
+	// 12-wide box starts at column 3, with header fill on both sides.
+	if cell := frame.Cells[3]; cell.Rune != 'O' {
+		t.Fatalf("expected centered title 'O' at (3,0), got %v", cell.Rune)
+	}
+	if frame.Cells[0].Rune != ' ' {
+		t.Fatalf("expected header fill left of the centered title, got %q", string(frame.Cells[0].Rune))
 	}
 	if cell := frame.Cells[1*frame.Width]; cell.Rune != 'c' {
 		t.Fatalf("expected content at (0,1), got %v", cell.Rune)
@@ -356,6 +361,40 @@ func TestPanelRenders(t *testing.T) {
 	wantR, wantG, wantB := HexColor(0x0a1428).RGB()
 	if r, g, b := frame.Cells[1*frame.Width].Style.Bg().RGB(); r != wantR || g != wantG || b != wantB {
 		t.Fatalf("expected unfocused background, got %#x %#x %#x", r, g, b)
+	}
+}
+
+// TestPanelContentIndent pins the content indent: the title row spans
+// the full box width while the content rows start at the indent, and
+// the strip between the box's left edge and the content stays
+// unpainted by the panel. See TheoryOfTabPanel.
+func TestPanelContentIndent(t *testing.T) {
+	element := Panel(
+		Box{Top: 0, Left: 0, Bottom: 4, Right: 10},
+		"Output",
+		false,
+		[]Line{{Text: "hi"}},
+		0, false, true, testPanelStyle(),
+		ContentIndent(2),
+	)
+	screen := newFakeScreen(10, 4)
+	Render(element, screen)
+	if len(screen.frames) == 0 {
+		t.Fatal("expected a rendered frame")
+	}
+	frame := screen.frames[len(screen.frames)-1]
+	// The title row spans the full width: a 6-wide label centers at
+	// column 2 in a 10-wide box.
+	if frame.Cells[2].Rune != 'O' {
+		t.Fatalf("expected the centered title 'O' at column 2, got %q", string(frame.Cells[2].Rune))
+	}
+	// The content row starts at the indent: the strip columns stay
+	// unpainted by the panel and the text follows them.
+	if frame.Cells[1*frame.Width].Set {
+		t.Fatal("expected the indent strip's first column unpainted on a content row")
+	}
+	if frame.Cells[1*frame.Width+2].Rune != 'h' {
+		t.Fatalf("expected indented content at column 2, got %q", string(frame.Cells[1*frame.Width+2].Rune))
 	}
 }
 

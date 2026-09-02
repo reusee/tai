@@ -256,6 +256,55 @@ func TestToggleControlAtClick(t *testing.T) {
 	tui.mu.Unlock()
 }
 
+// TestOutputControlColumnBesideContent pins the control column's place
+// in the layout: the column paints only the content rows, the title
+// row spans the full tab width with a centered label, and the content
+// is indented past the column. See TheoryOfOutputControls.
+func TestOutputControlColumnBesideContent(t *testing.T) {
+	tui := newTUIForTest()
+	tui.tabs.Expanded = []bool{true, false, false}
+	tui.tabs.HasContent = []bool{true, false, false}
+	tui.tabs.Focus = 0
+	tui.interactive = false
+	tui.width, tui.height = 40, 10
+
+	tui.writeOutputPart(generators.RoleUser, outputColorUserLine, false, "q\n")
+	tui.writeOutputPart(generators.RoleModel, outputColorThoughtLine, true, "t1\nt2\n")
+	tui.writeOutputPart(generators.RoleModel, taiui.NoColor, false, "answer\n")
+
+	box := tui.tabs.Boxes(40, 10)[0]
+	tui.mu.Lock()
+	display := wrappedDisplay(tui, 0, box)
+	rows := tui.outputControlRows(box, display, 0)
+	tui.mu.Unlock()
+
+	screen := &panelTestScreen{width: 40, height: 10}
+	taiui.Render(buildRoot(tui, 40, 10, [3][]taiui.Line{display, nil, nil}), screen)
+	frame := screen.frames[len(screen.frames)-1]
+
+	// The title row spans the full tab width: the 6-wide label centers
+	// at column 17 in the 40-wide box, not inside a column-shifted
+	// panel.
+	if cell := frame.Cells[17]; cell.Rune != 'O' {
+		t.Fatalf("expected the centered title 'O' at (17,0), got %q", string(cell.Rune))
+	}
+	// The control column covers the content rows only: the first
+	// section's fold glyph sits in the column on its control row.
+	if len(rows) == 0 {
+		t.Fatal("expected control rows")
+	}
+	first := rows[0]
+	want := []rune(sectionGlyphExpanded)[0]
+	if cell := frame.Cells[first.row*frame.Width]; cell.Rune != want {
+		t.Fatalf("expected the fold glyph at (%d,0), got %q", first.row, string(cell.Rune))
+	}
+	// The content is indented past the column: the first display line
+	// starts at column 2 on the row below the title.
+	if cell := frame.Cells[1*frame.Width+controlColumnWidth]; cell.Rune != 'q' {
+		t.Fatalf("expected indented content at (2,1), got %q", string(cell.Rune))
+	}
+}
+
 // TestControlStripText verifies the horizontal hover strip's layout:
 // one Han-width slot per control. See TheoryOfOutputControls.
 func TestControlStripText(t *testing.T) {
