@@ -169,8 +169,9 @@ fresh display lengths, and builds the element tree with plain functions
 outputPanelView with its control column — plus buildRoot). The Output
 tab's content is its per-section projection (see TheoryOfOutputControls):
 each completed source line wraps at most once, the trailing partial line
-re-wraps fresh, and a section toggle or a content-width change resets
-the projection. The Logs tab wraps through a taiui.WrapCache so that
+re-wraps fresh, and a section toggle, the collapse-all key, or a
+content-width change resets the projection. The Logs tab wraps through
+a taiui.WrapCache so that
 when new output streams in, only the newly arrived completed lines and
 the trailing partial line are wrapped, avoiding O(N) full re-wrapping of
 large buffers on every frame; the Events tab caches each event node's
@@ -313,8 +314,9 @@ pane, a left press is inert unless it lands on the attempt-start line's
 👉 jump marker, which jumps the Output tab to the section that attempt
 wrote (see TheoryOfTUIOutputSections); a press on a handoff node's rows
 still toggles it. In the Output tab, a press on the control column
-toggles the section under the control and preempts the ordinary press
-handling (see TheoryOfOutputControls). Presses outside every panel,
+toggles the section under the control, a press on a collapsed section's
+row expands it, and both preempt the ordinary press handling (see
+TheoryOfOutputControls). Presses outside every panel,
 middle and right presses are ignored; no-button motion (mode 1003) only
 drives the control column's hover strip.
 
@@ -704,13 +706,6 @@ type TUI struct {
 	eventSections  map[outputSectionOwner]int
 	pendingOwner   *outputSectionOwner
 
-	// outputPreview reports whether the Output tab's global preview is
-	// on: the projection collapses every section to its first source
-	// line so the whole output structure fits the visible area, and a
-	// press on any preview row jumps to that section's full view.
-	// Guarded by mu. See TheoryOfOutputControls.
-	outputPreview bool
-
 	// The Output tab's per-section projection state, guarded by mu. See
 	// TheoryOfOutputControls. projWidth keys the caches: a content-width
 	// change resets them. projDisplay holds the projected display rows;
@@ -1014,17 +1009,6 @@ func (t *TUI) captureContent(content *generators.Content) {
 	t.notify()
 }
 
-// writeOutputPart writes one output part to the Output tab, starting a
-// new output section and inserting a blank line separator when the
-// output switches roles or switches between thinking and non-thinking
-// content, and also when a pending attempt-start event marks the start
-// of a new attempt's output. The section state (hasOutput,
-// lastOutputRole, lastWasThought) is only accessed by the generation
-// goroutine via captureContent, so it is read and written without a
-// lock; the section bookkeeping also read by the pointer handlers is
-// guarded by mu. sectionedLines, the sectioned high-water mark the
-// projection reads, is guarded by mu too. See
-// TheoryOfTUIOutputSections and TheoryOfOutputControls.
 func (t *TUI) writeOutputPart(role generators.Role, color taiui.Color, isThought bool, text string) {
 	// Consume a pending attempt-start event even when the role does
 	// not switch: consecutive attempts sharing one role still open
@@ -1067,6 +1051,17 @@ func (t *TUI) writeOutputPart(role generators.Role, color taiui.Color, isThought
 	}
 	if covered > t.sectionedLines {
 		t.sectionedLines = covered
+	}
+	// A collapsed section follows the newest output: its show line moves
+	// to the latest line the section covers, completed or the trailing
+	// partial. Only the last section receives streamed output. The
+	// projection rewrites that section's single row from the show line
+	// each frame. See TheoryOfOutputControls.
+	if n := len(t.outputSections); n > 0 {
+		sec := &t.outputSections[n-1]
+		if sec.collapsed && covered-1 >= sec.startLine {
+			sec.showLine = covered - 1
+		}
 	}
 	t.mu.Unlock()
 	t.lastOutputRole = role
@@ -1242,8 +1237,8 @@ func (t *TUI) handleKey(key string) bool {
 		t.jumpToTransition(-1)
 	case key == "next-transition":
 		t.jumpToTransition(1)
-	case key == "preview":
-		t.toggleOutputPreview()
+	case key == "collapse-all":
+		t.collapseAllSections()
 	case key == "up":
 		t.scroll(-1)
 	case key == "down":
@@ -1292,16 +1287,14 @@ func (t *TUI) handleKey(key string) bool {
 const TheoryOfTUIKeyMapping = `
 taiui.ReadKeys returns generic, application-independent key names ("q",
 "s", "?", "[", "]"); the TUI maps its key bindings to semantic names
-("quit", "split", "help", "prev-transition", "next-transition") so the
-key dispatch in Run reads as a table of actions rather than a table of
-characters. The mapping lives in cmd/tai, not in taiui, preserving
-taiui's reusability: key names stay generic, and each application defines
-its own binding. Unmapped keys (arrows, function keys, mouse events) pass
-through unchanged.
+("quit", "split", "help", "collapse-all", "prev-transition",
+"next-transition") so the key dispatch in Run reads as a table of
+actions rather than a table of characters. The mapping lives in cmd/tai,
+not in taiui, preserving taiui's reusability: key names stay generic,
+and each application defines its own binding. Unmapped keys (arrows,
+function keys, mouse events) pass through unchanged.
 `
 
-// mapTUIKey maps a generic key name from taiui.ReadKeys to the semantic
-// name the TUI uses for its key bindings. See TheoryOfTUIKeyMapping.
 func mapTUIKey(key string) string {
 	switch key {
 	case "q", "Q", "ctrl-c":
@@ -1310,8 +1303,8 @@ func mapTUIKey(key string) string {
 		return "split"
 	case "m", "M":
 		return "mouse"
-	case "p", "P":
-		return "preview"
+	case "c", "C":
+		return "collapse-all"
 	case "?":
 		return "help"
 	case "[":
@@ -1432,17 +1425,16 @@ func (t *TUI) handleMouseKey(key string) {
 		// ordinary press handling runs, so clicking a pane hands the
 		// keyboard back to navigation. See TheoryOfTUIChatInput.
 		t.inputFocused = false
-		// In the global preview a press anywhere in the Output tab's
-		// content area jumps to the pressed section's full view: every
-		// preview row is exactly one section. See
-		// TheoryOfOutputControls.
-		if t.previewClickToSection(x, y) {
-			return
-		}
 		// A press on the Output tab's control column toggles the
 		// section under the control instead of driving tab
 		// interaction. See TheoryOfOutputControls.
 		if t.toggleControlAtClick(x, y) {
+			return
+		}
+		// A press on a collapsed section's row expands it, replacing
+		// the removed preview's click-to-jump. See
+		// TheoryOfOutputControls.
+		if t.expandCollapsedSectionAtClick(x, y) {
 			return
 		}
 		t.mouse.Press(t.tabs, t.scrolls[:], t.width, t.height, x, y)

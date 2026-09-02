@@ -2675,6 +2675,8 @@ func TestMapTUIKey(t *testing.T) {
 		{"?", "help"},
 		{"[", "prev-transition"},
 		{"]", "next-transition"},
+		{"c", "collapse-all"},
+		{"C", "collapse-all"},
 		// Unmapped keys pass through unchanged.
 		{"up", "up"},
 		{"down", "down"},

@@ -57,25 +57,24 @@ Output tab control column theory (cmd/tai):
   the section is expanded, ▸ while collapsed, drawn in the default
   foreground so it never competes with the content. A press on the
   control's cells toggles the section's collapsed state.
+- The c key collapses every section at once, folding the whole output
+  structure to one row per section. A press on any collapsed section's
+  display row expands it, so the collapsed structure doubles as the
+  table of contents. Expanded sections are inert to body presses —
+  only the control column collapses them — so reading inside an
+  expanded section never folds it.
 - The control follows the content: it renders at the section's first
   display row, clamped into the viewport when that row has scrolled
   above it, so every section with a visible row stays addressable while
   scrolled. Sections whose rows left the viewport carry no control.
-- A collapsed section renders as exactly one display row — its first
-  source line, truncated to the content width — so a long section folds
-  to its header. Collapse is a display projection over the append-only
-  buffer: the projection re-derives from the source, so toggling back
-  re-reveals every line. See TheoryOfTUINoTruncation.
-- The global preview (the p key) collapses every section to its first
-  source line at once, so the whole output structure fits the visible
-  area. A press on any preview row — content or control column —
-  leaves the preview and jumps the Output tab to the pressed section's
-  full view, so the fold controls are not rendered in the preview:
-  their toggle semantics are replaced by the jump. Entering the
-  preview expands and focuses the Output tab when needed and shows the
-  overview from the top; leaving lands on the section at the top of
-  the preview viewport, so the reading position carries into the
-  restored view.
+- A collapsed section renders as exactly one display row — its show
+  line, truncated to the content width. The show line is the section's
+  first source line at collapse time; while output streams into the
+  collapsed section, it follows the newest line, completed or partial,
+  so the row always shows the latest output. Collapse is a display
+  projection over the append-only buffer: the projection re-derives
+  from the source, so expanding re-reveals every line. See
+  TheoryOfTUINoTruncation.
 - A section may carry several controls. The column shows the first
   control per row; when the pointer hovers the control column on a
   control's row, all of the section's controls display horizontally,
@@ -84,8 +83,10 @@ Output tab control column theory (cmd/tai):
 - The projection is incremental: each completed source line wraps at
   most once per content width behind a left-to-right pointer, the
   trailing partial line re-wraps fresh every frame, and a section
-  toggle, the preview toggle, or a content-width change resets the
-  projection.
+  toggle, a collapse-all key press, or a content-width change resets
+  the projection. Only the last collapsed section's row changes while
+  output streams, so the projection rewrites that single row in place
+  each frame instead of re-deriving.
 `
 
 // controlColumnWidth is the control column's width in terminal cells:
@@ -135,11 +136,14 @@ func (t *TUI) sectionControls(idx int) []outputControl {
 
 // outputSection is one section of the Output tab's content: the index
 // in the output line buffer at which the section's first source line
-// begins, and whether the section is collapsed to its first line. The
-// section spans to the next section's start.
+// begins, whether the section is collapsed to one row, and the source
+// line the collapsed row displays — the header at collapse time, the
+// latest line once new output arrives. The section spans to the next
+// section's start.
 type outputSection struct {
 	startLine int
 	collapsed bool
+	showLine  int
 }
 
 // outputSectionOwner identifies the pipeline event that owns a
@@ -168,22 +172,20 @@ func sectionCollapsedRow(line taiui.Line, contentWidth int) taiui.Line {
 	}
 }
 
-// sectionCollapsed reports the section's projected form: the global
-// preview collapses every section to its first source line at once,
-// so the whole output structure fits the visible area; otherwise the
-// section's own collapsed state decides. The caller holds t.mu. See
-// TheoryOfOutputControls.
+// sectionCollapsed reports the section's projected form: a collapsed
+// section renders as its single show-line row while every other section
+// renders in full. The caller holds t.mu. See TheoryOfOutputControls.
 func (t *TUI) sectionCollapsed(idx int) bool {
-	return t.outputPreview || t.outputSections[idx].collapsed
+	return t.outputSections[idx].collapsed
 }
 
 // outputDisplay renders the Output tab's display: the projection of the
 // append-only output buffer where every collapsed section contributes
-// one row — its first source line — and every other line wraps in
-// full. The global preview collapses every section the same way. Each
-// completed source line wraps at most once per content width behind a
-// left-to-right pointer; the trailing partial line re-wraps fresh
-// every frame; a section toggle or a content-width change resets the
+// one row — its show line, truncated to the content width — and every
+// other line wraps in full. Each completed source line wraps at most
+// once per content width behind a left-to-right pointer; the trailing
+// partial line re-wraps fresh every frame; a section toggle, a
+// collapse-all key press, or a content-width change resets the
 // projection. The caller holds t.mu. See TheoryOfOutputControls.
 func (t *TUI) outputDisplay(contentWidth int) []taiui.Line {
 	lines := t.output.Lines()
@@ -236,7 +238,7 @@ func (t *TUI) outputDisplay(contentWidth int) []taiui.Line {
 			to = sections[i+1].startLine
 			if t.sectionCollapsed(i) {
 				if t.projCounts[i] == 0 && to > sections[i].startLine {
-					t.projDisplay = append(t.projDisplay, sectionCollapsedRow(lines[sections[i].startLine], contentWidth))
+					t.projDisplay = append(t.projDisplay, sectionCollapsedRow(lines[sections[i].showLine], contentWidth))
 					t.projCounts[i] = 1
 				}
 			} else {
@@ -250,7 +252,7 @@ func (t *TUI) outputDisplay(contentWidth int) []taiui.Line {
 			to = min(t.sectionedLines, completed)
 			if t.sectionCollapsed(last) {
 				if t.projCounts[last] == 0 && to > sections[last].startLine {
-					t.projDisplay = append(t.projDisplay, sectionCollapsedRow(lines[sections[last].startLine], contentWidth))
+					t.projDisplay = append(t.projDisplay, sectionCollapsedRow(lines[sections[last].showLine], contentWidth))
 					t.projCounts[last] = 1
 				}
 			} else {
@@ -268,8 +270,38 @@ func (t *TUI) outputDisplay(contentWidth int) []taiui.Line {
 		t.projWrapped = to
 	}
 
+	// The last collapsed section's single row follows the streaming
+	// output: rewrite it in place from the section's show line, which
+	// the output path keeps on the newest line. The rewrite also
+	// renders the row when the section's span holds only a partial
+	// line — a case the wrap loop never reaches, because completed
+	// equals the section's start until the partial completes. Closed
+	// collapsed sections never change, so only this row is rewritten.
+	if last >= 0 && t.sectionCollapsed(last) {
+		sec := &t.outputSections[last]
+		covered := completed
+		if t.output.HasPartial() {
+			covered++
+		}
+		if covered > sec.startLine {
+			row := sectionCollapsedRow(lines[sec.showLine], contentWidth)
+			pos := t.outputSectionOffset(last)
+			if t.projCounts[last] == 0 {
+				// Insert at the section's projected position, before
+				// any tail rows rendered after it.
+				t.projDisplay = append(t.projDisplay, taiui.Line{})
+				copy(t.projDisplay[pos+1:], t.projDisplay[pos:])
+				t.projCounts[last] = 1
+			}
+			if pos < len(t.projDisplay) {
+				t.projDisplay[pos] = row
+			}
+		}
+	}
+
 	// The trailing partial line re-wraps fresh every frame; a collapsed
-	// section hides it under the section's single row.
+	// section hides it under the section's single row, which shows the
+	// newest line — the partial itself when one is open.
 	if t.output.HasPartial() {
 		show := true
 		switch {
@@ -291,8 +323,7 @@ func (t *TUI) outputDisplay(contentWidth int) []taiui.Line {
 // closed form when a newer section opens: an expanded section absorbs
 // the tail rows and wraps its remaining unprocessed lines; a collapsed
 // section drops the tail rows its single row hides and, when its span
-// stayed empty until now, renders its first-line row. The global
-// preview collapses every section the same way. See
+// stayed empty until now, renders its show-line row. See
 // TheoryOfOutputControls.
 func (t *TUI) finalizeProjectedSection(idx int, spanEnd int, lines []taiui.Line, contentWidth int) {
 	sec := t.outputSections[idx]
@@ -300,7 +331,7 @@ func (t *TUI) finalizeProjectedSection(idx int, spanEnd int, lines []taiui.Line,
 		t.projDisplay = t.projDisplay[:len(t.projDisplay)-t.projTailRows]
 		t.projTailRows = 0
 		if t.projCounts[idx] == 0 && spanEnd > sec.startLine {
-			t.projDisplay = append(t.projDisplay, sectionCollapsedRow(lines[sec.startLine], contentWidth))
+			t.projDisplay = append(t.projDisplay, sectionCollapsedRow(lines[sec.showLine], contentWidth))
 			t.projCounts[idx] = 1
 		}
 	} else {
@@ -322,13 +353,41 @@ func (t *TUI) resetProjectionLocked() {
 	t.projWidth = -1
 }
 
-// toggleOutputSectionLocked flips section idx's collapsed state. The
-// caller holds t.mu. See TheoryOfOutputControls.
+// collapseAllSections collapses every output section, folding the whole
+// output structure to one row per section — the overview the c key
+// provides, replacing the removed global preview. Every collapsed
+// section shows its header; new output switches a collapsed section's
+// row to its latest line. See TheoryOfOutputControls.
+func (t *TUI) collapseAllSections() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	changed := false
+	for i := range t.outputSections {
+		sec := &t.outputSections[i]
+		if !sec.collapsed || sec.showLine != sec.startLine {
+			sec.collapsed = true
+			sec.showLine = sec.startLine
+			changed = true
+		}
+	}
+	if changed {
+		t.resetProjectionLocked()
+	}
+}
+
+// toggleOutputSectionLocked flips section idx's collapsed state. A
+// newly collapsed section shows its header; the latest-line display
+// returns only when new output arrives. The caller holds t.mu. See
+// TheoryOfOutputControls.
 func (t *TUI) toggleOutputSectionLocked(idx int) {
 	if idx < 0 || idx >= len(t.outputSections) {
 		return
 	}
-	t.outputSections[idx].collapsed = !t.outputSections[idx].collapsed
+	sec := &t.outputSections[idx]
+	sec.collapsed = !sec.collapsed
+	if sec.collapsed {
+		sec.showLine = sec.startLine
+	}
 	t.resetProjectionLocked()
 }
 
@@ -400,15 +459,10 @@ func (t *TUI) outputControlRows(box taiui.Box, display []taiui.Line, offset int)
 // press must land in the control column, and while the hover strip
 // shows, the press column maps onto the strip's slots — one Han-width
 // slot per control, the fold toggle first. It reports whether a control
-// consumed the press. In the global preview the fold controls are not
-// rendered and every press is a jump handled before this method. A
-// minimal TUI without the output buffer carries no sections and no
-// controls, so nothing consumes the press. The caller holds t.mu. See
-// TheoryOfOutputControls.
+// consumed the press. A minimal TUI without the output buffer carries
+// no sections and no controls, so nothing consumes the press. The
+// caller holds t.mu. See TheoryOfOutputControls.
 func (t *TUI) toggleControlAtClick(x, y int) bool {
-	if t.outputPreview {
-		return false
-	}
 	if !t.tabs.Expanded[0] || t.output == nil {
 		return false
 	}
@@ -473,6 +527,46 @@ func (t *TUI) setControlHoverLocked(x, y int) {
 	t.ctlHoverY = y
 }
 
+// expandCollapsedSectionAtClick expands the collapsed section whose
+// display row the press hit: every row of a collapsed section is its
+// expansion target, the click behavior that replaces the removed
+// global preview. Expanded sections are inert here — only the control
+// column collapses them — so reading inside an expanded section never
+// folds it. The Output tab takes the focus so the expansion result is
+// visible. It reports whether the press expanded a section. The caller
+// holds t.mu. See TheoryOfOutputControls.
+func (t *TUI) expandCollapsedSectionAtClick(x, y int) bool {
+	if !t.tabs.Expanded[0] || t.output == nil {
+		return false
+	}
+	box := t.tabs.Boxes(t.width, t.height)[0]
+	if x < box.Left || x >= box.Right {
+		return false
+	}
+	panelBottom := box.Bottom
+	if t.interactive {
+		panelBottom--
+	}
+	if y < box.Top+1 || y >= panelBottom {
+		return false
+	}
+	display := wrappedDisplay(t, 0, box)
+	if len(display) == 0 {
+		return false
+	}
+	offset := taiui.ClampOffset(t.scrolls[0].Offset, len(display), t.tuiPaneHeight(0, box))
+	idx := t.outputSectionAtOffset(offset + (y - box.Top - 1))
+	if idx < 0 || !t.outputSections[idx].collapsed {
+		return false
+	}
+	t.outputSections[idx].collapsed = false
+	t.resetProjectionLocked()
+	if t.tabs.Focus != 0 {
+		t.tabs.FocusTab(0)
+	}
+	return true
+}
+
 // beginOutputSection records a new section starting at the next source
 // line the output buffer will create — the line the caller is about to
 // write — and, when the section is owned by an event, binds the event
@@ -495,9 +589,11 @@ func (t *TUI) beginOutputSection(owner *outputSectionOwner) {
 	if covered > t.sectionedLines {
 		t.sectionedLines = covered
 	}
+	start := len(t.output.CompletedLines())
 	idx := len(t.outputSections)
 	t.outputSections = append(t.outputSections, outputSection{
-		startLine: len(t.output.CompletedLines()),
+		startLine: start,
+		showLine:  start,
 	})
 	if owner != nil {
 		t.eventSections[*owner] = idx
@@ -659,96 +755,4 @@ func (t *TUI) showOutputSection(idx int) {
 	offset := t.outputSectionOffset(idx)
 	t.scrolls[0].Offset = taiui.ClampOffset(offset, len(display), t.tuiPaneHeight(0, box))
 	t.scrolls[0].Follow = false
-}
-
-// previewClickToSection maps a press inside the preview's content area
-// onto the section of the pressed display row and leaves the preview
-// with the Output tab scrolled to that section's full view: every
-// preview row is exactly one section, so any row is a jump target. It
-// reports whether the press jumped. The caller holds t.mu. See
-// TheoryOfOutputControls.
-func (t *TUI) previewClickToSection(x, y int) bool {
-	if !t.outputPreview || !t.tabs.Expanded[0] || t.output == nil {
-		return false
-	}
-	box := t.tabs.Boxes(t.width, t.height)[0]
-	if x < box.Left || x >= box.Right {
-		return false
-	}
-	panelBottom := box.Bottom
-	if t.interactive {
-		panelBottom--
-	}
-	if y < box.Top+1 || y >= panelBottom {
-		return false
-	}
-	display := wrappedDisplay(t, 0, box)
-	if len(display) == 0 {
-		return false
-	}
-	offset := taiui.ClampOffset(t.scrolls[0].Offset, len(display), t.tuiPaneHeight(0, box))
-	row := offset + (y - box.Top - 1)
-	idx := t.outputSectionAtOffset(row)
-	if idx < 0 {
-		return false
-	}
-	t.exitOutputPreviewLocked(idx)
-	return true
-}
-
-// previewTopSectionLocked returns the section covering the top row of
-// the preview viewport, or -1 when the Output tab shows nothing. The
-// caller holds t.mu. See TheoryOfOutputControls.
-func (t *TUI) previewTopSectionLocked() int {
-	if !t.tabs.Expanded[0] || t.output == nil {
-		return -1
-	}
-	box := t.tabs.Boxes(t.width, t.height)[0]
-	if box.Width() <= 0 || box.Height() <= 0 {
-		return -1
-	}
-	display := wrappedDisplay(t, 0, box)
-	if len(display) == 0 {
-		return -1
-	}
-	offset := taiui.ClampOffset(t.scrolls[0].Offset, len(display), t.tuiPaneHeight(0, box))
-	return t.outputSectionAtOffset(offset)
-}
-
-// exitOutputPreviewLocked leaves preview mode, landing the restored
-// full view on the given section; a negative target keeps the plain
-// restore. The caller holds t.mu. See TheoryOfOutputControls.
-func (t *TUI) exitOutputPreviewLocked(target int) {
-	if !t.outputPreview {
-		return
-	}
-	t.outputPreview = false
-	t.resetProjectionLocked()
-	if target >= 0 {
-		t.showOutputSection(target)
-	}
-}
-
-// toggleOutputPreview switches the Output tab's global preview: the
-// projection collapses every section to its first source line, so the
-// whole output structure fits the visible area, and a press on any
-// preview row jumps to that section's full view. Entering expands and
-// focuses the Output tab when needed and shows the overview from the
-// top; leaving lands on the section at the top of the preview
-// viewport, so the reading position carries into the restored view.
-// See TheoryOfOutputControls.
-func (t *TUI) toggleOutputPreview() {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if !t.outputPreview {
-		if !t.tabs.Expanded[0] || t.tabs.Focus != 0 {
-			t.tabs.Toggle(0)
-		}
-		t.outputPreview = true
-		t.resetProjectionLocked()
-		t.scrolls[0].Offset = 0
-		t.scrolls[0].Follow = false
-		return
-	}
-	t.exitOutputPreviewLocked(t.previewTopSectionLocked())
 }

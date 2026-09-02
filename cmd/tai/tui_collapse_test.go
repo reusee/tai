@@ -52,8 +52,9 @@ func TestOutputSectionCollapseShowsFirstLine(t *testing.T) {
 }
 
 // TestOutputSectionCollapseStreaming verifies that a collapsed section
-// keeps exactly one row while output streams into it, hiding the
-// trailing partial line under its row. See TheoryOfOutputControls.
+// keeps exactly one row while output streams into it, and the row
+// follows the newest output — the latest completed line, then the
+// trailing partial line. See TheoryOfOutputControls.
 func TestOutputSectionCollapseStreaming(t *testing.T) {
 	tui := newTUIForTest()
 	box := taiui.Box{Top: 0, Left: 0, Bottom: 20, Right: 40}
@@ -65,12 +66,13 @@ func TestOutputSectionCollapseStreaming(t *testing.T) {
 	tui.mu.Unlock()
 	assertTexts(t, displayTexts(wrappedDisplay(tui, 0, box)), "thinking first")
 
+	// New output moves the collapsed row to the newest completed line.
 	tui.writeOutputPart(generators.RoleModel, outputColorThoughtLine, true, "thinking second\n")
-	assertTexts(t, displayTexts(wrappedDisplay(tui, 0, box)), "thinking first")
+	assertTexts(t, displayTexts(wrappedDisplay(tui, 0, box)), "thinking second")
 
-	// The trailing partial line stays hidden under the collapsed row.
+	// The trailing partial line is the newest output: the row shows it.
 	tui.writeOutputPart(generators.RoleModel, outputColorThoughtLine, true, "partial thi")
-	assertTexts(t, displayTexts(wrappedDisplay(tui, 0, box)), "thinking first")
+	assertTexts(t, displayTexts(wrappedDisplay(tui, 0, box)), "partial thi")
 }
 
 // TestOutputSectionTogglePreservesContent verifies that collapsing is a
@@ -159,6 +161,52 @@ func TestSectionControlsGlyph(t *testing.T) {
 	if got := tui.sectionControls(0)[0].Glyph; got != sectionGlyphCollapsed {
 		t.Fatalf("collapsed section glyph %q, want %q", got, sectionGlyphCollapsed)
 	}
+}
+
+// TestCollapseAllSections verifies the collapse-all key: every section
+// folds to one row, expanding one section reveals only its lines, and
+// collapsing it again folds back to the header. New output into a
+// collapsed section moves its row to the newest line. The collapsed
+// state itself is the overview the removed global preview provided.
+// See TheoryOfOutputControls.
+func TestCollapseAllSections(t *testing.T) {
+	tui := newTUIForTest()
+	box := taiui.Box{Top: 0, Left: 0, Bottom: 20, Right: 40}
+
+	tui.writeOutputPart(generators.RoleUser, outputColorUserLine, false, "question\n")
+	tui.writeOutputPart(generators.RoleModel, outputColorThoughtLine, true,
+		"thought one\nthought two\nthought three\n")
+	tui.writeOutputPart(generators.RoleModel, taiui.NoColor, false, "answer\n")
+
+	tui.collapseAllSections()
+	tui.mu.Lock()
+	display := wrappedDisplay(tui, 0, box)
+	tui.mu.Unlock()
+	assertTexts(t, displayTexts(display), "question", "thought one", "answer")
+
+	// Expanding one section reveals only that section's lines; the
+	// separator blank line inside its span renders with them.
+	tui.mu.Lock()
+	tui.toggleOutputSectionLocked(1)
+	display = wrappedDisplay(tui, 0, box)
+	tui.mu.Unlock()
+	assertTexts(t, displayTexts(display),
+		"question", "thought one", "thought two", "thought three", "", "answer")
+
+	// Collapsing again folds back to the header.
+	tui.mu.Lock()
+	tui.toggleOutputSectionLocked(1)
+	display = wrappedDisplay(tui, 0, box)
+	tui.mu.Unlock()
+	assertTexts(t, displayTexts(display), "question", "thought one", "answer")
+
+	// New output into the collapsed section moves its row to the
+	// newest line.
+	tui.writeOutputPart(generators.RoleModel, taiui.NoColor, false, "answer two\n")
+	tui.mu.Lock()
+	display = wrappedDisplay(tui, 0, box)
+	tui.mu.Unlock()
+	assertTexts(t, displayTexts(display), "question", "thought one", "answer two")
 }
 
 func TestOutputControlRowsPinned(t *testing.T) {
@@ -252,6 +300,43 @@ func TestToggleControlAtClick(t *testing.T) {
 	}
 	if tui.toggleControlAtClick(box.Left, rows[1].row+1) {
 		t.Fatal("a press on a row without a control must not toggle")
+	}
+	tui.mu.Unlock()
+}
+
+// TestClickExpandsCollapsedSection verifies that a press on a collapsed
+// section's display row expands it, the click behavior that replaces
+// the removed preview's click-to-jump. See TheoryOfOutputControls.
+func TestClickExpandsCollapsedSection(t *testing.T) {
+	tui := newTUIForTest()
+	tui.width, tui.height = 40, 10
+
+	tui.writeOutputPart(generators.RoleUser, outputColorUserLine, false, "q\n")
+	tui.writeOutputPart(generators.RoleModel, outputColorThoughtLine, true, "t1\nt2\nt3\n")
+	tui.writeOutputPart(generators.RoleModel, taiui.NoColor, false, "answer\n")
+
+	box := tui.tabs.Boxes(40, 10)[0]
+	tui.mu.Lock()
+	tui.toggleOutputSectionLocked(1)
+	tui.mu.Unlock()
+
+	// The press maps onto section 1's collapsed display row: the
+	// projection holds section 0 in full — 2 rows, including the
+	// separator blank line inside its span — so the collapsed row sits
+	// at display index 2, pane row box.Top+3.
+	tui.mu.Lock()
+	ok := tui.expandCollapsedSectionAtClick(box.Left+5, box.Top+3)
+	expanded := !tui.outputSections[1].collapsed
+	tui.mu.Unlock()
+	if !ok || !expanded {
+		t.Fatalf("expected the press to expand section 1, ok=%v expanded=%v", ok, expanded)
+	}
+
+	// A press on an expanded section's row is inert: only the control
+	// column collapses an expanded section.
+	tui.mu.Lock()
+	if tui.expandCollapsedSectionAtClick(box.Left+5, box.Top+3) {
+		t.Fatal("a press on an expanded section's row must be inert")
 	}
 	tui.mu.Unlock()
 }

@@ -109,7 +109,7 @@ var tuiHelpLines = []string{
 	"page up / down\tscroll focused pane by page",
 	"home / end\tjump to start / end of focused pane",
 	"[ / ]\tjump to previous / next section start or end",
-	"p\ttoggle global preview; click a section row to jump to it",
+	"c\tcollapse all sections; click a collapsed section to expand it",
 	"enter\tsend the input line when focused; toggle latest handoff otherwise",
 	"click\tselect / toggle tab under cursor; click the input row to focus input",
 	"output column\tclick ▸ / ▾ at a section's first row to collapse / expand it",
@@ -180,9 +180,8 @@ func buildRoot(t *TUI, width, height int, displays [3][]taiui.Line) taiui.Elemen
 // content panel whose content rows are indented past the control
 // column, the column's background over the content rows, and one
 // control glyph per visible section. The title row spans the full box
-// width and is not part of the column. In the global preview the fold
-// controls are not rendered: a press on any row jumps to its section
-// instead of toggling. The caller holds t.mu. See TheoryOfOutputControls.
+// width and is not part of the column. The caller holds t.mu. See
+// TheoryOfOutputControls.
 func (t *TUI) outputPanelView(box taiui.Box, display []taiui.Line, label string, highlight bool) taiui.Element {
 	panel := taiui.TabPanel(box, tabNames[0], label, highlight,
 		t.tabs.Expanded[0], t.tabs.Focus == 0, t.tabs.Unseen[0], display, t.scrolls[0], panelStyle,
@@ -199,30 +198,28 @@ func (t *TUI) outputPanelView(box taiui.Box, display []taiui.Line, label string,
 		taiui.Fill(true),
 		taiui.BGColor(base),
 	)}
-	if !t.outputPreview {
-		offset := taiui.ClampOffset(t.scrolls[0].Offset, len(display), t.tuiPaneHeight(0, box))
-		for _, row := range t.outputControlRows(box, display, offset) {
-			controls := t.sectionControls(row.section)
-			if len(controls) == 0 {
-				continue
-			}
-			text := controls[0].Glyph
-			right := box.Left + controlColumnWidth
-			// Hovering the control column on a control's row lays the
-			// section's controls out horizontally, one Han-width slot
-			// each, extending past the column. The strip needs mouse
-			// reporting on: with reporting off the tracked position is
-			// stale. See TheoryOfOutputControls.
-			stripWidth := controlColumnWidth * len(controls)
-			if t.ctlHover && t.mouseReporting && len(controls) > 1 && t.ctlHoverY == row.row &&
-				t.ctlHoverX >= box.Left && t.ctlHoverX < box.Left+stripWidth {
-				text = controlStripText(controls)
-				right = min(box.Left+stripWidth, box.Right)
-			}
-			children = append(children, taiui.Text(text, taiui.Box{
-				Top: row.row, Left: box.Left, Bottom: row.row + 1, Right: right,
-			}))
+	offset := taiui.ClampOffset(t.scrolls[0].Offset, len(display), t.tuiPaneHeight(0, box))
+	for _, row := range t.outputControlRows(box, display, offset) {
+		controls := t.sectionControls(row.section)
+		if len(controls) == 0 {
+			continue
 		}
+		text := controls[0].Glyph
+		right := box.Left + controlColumnWidth
+		// Hovering the control column on a control's row lays the
+		// section's controls out horizontally, one Han-width slot
+		// each, extending past the column. The strip needs mouse
+		// reporting on: with reporting off the tracked position is
+		// stale. See TheoryOfOutputControls.
+		stripWidth := controlColumnWidth * len(controls)
+		if t.ctlHover && t.mouseReporting && len(controls) > 1 && t.ctlHoverY == row.row &&
+			t.ctlHoverX >= box.Left && t.ctlHoverX < box.Left+stripWidth {
+			text = controlStripText(controls)
+			right = min(box.Left+stripWidth, box.Right)
+		}
+		children = append(children, taiui.Text(text, taiui.Box{
+			Top: row.row, Left: box.Left, Bottom: row.row + 1, Right: right,
+		}))
 	}
 	return taiui.Overlay(children...)
 }
