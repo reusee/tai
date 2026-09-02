@@ -55,7 +55,7 @@ func TestMenuBarLayout(t *testing.T) {
 		t.Fatal("a narrow width keeps only the titles that fit")
 	}
 	var buf bytes.Buffer
-	taiui.Render(menuBarElement(80, 0), taiui.NewTerminalScreen(&buf, 80, 10))
+	taiui.Render(menuBarElement(80, 0, -1), taiui.NewTerminalScreen(&buf, 80, 10))
 	for _, want := range want {
 		if !bytes.Contains(buf.Bytes(), []byte(want)) {
 			t.Fatalf("the menu bar must render %q, got: %q", want, buf.String())
@@ -97,7 +97,7 @@ func TestMenuDropdownBox(t *testing.T) {
 // TheoryOfControlBar.
 func TestMenuDropdownRendering(t *testing.T) {
 	var buf bytes.Buffer
-	taiui.Render(menuDropdownElement(80, 24, 0), taiui.NewTerminalScreen(&buf, 80, 24))
+	taiui.Render(menuDropdownElement(80, 24, 0, -1), taiui.NewTerminalScreen(&buf, 80, 24))
 	out := buf.String()
 	for _, want := range []string{"Prev section", "Next section", "Collapse all"} {
 		if !bytes.Contains(buf.Bytes(), []byte(want)) {

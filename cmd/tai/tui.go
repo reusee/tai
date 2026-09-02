@@ -321,8 +321,11 @@ still toggles it. In the Output tab, a press on the control column
 toggles the section under the control, a press on a collapsed section's
 row expands it, and both preempt the ordinary press handling (see
 TheoryOfOutputControls). Presses outside every panel,
-middle and right presses are ignored; no-button motion (mode 1003) only
-drives the control column's hover strip.
+middle and right presses are ignored; no-button motion (mode 1003)
+drives the control column's hover strip and the menu bar's pointer
+hover: the hovered category title and the open dropdown's item render
+reversed, and while a dropdown is open, motion over another title
+switches menus (see TheoryOfControlBar).
 
 In interactive sessions, the Output tab's input row is the one press
 target with its own semantics: a left press on the chat input bar's row
@@ -736,8 +739,10 @@ type TUI struct {
 	sectionedLines  int
 
 	// ctlHover records the pointer position from the latest no-button
-	// motion event (mode 1003), driving the Output tab's control-column
-	// hover strip. See TheoryOfOutputControls.
+	// motion event (mode 1003), driving pointer hover rendering: the
+	// Output tab's control-column hover strip and the menu bar's
+	// hovered title and dropdown item. See TheoryOfOutputControls and
+	// TheoryOfControlBar.
 	ctlHover  bool
 	ctlHoverX int
 	ctlHoverY int

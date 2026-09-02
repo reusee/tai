@@ -185,7 +185,7 @@ func buildRoot(t *TUI, width, height int, displays [3][]taiui.Line) taiui.Elemen
 		// category dropdown. The row carries only the category titles,
 		// so it keeps the terminal default background. See
 		// TheoryOfControlBar.
-		root = taiui.Overlay(root, menuBarElement(width, t.openMenu))
+		root = taiui.Overlay(root, menuBarElement(width, t.openMenu, t.menuHoverTitleLocked()))
 	}
 	if t.showHelp {
 		// The help overlay is centered over the tabs and lists the key
@@ -196,7 +196,7 @@ func buildRoot(t *TUI, width, height int, displays [3][]taiui.Line) taiui.Elemen
 	if t.openMenu >= 0 {
 		// The open menu's dropdown covers the tabs below its title. See
 		// TheoryOfControlBar.
-		if dropdown := menuDropdownElement(width, height, t.openMenu); dropdown != nil {
+		if dropdown := menuDropdownElement(width, height, t.openMenu, t.menuHoverItemLocked()); dropdown != nil {
 			root = taiui.Overlay(root, dropdown)
 		}
 	}

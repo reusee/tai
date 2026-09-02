@@ -22,6 +22,12 @@ Menu bar and mouse-complete interaction theory (cmd/tai):
   open menu, the top-level quit entry is never triggered by hover,
   and closing stays press-driven. With the menus, all TUI
   interactions are reachable by mouse alone.
+- Pointer hover is affordance only: the category title and the open
+  dropdown's item under the pointer render reversed, so the pointer
+  target is visible before any press. The highlight runs no action
+  and opens no menu by itself; the motion-driven menu switch while a
+  dropdown is open, the press-driven closing, and the quit entry's
+  hover inertness are unchanged.
 - The menu bar exists only while Tabs.TopInset reserves a row: the
   tab layout starts below the inset, the bar draws over the reserved
   row, and no coordinate is remapped. Every Boxes consumer, hit test,
@@ -146,17 +152,22 @@ func menuBarHit(topInset, width, x, y int) (index int, ok bool) {
 // menuBarElement renders the menu bar row: the category titles as
 // plain text on the row Tabs.TopInset reserves, with no background of
 // its own so the row keeps the terminal default. The open menu's
-// title is bold. See TheoryOfControlBar.
-func menuBarElement(width int, openMenu int) taiui.Element {
+// title is bold; the title under the pointer renders reversed. Hover
+// is affordance only and never triggers actions. See
+// TheoryOfControlBar.
+func menuBarElement(width int, openMenu int, hoverMenu int) taiui.Element {
 	var children []any
 	for _, slot := range menuBarLayout(width) {
 		box := taiui.Box{Top: 0, Left: slot.x0, Bottom: 1, Right: slot.x1}
 		title := menuBarEntries[slot.index].title
+		specs := []any{title, box}
 		if slot.index == openMenu {
-			children = append(children, taiui.Text(title, box, taiui.Bold(true)))
-		} else {
-			children = append(children, taiui.Text(title, box))
+			specs = append(specs, taiui.Bold(true))
 		}
+		if slot.index == hoverMenu {
+			specs = append(specs, taiui.Reverse(true))
+		}
+		children = append(children, taiui.Text(specs...))
 	}
 	return taiui.Overlay(children...)
 }
@@ -203,9 +214,10 @@ func menuDropdownBox(width, height, openMenu int) (taiui.Box, bool) {
 
 // menuDropdownElement renders the open menu's dropdown over the tabs:
 // a filled, borderless box holding exactly the item rows, one per
-// row, with one cell of side padding. It returns nil when no menu is
-// open or the box degenerates. See TheoryOfControlBar.
-func menuDropdownElement(width, height, openMenu int) taiui.Element {
+// row, with one cell of side padding; the item under the pointer
+// renders reversed. It returns nil when no menu is open or the box
+// degenerates. See TheoryOfControlBar.
+func menuDropdownElement(width, height, openMenu, hoverItem int) taiui.Element {
 	box, ok := menuDropdownBox(width, height, openMenu)
 	if !ok {
 		return nil
@@ -217,9 +229,13 @@ func menuDropdownElement(width, height, openMenu int) taiui.Element {
 		taiui.BGColor(taiui.HexColor(tabUnfocusBG)),
 	)}
 	for i, item := range entry.items {
-		children = append(children, taiui.Text(item.label,
+		specs := []any{item.label,
 			taiui.Box{Top: box.Top + i, Left: box.Left + menuDropdownPadding, Bottom: box.Top + 1 + i, Right: box.Right - menuDropdownPadding},
-		))
+		}
+		if i == hoverItem {
+			specs = append(specs, taiui.Reverse(true))
+		}
+		children = append(children, taiui.Text(specs...))
 	}
 	return taiui.Overlay(children...)
 }
@@ -323,6 +339,46 @@ func (t *TUI) menuDropdownPressLocked(x, y int) (action controlBarAction, consum
 		action = menuBarEntries[open].items[row].action
 	}
 	return action, consumed
+}
+
+// menuHoverItemLocked returns the row of the open menu's dropdown
+// item the pointer hovers, or -1. The item highlights only where a
+// press would run it: inside the item's text columns, not the
+// dropdown's side padding. The caller holds t.mu. See
+// TheoryOfControlBar.
+func (t *TUI) menuHoverItemLocked() int {
+	if !t.ctlHover || t.openMenu < 0 || t.openMenu >= len(menuBarEntries) {
+		return -1
+	}
+	box, ok := menuDropdownBox(t.width, t.height, t.openMenu)
+	if !ok {
+		return -1
+	}
+	if t.ctlHoverY < box.Top || t.ctlHoverY >= box.Bottom ||
+		t.ctlHoverX < box.Left+menuDropdownPadding || t.ctlHoverX >= box.Right-menuDropdownPadding {
+		return -1
+	}
+	row := t.ctlHoverY - box.Top
+	if row >= len(menuBarEntries[t.openMenu].items) {
+		return -1
+	}
+	return row
+}
+
+// menuHoverTitleLocked returns the menu bar entry the pointer hovers,
+// from the pointer position the latest motion or release event
+// recorded, or -1. The highlight is affordance only: hover never
+// opens menus or runs actions. The caller holds t.mu. See
+// TheoryOfControlBar.
+func (t *TUI) menuHoverTitleLocked() int {
+	if !t.ctlHover {
+		return -1
+	}
+	index, ok := menuBarHit(t.tabs.TopInset, t.width, t.ctlHoverX, t.ctlHoverY)
+	if !ok {
+		return -1
+	}
+	return index
 }
 
 // menuHoverLocked pops up the menu of the category title under the
