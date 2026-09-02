@@ -17,6 +17,52 @@ type fakeTtyForTest struct {
 	buf bytes.Buffer
 }
 
+// TestMenuBarLayout pins the pure layout: ordered titles, hit-test
+// agreement, gap and off-row inertness, narrow-width truncation, and
+// the rendered titles. See TheoryOfControlBar.
+func TestMenuBarLayout(t *testing.T) {
+	slots := menuBarLayout(80)
+	want := []string{"Sections", "View", "Help", "Quit"}
+	if len(slots) != len(want) {
+		t.Fatalf("expected %d slots, got %d", len(want), len(slots))
+	}
+	for i, slot := range slots {
+		if menuBarEntries[slot.index].title != want[i] {
+			t.Fatalf("slot %d is %q, want %q", i, menuBarEntries[slot.index].title, want[i])
+		}
+		if slot.x1-slot.x0 != len(want[i]) {
+			t.Fatalf("slot %d width is %d, want %d", i, slot.x1-slot.x0, len(want[i]))
+		}
+		index, ok := menuBarHit(1, 80, slot.x0, 0)
+		if !ok || index != slot.index {
+			t.Fatalf("hit at %d resolved %d ok=%v, want %d", slot.x0, index, ok, slot.index)
+		}
+		index, _ = menuBarHit(1, 80, slot.x1-1, 0)
+		if index != slot.index {
+			t.Fatalf("hit at %d resolved %d, want %d", slot.x1-1, index, slot.index)
+		}
+	}
+	if _, ok := menuBarHit(1, 80, slots[0].x1, 0); ok {
+		t.Fatal("the gap between titles is inert")
+	}
+	if _, ok := menuBarHit(1, 80, 0, 1); ok {
+		t.Fatal("row 1 is not the menu bar")
+	}
+	if _, ok := menuBarHit(0, 80, 0, 0); ok {
+		t.Fatal("no inset means no menu bar")
+	}
+	if len(menuBarLayout(10)) != 1 {
+		t.Fatal("a narrow width keeps only the titles that fit")
+	}
+	var buf bytes.Buffer
+	taiui.Render(menuBarElement(80, 0), taiui.NewTerminalScreen(&buf, 80, 10))
+	for _, want := range want {
+		if !bytes.Contains(buf.Bytes(), []byte(want)) {
+			t.Fatalf("the menu bar must render %q, got: %q", want, buf.String())
+		}
+	}
+}
+
 func (f *fakeTtyForTest) Start() error             { return nil }
 func (f *fakeTtyForTest) Stop() error              { return nil }
 func (f *fakeTtyForTest) Drain() error             { return nil }
@@ -29,125 +75,6 @@ func (f *fakeTtyForTest) Write(p []byte) (int, error) {
 	return f.buf.Write(p)
 }
 func (f *fakeTtyForTest) Close() error { return nil }
-
-// TestControlBarLayout pins the pure layout: ordered two-cell slots,
-// hit-test agreement, off-bar inertness, and the mouse-state glyph.
-// See TheoryOfControlBar.
-func TestControlBarLayout(t *testing.T) {
-	glyphs := controlBarLayout(80, true)
-	want := []controlBarAction{
-		controlPrevSections, controlNextSections, controlCollapseAll,
-		controlSplitToggle, controlMouseToggle, controlHelpToggle, controlQuit,
-	}
-	if len(glyphs) != len(want) {
-		t.Fatalf("expected %d glyphs, got %d", len(want), len(glyphs))
-	}
-	for i, g := range glyphs {
-		if g.action != want[i] {
-			t.Fatalf("glyph %d is %q, want %q", i, g.action, want[i])
-		}
-		if g.x1-g.x0 != 2 {
-			t.Fatalf("glyph %d slot is %d cells, want 2", i, g.x1-g.x0)
-		}
-		action, ok := controlBarHit(1, 80, g.x0, 0, true)
-		if !ok || action != g.action {
-			t.Fatalf("hit at %d resolved %q ok=%v, want %q", g.x0, action, ok, g.action)
-		}
-		action, _ = controlBarHit(1, 80, g.x1-1, 0, true)
-		if action != g.action {
-			t.Fatalf("hit at %d resolved %q, want %q", g.x1-1, action, g.action)
-		}
-	}
-	if _, ok := controlBarHit(1, 80, 2, 0, true); ok {
-		t.Fatal("the separator column between slots is inert")
-	}
-	if _, ok := controlBarHit(1, 80, 0, 1, true); ok {
-		t.Fatal("row 1 is not the control bar")
-	}
-	if _, ok := controlBarHit(0, 80, 0, 0, true); ok {
-		t.Fatal("no inset means no control bar")
-	}
-	off := controlBarLayout(80, false)
-	if glyphs[4].glyph != "◉" || off[4].glyph != "◎" {
-		t.Fatalf("mouse glyphs: on %q off %q", glyphs[4].glyph, off[4].glyph)
-	}
-}
-
-// TestTUIControlBarClicks drives each bar action through
-// handleMouseKey, the path the session's key loop takes. See
-// TheoryOfControlBar.
-func TestTUIControlBarClicks(t *testing.T) {
-	newBar := func() *TUI {
-		tui := newTUIForTest()
-		tui.width, tui.height = 80, 24
-		tui.tabs.TopInset = 1
-		return tui
-	}
-
-	t.Run("Split", func(t *testing.T) {
-		tui := newBar()
-		tui.handleMouseKey("mouse-left@9,0")
-		if !tui.tabs.SplitVertical {
-			t.Fatal("the split glyph must toggle the split axis")
-		}
-	})
-
-	t.Run("Help", func(t *testing.T) {
-		tui := newBar()
-		tui.handleMouseKey("mouse-left@15,0")
-		if !tui.showHelp {
-			t.Fatal("the help glyph must open the help overlay")
-		}
-		tui.handleMouseKey("mouse-left@15,0")
-		if tui.showHelp {
-			t.Fatal("the help glyph must close the help overlay")
-		}
-	})
-
-	t.Run("MouseToggle", func(t *testing.T) {
-		tui := newBar()
-		tui.mouseReporting = true
-		tui.handleMouseKey("mouse-left@12,0")
-		if tui.mouseReporting {
-			t.Fatal("the mouse glyph must toggle reporting off")
-		}
-	})
-
-	t.Run("CollapseAll", func(t *testing.T) {
-		tui := newBar()
-		tui.writeOutputPart(generators.RoleUser, outputColorUserLine, false, "a\n")
-		tui.writeOutputPart(generators.RoleModel, taiui.NoColor, false, "b\n")
-		tui.handleMouseKey("mouse-left@6,0")
-		for i := range tui.outputSections {
-			if !tui.outputSections[i].collapsed {
-				t.Fatalf("section %d must be collapsed", i)
-			}
-		}
-	})
-
-	t.Run("QuitConfirmsOnSecondPress", func(t *testing.T) {
-		tui := newBar()
-		tui.tty = &fakeTtyForTest{}
-		if tui.handleMouseKey("mouse-left@18,0") {
-			t.Fatal("the first quit press must only arm the confirmation")
-		}
-		if !tui.quit.Pending() {
-			t.Fatal("the first quit press must arm the confirmation")
-		}
-		if !tui.handleMouseKey("mouse-left@18,0") {
-			t.Fatal("the second quit press must confirm the quit")
-		}
-	})
-
-	t.Run("OtherPressCancelsQuit", func(t *testing.T) {
-		tui := newBar()
-		tui.handleMouseKey("mouse-left@18,0")
-		tui.handleMouseKey("mouse-left@5,5")
-		if tui.quit.Pending() {
-			t.Fatal("a press elsewhere must cancel the confirmation")
-		}
-	})
-}
 
 // TestTUISubmitGlyphClick pins the pointer submit path: a press on the
 // bar's right-end glyph delivers the typed line while a ChatInput call
@@ -203,4 +130,94 @@ func TestTUIHelpClickCloses(t *testing.T) {
 	if !tui.showHelp {
 		t.Fatal("a press outside the help overlay must not close it")
 	}
+}
+
+// TestTUIMenuBarClicks drives the menu bar through handleMouseKey, the
+// path the session's key loop takes: opening, switching, item actions,
+// closing, and the two-press quit. See TheoryOfControlBar.
+func TestTUIMenuBarClicks(t *testing.T) {
+	newBar := func() *TUI {
+		tui := newTUIForTest()
+		tui.width, tui.height = 80, 24
+		tui.tabs.TopInset = 1
+		return tui
+	}
+
+	t.Run("OpenAndClose", func(t *testing.T) {
+		tui := newBar()
+		tui.handleMouseKey("mouse-left@2,0")
+		if tui.openMenu != 0 {
+			t.Fatalf("the Sections title must open its menu, got %d", tui.openMenu)
+		}
+		tui.handleMouseKey("mouse-left@2,0")
+		if tui.openMenu != -1 {
+			t.Fatalf("pressing the title again must close the menu, got %d", tui.openMenu)
+		}
+	})
+
+	t.Run("SwitchMenus", func(t *testing.T) {
+		tui := newBar()
+		tui.handleMouseKey("mouse-left@2,0")
+		tui.handleMouseKey("mouse-left@12,0")
+		if tui.openMenu != 1 {
+			t.Fatalf("pressing another title must switch menus, got %d", tui.openMenu)
+		}
+	})
+
+	t.Run("ItemRunsAction", func(t *testing.T) {
+		tui := newBar()
+		tui.handleMouseKey("mouse-left@12,0")
+		tui.handleMouseKey("mouse-left@15,2")
+		if !tui.tabs.SplitVertical {
+			t.Fatal("the Toggle split item must toggle the split axis")
+		}
+		if tui.openMenu != -1 {
+			t.Fatal("an item press must close the menu")
+		}
+	})
+
+	t.Run("CollapseAll", func(t *testing.T) {
+		tui := newBar()
+		tui.writeOutputPart(generators.RoleUser, outputColorUserLine, false, "a\n")
+		tui.writeOutputPart(generators.RoleModel, taiui.NoColor, false, "b\n")
+		tui.handleMouseKey("mouse-left@2,0")
+		tui.handleMouseKey("mouse-left@15,4")
+		for i := range tui.outputSections {
+			if !tui.outputSections[i].collapsed {
+				t.Fatalf("section %d must be collapsed", i)
+			}
+		}
+	})
+
+	t.Run("QuitConfirmsOnSecondPress", func(t *testing.T) {
+		tui := newBar()
+		tui.tty = &fakeTtyForTest{}
+		if tui.handleMouseKey("mouse-left@27,0") {
+			t.Fatal("the first quit press must only arm the confirmation")
+		}
+		if !tui.quit.Pending() {
+			t.Fatal("the first quit press must arm the confirmation")
+		}
+		if !tui.handleMouseKey("mouse-left@27,0") {
+			t.Fatal("the second quit press must confirm the quit")
+		}
+	})
+
+	t.Run("OutsidePressClosesMenu", func(t *testing.T) {
+		tui := newBar()
+		tui.handleMouseKey("mouse-left@2,0")
+		tui.handleMouseKey("mouse-left@5,10")
+		if tui.openMenu != -1 {
+			t.Fatal("a press outside the dropdown must close the menu")
+		}
+	})
+
+	t.Run("OtherPressCancelsQuit", func(t *testing.T) {
+		tui := newBar()
+		tui.handleMouseKey("mouse-left@27,0")
+		tui.handleMouseKey("mouse-left@5,10")
+		if tui.quit.Pending() {
+			t.Fatal("a press elsewhere must cancel the confirmation")
+		}
+	})
 }

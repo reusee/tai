@@ -22,6 +22,9 @@ func newChatInputTestTUI() *TUI {
 	return &TUI{
 		tabs:     taiui.NewTabs(3),
 		updateCh: make(chan struct{}, 1),
+		// No menu is open when a test starts: the zero index would be a
+		// valid open menu. See TheoryOfControlBar.
+		openMenu: -1,
 		// The input-bar tests exercise interactive sessions, the only
 		// ones that render the bar. See TheoryOfTUIChatInput.
 		interactive: true,

@@ -26,10 +26,13 @@ func newTUIForTest() *TUI {
 	// production default. See TheoryOfTUI.
 	tabs.FocusTab(0)
 	return &TUI{
-		output:  taiui.NewLineBuffer(0),
-		logs:    taiui.NewStringBuffer(0),
-		tabs:    tabs,
-		scrolls: [3]taiui.ScrollState{{Follow: true}},
+		output: taiui.NewLineBuffer(0),
+		logs:   taiui.NewStringBuffer(0),
+		tabs:   tabs,
+		// No menu is open when a test starts: the zero index would be a
+		// valid open menu. See TheoryOfControlBar.
+		openMenu: -1,
+		scrolls:  [3]taiui.ScrollState{{Follow: true}},
 		// The Events tab's elapsed timer counts from the test's start;
 		// timer assertions anchor on an explicitly set startTime. See
 		// TheoryOfEventTree.

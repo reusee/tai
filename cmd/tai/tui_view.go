@@ -119,7 +119,7 @@ var tuiHelpLines = []string{
 	"q / Ctrl-C\tquit (press again to confirm)",
 	"input bar\tclick the bottom row to focus and type; esc or view-changing keys release",
 	"?\ttoggle this help overlay",
-	"top bar\tclick « » ⊟ ⇅ ◉ ? ✕ to jump sections, collapse all, split, toggle mouse, toggle help, quit",
+	"menu bar\tclick a category on the top row to open its menu; click an item to run it; Quit confirms on the second click",
 	"submit glyph\tclick ↵ at the input bar's right end to send the typed line",
 	"help close\tclick anywhere on the help overlay to close it",
 }
@@ -180,16 +180,25 @@ func buildRoot(t *TUI, width, height int, displays [3][]taiui.Line) taiui.Elemen
 	}
 	root := taiui.Overlay(elements...)
 	if t.tabs.TopInset > 0 {
-		// The control bar draws over the top rows the inset reserves:
-		// every keyboard action without a pointer path is a clickable
-		// glyph there. See TheoryOfControlBar.
-		root = taiui.Overlay(root, controlBarElement(width, t.mouseReporting))
+		// The menu bar draws over the top row the inset reserves: every
+		// keyboard action without a pointer path is reachable through a
+		// category dropdown. The row carries only the category titles,
+		// so it keeps the terminal default background. See
+		// TheoryOfControlBar.
+		root = taiui.Overlay(root, menuBarElement(width, t.openMenu))
 	}
 	if t.showHelp {
 		// The help overlay is centered over the tabs and lists the key
 		// bindings. It is derived from state like the quit confirmation
 		// bar: toggling showHelp re-renders the overlay.
 		root = taiui.Overlay(root, taiui.HelpOverlay(t.helpLines(), 16, width, height))
+	}
+	if t.openMenu >= 0 {
+		// The open menu's dropdown covers the tabs below its title. See
+		// TheoryOfControlBar.
+		if dropdown := menuDropdownElement(width, height, t.openMenu); dropdown != nil {
+			root = taiui.Overlay(root, dropdown)
+		}
 	}
 	if t.quit.Pending() {
 		// A pending quit confirmation draws a confirmation bar over the

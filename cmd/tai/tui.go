@@ -644,6 +644,13 @@ type TUI struct {
 	// See TheoryOfTUI.
 	showHelp bool
 
+	// openMenu is the index of the open menu bar dropdown in
+	// menuBarEntries, or -1 when none is open. A press on a category
+	// title opens, switches, or closes the dropdown, an item press
+	// runs its action, and a press outside closes it. Guarded by mu.
+	// See TheoryOfControlBar.
+	openMenu int
+
 	// interactive reports whether this session's app supports
 	// multi-turn conversation (see apps.Interactive): only
 	// interactive sessions render the chat input bar and reserve its
@@ -792,6 +799,9 @@ func newTUI() (*TUI, error) {
 		output: taiui.NewLineBuffer(0),
 		logs:   taiui.NewStringBuffer(0),
 		tabs:   tabs,
+		// No menu is open when the session starts. See
+		// TheoryOfControlBar.
+		openMenu: -1,
 		// The Output tab starts expanded, focused, and following the
 		// tail; the other tabs stay collapsed and expand automatically
 		// the first time content for them arrives. The scroll offsets
@@ -1416,20 +1426,43 @@ func (t *TUI) handleMouseKey(key string) bool {
 	case "wheel-down":
 		t.mouse.Wheel(t.tabs, t.scrolls[:], t.width, t.height, x, y, 1)
 	case "left":
-		if a, hit := controlBarHit(t.tabs.TopInset, t.width, x, y, t.mouseReporting); hit {
-			// Any bar press other than the quit glyph cancels a pending
-			// quit confirmation, like any non-quit key. See TheoryOfTUI.
-			if a != controlQuit {
+		if index, hit := menuBarHit(t.tabs.TopInset, t.width, x, y); hit {
+			entry := menuBarEntries[index]
+			if entry.isTopLevel() {
+				// Any menu press other than the quit entry cancels a
+				// pending quit confirmation, like any non-quit key. See
+				// TheoryOfTUI.
+				if entry.action != controlQuit {
+					t.quit.Cancel()
+				}
+				// The action runs after the lock is released: the
+				// dispatched actions take t.mu themselves. See
+				// TheoryOfControlBar.
+				action, dispatchBar = entry.action, true
+			} else {
+				// A category title press opens, switches, or closes the
+				// dropdown. See TheoryOfControlBar.
 				t.quit.Cancel()
+				if t.openMenu == index {
+					t.openMenu = -1
+				} else {
+					t.openMenu = index
+				}
 			}
-			// The bar action runs after the lock is released: the
-			// dispatched actions take t.mu themselves. See
-			// TheoryOfControlBar.
-			action, dispatchBar = a, true
-		} else {
-			// A press that is not the quit glyph cancels a pending
-			// quit confirmation, like any other key. See TheoryOfTUI.
+		} else if itemAction, consumed := t.menuDropdownPressLocked(x, y); consumed {
+			// A press inside the open dropdown closes it; an item press
+			// runs its action. See TheoryOfControlBar.
 			t.quit.Cancel()
+			if itemAction != "" {
+				action, dispatchBar = itemAction, true
+			}
+		} else {
+			// A press that is not on the menu bar or the open dropdown
+			// cancels a pending quit confirmation, closes the menu, and
+			// runs the ordinary press handling, like any other key. See
+			// TheoryOfTUI.
+			t.quit.Cancel()
+			t.openMenu = -1
 			switch {
 			case t.helpPressLocked(x, y):
 				// A press inside the help overlay closes it. See
