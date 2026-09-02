@@ -787,7 +787,8 @@ func TestReadTUIKeys(t *testing.T) {
 func TestReadTUIMouseKeys(t *testing.T) {
 	// SGR mouse sequences: ESC [ < Cb ; Cx ; Cy M for press, drag, and
 	// wheel events, m for releases. Wire coordinates are 1-based and
-	// emitted 0-based. See taiui.TheoryOfMouseInput.
+	// emitted 0-based. No-button motion (mode 1003) reports the pointer
+	// position as a motion event. See taiui.TheoryOfMouseInput.
 	pr, pw := io.Pipe()
 	ch := make(chan string, 10)
 	go taiui.ReadKeys(pr, ch)
@@ -797,11 +798,11 @@ func TestReadTUIMouseKeys(t *testing.T) {
 		pw.Write([]byte("\x1b[<64;8;9M")) // wheel up at (7,8)
 		pw.Write([]byte("\x1b[<65;8;9M")) // wheel down at (7,8)
 		pw.Write([]byte("\x1b[<32;5;5M")) // left drag at (4,4)
-		pw.Write([]byte("\x1b[<35;5;5M")) // no-button motion: ignored
+		pw.Write([]byte("\x1b[<35;5;5M")) // no-button motion at (4,4)
 		pw.Close()
 	}()
 	var got []string
-	for len(got) < 5 {
+	for len(got) < 6 {
 		select {
 		case k := <-ch:
 			got = append(got, k)
@@ -815,17 +816,12 @@ func TestReadTUIMouseKeys(t *testing.T) {
 		"mouse-wheel-up@7,8",
 		"mouse-wheel-down@7,8",
 		"mouse-leftdrag@4,4",
+		"mouse-motion@4,4",
 	}
 	for i := range want {
 		if got[i] != want[i] {
 			t.Fatalf("key %d: expected %q, got %q", i, want[i], got[i])
 		}
-	}
-	// The no-button motion event must be ignored.
-	select {
-	case k := <-ch:
-		t.Fatalf("unexpected key for ignored motion: %q", k)
-	case <-time.After(50 * time.Millisecond):
 	}
 }
 

@@ -83,16 +83,20 @@ taiui mouse input theory:
   modifier prefix; the consumer tracks which button the release ends.
   In X10 and URXVT, the low 2 bits set to 3 (after offset subtraction)
   indicates release, regardless of modifier bits. No-button motion
-  (code 35) and malformed sequences are ignored.
+  (code 35) is emitted as "mouse-motion@x,y", carrying the pointer
+  position for hover tracking; malformed sequences are ignored.
 - Like keyboard input, a mouse sequence may arrive split across reads;
   the parser waits for the sequence terminator (or all 3 raw bytes for
   X10) before emitting.
 `
 
 const (
-	MouseKeyPrefix       = "mouse-"
-	MouseEnableSequence  = "\x1b[?1000h\x1b[?1002h\x1b[?1006h"
-	MouseDisableSequence = "\x1b[?1000l\x1b[?1002l\x1b[?1006l"
+	MouseKeyPrefix = "mouse-"
+	// MouseEnableSequence enables button events (1000), button-held
+	// drag (1002), any-motion tracking (1003) for hover, and SGR
+	// extended coordinates (1006). See TheoryOfMouseInput.
+	MouseEnableSequence  = "\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h"
+	MouseDisableSequence = "\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l"
 	mouseMotionFlag      = 32
 	mouseWheelFlag       = 64
 	mouseShiftFlag       = 4
@@ -1114,8 +1118,9 @@ func mouseKeyName(button, x, y int, release bool) string {
 		case 2:
 			kind = "rightdrag"
 		default:
-			// Motion without a button (mode 1003) is not consumed.
-			return ""
+			// Motion without a button (mode 1003) reports the pointer
+			// position alone, so applications can track hover.
+			kind = "motion"
 		}
 	default:
 		switch button & 3 {

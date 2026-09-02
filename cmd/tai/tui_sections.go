@@ -38,170 +38,95 @@ Output tab sections and event-to-output navigation theory (cmd/tai):
   recomputed on the click path only, not per frame.
 
 - The scroll target is the display line where the section's first
-  source line begins: the source lines before the section start are
-  wrapped with the same wrapping the Output pane's display uses, so
-  the offset indexes into the wrapped display identically. The wrap
-  runs on the click path only, not per frame. In the collapsed thought
-  projection the offset derives from the cached per-section row counts
-  instead; see TheoryOfTUIThoughtsCollapse.
+  source line begins: the projection records each section's
+  display-row count, so the offset is the prefix rows plus the earlier
+  sections' counts (outputSectionOffset) — the same offsets the
+  projection rendered. See TheoryOfOutputControls.
 `
 
-// collapsedThoughtRow renders one source line as the collapsed row of a
-// thought section: the line truncated to the content width, keeping the
-// line's color, so the row never exceeds one display column.
-func collapsedThoughtRow(line taiui.Line, contentWidth int) taiui.Line {
-	return taiui.Line{
-		Text:  displaywidth.TruncateString(line.Text, contentWidth, "…"),
-		Color: line.Color,
-	}
+const TheoryOfOutputControls = `
+Output tab control column theory (cmd/tai):
+
+- The Output tab reserves a control column at its left edge, one Han
+  character wide. The content panel renders two cells to the right, so
+  no content hides under the controls, and the column's background
+  follows the tab's focus state like the panel's own.
+- Every section carries a fold control: the unicode triangle ▾ while
+  the section is expanded, ▸ while collapsed, drawn in the default
+  foreground so it never competes with the content. A press on the
+  control's cells toggles the section's collapsed state.
+- The control follows the content: it renders at the section's first
+  display row, clamped into the viewport when that row has scrolled
+  above it, so every section with a visible row stays addressable while
+  scrolled. Sections whose rows left the viewport carry no control.
+- A collapsed section renders as exactly one display row — its first
+  source line, truncated to the content width — so a long section folds
+  to its header. Collapse is a display projection over the append-only
+  buffer: the projection re-derives from the source, so toggling back
+  re-reveals every line. See TheoryOfTUINoTruncation.
+- A section may carry several controls. The column shows the first
+  control per row; when the pointer hovers the control column on a
+  control's row, all of the section's controls display horizontally,
+  one Han-width slot each, and a press maps its column onto the slot.
+  The pointer's no-button motion events (mode 1003) drive the hover.
+- The projection is incremental: each completed source line wraps at
+  most once per content width behind a left-to-right pointer, the
+  trailing partial line re-wraps fresh every frame, and a section
+  toggle or a content-width change resets the projection.
+`
+
+// controlColumnWidth is the control column's width in terminal cells:
+// one Han character. See TheoryOfOutputControls.
+const controlColumnWidth = 2
+
+const (
+	// sectionGlyphCollapsed marks a collapsed section: a press expands
+	// it. See TheoryOfOutputControls.
+	sectionGlyphCollapsed = "▸"
+	// sectionGlyphExpanded marks an expanded section: a press collapses
+	// it. See TheoryOfOutputControls.
+	sectionGlyphExpanded = "▾"
+)
+
+// outputControl is one control of a section's control column: a unicode
+// glyph label resolved per section at render time. The first control is
+// the fold toggle; further controls join the hover strip. See
+// TheoryOfOutputControls.
+type outputControl struct {
+	Glyph string
 }
 
-const TheoryOfTUIThoughtsCollapse = `
-Output tab thought collapse theory (cmd/tai):
-
-- The t key toggles thoughtsCollapsed. When on, every thought section
-  of the Output tab renders as exactly one display row: a closed
-  section shows its first source line, and a still-streaming section —
-  a generation or handoff request in flight — shows its newest
-  sectioned line, so a long thinking phase keeps a live single-row
-  view of the newest reasoning while the earlier lines stay hidden.
-  Non-thought sections render in full, and lines appended outside any
-  section (command output, stderr) always render in full.
-- Collapse is a display projection, never a buffer change: the output
-  buffer and the expanded wrap cache are untouched, so toggling the
-  mode off re-reveals every line. See TheoryOfTUINoTruncation.
-- The projection wraps each source line at most once per content
-  width: the prefix, the closed sections, the last section, and the
-  tail are wrapped incrementally behind a single left-to-right
-  pointer, and only the unprocessed suffix is wrapped per frame; a
-  thought section's single row is the one transient row, overwritten
-  in place as the newest line changes. A content-width change resets
-  the caches.
-- Section jumps (showOutputSection) derive a section's display row
-  from the cached per-section row counts, so a click on an
-  attempt-start marker lands on the collapsed section's row.
-`
-
-// collapsedOutputDisplay renders the Output tab's collapsed projection:
-// prefix and tail lines in full, non-thought sections in full, and each
-// thought section as one row — its first source line when closed, its
-// newest sectioned line while output is still streaming into it. Every
-// source line is wrapped at most once per content width: the regions
-// behind a single left-to-right pointer are cached and only the
-// unprocessed suffix is wrapped per frame. See
-// TheoryOfTUIThoughtsCollapse.
-func (t *TUI) collapsedOutputDisplay(contentWidth int) []taiui.Line {
-	lines := t.output.Lines()
-	sections := t.outputSections
-
-	if t.collapsedWidth != contentWidth {
-		// A content-width change invalidates every wrapped row; the
-		// wrap loop below rebuilds the projection from the start, so
-		// every section registers with a zeroed count slot and no
-		// section is finalized here.
-		t.collapsedWidth = contentWidth
-		t.collapsedDisplay = t.collapsedDisplay[:0]
-		t.collapsedCounts = t.collapsedCounts[:0]
-		t.collapsedWrapped = 0
-		t.collapsedTailRows = 0
-		for len(t.collapsedCounts) < len(sections) {
-			t.collapsedCounts = append(t.collapsedCounts, 0)
-		}
-	} else {
-		// Fold the previously last section into its closed form and
-		// register every section the cache does not know yet.
-		for len(t.collapsedCounts) < len(sections) {
-			n := len(t.collapsedCounts)
-			if n > 0 {
-				t.finalizeCollapsedSection(n-1, sections[n].startLine, lines, contentWidth)
-			}
-			t.collapsedCounts = append(t.collapsedCounts, 0)
-		}
+// controlStripText renders the horizontal strip of a section's
+// controls: one Han-width slot per control, shown when the pointer
+// hovers the control column on the control's row. See
+// TheoryOfOutputControls.
+func controlStripText(controls []outputControl) string {
+	var b strings.Builder
+	for _, c := range controls {
+		b.WriteString(c.Glyph)
+		b.WriteString(" ")
 	}
+	return b.String()
+}
 
-	// Wrap the unprocessed suffix region by region: the prefix before
-	// the first section, every closed section, the last section's
-	// territory, and the tail. The buffer is append-only and the
-	// pointer advances left to right, so appended rows keep source
-	// order.
-	for t.collapsedWrapped < len(lines) {
-		from := t.collapsedWrapped
-		var to int
-		switch {
-		case len(sections) == 0 || from < sections[0].startLine:
-			// Prefix: lines before the first section render in full.
-			to = len(lines)
-			if len(sections) > 0 {
-				to = sections[0].startLine
-			}
-			t.collapsedDisplay = taiui.WrapLinesColoredInto(
-				lines[from:to], contentWidth, t.collapsedDisplay)
-		case from < sections[len(sections)-1].startLine:
-			// A closed section: a thought section renders one row, a
-			// non-thought section in full.
-			i := 0
-			for i < len(sections)-1 && sections[i+1].startLine <= from {
-				i++
-			}
-			to = sections[i+1].startLine
-			if sections[i].isThought {
-				if to > sections[i].startLine {
-					t.collapsedDisplay = append(t.collapsedDisplay,
-						collapsedThoughtRow(lines[sections[i].startLine], contentWidth))
-					t.collapsedCounts[i] = 1
-				}
-			} else {
-				before := len(t.collapsedDisplay)
-				t.collapsedDisplay = taiui.WrapLinesColoredInto(
-					lines[from:to], contentWidth, t.collapsedDisplay)
-				t.collapsedCounts[i] += len(t.collapsedDisplay) - before
-			}
-		case from < t.sectionedLines:
-			// The last section's territory: a thought section's lines
-			// stay hidden under its single row, a non-thought section
-			// renders in full.
-			to = t.sectionedLines
-			if !sections[len(sections)-1].isThought {
-				before := len(t.collapsedDisplay)
-				t.collapsedDisplay = taiui.WrapLinesColoredInto(
-					lines[from:to], contentWidth, t.collapsedDisplay)
-				t.collapsedCounts[len(sections)-1] += len(t.collapsedDisplay) - before
-			}
-		default:
-			// Tail: lines appended outside any section render in full.
-			to = len(lines)
-			before := len(t.collapsedDisplay)
-			t.collapsedDisplay = taiui.WrapLinesColoredInto(
-				lines[from:to], contentWidth, t.collapsedDisplay)
-			t.collapsedTailRows += len(t.collapsedDisplay) - before
-		}
-		t.collapsedWrapped = to
+// sectionControls returns the controls of section idx. The fold toggle
+// comes first, its glyph following the section's collapsed state;
+// further controls append here. See TheoryOfOutputControls.
+func (t *TUI) sectionControls(idx int) []outputControl {
+	glyph := sectionGlyphExpanded
+	if t.outputSections[idx].collapsed {
+		glyph = sectionGlyphCollapsed
 	}
-
-	// The collapsed row of a thought last section: its first line when
-	// closed, its newest sectioned line while streaming.
-	if last := len(sections) - 1; last >= 0 && sections[last].isThought {
-		secEnd := t.sectionedLines
-		if secEnd > sections[last].startLine {
-			row := lines[sections[last].startLine]
-			if t.collapsedThoughtsOpen() {
-				row = lines[secEnd-1]
-			}
-			t.placeCollapsedRow(collapsedThoughtRow(row, contentWidth))
-		}
-	}
-
-	return t.collapsedDisplay
+	return []outputControl{{Glyph: glyph}}
 }
 
 // outputSection is one section of the Output tab's content: the index
 // in the output line buffer at which the section's first source line
-// begins, and whether the section carries reasoning thoughts, which
-// the collapsed display reduces to one row. The section spans to the
-// next section's start.
+// begins, and whether the section is collapsed to its first line. The
+// section spans to the next section's start.
 type outputSection struct {
 	startLine int
-	isThought bool
+	collapsed bool
 }
 
 // outputSectionOwner identifies the pipeline event that owns a
@@ -212,41 +137,298 @@ type outputSectionOwner struct {
 	seq int
 }
 
-// finalizeCollapsedSection folds the previously last section into its
-// closed form when a newer section opens: a non-thought section keeps
-// its rows, absorbs the tail rows, and wraps any unprocessed trailing
-// lines; a thought section drops the tail rows hidden under its
-// collapsed row and freezes that row to the section's first line. See
-// TheoryOfTUIThoughtsCollapse.
-func (t *TUI) finalizeCollapsedSection(idx int, spanEnd int, lines []taiui.Line, contentWidth int) {
-	if t.outputSections[idx].isThought {
-		// Tail rows are hidden under the collapsed row.
-		t.collapsedDisplay = t.collapsedDisplay[:len(t.collapsedDisplay)-t.collapsedTailRows]
-		t.collapsedTailRows = 0
-		// The collapsed row freezes to the section's first line.
-		if t.collapsedCounts[idx] == 1 {
-			t.collapsedDisplay[len(t.collapsedDisplay)-1] =
-				collapsedThoughtRow(lines[t.outputSections[idx].startLine], contentWidth)
+// outputControlRow is one rendered control: the section the control
+// acts on and the absolute screen row of its glyph. See
+// TheoryOfOutputControls.
+type outputControlRow struct {
+	section int
+	row     int
+}
+
+// sectionCollapsedRow renders one source line as the single row of a
+// collapsed section: the line truncated to the content width, keeping
+// the line's color. See TheoryOfOutputControls.
+func sectionCollapsedRow(line taiui.Line, contentWidth int) taiui.Line {
+	return taiui.Line{
+		Text:  displaywidth.TruncateString(line.Text, contentWidth, "…"),
+		Color: line.Color,
+	}
+}
+
+// outputDisplay renders the Output tab's display: the projection of the
+// append-only output buffer where every collapsed section contributes
+// one row — its first source line — and every other line wraps in
+// full. Each completed source line wraps at most once per content
+// width behind a left-to-right pointer; the trailing partial line
+// re-wraps fresh every frame; a section toggle or a content-width
+// change resets the projection. The caller holds t.mu. See
+// TheoryOfOutputControls.
+func (t *TUI) outputDisplay(contentWidth int) []taiui.Line {
+	lines := t.output.Lines()
+	completed := len(t.output.CompletedLines())
+	sections := t.outputSections
+	last := len(sections) - 1
+
+	reset := t.projWidth != contentWidth
+	if reset {
+		t.projWidth = contentWidth
+		t.projDisplay = t.projDisplay[:0]
+		t.projCounts = t.projCounts[:0]
+		t.projWrapped = 0
+		t.projPrefixRows = 0
+		t.projTailRows = 0
+		t.projPartialRows = 0
+	} else if t.projPartialRows > 0 {
+		// Drop the previous frame's transient partial rows before the
+		// region loop appends behind them.
+		t.projDisplay = t.projDisplay[:len(t.projDisplay)-t.projPartialRows]
+		t.projPartialRows = 0
+	}
+	for len(t.projCounts) < len(sections) {
+		n := len(t.projCounts)
+		if n > 0 && !reset {
+			t.finalizeProjectedSection(n-1, sections[n].startLine, lines, contentWidth)
 		}
-	} else {
-		t.collapsedCounts[idx] += t.collapsedTailRows
-		t.collapsedTailRows = 0
-		if t.collapsedWrapped < spanEnd {
-			before := len(t.collapsedDisplay)
-			t.collapsedDisplay = taiui.WrapLinesColoredInto(
-				lines[t.collapsedWrapped:spanEnd], contentWidth, t.collapsedDisplay)
-			t.collapsedCounts[idx] += len(t.collapsedDisplay) - before
+		t.projCounts = append(t.projCounts, 0)
+	}
+
+	for t.projWrapped < completed {
+		from := t.projWrapped
+		var to int
+		switch {
+		case len(sections) == 0 || from < sections[0].startLine:
+			// Prefix: lines before the first section render in full.
+			to = completed
+			if len(sections) > 0 {
+				to = sections[0].startLine
+			}
+			before := len(t.projDisplay)
+			t.projDisplay = taiui.WrapLinesColoredInto(lines[from:to], contentWidth, t.projDisplay)
+			t.projPrefixRows += len(t.projDisplay) - before
+		case from < sections[last].startLine:
+			// A closed section.
+			i := 0
+			for i < last && sections[i+1].startLine <= from {
+				i++
+			}
+			to = sections[i+1].startLine
+			if sections[i].collapsed {
+				if t.projCounts[i] == 0 && to > sections[i].startLine {
+					t.projDisplay = append(t.projDisplay, sectionCollapsedRow(lines[sections[i].startLine], contentWidth))
+					t.projCounts[i] = 1
+				}
+			} else {
+				before := len(t.projDisplay)
+				t.projDisplay = taiui.WrapLinesColoredInto(lines[from:to], contentWidth, t.projDisplay)
+				t.projCounts[i] += len(t.projDisplay) - before
+			}
+		case from < t.sectionedLines:
+			// The last section's territory; the partial line that
+			// sectionedLines may cover wraps after the loop.
+			to = min(t.sectionedLines, completed)
+			if sections[last].collapsed {
+				if t.projCounts[last] == 0 && to > sections[last].startLine {
+					t.projDisplay = append(t.projDisplay, sectionCollapsedRow(lines[sections[last].startLine], contentWidth))
+					t.projCounts[last] = 1
+				}
+			} else {
+				before := len(t.projDisplay)
+				t.projDisplay = taiui.WrapLinesColoredInto(lines[from:to], contentWidth, t.projDisplay)
+				t.projCounts[last] += len(t.projDisplay) - before
+			}
+		default:
+			// Tail: lines appended outside any section render in full.
+			to = completed
+			before := len(t.projDisplay)
+			t.projDisplay = taiui.WrapLinesColoredInto(lines[from:to], contentWidth, t.projDisplay)
+			t.projTailRows += len(t.projDisplay) - before
+		}
+		t.projWrapped = to
+	}
+
+	// The trailing partial line re-wraps fresh every frame; a collapsed
+	// section hides it under the section's single row.
+	if t.output.HasPartial() {
+		show := true
+		switch {
+		case len(sections) == 0 || completed < sections[0].startLine:
+		case completed < t.sectionedLines:
+			show = !sections[last].collapsed
+		}
+		if show {
+			before := len(t.projDisplay)
+			t.projDisplay = taiui.WrapLinesColoredInto(lines[completed:completed+1], contentWidth, t.projDisplay)
+			t.projPartialRows = len(t.projDisplay) - before
 		}
 	}
-	t.collapsedWrapped = spanEnd
+
+	return t.projDisplay
+}
+
+// finalizeProjectedSection folds the previously last section into its
+// closed form when a newer section opens: an expanded section absorbs
+// the tail rows and wraps its remaining unprocessed lines; a collapsed
+// section drops the tail rows its single row hides and, when its span
+// stayed empty until now, renders its first-line row. See
+// TheoryOfOutputControls.
+func (t *TUI) finalizeProjectedSection(idx int, spanEnd int, lines []taiui.Line, contentWidth int) {
+	sec := t.outputSections[idx]
+	if sec.collapsed {
+		t.projDisplay = t.projDisplay[:len(t.projDisplay)-t.projTailRows]
+		t.projTailRows = 0
+		if t.projCounts[idx] == 0 && spanEnd > sec.startLine {
+			t.projDisplay = append(t.projDisplay, sectionCollapsedRow(lines[sec.startLine], contentWidth))
+			t.projCounts[idx] = 1
+		}
+	} else {
+		t.projCounts[idx] += t.projTailRows
+		t.projTailRows = 0
+		if t.projWrapped < spanEnd {
+			before := len(t.projDisplay)
+			t.projDisplay = taiui.WrapLinesColoredInto(lines[t.projWrapped:spanEnd], contentWidth, t.projDisplay)
+			t.projCounts[idx] += len(t.projDisplay) - before
+		}
+	}
+	t.projWrapped = spanEnd
+}
+
+// resetProjectionLocked drops the projection state, so the next
+// outputDisplay call re-derives every row from the source. The caller
+// holds t.mu. See TheoryOfOutputControls.
+func (t *TUI) resetProjectionLocked() {
+	t.projWidth = -1
+}
+
+// toggleOutputSectionLocked flips section idx's collapsed state. The
+// caller holds t.mu. See TheoryOfOutputControls.
+func (t *TUI) toggleOutputSectionLocked(idx int) {
+	if idx < 0 || idx >= len(t.outputSections) {
+		return
+	}
+	t.outputSections[idx].collapsed = !t.outputSections[idx].collapsed
+	t.resetProjectionLocked()
+}
+
+// outputSectionOffset returns the display offset at which section idx's
+// rows begin in the projected display: the prefix rows plus every
+// earlier section's row count. The projection must have been computed
+// for the current content width. The caller holds t.mu. See
+// TheoryOfTUIOutputSections.
+func (t *TUI) outputSectionOffset(idx int) int {
+	top := t.projPrefixRows
+	for i := 0; i < idx && i < len(t.projCounts); i++ {
+		top += t.projCounts[i]
+	}
+	return top
+}
+
+// outputControlRows computes the control column's rows for the current
+// view: one row per section with at least one visible display row,
+// pinned to the section's first display row or the viewport top when
+// that row scrolled above it. Sections tile the content disjointly, so
+// two controls never pin to the same row. The caller holds t.mu. See
+// TheoryOfOutputControls.
+func (t *TUI) outputControlRows(box taiui.Box, display []taiui.Line, offset int) []outputControlRow {
+	paneHeight := t.tuiPaneHeight(0, box)
+	var rows []outputControlRow
+	for i := range t.outputSections {
+		count := 0
+		if i < len(t.projCounts) {
+			count = t.projCounts[i]
+		}
+		if count <= 0 {
+			continue
+		}
+		top := t.outputSectionOffset(i)
+		if top+count <= offset || top >= offset+paneHeight {
+			continue
+		}
+		rows = append(rows, outputControlRow{
+			section: i,
+			row:     box.Top + 1 + (max(top, offset) - offset),
+		})
+	}
+	return rows
+}
+
+// toggleControlAtClick toggles the section whose control the press hit:
+// the press must land on a rendered control row; with one control the
+// press must land in the control column, and while the hover strip
+// shows, the press column maps onto the strip's slots — one Han-width
+// slot per control, the fold toggle first. It reports whether a control
+// consumed the press. A minimal TUI without the output buffer carries
+// no sections and no controls, so nothing consumes the press. The
+// caller holds t.mu. See TheoryOfOutputControls.
+func (t *TUI) toggleControlAtClick(x, y int) bool {
+	if !t.tabs.Expanded[0] || t.output == nil {
+		return false
+	}
+	box := t.tabs.Boxes(t.width, t.height)[0]
+	if box.Width() <= controlColumnWidth || box.Height() <= 0 {
+		return false
+	}
+	panelBottom := box.Bottom
+	if t.interactive {
+		panelBottom--
+	}
+	if y < box.Top+1 || y >= panelBottom {
+		return false
+	}
+	// A press outside the control column can only be a hover-strip
+	// slot, which requires the strip conditions; reject before paying
+	// for the projection walk.
+	if x < box.Left || x >= box.Left+controlColumnWidth {
+		if !(t.ctlHover && t.mouseReporting && t.ctlHoverY == y) {
+			return false
+		}
+	}
+	display := wrappedDisplay(t, 0, box)
+	if len(display) == 0 {
+		return false
+	}
+	offset := taiui.ClampOffset(t.scrolls[0].Offset, len(display), t.tuiPaneHeight(0, box))
+	for _, row := range t.outputControlRows(box, display, offset) {
+		if row.row != y {
+			continue
+		}
+		controls := t.sectionControls(row.section)
+		if len(controls) == 0 {
+			return false
+		}
+		// The press must land in the control column, or — while the
+		// hover strip shows — anywhere within the strip's slots. See
+		// TheoryOfOutputControls.
+		extent := controlColumnWidth
+		if t.ctlHover && t.mouseReporting && t.ctlHoverY == y && len(controls) > 1 {
+			extent = controlColumnWidth * len(controls)
+		}
+		if x < box.Left || x >= box.Left+min(extent, box.Width()) {
+			return false
+		}
+		slot := min((x-box.Left)/controlColumnWidth, len(controls)-1)
+		if slot != 0 {
+			return true
+		}
+		t.toggleOutputSectionLocked(row.section)
+		return true
+	}
+	return false
+}
+
+// setControlHoverLocked records the pointer position from a no-button
+// motion event, driving the control column's hover strip. The caller
+// holds t.mu. See TheoryOfOutputControls.
+func (t *TUI) setControlHoverLocked(x, y int) {
+	t.ctlHover = true
+	t.ctlHoverX = x
+	t.ctlHoverY = y
 }
 
 // beginOutputSection records a new section starting at the next source
 // line the output buffer will create — the line the caller is about to
-// write — marks whether the section carries reasoning thoughts, and,
-// when the section is owned by an event, binds the event to it for the
-// Events tab's click-to-jump mapping. Guarded by mu.
-func (t *TUI) beginOutputSection(owner *outputSectionOwner, isThought bool) {
+// write — and, when the section is owned by an event, binds the event
+// to it for the Events tab's click-to-jump mapping. Guarded by mu.
+func (t *TUI) beginOutputSection(owner *outputSectionOwner) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.eventSections == nil {
@@ -254,9 +436,9 @@ func (t *TUI) beginOutputSection(owner *outputSectionOwner, isThought bool) {
 	}
 	// Separator blank lines and any lines appended outside the
 	// sectioned path since the last content belong to the closing
-	// section's span: the high-water mark covers them so the collapsed
+	// section's span: the high-water mark covers them so the
 	// projection treats them as sectioned. See
-	// TheoryOfTUIThoughtsCollapse.
+	// TheoryOfTUIOutputSections.
 	covered := len(t.output.CompletedLines())
 	if t.output.HasPartial() {
 		covered++
@@ -267,7 +449,6 @@ func (t *TUI) beginOutputSection(owner *outputSectionOwner, isThought bool) {
 	idx := len(t.outputSections)
 	t.outputSections = append(t.outputSections, outputSection{
 		startLine: len(t.output.CompletedLines()),
-		isThought: isThought,
 	})
 	if owner != nil {
 		t.eventSections[*owner] = idx
@@ -281,16 +462,6 @@ func (t *TUI) clearPendingOutputOwner() {
 	t.mu.Lock()
 	t.pendingOwner = nil
 	t.mu.Unlock()
-}
-
-// collapsedThoughtsOpen reports whether the last thought section is
-// still receiving output: a generation or handoff request is in
-// flight. A partial trailing line alone does not count — output stops
-// arriving once the request ends, so the row freezes to the section's
-// first line. The caller holds t.mu. See
-// TheoryOfTUIThoughtsCollapse.
-func (t *TUI) collapsedThoughtsOpen() bool {
-	return t.generating || t.handoff
 }
 
 // jumpToEventAtClick scrolls the Output tab to the output section of
@@ -354,18 +525,6 @@ func nodeHasJumpMarker(node *taiui.EventNode) bool {
 	return len(node.Lines) > 0 && strings.HasSuffix(node.Lines[0].Text, " "+eventJumpMarker)
 }
 
-// collapsedSectionTop returns the display offset at which section idx's
-// content begins in the collapsed projection: the prefix rows plus the
-// display rows of every earlier section. The caller holds t.mu. See
-// TheoryOfTUIThoughtsCollapse.
-func (t *TUI) collapsedSectionTop(idx int) int {
-	rest := 0
-	for _, count := range t.collapsedCounts[min(idx, len(t.collapsedCounts)):] {
-		rest += count
-	}
-	return len(t.collapsedDisplay) - t.collapsedTailRows - rest
-}
-
 // markerColumnRange returns the cell-column range of the jump marker
 // within text, measured cluster by cluster with the given width
 // options — the same measurement the renderer uses, so multi-column
@@ -424,32 +583,11 @@ func findEventNode(roots []*taiui.EventNode, run, seq int) *taiui.EventNode {
 	return nil
 }
 
-// placeCollapsedRow writes the collapsed row of the last thought
-// section: the row slot is created before any tail rows when the
-// section receives its first content, then overwritten in place as the
-// newest line changes. See TheoryOfTUIThoughtsCollapse.
-func (t *TUI) placeCollapsedRow(row taiui.Line) {
-	K := len(t.collapsedCounts) - 1
-	if t.collapsedCounts[K] == 0 {
-		at := len(t.collapsedDisplay) - t.collapsedTailRows
-		if t.collapsedTailRows > 0 {
-			t.collapsedDisplay = append(t.collapsedDisplay, taiui.Line{})
-			copy(t.collapsedDisplay[at+1:], t.collapsedDisplay[at:])
-			t.collapsedDisplay[at] = row
-		} else {
-			t.collapsedDisplay = append(t.collapsedDisplay, row)
-		}
-		t.collapsedCounts[K] = 1
-		return
-	}
-	t.collapsedDisplay[len(t.collapsedDisplay)-t.collapsedTailRows-1] = row
-}
-
 // showOutputSection scrolls the Output tab's view so the section's
-// first display line lands at the top of the pane. The jump result
-// must be visible: the Output tab is expanded and focused when needed,
-// and following the tail stops — the live tail resumes only when the
-// view reaches the latest row.
+// first display line lands at the top of the pane. The jump result must
+// be visible: the Output tab is expanded and focused when needed, and
+// following the tail stops — the live tail resumes only when the view
+// reaches the latest row.
 func (t *TUI) showOutputSection(idx int) {
 	if idx < 0 || idx >= len(t.outputSections) {
 		return
@@ -466,31 +604,10 @@ func (t *TUI) showOutputSection(idx int) {
 	if len(display) == 0 {
 		return
 	}
-	// The collapsed projection reindexes the sections: the offset
-	// derives from the cached per-section row counts instead of
-	// wrapping the source lines. See TheoryOfTUIThoughtsCollapse.
-	offset := t.outputSectionDisplayTop(t.outputSections[idx].startLine, box)
-	if t.thoughtsCollapsed {
-		offset = t.collapsedSectionTop(idx)
-	}
+	// The projected display records each section's row count, so the
+	// offset derives from the projection. See
+	// TheoryOfTUIOutputSections.
+	offset := t.outputSectionOffset(idx)
 	t.scrolls[0].Offset = taiui.ClampOffset(offset, len(display), t.tuiPaneHeight(0, box))
 	t.scrolls[0].Follow = false
-}
-
-// outputSectionDisplayTop computes the display offset at which the
-// section starting at source line startLine begins: the source lines
-// before it are wrapped with the same wrapping the Output pane's
-// display uses, so the offset indexes into wrappedDisplay's lines
-// identically. startLine is always a completed source line, so the
-// wrap covers completed lines only.
-func (t *TUI) outputSectionDisplayTop(startLine int, box taiui.Box) int {
-	contentWidth := max(box.Width()-1, 1)
-	lines := t.output.Lines()
-	if startLine > len(lines) {
-		startLine = len(lines)
-	}
-	if startLine <= 0 {
-		return 0
-	}
-	return len(taiui.WrapLinesColored(lines[:startLine], contentWidth))
 }

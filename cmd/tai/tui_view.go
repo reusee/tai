@@ -28,31 +28,33 @@ func outputTabLabel(finished bool, generating bool, handoff bool) (label string,
 }
 
 // wrappedDisplay computes the wrapped, colored lines of one expanded tab
-// from its content and box: the Output tab renders the collapsed thought
-// projection or wraps incrementally through its taiui.WrapCache, the
-// Logs tab wraps through its cache, and the Events tab walks its event
-// tree (taiui.EventTree). See TheoryOfTUI, TheoryOfTUIThoughtsCollapse
-// and TheoryOfEventTree.
+// from its content and box: the Output tab renders its per-section
+// projection (see TheoryOfOutputControls), the Logs tab wraps through
+// its cache, and the Events tab walks its event tree
+// (taiui.EventTree). See TheoryOfTUI and TheoryOfEventTree.
 func wrappedDisplay(t *TUI, idx int, box taiui.Box) []taiui.Line {
-	contentWidth := max(box.Width()-1, 1)
 	switch idx {
 	case 0:
-		if t.thoughtsCollapsed {
-			return t.collapsedOutputDisplay(contentWidth)
+		// The control column reserves two cells at the panel's left
+		// edge, and the scrollbar column one at the right. See
+		// TheoryOfOutputControls.
+		contentWidth := max(box.Width()-1, 1)
+		if t.tabs.Expanded[0] && box.Width() > controlColumnWidth {
+			contentWidth = max(box.Width()-controlColumnWidth-1, 1)
 		}
-		return t.outputCache.Colored(t.output, contentWidth)
+		return t.outputDisplay(contentWidth)
 	case 1:
 		base := panelStyle.BaseBG
 		if t.tabs.Focus == 1 {
 			base = panelStyle.FocusBG
 		}
-		return t.events.Display(contentWidth, base)
+		return t.events.Display(max(box.Width()-1, 1), base)
 	case 2:
 		base := panelStyle.BaseBG
 		if t.tabs.Focus == 2 {
 			base = panelStyle.FocusBG
 		}
-		return t.logsCache.Plain(t.logs, contentWidth, base)
+		return t.logsCache.Plain(t.logs, max(box.Width()-1, 1), base)
 	}
 	return nil
 }
@@ -103,13 +105,13 @@ var tuiHelpLines = []string{
 	"1 / 2 / 3\tselect tab; press focused tab again to collapse",
 	"tab\tcycle focus among expanded tabs",
 	"s\ttoggle vertical / horizontal split",
-	"t\tcollapse / expand thought sections in the Output tab",
 	"up / down\tscroll focused pane",
 	"page up / down\tscroll focused pane by page",
 	"home / end\tjump to start / end of focused pane",
 	"[ / ]\tjump to previous / next section start or end",
 	"enter\tsend the input line when focused; toggle latest handoff otherwise",
 	"click\tselect / toggle tab under cursor; click the input row to focus input",
+	"output column\tclick ▸ / ▾ at a section's first row to collapse / expand it",
 	"events row\tclick 👉 on an attempt-start line to jump the Output tab to its output section",
 	"wheel / drag\tscroll pane under cursor",
 	"m\ttoggle mouse reporting (off: select & copy in the terminal)",
@@ -138,11 +140,18 @@ func buildRoot(t *TUI, width, height int, displays [3][]taiui.Line) taiui.Elemen
 			inputBar = t.inputBar.Element(box, t.inputFocused, t.tabs.Focus == 0, inputBarStyle)
 			box.Bottom--
 		}
-		panel := taiui.TabPanel(
-			box, tabNames[i], label, highlight,
-			t.tabs.Expanded[i], t.tabs.Focus == i, t.tabs.Unseen[i],
-			displays[i], t.scrolls[i], panelStyle,
-		)
+		var panel taiui.Element
+		if i == 0 && t.tabs.Expanded[0] && box.Width() > controlColumnWidth && box.Height() > 0 {
+			// The expanded Output tab reserves its leftmost column for
+			// the section controls. See TheoryOfOutputControls.
+			panel = t.outputPanelView(box, displays[0], label, highlight)
+		} else {
+			panel = taiui.TabPanel(
+				box, tabNames[i], label, highlight,
+				t.tabs.Expanded[i], t.tabs.Focus == i, t.tabs.Unseen[i],
+				displays[i], t.scrolls[i], panelStyle,
+			)
+		}
 		if panel != nil {
 			elements = append(elements, panel)
 		}
@@ -164,6 +173,50 @@ func buildRoot(t *TUI, width, height int, displays [3][]taiui.Line) taiui.Elemen
 		root = taiui.Overlay(root, taiui.QuitConfirmBar(width, height))
 	}
 	return root
+}
+
+// outputPanelView builds the expanded Output tab: the content panel
+// shifted right of the control column, the column's background, and one
+// control glyph per visible section. The caller holds t.mu. See
+// TheoryOfOutputControls.
+func (t *TUI) outputPanelView(box taiui.Box, display []taiui.Line, label string, highlight bool) taiui.Element {
+	panelBox := box
+	panelBox.Left += controlColumnWidth
+	panel := taiui.TabPanel(panelBox, tabNames[0], label, highlight,
+		t.tabs.Expanded[0], t.tabs.Focus == 0, t.tabs.Unseen[0], display, t.scrolls[0], panelStyle)
+	base := panelStyle.BaseBG
+	if t.tabs.Focus == 0 {
+		base = panelStyle.FocusBG
+	}
+	children := []any{panel, taiui.Rect(
+		taiui.Box{Top: box.Top, Left: box.Left, Bottom: box.Bottom, Right: box.Left + controlColumnWidth},
+		taiui.Fill(true),
+		taiui.BGColor(base),
+	)}
+	offset := taiui.ClampOffset(t.scrolls[0].Offset, len(display), t.tuiPaneHeight(0, box))
+	for _, row := range t.outputControlRows(box, display, offset) {
+		controls := t.sectionControls(row.section)
+		if len(controls) == 0 {
+			continue
+		}
+		text := controls[0].Glyph
+		right := box.Left + controlColumnWidth
+		// Hovering the control column on a control's row lays the
+		// section's controls out horizontally, one Han-width slot
+		// each, extending past the column. The strip needs mouse
+		// reporting on: with reporting off the tracked position is
+		// stale. See TheoryOfOutputControls.
+		stripWidth := controlColumnWidth * len(controls)
+		if t.ctlHover && t.mouseReporting && len(controls) > 1 && t.ctlHoverY == row.row &&
+			t.ctlHoverX >= box.Left && t.ctlHoverX < box.Left+stripWidth {
+			text = controlStripText(controls)
+			right = min(box.Left+stripWidth, box.Right)
+		}
+		children = append(children, taiui.Text(text, taiui.Box{
+			Top: row.row, Left: box.Left, Bottom: row.row + 1, Right: right,
+		}))
+	}
+	return taiui.Overlay(children...)
 }
 
 // inputBarStyle styles the chat input bar from the panel style: the

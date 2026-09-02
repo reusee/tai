@@ -165,10 +165,14 @@ accidental q press never loses the session.
 taiuidemo pattern: render() computes the wrapped display lines of each
 expanded tab (wrappedDisplay), updates the scroll offsets against the
 fresh display lengths, and builds the element tree with plain functions
-(one taiui.TabPanel per tab, plus buildRoot). wrappedDisplay feeds the
-Output and Logs tabs' content through a taiui.WrapCache so that when new
-output streams in, only the newly arrived completed lines and the
-trailing partial line are wrapped, avoiding O(N) full re-wrapping of
+(one taiui.TabPanel per tab — the expanded Output tab through
+outputPanelView with its control column — plus buildRoot). The Output
+tab's content is its per-section projection (see TheoryOfOutputControls):
+each completed source line wraps at most once, the trailing partial line
+re-wraps fresh, and a section toggle or a content-width change resets
+the projection. The Logs tab wraps through a taiui.WrapCache so that
+when new output streams in, only the newly arrived completed lines and
+the trailing partial line are wrapped, avoiding O(N) full re-wrapping of
 large buffers on every frame; the Events tab caches each event node's
 wrapped lines instead (see TheoryOfEventTree), so a frame re-wraps only
 nodes that are new or repositioned.
@@ -308,8 +312,11 @@ focused) and records the origin of a drag-scroll. Inside the Events
 pane, a left press is inert unless it lands on the attempt-start line's
 👉 jump marker, which jumps the Output tab to the section that attempt
 wrote (see TheoryOfTUIOutputSections); a press on a handoff node's rows
-still toggles it. Presses outside every panel, middle and right presses,
-and no-button motion (mode 1003) are ignored.
+still toggles it. In the Output tab, a press on the control column
+toggles the section under the control and preempts the ordinary press
+handling (see TheoryOfOutputControls). Presses outside every panel,
+middle and right presses are ignored; no-button motion (mode 1003) only
+drives the control column's hover strip.
 
 In interactive sessions, the Output tab's input row is the one press
 target with its own semantics: a left press on the chat input bar's row
@@ -600,8 +607,7 @@ type TUI struct {
 	// at the right edge of its first display line. See TheoryOfEventTree.
 	startTime time.Time
 
-	outputCache taiui.WrapCache
-	logsCache   taiui.WrapCache
+	logsCache taiui.WrapCache
 
 	// finished reports whether the generation session has ended. It
 	// clears the Output tab's "generating..." hint.
@@ -698,25 +704,30 @@ type TUI struct {
 	eventSections  map[outputSectionOwner]int
 	pendingOwner   *outputSectionOwner
 
-	// thoughtsCollapsed reports whether the Output tab renders thought
-	// sections collapsed to one display row. See
-	// TheoryOfTUIThoughtsCollapse.
-	thoughtsCollapsed bool
-	// Collapsed-projection state of the Output tab, guarded by mu. See
-	// TheoryOfTUIThoughtsCollapse. collapsedWidth keys the caches: a
-	// content-width change resets them. collapsedDisplay holds the
-	// stable display rows; collapsedCounts holds one display-row count
-	// per section (1 for a thought section); collapsedWrapped is the
-	// left-to-right source-line pointer of the incremental wrap; and
-	// collapsedTailRows counts the tail rows appended after the
-	// sections' rows. sectionedLines is the high-water mark of
-	// sectioned output lines.
-	collapsedWidth    int
-	collapsedDisplay  []taiui.Line
-	collapsedCounts   []int
-	collapsedWrapped  int
-	collapsedTailRows int
-	sectionedLines    int
+	// The Output tab's per-section projection state, guarded by mu. See
+	// TheoryOfOutputControls. projWidth keys the caches: a content-width
+	// change resets them. projDisplay holds the projected display rows;
+	// projCounts holds one display-row count per section; projWrapped
+	// is the left-to-right source-line pointer of the incremental wrap;
+	// projPrefixRows and projTailRows count the rows before the first
+	// section and after the last one; and projPartialRows counts the
+	// transient rows of the trailing partial line. sectionedLines is
+	// the high-water mark of sectioned output lines.
+	projWidth       int
+	projDisplay     []taiui.Line
+	projCounts      []int
+	projWrapped     int
+	projPrefixRows  int
+	projTailRows    int
+	projPartialRows int
+	sectionedLines  int
+
+	// ctlHover records the pointer position from the latest no-button
+	// motion event (mode 1003), driving the Output tab's control-column
+	// hover strip. See TheoryOfOutputControls.
+	ctlHover  bool
+	ctlHoverX int
+	ctlHoverY int
 
 	// mouse is the pointer interaction state over the tab layout: wheel
 	// scrolling, press-driven tab switching, and drag-scrolling anchored
@@ -1005,8 +1016,8 @@ func (t *TUI) captureContent(content *generators.Content) {
 // goroutine via captureContent, so it is read and written without a
 // lock; the section bookkeeping also read by the pointer handlers is
 // guarded by mu. sectionedLines, the sectioned high-water mark the
-// collapsed projection reads, is guarded by mu too. See
-// TheoryOfTUIOutputSections and TheoryOfTUIThoughtsCollapse.
+// projection reads, is guarded by mu too. See
+// TheoryOfTUIOutputSections and TheoryOfOutputControls.
 func (t *TUI) writeOutputPart(role generators.Role, color taiui.Color, isThought bool, text string) {
 	// Consume a pending attempt-start event even when the role does
 	// not switch: consecutive attempts sharing one role still open
@@ -1034,14 +1045,14 @@ func (t *TUI) writeOutputPart(role generators.Role, color taiui.Color, isThought
 		newSection = true
 	}
 	if newSection {
-		t.beginOutputSection(owner, isThought)
+		t.beginOutputSection(owner)
 	}
 	t.writeColored(color, []byte(text))
 	// Record the sectioned high-water mark: every line the buffer holds
 	// after this append, including a trailing partial line, belongs to a
 	// section. Lines appended outside this path (command output, stderr)
-	// stay outside and render in full when collapsed. Locked because the
-	// render loop reads the mark. See TheoryOfTUIThoughtsCollapse.
+	// stay outside and render in full. Locked because the render loop
+	// reads the mark. See TheoryOfTUIOutputSections.
 	t.mu.Lock()
 	covered := len(t.output.CompletedLines())
 	if t.output.HasPartial() {
@@ -1146,17 +1157,6 @@ func (t *TUI) toggleHelp() {
 	t.showHelp = !t.showHelp
 }
 
-// toggleThoughtsCollapse switches the Output tab between the full and
-// the collapsed display of thought sections. Collapse is a display
-// projection: the output buffer and the expanded wrap cache are
-// untouched, so toggling back re-reveals every line. See
-// TheoryOfTUIThoughtsCollapse.
-func (t *TUI) toggleThoughtsCollapse() {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.thoughtsCollapsed = !t.thoughtsCollapsed
-}
-
 // cycleFocus advances the focus to the next expanded tab after the
 // current one, wrapping around. Collapsed tabs are skipped.
 func (t *TUI) cycleFocus() {
@@ -1231,8 +1231,6 @@ func (t *TUI) handleKey(key string) bool {
 		t.toggleSplit()
 	case key == "mouse":
 		t.toggleMouse()
-	case key == "thoughts":
-		t.toggleThoughtsCollapse()
 	case key == "prev-transition":
 		t.jumpToTransition(-1)
 	case key == "next-transition":
@@ -1303,8 +1301,6 @@ func mapTUIKey(key string) string {
 		return "split"
 	case "m", "M":
 		return "mouse"
-	case "t", "T":
-		return "thoughts"
 	case "?":
 		return "help"
 	case "[":
@@ -1403,6 +1399,12 @@ func (t *TUI) handleMouseKey(key string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	switch event {
+	case "motion":
+		// No-button motion (mode 1003) drives the control column's
+		// hover strip: the tracked pointer position decides whether a
+		// control row lays its controls out horizontally. See
+		// TheoryOfOutputControls.
+		t.setControlHoverLocked(x, y)
 	case "wheel-up":
 		t.mouse.Wheel(t.tabs, t.scrolls[:], t.width, t.height, x, y, -1)
 	case "wheel-down":
@@ -1419,6 +1421,12 @@ func (t *TUI) handleMouseKey(key string) {
 		// ordinary press handling runs, so clicking a pane hands the
 		// keyboard back to navigation. See TheoryOfTUIChatInput.
 		t.inputFocused = false
+		// A press on the Output tab's control column toggles the
+		// section under the control instead of driving tab
+		// interaction. See TheoryOfOutputControls.
+		if t.toggleControlAtClick(x, y) {
+			return
+		}
 		t.mouse.Press(t.tabs, t.scrolls[:], t.width, t.height, x, y)
 		// A press on the attempt-start line's jump marker jumps the
 		// Output tab to the section that attempt wrote; presses
@@ -1431,6 +1439,9 @@ func (t *TUI) handleMouseKey(key string) {
 		// expansion. See TheoryOfEventTree.
 		t.toggleHandoffAtClick(x, y)
 	case "release":
+		// The release refreshes the tracked pointer position, ending a
+		// drag with the pointer where it stopped.
+		t.setControlHoverLocked(x, y)
 		t.mouse.Release()
 	case "leftdrag":
 		t.mouse.Drag(t.tabs, t.scrolls[:], y)

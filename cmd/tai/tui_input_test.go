@@ -584,9 +584,10 @@ func TestTUIChatInputQuitReleasesWaiter(t *testing.T) {
 }
 
 // TestTUINonInteractiveHidesInputBar pins the non-interactive layout:
-// without the bar the Output pane keeps its full height and the tab's
-// bottom row shows scroll content, while an interactive session shows
-// the input prompt there instead. See TheoryOfTUIChatInput.
+// without the bar the Output pane keeps its full height, the tab's
+// bottom row shows the control column at the left edge and the scroll
+// content beside it, and an interactive session shows the input prompt
+// there instead. See TheoryOfTUIChatInput and TheoryOfOutputControls.
 func TestTUINonInteractiveHidesInputBar(t *testing.T) {
 	tui := newTUIForTest()
 	tui.tabs.Expanded = []bool{true, false, false}
@@ -598,7 +599,10 @@ func TestTUINonInteractiveHidesInputBar(t *testing.T) {
 	for i := range display {
 		display[i] = taiui.Line{Text: fmt.Sprintf("%d", i)}
 	}
-	renderBottomRow := func(interactive bool) taiui.FrameCell {
+	// The bottom row is read in two columns: column 0 is the control
+	// column, column 2 the panel's first content column. See
+	// TheoryOfOutputControls.
+	renderBottomRow := func(interactive bool) [2]taiui.FrameCell {
 		tui.interactive = interactive
 		// Ten display lines: the non-interactive pane (7 rows) shows
 		// lines 3..9 and the interactive pane (6 rows) lines 4..9, so
@@ -616,16 +620,27 @@ func TestTUINonInteractiveHidesInputBar(t *testing.T) {
 		frame := screen.frames[len(screen.frames)-1]
 		// The two collapsed strips leave the Output tab rows 0..7, so
 		// row 7 is the tab's bottom row.
-		return frame.Cells[7*frame.Width+0]
+		return [2]taiui.FrameCell{
+			frame.Cells[7*frame.Width+0],
+			frame.Cells[7*frame.Width+controlColumnWidth],
+		}
 	}
 
-	interactiveCell := renderBottomRow(true)
-	if !interactiveCell.Set || interactiveCell.Rune != '>' {
-		t.Fatalf("expected the input bar prompt at the interactive bottom row, got %+v", interactiveCell)
+	// The interactive bottom row carries the input bar prompt: the bar
+	// spans the tab's full width and draws over the control column.
+	interactiveCells := renderBottomRow(true)
+	if !interactiveCells[0].Set || interactiveCells[0].Rune != '>' {
+		t.Fatalf("expected the input bar prompt at the interactive bottom row, got %+v", interactiveCells[0])
 	}
-	nonInteractiveCell := renderBottomRow(false)
-	if !nonInteractiveCell.Set || nonInteractiveCell.Rune != '9' {
-		t.Fatalf("expected scroll content at the non-interactive bottom row, got %+v", nonInteractiveCell)
+
+	// The non-interactive bottom row shows the control column
+	// background at the left edge and the scroll content beside it.
+	nonInteractiveCells := renderBottomRow(false)
+	if !nonInteractiveCells[0].Set || nonInteractiveCells[0].Rune != ' ' {
+		t.Fatalf("expected the control column background at the non-interactive bottom row, got %+v", nonInteractiveCells[0])
+	}
+	if !nonInteractiveCells[1].Set || nonInteractiveCells[1].Rune != '9' {
+		t.Fatalf("expected scroll content at the non-interactive bottom row, got %+v", nonInteractiveCells[1])
 	}
 }
 

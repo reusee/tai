@@ -85,7 +85,10 @@ func TestTUIEventClickJumpsToOutputSection(t *testing.T) {
 	// A press on the jump marker jumps the Output tab to the section
 	// the attempt wrote.
 	tu.jumpToEventAtClick(box.Left+start, y)
-	want := tu.outputSectionDisplayTop(tu.outputSections[1].startLine, boxes[0])
+	// The projection records each section's display-row count, so the
+	// jump offset is the section's projected top. See
+	// TheoryOfTUIOutputSections.
+	want := tu.outputSectionOffset(1)
 	if want <= 0 {
 		t.Fatal("section top must be below the content start")
 	}
