@@ -78,8 +78,8 @@ func (t *TUI) tuiPaneHeight(idx int, box taiui.Box) int {
 // helpLines returns the help overlay's key-binding lines for this
 // session: the full list in interactive sessions, and a variant without
 // the input bar's entries in the others — Enter's input clause and the
-// input-row click semantics describe a bar that is not rendered. See
-// TheoryOfTUIChatInput.
+// input-row click semantics describe a bar that is not rendered. The
+// submit-glyph entry drops with the bar. See TheoryOfTUIChatInput.
 func (t *TUI) helpLines() []string {
 	if t.interactive {
 		return tuiHelpLines
@@ -92,7 +92,7 @@ func (t *TUI) helpLines() []string {
 			lines = append(lines, "enter\ttoggle latest handoff summary")
 		case "click":
 			lines = append(lines, "click\tselect / toggle tab under cursor")
-		case "input bar":
+		case "input bar", "submit glyph":
 			// The bar is not rendered in non-interactive sessions.
 		default:
 			lines = append(lines, line)
@@ -119,6 +119,9 @@ var tuiHelpLines = []string{
 	"q / Ctrl-C\tquit (press again to confirm)",
 	"input bar\tclick the bottom row to focus and type; esc or view-changing keys release",
 	"?\ttoggle this help overlay",
+	"top bar\tclick « » ⊟ ⇅ ◉ ? ✕ to jump sections, collapse all, split, toggle mouse, toggle help, quit",
+	"submit glyph\tclick ↵ at the input bar's right end to send the typed line",
+	"help close\tclick anywhere on the help overlay to close it",
 }
 
 func buildRoot(t *TUI, width, height int, displays [3][]taiui.Line) taiui.Element {
@@ -131,6 +134,7 @@ func buildRoot(t *TUI, width, height int, displays [3][]taiui.Line) taiui.Elemen
 		}
 		box := boxes[i]
 		var inputBar taiui.Element
+		var submitGlyphEl taiui.Element
 		if i == 0 && t.interactive && t.tabs.Expanded[0] && box.Height() > 1 && box.Width() > 0 {
 			// The chat input bar is the bottom row of the Output tab's
 			// box: the panel above it shrinks by one row and the bar
@@ -139,6 +143,17 @@ func buildRoot(t *TUI, width, height int, displays [3][]taiui.Line) taiui.Elemen
 			// sessions only — the bar is not rendered otherwise. See
 			// TheoryOfTUIChatInput.
 			inputBar = t.inputBar.Element(box, t.inputFocused, t.tabs.Focus == 0, inputBarStyle)
+			if box.Width() >= 2 {
+				// The submit glyph overlays the bar's right end: a press
+				// there sends the typed line, colored by whether a
+				// ChatInput call waits. See TheoryOfControlBar.
+				glyph, glyphColor := submitGlyph(t.inputResult != nil)
+				submitGlyphEl = taiui.Text(glyph,
+					taiui.Box{Top: box.Bottom - 1, Left: box.Right - 2, Bottom: box.Bottom, Right: box.Right},
+					taiui.FGColor(glyphColor),
+					taiui.Bold(true),
+				)
+			}
 			box.Bottom--
 		}
 		var panel taiui.Element
@@ -158,9 +173,18 @@ func buildRoot(t *TUI, width, height int, displays [3][]taiui.Line) taiui.Elemen
 		}
 		if inputBar != nil {
 			elements = append(elements, inputBar)
+			if submitGlyphEl != nil {
+				elements = append(elements, submitGlyphEl)
+			}
 		}
 	}
 	root := taiui.Overlay(elements...)
+	if t.tabs.TopInset > 0 {
+		// The control bar draws over the top rows the inset reserves:
+		// every keyboard action without a pointer path is a clickable
+		// glyph there. See TheoryOfControlBar.
+		root = taiui.Overlay(root, controlBarElement(width, t.mouseReporting))
+	}
 	if t.showHelp {
 		// The help overlay is centered over the tabs and lists the key
 		// bindings. It is derived from state like the quit confirmation

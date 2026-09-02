@@ -145,11 +145,15 @@ func TestCollapsedPanelUnseenDot(t *testing.T) {
 			t.Fatal("expected a rendered frame")
 		}
 		frame := screen.frames[len(screen.frames)-1]
-		// The label "Summary" ends at column 6; the red-circle emoji
-		// sits right after it, occupying columns 7 and 8.
+		// The label "Summary" ends at column 6; the unseen dot glyph
+		// sits right after it at column 7, in the unseen color.
 		cell := frame.Cells[7]
-		if cell.Rune != '🔴' {
-			t.Fatalf("expected the red-circle emoji at (7,0), got %v", cell.Rune)
+		if cell.Rune != '∘' {
+			t.Fatalf("expected the unseen dot glyph at (7,0), got %v", cell.Rune)
+		}
+		wantR, wantG, wantB := style.UnseenDotColor.RGB()
+		if r, g, b := cell.Style.Fg().RGB(); r != wantR || g != wantG || b != wantB {
+			t.Fatalf("expected the unseen color foreground at (7,0), got %#x %#x %#x", r, g, b)
 		}
 	})
 
@@ -161,11 +165,11 @@ func TestCollapsedPanelUnseenDot(t *testing.T) {
 			t.Fatal("expected a rendered frame")
 		}
 		frame := screen.frames[len(screen.frames)-1]
-		// The one-column strip cannot hold the two-column emoji, so the
+		// The one-column strip cannot hold the horizontal label, so the
 		// mark falls back to a red background cell right below the
 		// label, which occupies rows 0..6.
 		cell := frame.Cells[7*frame.Width]
-		wantR, wantG, wantB := style.UnseenDotBG.RGB()
+		wantR, wantG, wantB := style.UnseenDotColor.RGB()
 		if r, g, b := cell.Style.Bg().RGB(); r != wantR || g != wantG || b != wantB {
 			t.Fatalf("expected the unseen dot background at (0,7), got %#x %#x %#x", r, g, b)
 		}
@@ -177,8 +181,8 @@ func TestCollapsedPanelUnseenDot(t *testing.T) {
 		Render(element, screen)
 		frame := screen.frames[len(screen.frames)-1]
 		for _, cell := range frame.Cells {
-			if cell.Rune == '🔴' {
-				t.Fatal("expected no unseen emoji without the unseen flag")
+			if cell.Rune == '∘' {
+				t.Fatal("expected no unseen dot without the unseen flag")
 			}
 		}
 	})
@@ -321,12 +325,12 @@ func TestTabsBoxesMaxSizes(t *testing.T) {
 
 func testPanelStyle() PanelStyle {
 	return PanelStyle{
-		BaseBG:        HexColor(0x0a1428),
-		FocusBG:       HexColor(0x2e2e2e),
-		LabelFG:       color.PaletteColor(8),
-		FocusLabelFG:  color.PaletteColor(15),
-		ActiveLabelFG: color.PaletteColor(10),
-		UnseenDotBG:   color.Red,
+		BaseBG:         HexColor(0x0a1428),
+		FocusBG:        HexColor(0x2e2e2e),
+		LabelFG:        color.PaletteColor(8),
+		FocusLabelFG:   color.PaletteColor(15),
+		ActiveLabelFG:  color.PaletteColor(10),
+		UnseenDotColor: color.Red,
 	}
 }
 

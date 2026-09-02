@@ -19,7 +19,7 @@ taiui tabs theory:
   not re-expand a tab the user collapsed; the caller is told whether
   the tab was newly expanded, so it can resume following the tail.
 - Unseen content: a collapsed tab that receives content carries the
-  unseen flag, and its collapsed strip renders a red-circle emoji
+  unseen flag, and its collapsed strip renders the unseen dot glyph
   right after the label until the tab is expanded or focused, which
   clears the flag. An expanded tab never carries the flag, because its
   content is visible as it arrives. FocusTab gives one tab the
@@ -44,6 +44,10 @@ taiui tabs theory:
   uncapped, and the focused tab always ignores its cap. The extent a
   capped tab gives up is redistributed among the uncapped expanded tabs
   by weight, so the boxes still tile the screen exactly.
+- TopInset reserves rows at the top of the screen: Boxes lays every
+  tab below the inset, so a control bar drawn over the reserved row
+  needs no coordinate remapping anywhere; zero keeps the full-height
+  layout.
 - An expanded tab renders a one-row label strip pinned to the top and a
   scroll view spanning the remaining rows, showing only the visible
   lines in O(window) time, avoiding virtual-column overhead when
@@ -59,9 +63,9 @@ type Tabs struct {
 	Expanded   []bool
 	HasContent []bool
 	// Unseen marks a collapsed tab whose content arrived while it was
-	// collapsed: its collapsed strip renders the red-circle unseen
-	// emoji after the label until the tab is expanded or focused
-	// again. See TheoryOfTabs.
+	// collapsed: its collapsed strip carries the unseen dot glyph
+	// after the label until the tab is expanded or focused again. See
+	// TheoryOfTabs.
 	Unseen        []bool
 	LastFocus     []int
 	Focus         int
@@ -71,7 +75,12 @@ type Tabs struct {
 	// the stacked layout, columns in vertical split). Zero, negative,
 	// or a missing entry leaves the tab uncapped, and the focused tab
 	// always ignores its cap. See TheoryOfTabs.
-	MaxSizes   []int
+	MaxSizes []int
+	// TopInset reserves rows at the top of the screen: Boxes lays every
+	// tab below the inset, so a control bar drawn over the reserved row
+	// stays clear of every panel. Zero keeps the full-height layout.
+	// See TheoryOfTabs.
+	TopInset   int
 	focusOrder int
 }
 
@@ -213,6 +222,7 @@ func (t *Tabs) CycleFocus() {
 // Boxes computes the panel box of each tab. See TheoryOfTabs.
 func (t *Tabs) Boxes(width, height int) []Box {
 	boxes := make([]Box, t.Count)
+	inset := max(t.TopInset, 0)
 
 	var expandedIndices []int
 	totalWeight := 0
@@ -237,23 +247,23 @@ func (t *Tabs) Boxes(width, height int) []Box {
 		pos := 0
 		for i := 0; i < t.Count; i++ {
 			if t.Expanded[i] {
-				boxes[i] = Box{Top: 0, Left: edge, Bottom: height, Right: edge + sizes[pos]}
+				boxes[i] = Box{Top: inset, Left: edge, Bottom: height, Right: edge + sizes[pos]}
 				edge += sizes[pos]
 				pos++
 			} else {
-				boxes[i] = Box{Top: 0, Left: edge, Bottom: height, Right: edge + 1}
+				boxes[i] = Box{Top: inset, Left: edge, Bottom: height, Right: edge + 1}
 				edge++
 			}
 		}
 		return boxes
 	}
 
-	expandedHeight := height - collapsedCount
+	expandedHeight := height - inset - collapsedCount
 	if expandedHeight < 0 {
 		expandedHeight = 0
 	}
 	sizes := t.expandedSizes(expandedHeight, expandedIndices, totalWeight)
-	edge := 0
+	edge := inset
 	pos := 0
 	for i := 0; i < t.Count; i++ {
 		if t.Expanded[i] {
@@ -341,16 +351,16 @@ func (t *Tabs) expandedSizes(extent int, expandedIndices []int, totalWeight int)
 // unfocused tab, FocusBG of the focused tab. LabelFG is the label color
 // of an unfocused tab, FocusLabelFG of the focused tab, and ActiveLabelFG
 // highlights a label whose tab carries an active state (e.g., an
-// in-flight generation request). UnseenDotBG paints the fallback red
-// dot on a one-column strip, where the red-circle unseen emoji cannot
-// fit.
+// in-flight generation request). UnseenDotColor colors the unseen dot
+// glyph on a horizontal strip and paints the fallback background cell
+// on a one-column vertical strip.
 type PanelStyle struct {
-	BaseBG        Color
-	FocusBG       Color
-	LabelFG       Color
-	FocusLabelFG  Color
-	ActiveLabelFG Color
-	UnseenDotBG   Color
+	BaseBG         Color
+	FocusBG        Color
+	LabelFG        Color
+	FocusLabelFG   Color
+	ActiveLabelFG  Color
+	UnseenDotColor Color
 }
 
 var _ Element = _Panel{}
@@ -529,12 +539,18 @@ func renderPanel(p _Panel, box Box, style Style, draw drawFunc, cursor cursorFun
 	}
 }
 
+// unseenDotGlyph marks unseen content on a collapsed strip: a ring
+// glyph with no Emoji property, rendered in the unseen color as a
+// plain colored character on every terminal and width setting. See
+// TheoryOfTabPanel.
+const unseenDotGlyph = "∘"
+
 // CollapsedPanel renders a collapsed tab as a thin strip showing the
 // tab's title. In a narrow column the label is written vertically; in
-// a short row it is written horizontally. An unseen tab carries a
-// red-circle emoji right after the label. The one-column vertical
-// strip cannot hold the two-column emoji — it would be clipped
-// entirely — so the mark falls back to a red background cell there.
+// a short row it is written horizontally. An unseen tab carries a red
+// dot glyph right after the label. The one-column vertical strip
+// cannot hold the horizontal label — the mark falls back to a red
+// background cell there.
 func CollapsedPanel(box Box, label string, focus, unseen bool, style PanelStyle) Element {
 	base := style.BaseBG
 	if focus {
@@ -569,23 +585,36 @@ func CollapsedPanel(box Box, label string, focus, unseen bool, style PanelStyle)
 		return Overlay(panel, Rect(
 			Box{Top: dotRow, Left: box.Left, Bottom: dotRow + 1, Right: box.Left + 1},
 			Fill(true),
-			BGColor(style.UnseenDotBG),
+			BGColor(style.UnseenDotColor),
 		))
 	}
-	labelText := label
-	if unseen {
-		// The unseen mark is the red-circle emoji: a colored glyph
-		// right after the label, where the former background dot sat.
-		labelText = label + "🔴"
-	}
-	return Rect(
+	panel := Rect(
 		Box(box),
 		Fill(true),
 		BGColor(base),
 		Text(
-			labelText,
+			label,
 			Bold(focus),
 			FGColor(labelFg),
 		),
 	)
+	if !unseen {
+		return panel
+	}
+	// The unseen mark is a red dot glyph right after the label: a
+	// colorable character carrying the unseen color as its foreground.
+	options := DisplayWidthOptions()
+	iter := getGraphemeIter()
+	defer putGraphemeIter(iter)
+	dotCol := box.Left + lineWidth(options, label, iter)
+	if dotCol >= box.Right {
+		// The label fills the strip: there is no room for the mark.
+		return panel
+	}
+	return Overlay(panel, Rect(
+		Box{Top: box.Top, Left: dotCol, Bottom: box.Top + 1, Right: dotCol + 1},
+		Fill(true),
+		BGColor(base),
+		Text(unseenDotGlyph, Bold(true), FGColor(style.UnseenDotColor)),
+	))
 }

@@ -11,6 +11,9 @@ taiui session chrome theory:
   content; TabWidth aligns each line's key and description columns.
   Both overlays are part of the element tree, derived from state, so no
   imperative layer management is needed.
+- HelpOverlayBox exposes the overlay's box so applications hit-test
+  pointer presses against it: a press inside the box closes the
+  overlay.
 `
 
 // QuitConfirm implements the two-press quit pattern: the first quit key
@@ -55,21 +58,29 @@ func QuitConfirmBar(width, height int) Element {
 	)
 }
 
-// HelpOverlay returns a centered, bordered overlay listing the given
-// help lines. tabWidth aligns the key column of each line. See
-// TheoryOfSessionChrome.
-func HelpOverlay(lines []string, tabWidth, width, height int) Element {
+// HelpOverlayBox returns the box the help overlay renders in, so an
+// application can hit-test pointer presses against the overlay: a
+// press inside the box closes it. See TheoryOfSessionChrome.
+func HelpOverlayBox(lines []string, width, height int) Box {
 	overlayHeight := min(len(lines)+4, max(height-2, 1))
 	overlayWidth := min(72, max(width-4, 1))
 	top := max((height-overlayHeight)/2, 0)
 	left := max((width-overlayWidth)/2, 0)
+	return Box{
+		Top:    top,
+		Left:   left,
+		Bottom: top + overlayHeight,
+		Right:  left + overlayWidth,
+	}
+}
+
+// HelpOverlay returns a centered, bordered overlay listing the given
+// help lines. tabWidth aligns the key column of each line. The box
+// comes from HelpOverlayBox, so applications can hit-test presses
+// against the overlay. See TheoryOfSessionChrome.
+func HelpOverlay(lines []string, tabWidth, width, height int) Element {
 	return Rect(
-		Box{
-			Top:    top,
-			Left:   left,
-			Bottom: top + overlayHeight,
-			Right:  left + overlayWidth,
-		},
+		HelpOverlayBox(lines, width, height),
 		Border(true),
 		Fill(true),
 		BGColor(HexColor(0x202020)),

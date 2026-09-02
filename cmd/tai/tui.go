@@ -242,6 +242,10 @@ compares it after, so a key that changes nothing (a page-up already at
 the top) keeps the bar focused. After any loss the cursor hides and
 ONLY a click on the bar's row regains the focus.
 
+The submit glyph ↵ at the bar's right end delivers the typed line by
+click, by the same delivery rule and without requiring focus; see
+TheoryOfControlBar.
+
 The terminal cursor is shown while the bar is focused — the focused
 bar renders an Input element whose CursorAt records the editing
 position in the frame — and hidden on the focus-loss transition,
@@ -435,17 +439,17 @@ func (t Tui) Keys() map[string]string {
 
 // panelStyle styles the three tab panels: dark blue for unfocused tabs,
 // dark gray for the focused tab, a highlight color for the active
-// request label, and red for the fallback unseen-content background on
-// a one-column strip, where the red-circle unseen emoji cannot fit. It
-// is the single style definition shared by the panel rendering and the
-// tests.
+// request label, and red for the unseen dot of a collapsed strip — the
+// horizontal glyph's foreground and the one-column strip's fallback
+// background. It is the single style definition shared by the panel
+// rendering and the tests.
 var panelStyle = taiui.PanelStyle{
-	BaseBG:        taiui.HexColor(tabUnfocusBG),
-	FocusBG:       taiui.HexColor(tabFocusBG),
-	LabelFG:       color.PaletteColor(8),
-	FocusLabelFG:  color.PaletteColor(15),
-	ActiveLabelFG: color.PaletteColor(int(tabActiveLabelFg)),
-	UnseenDotBG:   taiui.HexColor(0xd23b3b),
+	BaseBG:         taiui.HexColor(tabUnfocusBG),
+	FocusBG:        taiui.HexColor(tabFocusBG),
+	LabelFG:        color.PaletteColor(8),
+	FocusLabelFG:   color.PaletteColor(15),
+	ActiveLabelFG:  color.PaletteColor(int(tabActiveLabelFg)),
+	UnseenDotColor: taiui.HexColor(0xd23b3b),
 }
 
 var (
@@ -775,6 +779,10 @@ func newTUI() (*TUI, error) {
 	// the pane the user watches, so it is open from the first frame.
 	// See TheoryOfTUI.
 	tabs.FocusTab(0)
+	// The control bar reserves the top row: every keyboard action
+	// without a pointer path renders there as a clickable glyph. See
+	// TheoryOfControlBar.
+	tabs.TopInset = 1
 	return &TUI{
 		// Every display buffer is unbounded: the Output tab retains each
 		// streamed line, the Logs tab each log record, and the Events
@@ -876,9 +884,7 @@ func (t *TUI) handleChatInputKey(key string) bool {
 		// keeps the typed line for the next submit. The key is always
 		// consumed so it never triggers the unfocused Enter binding.
 		// See TheoryOfTUIChatInput.
-		if t.inputResult != nil {
-			t.deliverInputLocked(chatInputResult{line: t.inputBar.Line(), ok: true})
-		}
+		t.submitInputLocked()
 	case key == "esc", key == "ctrl-c":
 		// Release the keyboard back to navigation; the blocked
 		// ChatInput keeps waiting and the typed line is kept. io.EOF
@@ -1187,8 +1193,10 @@ func (t *TUI) handleKey(key string) bool {
 	// focuses it; a press elsewhere releases it). See
 	// TheoryOfTUIChatInput and TheoryOfMouseSupport.
 	if strings.HasPrefix(key, taiui.MouseKeyPrefix) {
-		t.handleMouseKey(key)
-		return false
+		// The pointer path can confirm a quit through the control
+		// bar's ✕ glyph, so its result ends the session like the quit
+		// key. See TheoryOfControlBar.
+		return t.handleMouseKey(key)
 	}
 	// While the chat input bar is focused, editing keys edit the
 	// pending line; every other key falls through to the dispatch below
@@ -1257,16 +1265,9 @@ func (t *TUI) handleKey(key string) bool {
 		t.toggleHelp()
 	case key == "quit":
 		// The first quit key press shows a confirmation bar; a second
-		// press confirms the quit. See TheoryOfTUI.
-		if t.handleQuitKey() {
-			// Release any chat input waiting on the input bar so the
-			// blocked generation loop can wind down as the session
-			// ends. See TheoryOfTUIChatInput.
-			t.cancelChatInput()
-			t.mu.Lock()
-			height := t.height
-			t.mu.Unlock()
-			fmt.Fprintf(t.tty, "\x1b[%d;1H", height)
+		// press confirms the quit. The exit path is shared with the
+		// control bar's ✕ glyph. See TheoryOfTUI and TheoryOfControlBar.
+		if t.finishQuit() {
 			return true
 		}
 	}
@@ -1395,13 +1396,14 @@ func (t *TUI) Run(gen func()) error {
 	return sess.Run()
 }
 
-func (t *TUI) handleMouseKey(key string) {
+func (t *TUI) handleMouseKey(key string) bool {
 	event, x, y, ok := taiui.ParseMouseKey(key)
 	if !ok {
-		return
+		return false
 	}
 	t.mu.Lock()
-	defer t.mu.Unlock()
+	var action controlBarAction
+	dispatchBar := false
 	switch event {
 	case "motion":
 		// No-button motion (mode 1003) drives the control column's
@@ -1414,40 +1416,64 @@ func (t *TUI) handleMouseKey(key string) {
 	case "wheel-down":
 		t.mouse.Wheel(t.tabs, t.scrolls[:], t.width, t.height, x, y, 1)
 	case "left":
-		if t.inputRowHit(x, y) {
-			// A press on the chat input bar's row focuses the bar
-			// instead of driving tab interaction, so the user can click
-			// the input and type. See TheoryOfTUIChatInput.
-			t.focusInputLocked()
-			return
+		if a, hit := controlBarHit(t.tabs.TopInset, t.width, x, y, t.mouseReporting); hit {
+			// Any bar press other than the quit glyph cancels a pending
+			// quit confirmation, like any non-quit key. See TheoryOfTUI.
+			if a != controlQuit {
+				t.quit.Cancel()
+			}
+			// The bar action runs after the lock is released: the
+			// dispatched actions take t.mu themselves. See
+			// TheoryOfControlBar.
+			action, dispatchBar = a, true
+		} else {
+			// A press that is not the quit glyph cancels a pending
+			// quit confirmation, like any other key. See TheoryOfTUI.
+			t.quit.Cancel()
+			switch {
+			case t.helpPressLocked(x, y):
+				// A press inside the help overlay closes it. See
+				// TheoryOfControlBar.
+			case t.submitGlyphHitLocked(x, y):
+				// A press on the submit glyph delivers the typed line
+				// by the Enter rule. See TheoryOfControlBar.
+				t.submitInputLocked()
+			case t.inputRowHit(x, y):
+				// A press on the chat input bar's row focuses the bar
+				// instead of driving tab interaction, so the user can
+				// click the input and type. See TheoryOfTUIChatInput.
+				t.focusInputLocked()
+			default:
+				// A press anywhere else releases the input focus before
+				// the ordinary press handling runs, so clicking a pane
+				// hands the keyboard back to navigation. See
+				// TheoryOfTUIChatInput.
+				t.inputFocused = false
+				// A press on the Output tab's control column toggles
+				// the section under the control instead of driving tab
+				// interaction. See TheoryOfOutputControls.
+				if t.toggleControlAtClick(x, y) {
+					break
+				}
+				// A press on a collapsed section's row expands it,
+				// replacing the removed preview's click-to-jump. See
+				// TheoryOfOutputControls.
+				if t.expandCollapsedSectionAtClick(x, y) {
+					break
+				}
+				t.mouse.Press(t.tabs, t.scrolls[:], t.width, t.height, x, y)
+				// A press on the attempt-start line's jump marker jumps
+				// the Output tab to the section that attempt wrote;
+				// presses elsewhere in the Events pane are inert. The
+				// jump runs before the handoff toggle so it maps rows
+				// of the last-rendered tree, the same ranges the toggle
+				// consumes. See TheoryOfTUIOutputSections.
+				t.jumpToEventAtClick(x, y)
+				// A press on a handoff node's display rows toggles its
+				// expansion. See TheoryOfEventTree.
+				t.toggleHandoffAtClick(x, y)
+			}
 		}
-		// A press anywhere else releases the input focus before the
-		// ordinary press handling runs, so clicking a pane hands the
-		// keyboard back to navigation. See TheoryOfTUIChatInput.
-		t.inputFocused = false
-		// A press on the Output tab's control column toggles the
-		// section under the control instead of driving tab
-		// interaction. See TheoryOfOutputControls.
-		if t.toggleControlAtClick(x, y) {
-			return
-		}
-		// A press on a collapsed section's row expands it, replacing
-		// the removed preview's click-to-jump. See
-		// TheoryOfOutputControls.
-		if t.expandCollapsedSectionAtClick(x, y) {
-			return
-		}
-		t.mouse.Press(t.tabs, t.scrolls[:], t.width, t.height, x, y)
-		// A press on the attempt-start line's jump marker jumps the
-		// Output tab to the section that attempt wrote; presses
-		// elsewhere in the Events pane are inert. The jump runs before
-		// the handoff toggle so it maps rows of the last-rendered
-		// tree, the same ranges the toggle consumes. See
-		// TheoryOfTUIOutputSections.
-		t.jumpToEventAtClick(x, y)
-		// A press on a handoff node's display rows toggles its
-		// expansion. See TheoryOfEventTree.
-		t.toggleHandoffAtClick(x, y)
 	case "release":
 		// The release refreshes the tracked pointer position, ending a
 		// drag with the pointer where it stopped.
@@ -1456,6 +1482,11 @@ func (t *TUI) handleMouseKey(key string) {
 	case "leftdrag":
 		t.mouse.Drag(t.tabs, t.scrolls[:], y)
 	}
+	t.mu.Unlock()
+	if dispatchBar {
+		return t.dispatchControlBar(action)
+	}
+	return false
 }
 
 // toggleLastHandoff expands or collapses the handoff node displayed

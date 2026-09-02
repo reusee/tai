@@ -8,10 +8,11 @@ taiui tab panel theory:
   content lines, and scroll view. The title/label pair decouples the
   persistent strip label from the dynamic panel label, which may carry
   status suffixes such as "(generating...)".
-- An unseen collapsed tab renders a red-circle emoji right after its
+- An unseen collapsed tab renders a red dot glyph right after its
   label, marking content that arrived while the tab was collapsed; the
-  one-column vertical strip falls back to a red background cell,
-  because the two-column emoji cannot fit.
+  glyph is a plain colorable character, so every terminal renders it.
+  The one-column vertical strip falls back to a red background cell,
+  because the horizontal label cannot fit there.
 - The panel's title row centers its label across the full box width,
   filled edge to edge. An optional ContentIndent spec indents the
   content rows from the box's left edge, reserving the strip for
