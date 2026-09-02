@@ -186,6 +186,26 @@ func TestSystemPromptDecompositionPrecedesAnalysis(t *testing.T) {
 	})
 }
 
+func TestSystemPromptParallelRounds(t *testing.T) {
+	dscope.New(
+		modes.ForTest(t),
+		new(Module),
+	).Fork(
+		func() codetypes.PartsProvider { return mockPartsProvider{} },
+		func() flags.Plan { return true },
+	).Call(func(
+		prompt SystemPrompt,
+	) {
+		s := string(prompt)
+		if !strings.Contains(s, "Round Granularity") {
+			t.Fatal("system prompt must include the round granularity section")
+		}
+		if !strings.Contains(s, "Maximize parallelism inside a round") {
+			t.Fatal("round granularity must teach batching independent work into one round")
+		}
+	})
+}
+
 func TestSystemPromptTaskDecompositionStrategies(t *testing.T) {
 	dscope.New(
 		modes.ForTest(t),

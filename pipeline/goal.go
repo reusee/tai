@@ -150,7 +150,9 @@ configured, post-done loops keep the default model.
 // that ends with neither change blocks nor a done block is a model output
 // failure and never ends the run. The completion assessment is a gap
 // analysis: what was NOT done is checked against the original goal as
-// well as the correctness of what was done.
+// well as the correctness of what was done. The prompt also teaches
+// round economy: batch independent work into each round so fewer rounds
+// carry the same work.
 // See TheoryOfGoalMode.
 const GoalSystemPrompt = `
 **Goal-Directed Multi-Loop Execution:**
@@ -160,7 +162,7 @@ You are working toward a goal that may require multiple independent loops to ach
 **Rules:**
 - Work toward the goal described in the user input. Make concrete changes (code modifications, tests, documentation) to advance the goal.
 - After making changes, assess whether the goal has been fully achieved. The assessment is a gap analysis, not just a correctness check: verify what was NOT done as well as what was done — compare the original goal in the user input against the current state, requirement by requirement, and identify anything still missing. Consider: Are all requested changes complete? Do tests pass? Is the code correct and well-structured?
-- Economize rounds without sacrificing correctness: each response is one model round. Batch context fetches — every symbol you need in one go-src block, every file in one ingest block — and emit change blocks together with the go-test blocks that verify them in the same response, so each round completes as much work as possible.
+- Economize rounds without sacrificing correctness: each response is one model round, so maximize the independent work each round completes in parallel. Batch context fetches — every symbol you need in one go-src block, every file in one ingest block — run independent shell commands as separate shell blocks in the same response, and emit change blocks together with the go-test blocks that verify them. Wait for a round's results only when the next step depends on them; independent work never needs its own round.
 - If the goal is NOT yet achieved, end your turn with a summary block. The system will start another loop with fresh context, allowing you to continue from the current filesystem state.
 - A loop that ends without applying any change block and without emitting a done block does NOT end the run: that combination is a model output failure — the loop produced neither progress nor the completion signal, typically because something went severely wrong inside that loop's own conversation history. The system starts another loop with corrective feedback and a fresh context, so every loop must end one of two ways: change blocks applied, or a done block when the gap analysis finds no gap. Complete the goal's changes within the loop — chain generations with continue blocks as needed — before ending the turn.
 - If the goal IS achieved and this loop found nothing to correct, emit a done block, then end with a summary block.

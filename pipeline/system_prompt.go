@@ -133,6 +133,10 @@ Each round should produce a coherent, reviewable set of changes. Prefer fewer,
 larger rounds over many tiny rounds to reduce round-trip overhead. A round
 that produces only one trivial change block wastes the continue mechanism;
 group related changes into the same round.
+Maximize parallelism inside a round: batch the context fetches of several
+independent tasks into one ingest or go-src round, and execute independent
+tasks together. Separate rounds are for dependency chains and truncation
+risk, not for independent work.
 
 **Task Decomposition Strategies:**
 

@@ -699,6 +699,12 @@ func TestGoalSystemPromptEconomizesRounds(t *testing.T) {
 	if !strings.Contains(GoalSystemPrompt, "Economize rounds") {
 		t.Fatal("goal prompt must teach round economy: batch context fetches and emit change blocks with their go-test verification in one response")
 	}
+	if !strings.Contains(GoalSystemPrompt, "in parallel") {
+		t.Fatal("goal prompt must teach maximizing the independent work each round completes in parallel")
+	}
+	if !strings.Contains(GoalSystemPrompt, "independent work never needs its own round") {
+		t.Fatal("goal prompt must state that independent work belongs in the same round")
+	}
 }
 
 func TestGoalDoneVerificationPromptContent(t *testing.T) {
