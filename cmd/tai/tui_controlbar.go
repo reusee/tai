@@ -16,8 +16,12 @@ Menu bar and mouse-complete interaction theory (cmd/tai):
   entry. A press on a category title opens its dropdown, pressing it
   again closes it, a press on another title switches menus, an item
   press runs the action and closes, and a press anywhere else closes
-  the menu and runs the ordinary press handling. With the menus, all
-  TUI interactions are reachable by mouse alone.
+  the menu and runs the ordinary press handling. While a dropdown is
+  open, pointer motion over another category title pops up that
+  title's menu, like a desktop menu bar; motion elsewhere keeps the
+  open menu, the top-level quit entry is never triggered by hover,
+  and closing stays press-driven. With the menus, all TUI
+  interactions are reachable by mouse alone.
 - The menu bar exists only while Tabs.TopInset reserves a row: the
   tab layout starts below the inset, the bar draws over the reserved
   row, and no coordinate is remapped. Every Boxes consumer, hit test,
@@ -28,9 +32,10 @@ Menu bar and mouse-complete interaction theory (cmd/tai):
   renderer and the hit tests share menuBarLayout and menuDropdownBox,
   so they cannot disagree. Titles and labels are ASCII constants, so
   their byte length is their cell width.
-- The dropdown is a bordered Rect titled with the category name,
-  drawn over the tabs; the element tree places it after the panels
-  and the help overlay, so an open menu covers both.
+- The dropdown is a borderless, filled box holding exactly the item
+  rows: one cell of side padding, no vertical padding, no border and
+  no title, drawn over the tabs; the element tree places it after the
+  panels and the help overlay, so an open menu covers both.
 - Quit keeps the two-press protocol: the first Quit press arms the
   confirmation bar, the second confirms, and any other press — menu
   entry or pane — cancels.
@@ -90,8 +95,9 @@ var menuBarEntries = []menuEntry{
 }
 
 // menuDropdownPadding is the blank cells between an item label and the
-// dropdown border on each side.
-const menuDropdownPadding = 2
+// dropdown edge on each side. There is no vertical padding: the box
+// holds exactly the item rows.
+const menuDropdownPadding = 1
 
 // menuBarGap is the blank cells between two menu bar titles.
 const menuBarGap = 3
@@ -155,10 +161,11 @@ func menuBarElement(width int, openMenu int) taiui.Element {
 	return taiui.Overlay(children...)
 }
 
-// menuDropdownBox returns the box of the open menu's dropdown: a
-// bordered box of item rows under the menu's title slot, shifted left
-// and clamped so it stays on the screen. The renderer and the item hit
-// test share it, so they cannot disagree. See TheoryOfControlBar.
+// menuDropdownBox returns the box of the open menu's dropdown: the
+// item rows directly under the menu's title slot, one cell of side
+// padding and no vertical padding, shifted left and clamped so it
+// stays on the screen. The renderer and the item hit test share it,
+// so they cannot disagree. See TheoryOfControlBar.
 func menuDropdownBox(width, height, openMenu int) (taiui.Box, bool) {
 	if openMenu < 0 || openMenu >= len(menuBarEntries) {
 		return taiui.Box{}, false
@@ -179,9 +186,9 @@ func menuDropdownBox(width, height, openMenu int) (taiui.Box, bool) {
 	for _, item := range entry.items {
 		itemWidth = max(itemWidth, len(item.label))
 	}
-	w := itemWidth + menuDropdownPadding*2 + 2 // item padding plus the border
+	w := itemWidth + menuDropdownPadding*2
 	left := min(slot.x0, max(width-w, 0))
-	h := len(entry.items) + 2 // item rows plus the border
+	h := len(entry.items)
 	box := taiui.Box{
 		Top:    1,
 		Left:   left,
@@ -195,9 +202,9 @@ func menuDropdownBox(width, height, openMenu int) (taiui.Box, bool) {
 }
 
 // menuDropdownElement renders the open menu's dropdown over the tabs:
-// a bordered box titled with the category name, one item per row. It
-// returns nil when no menu is open or the box degenerates. See
-// TheoryOfControlBar.
+// a filled, borderless box holding exactly the item rows, one per
+// row, with one cell of side padding. It returns nil when no menu is
+// open or the box degenerates. See TheoryOfControlBar.
 func menuDropdownElement(width, height, openMenu int) taiui.Element {
 	box, ok := menuDropdownBox(width, height, openMenu)
 	if !ok {
@@ -208,12 +215,10 @@ func menuDropdownElement(width, height, openMenu int) taiui.Element {
 		box,
 		taiui.Fill(true),
 		taiui.BGColor(taiui.HexColor(tabUnfocusBG)),
-		taiui.Border(true),
-		taiui.Title(entry.title),
 	)}
 	for i, item := range entry.items {
 		children = append(children, taiui.Text(item.label,
-			taiui.Box{Top: box.Top + 1 + i, Left: box.Left + 1, Bottom: box.Top + 2 + i, Right: box.Right - 1},
+			taiui.Box{Top: box.Top + i, Left: box.Left + menuDropdownPadding, Bottom: box.Top + 1 + i, Right: box.Right - menuDropdownPadding},
 		))
 	}
 	return taiui.Overlay(children...)
@@ -297,10 +302,10 @@ func (t *TUI) helpPressLocked(x, y int) bool {
 }
 
 // menuDropdownPressLocked handles a left press while a menu is open: a
-// press on an item reports its action, a press inside the dropdown but
-// off the items reports none, and a press outside the dropdown is not
-// consumed. A consumed press closes the menu. The caller holds t.mu.
-// See TheoryOfControlBar.
+// press on an item reports its action, a press on the dropdown's side
+// padding closes the menu without an action, and a press outside the
+// dropdown is not consumed. A consumed press closes the menu. The
+// caller holds t.mu. See TheoryOfControlBar.
 func (t *TUI) menuDropdownPressLocked(x, y int) (action controlBarAction, consumed bool) {
 	open := t.openMenu
 	if open < 0 || open >= len(menuBarEntries) {
@@ -312,12 +317,32 @@ func (t *TUI) menuDropdownPressLocked(x, y int) (action controlBarAction, consum
 	}
 	t.openMenu = -1
 	consumed = true
-	row := y - (box.Top + 1)
+	row := y - box.Top
 	if row >= 0 && row < len(menuBarEntries[open].items) &&
-		x >= box.Left+1 && x < box.Right-1 {
+		x >= box.Left+menuDropdownPadding && x < box.Right-menuDropdownPadding {
 		action = menuBarEntries[open].items[row].action
 	}
 	return action, consumed
+}
+
+// menuHoverLocked pops up the menu of the category title under the
+// pointer while a menu is open: motion over another category title
+// switches the open dropdown to that title, like a desktop menu bar;
+// motion elsewhere keeps the open menu, and the top-level quit entry
+// is never triggered by hover. The caller holds t.mu. See
+// TheoryOfControlBar.
+func (t *TUI) menuHoverLocked(x, y int) {
+	if t.openMenu < 0 {
+		return
+	}
+	index, ok := menuBarHit(t.tabs.TopInset, t.width, x, y)
+	if !ok {
+		return
+	}
+	if entry := menuBarEntries[index]; entry.isTopLevel() || index == t.openMenu {
+		return
+	}
+	t.openMenu = index
 }
 
 // submitGlyphHitLocked reports whether the press lands on the input

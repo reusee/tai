@@ -1418,9 +1418,12 @@ func (t *TUI) handleMouseKey(key string) bool {
 	case "motion":
 		// No-button motion (mode 1003) drives the control column's
 		// hover strip: the tracked pointer position decides whether a
-		// control row lays its controls out horizontally. See
-		// TheoryOfOutputControls.
+		// control row lays its controls out horizontally. While a
+		// menu is open, motion over another category title pops up
+		// that title's menu. See TheoryOfOutputControls and
+		// TheoryOfControlBar.
 		t.setControlHoverLocked(x, y)
+		t.menuHoverLocked(x, y)
 	case "wheel-up":
 		t.mouse.Wheel(t.tabs, t.scrolls[:], t.width, t.height, x, y, -1)
 	case "wheel-down":

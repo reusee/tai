@@ -63,6 +63,57 @@ func TestMenuBarLayout(t *testing.T) {
 	}
 }
 
+// TestMenuDropdownBox pins the borderless dropdown geometry: the box
+// holds exactly the item rows directly below the menu bar row, with
+// one cell of side padding, and the press mapping agrees with it. See
+// TheoryOfControlBar.
+func TestMenuDropdownBox(t *testing.T) {
+	box, ok := menuDropdownBox(80, 24, 0)
+	if !ok {
+		t.Fatal("the Sections dropdown must have a box")
+	}
+	if box.Top != 1 || box.Height() != len(menuBarEntries[0].items) {
+		t.Fatalf("the dropdown must hold exactly the item rows below the bar, got top %d height %d", box.Top, box.Height())
+	}
+	if box.Width() != len("Prev section")+menuDropdownPadding*2 {
+		t.Fatalf("the dropdown width is %d, want the item width plus two padding cells", box.Width())
+	}
+	tui := &TUI{openMenu: 0, width: 80, height: 24}
+	if action, consumed := tui.menuDropdownPressLocked(box.Left+menuDropdownPadding, box.Top); !consumed || action != controlPrevSections {
+		t.Fatalf("the first item press must run its action, got %q consumed=%v", action, consumed)
+	}
+	tui.openMenu = 0
+	if action, consumed := tui.menuDropdownPressLocked(box.Left, box.Top); !consumed || action != "" {
+		t.Fatalf("a press on the side padding must close the menu without an action, got %q consumed=%v", action, consumed)
+	}
+	tui.openMenu = 0
+	if _, consumed := tui.menuDropdownPressLocked(5, box.Bottom); consumed {
+		t.Fatal("a press below the dropdown is not consumed")
+	}
+}
+
+// TestMenuDropdownRendering pins the borderless dropdown element: the
+// item labels render and no border glyph or title row appears. See
+// TheoryOfControlBar.
+func TestMenuDropdownRendering(t *testing.T) {
+	var buf bytes.Buffer
+	taiui.Render(menuDropdownElement(80, 24, 0), taiui.NewTerminalScreen(&buf, 80, 24))
+	out := buf.String()
+	for _, want := range []string{"Prev section", "Next section", "Collapse all"} {
+		if !bytes.Contains(buf.Bytes(), []byte(want)) {
+			t.Fatalf("the dropdown must render %q, got: %q", want, out)
+		}
+	}
+	for _, glyph := range "┌┐└┘─│" {
+		if bytes.ContainsRune(buf.Bytes(), glyph) {
+			t.Fatalf("the dropdown must not draw the border glyph %q, got: %q", glyph, out)
+		}
+	}
+	if bytes.Contains(buf.Bytes(), []byte("Sections")) {
+		t.Fatal("the borderless dropdown carries no title row")
+	}
+}
+
 func (f *fakeTtyForTest) Start() error             { return nil }
 func (f *fakeTtyForTest) Stop() error              { return nil }
 func (f *fakeTtyForTest) Drain() error             { return nil }
@@ -133,8 +184,8 @@ func TestTUIHelpClickCloses(t *testing.T) {
 }
 
 // TestTUIMenuBarClicks drives the menu bar through handleMouseKey, the
-// path the session's key loop takes: opening, switching, item actions,
-// closing, and the two-press quit. See TheoryOfControlBar.
+// path the session's key loop takes: opening, hover switching, item
+// actions, closing, and the two-press quit. See TheoryOfControlBar.
 func TestTUIMenuBarClicks(t *testing.T) {
 	newBar := func() *TUI {
 		tui := newTUIForTest()
@@ -164,10 +215,30 @@ func TestTUIMenuBarClicks(t *testing.T) {
 		}
 	})
 
+	t.Run("HoverSwitchesMenus", func(t *testing.T) {
+		tui := newBar()
+		tui.handleMouseKey("mouse-left@2,0")
+		if tui.openMenu != 0 {
+			t.Fatalf("the Sections title must open its menu, got %d", tui.openMenu)
+		}
+		tui.handleMouseKey("mouse-motion@12,0")
+		if tui.openMenu != 1 {
+			t.Fatal("motion over another title must pop up that title's menu")
+		}
+		tui.handleMouseKey("mouse-motion@5,10")
+		if tui.openMenu != 1 {
+			t.Fatal("motion off the menu bar must keep the open menu")
+		}
+		tui.handleMouseKey("mouse-motion@27,0")
+		if tui.openMenu != 1 {
+			t.Fatal("motion over the quit entry must not switch or trigger it")
+		}
+	})
+
 	t.Run("ItemRunsAction", func(t *testing.T) {
 		tui := newBar()
 		tui.handleMouseKey("mouse-left@12,0")
-		tui.handleMouseKey("mouse-left@15,2")
+		tui.handleMouseKey("mouse-left@15,1")
 		if !tui.tabs.SplitVertical {
 			t.Fatal("the Toggle split item must toggle the split axis")
 		}
@@ -181,7 +252,7 @@ func TestTUIMenuBarClicks(t *testing.T) {
 		tui.writeOutputPart(generators.RoleUser, outputColorUserLine, false, "a\n")
 		tui.writeOutputPart(generators.RoleModel, taiui.NoColor, false, "b\n")
 		tui.handleMouseKey("mouse-left@2,0")
-		tui.handleMouseKey("mouse-left@15,4")
+		tui.handleMouseKey("mouse-left@5,3")
 		for i := range tui.outputSections {
 			if !tui.outputSections[i].collapsed {
 				t.Fatalf("section %d must be collapsed", i)
