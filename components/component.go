@@ -2,6 +2,7 @@ package components
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strings"
 
@@ -59,15 +60,109 @@ contribution is registered, every block kind has a matching processor, and
 every user prompt part is assembled through the same unified mechanism.
 `
 
+const TheoryOfReadOnlyPrefetch = `
+Parse-time prefetch runs the side-effect-free part of a block's
+processing in a background goroutine as soon as the block is parsed
+during streaming, so read-only fetches — go-src symbol resolution,
+ingest file and network fetches — overlap the remainder of the
+generation instead of starting after it ends. The latency between the
+generation's end and the next round shrinks; the model-visible contract
+is unchanged: results still arrive only as user content in the next
+round (see blocks.TheoryOfDeferredExecution).
+
+A component declares prefetchability with Compute: a function that turns
+ONE block into its user-content parts without side effects. Processing
+decomposes into compute (block to parts) and apply (the Process function
+appends the prefetched parts or state in block order). Kinds whose
+processing has side effects — shell runs commands, change applies edits
+during streaming — or is handled outside the component loop (summary,
+continue) carry no Compute and are never prefetched.
+
+The generation loop starts one goroutine per parsed block whose kind has
+a Compute, delivering the outcome through a buffered PrefetchFuture.
+Futures travel with the collected blocks: they are per attempt, reset
+with the blocks, and a failed attempt's futures are discarded with its
+blocks. ProcessComponents passes each component the futures aligned with
+its filtered blocks; the component consumes every prefetched outcome in
+block order and falls back to a synchronous Compute call when no future
+exists (direct callers, tests), so the applied parts keep the block
+order regardless of completion order. A dropped future leaks nothing:
+the buffered channel lets the computing goroutine finish, and a
+panicking computation is recovered and delivered as an error outcome.
+`
+
 // ComponentProcessFunc processes blocks of a specific kind from the parser
 // state in the main generation loop.
 type ComponentProcessFunc func(ctx context.Context, pctx *ProcessContext) ProcessResult
+
+// ComponentComputeFunc computes the user-content parts of one block
+// without side effects, so the generation loop can start it in a
+// background goroutine at parse time. The filesystem root and HTTP
+// client are the block's processing environment, mirroring
+// ProcessContext. See TheoryOfReadOnlyPrefetch.
+type ComponentComputeFunc func(
+	ctx context.Context,
+	block blocks.Block,
+	root *os.Root,
+	httpClient nets.HTTPClient,
+) (
+	parts []generators.Part,
+	err error,
+)
+
+// Prefetched carries the outcome of one prefetched block computation.
+// See TheoryOfReadOnlyPrefetch.
+type Prefetched struct {
+	Parts []generators.Part
+	Err   error
+}
+
+// PrefetchFuture delivers the outcome of one prefetched block
+// computation. The channel is buffered with capacity one, so the
+// computing goroutine never blocks on delivery, and a future dropped
+// without a Wait — the blocks of a failed attempt — leaks nothing: the
+// goroutine finishes and the channel is garbage collected. See
+// TheoryOfReadOnlyPrefetch.
+type PrefetchFuture chan Prefetched
+
+// Wait blocks until the prefetched computation completes and returns
+// its outcome. The component consuming the block calls Wait exactly
+// once, in block order, so the applied parts keep the block order
+// regardless of completion order. See TheoryOfReadOnlyPrefetch.
+func (f PrefetchFuture) Wait() Prefetched {
+	return <-f
+}
+
+// StartPrefetch runs fn in a background goroutine and returns a future
+// delivering its outcome. A panicking computation is recovered and
+// delivered as an error, so a panic in a prefetch never wedges the
+// consumer nor crashes the generation loop. See
+// TheoryOfReadOnlyPrefetch.
+func StartPrefetch(fn func() Prefetched) PrefetchFuture {
+	future := make(PrefetchFuture, 1)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				future <- Prefetched{
+					Err: fmt.Errorf("prefetch computation panicked: %v", r),
+				}
+			}
+		}()
+		future <- fn()
+	}()
+	return future
+}
 
 // ProcessContext bundles all dependencies a ComponentProcessFunc may need.
 type ProcessContext struct {
 	// Blocks are the blocks matching this component's Kind, pre-filtered
 	// by ProcessComponents.
 	Blocks []blocks.Block
+	// Prefetched holds, for each entry of Blocks, the prefetched
+	// computation of the matching block, aligned by index. A nil entry
+	// marks a block that was not prefetched; the component computes it
+	// synchronously instead. See TheoryOfReadOnlyPrefetch.
+	Prefetched []PrefetchFuture
 	// State is the current generators state. Components may modify it
 	// (e.g., ingest appends fetched resources).
 	State generators.State
@@ -117,6 +212,13 @@ type Component struct {
 	// streaming, summary blocks processed in runGeneration, memory
 	// blocks processed post-loop).
 	Process ComponentProcessFunc
+	// Compute computes the user-content parts of ONE block of this kind
+	// without side effects, so the generation loop can start it in a
+	// background goroutine at parse time. When nil, the kind is never
+	// prefetched: its processing has side effects, or is not decomposable
+	// per block (shell, change, continue, summary). See
+	// TheoryOfReadOnlyPrefetch.
+	Compute ComponentComputeFunc
 }
 
 // ComponentSet is an ordered collection of Component.
@@ -143,6 +245,53 @@ func (c ComponentSet) KnownKinds(extra ...string) func(kind string) bool {
 	return func(kind string) bool {
 		return known[kind]
 	}
+}
+
+// Computes returns the side-effect-free per-block computations declared
+// by the set's components, keyed by block kind. The generation loop
+// consults the map when a block is parsed: a kind with an entry is
+// prefetched at parse time, every other kind is not. See
+// TheoryOfReadOnlyPrefetch.
+func (c ComponentSet) Computes() map[string]ComponentComputeFunc {
+	computes := make(map[string]ComponentComputeFunc, len(c))
+	for _, comp := range c {
+		if comp.Kind != "" && comp.Compute != nil {
+			computes[comp.Kind] = comp.Compute
+		}
+	}
+	return computes
+}
+
+// ConsumePrefetchedBlockParts collects the user-content parts of the
+// context's blocks in block order: a prefetched block delivers its own
+// outcome through the aligned future, a non-prefetched block is computed
+// synchronously through computeOne. The helper is the shared consumption
+// side of parse-time prefetch: it keeps the applied parts in block order
+// regardless of the prefetches' completion order, so a component
+// decomposes into a per-block compute and this ordered apply. See
+// TheoryOfReadOnlyPrefetch.
+func ConsumePrefetchedBlockParts(
+	ctx context.Context,
+	pctx *ProcessContext,
+	computeOne func(ctx context.Context, block blocks.Block) ([]generators.Part, error),
+) (
+	parts []generators.Part,
+	err error,
+) {
+	for i, block := range pctx.Blocks {
+		var blockParts []generators.Part
+		if i < len(pctx.Prefetched) && pctx.Prefetched[i] != nil {
+			outcome := pctx.Prefetched[i].Wait()
+			blockParts, err = outcome.Parts, outcome.Err
+		} else {
+			blockParts, err = computeOne(ctx, block)
+		}
+		if err != nil {
+			return nil, err
+		}
+		parts = append(parts, blockParts...)
+	}
+	return parts, nil
 }
 
 // PromptSections returns the concatenated system prompt sections from all
@@ -259,6 +408,14 @@ func (c ComponentSet) Processable() []Component {
 // and run-duration control belongs to the caller via
 // pipeline.RunOptions.MaxGenerations.
 //
+// prefetched optionally carries, aligned with allBlocks by index, the
+// prefetched computation of each block: a non-nil entry delivers the
+// block's side-effect-free outcome to the component, a nil entry or a
+// missing tail leaves the component computing the block synchronously.
+// The alignment lets a component consume each prefetched outcome with
+// its own block, so duplicate blocks keep their own results. See
+// TheoryOfReadOnlyPrefetch.
+//
 // Both the ai command and the pipeline call this function, so the
 // component processing loop is identical across all generation commands —
 // only the ComponentSet and block list differ. See TheoryOfComponents.
@@ -269,6 +426,7 @@ func ProcessComponents(
 	state generators.State,
 	root *os.Root,
 	httpClient nets.HTTPClient,
+	prefetched ...PrefetchFuture,
 ) (
 	remainingBlocks []blocks.Block,
 	newState generators.State,
@@ -281,12 +439,20 @@ func ProcessComponents(
 			continue
 		}
 
-		// Filter blocks by this component's kind.
+		// Filter blocks by this component's kind, carrying the aligned
+		// prefetched futures along so each block keeps its own outcome.
+		// See TheoryOfReadOnlyPrefetch.
 		var compBlocks []blocks.Block
+		var compFutures []PrefetchFuture
 		var otherBlocks []blocks.Block
-		for _, b := range allBlocks {
+		for i, b := range allBlocks {
 			if b.Kind == comp.Kind {
 				compBlocks = append(compBlocks, b)
+				if i < len(prefetched) {
+					compFutures = append(compFutures, prefetched[i])
+				} else {
+					compFutures = append(compFutures, nil)
+				}
 			} else {
 				otherBlocks = append(otherBlocks, b)
 			}
@@ -299,6 +465,7 @@ func ProcessComponents(
 
 		result := comp.Process(ctx, &ProcessContext{
 			Blocks:     compBlocks,
+			Prefetched: compFutures,
 			State:      state,
 			Root:       root,
 			HttpClient: httpClient,

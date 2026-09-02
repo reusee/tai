@@ -3,6 +3,7 @@ package components
 import (
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 
@@ -399,5 +400,123 @@ func TestProcessComponentsStateModificationTriggers(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("expected fetched context in new state")
+	}
+}
+
+func TestComponentSetComputes(t *testing.T) {
+	// Computes maps the kinds that declare a side-effect-free per-block
+	// computation; kinds without Compute, and prompt-only kinds, are
+	// never prefetched. See TheoryOfReadOnlyPrefetch.
+	computes := ComponentSet{
+		{
+			Kind: "go-src",
+			Compute: func(ctx context.Context, block blocks.Block, root *os.Root, httpClient nets.HTTPClient) ([]generators.Part, error) {
+				return nil, nil
+			},
+		},
+		{Kind: "shell"}, // no Compute: never prefetched
+		{Kind: ""},      // prompt-only: never prefetched
+	}.Computes()
+	if len(computes) != 1 {
+		t.Fatalf("expected 1 compute entry, got %d", len(computes))
+	}
+	if _, ok := computes["go-src"]; !ok {
+		t.Fatal("expected the go-src kind in the computes map")
+	}
+}
+
+func TestStartPrefetchDeliversOutcome(t *testing.T) {
+	// StartPrefetch runs the computation in a background goroutine and
+	// delivers its outcome through the buffered future. See
+	// TheoryOfReadOnlyPrefetch.
+	future := StartPrefetch(func() Prefetched {
+		return Prefetched{Parts: []generators.Part{generators.Text("computed")}}
+	})
+	outcome := future.Wait()
+	if outcome.Err != nil {
+		t.Fatalf("unexpected error: %v", outcome.Err)
+	}
+	if len(outcome.Parts) != 1 || string(outcome.Parts[0].(generators.Text)) != "computed" {
+		t.Fatalf("unexpected parts: %v", outcome.Parts)
+	}
+}
+
+func TestStartPrefetchRecoversPanic(t *testing.T) {
+	// A panicking computation is recovered and delivered as an error, so
+	// a prefetch panic never wedges the consumer nor crashes the
+	// generation loop. See TheoryOfReadOnlyPrefetch.
+	future := StartPrefetch(func() Prefetched {
+		panic("boom")
+	})
+	outcome := future.Wait()
+	if outcome.Err == nil {
+		t.Fatal("expected the panicking computation to be delivered as an error")
+	}
+}
+
+func TestProcessComponentsConsumesPrefetched(t *testing.T) {
+	// Futures align with block positions: a prefetched block delivers
+	// its own outcome, a non-prefetched block falls back to a
+	// synchronous Compute call, and nothing is computed twice. See
+	// TheoryOfReadOnlyPrefetch.
+	computed := 0
+	compute := func(ctx context.Context, block blocks.Block, root *os.Root, httpClient nets.HTTPClient) ([]generators.Part, error) {
+		computed++
+		return []generators.Part{generators.Text("sync " + block.Body)}, nil
+	}
+	comps := ComponentSet{
+		{
+			Kind:    "go-src",
+			Compute: compute,
+			Process: func(ctx context.Context, pctx *ProcessContext) ProcessResult {
+				var parts []generators.Part
+				for i := range pctx.Blocks {
+					if i < len(pctx.Prefetched) && pctx.Prefetched[i] != nil {
+						outcome := pctx.Prefetched[i].Wait()
+						parts = append(parts, outcome.Parts...)
+						continue
+					}
+					p, err := compute(ctx, pctx.Blocks[i], pctx.Root, pctx.HttpClient)
+					if err != nil {
+						return ProcessResult{Err: err}
+					}
+					parts = append(parts, p...)
+				}
+				return ProcessResult{Parts: parts}
+			},
+		},
+	}
+	allBlocks := []blocks.Block{
+		{Kind: "go-src", Body: "one"},
+		{Kind: "go-src", Body: "two"},
+	}
+	prefetched := []PrefetchFuture{
+		StartPrefetch(func() Prefetched {
+			return Prefetched{Parts: []generators.Part{generators.Text("future one")}}
+		}),
+		// Block two is not prefetched: the component computes it
+		// synchronously through Compute.
+		nil,
+	}
+
+	_, _, combinedParts, triggered, err := ProcessComponents(
+		context.Background(), comps, allBlocks, nil, nil, nets.HTTPClient{},
+		prefetched...,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !triggered {
+		t.Fatal("expected triggered=true")
+	}
+	if len(combinedParts) != 2 {
+		t.Fatalf("expected 2 parts, got %d", len(combinedParts))
+	}
+	if string(combinedParts[0].(generators.Text)) != "future one" ||
+		string(combinedParts[1].(generators.Text)) != "sync two" {
+		t.Fatalf("futures must align with block positions, got %v", combinedParts)
+	}
+	if computed != 1 {
+		t.Fatalf("expected 1 synchronous compute (the non-prefetched block), got %d", computed)
 	}
 }

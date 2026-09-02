@@ -567,6 +567,67 @@ func TestFetchIngestRequestsError(t *testing.T) {
 	}
 }
 
+func TestFetchIngestBlock(t *testing.T) {
+	// FetchIngestBlock computes one ingest block's parts without
+	// touching the state: the fetched file content becomes a Text part.
+	// The per-block shape is what makes the fetch prefetchable at parse
+	// time. See TheoryOfIngestBlocks and
+	// components.TheoryOfReadOnlyPrefetch.
+	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+
+	content := "test content"
+	if err := os.WriteFile(filepath.Join(dir, "test.txt"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	parts, err := FetchIngestBlock(
+		Block{Kind: "ingest", Body: `<file path="test.txt" />`},
+		context.Background(), root, nets.HTTPClient{&http.Client{}}, nil,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(parts) != 1 {
+		t.Fatalf("expected 1 part, got %d", len(parts))
+	}
+	text, ok := parts[0].(generators.Text)
+	if !ok {
+		t.Fatalf("expected Text part, got %T", parts[0])
+	}
+	if !strings.Contains(string(text), content) {
+		t.Fatalf("expected text to contain %q, got %q", content, text)
+	}
+}
+
+func TestFetchIngestBlockParseError(t *testing.T) {
+	// A malformed body yields an error-text part rather than an error,
+	// so the model can correct the block in the next round.
+	root, err := os.OpenRoot(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+
+	parts, err := FetchIngestBlock(
+		Block{Kind: "ingest", Body: `<file />`},
+		context.Background(), root, nets.HTTPClient{&http.Client{}}, nil,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(parts) != 1 {
+		t.Fatalf("expected 1 part, got %d", len(parts))
+	}
+	if !strings.Contains(string(parts[0].(generators.Text)), "ingest block parse error") {
+		t.Fatalf("expected a parse-error part, got %q", parts[0])
+	}
+}
+
 func TestIngestBlockPromptsRequireSummary(t *testing.T) {
 	// The ingest prompt must not license omitting the summary
 	// block: the stop rule is phrased summary-first — emit the summary
@@ -646,109 +707,5 @@ func TestGlobFilesAbsolutePattern(t *testing.T) {
 	}
 	if len(matches) != 2 {
 		t.Fatalf("expected 2 matches, got %d: %v", len(matches), matches)
-	}
-}
-
-func TestProcessIngestBlocksAppendsFetchedContent(t *testing.T) {
-	// ProcessIngestBlocks only processes ingest blocks. Non-ingest blocks
-	// are not passed to it (filtered by ProcessComponents), so this test
-	// verifies that ingest blocks are processed correctly.
-	dir := t.TempDir()
-	root, err := os.OpenRoot(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer root.Close()
-
-	content := "test content"
-	if err := os.WriteFile(filepath.Join(dir, "test.txt"), []byte(content), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	state := generators.NewPrompts("", nil)
-	ingestBlocks := []Block{
-		{Kind: "ingest", Body: `<file path="test.txt" />`},
-	}
-
-	newState, hasIngest, err := ProcessIngestBlocks(ingestBlocks, context.Background(), root, nets.HTTPClient{&http.Client{}}, nil, state)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !hasIngest {
-		t.Fatal("expected hasIngest=true")
-	}
-
-	// Verify content was appended to state.
-	found := false
-	for c := range newState.Contents() {
-		for _, p := range c.Parts {
-			if text, ok := p.(generators.Text); ok {
-				if strings.Contains(string(text), content) {
-					found = true
-				}
-			}
-		}
-	}
-	if !found {
-		t.Fatal("expected fetched content in state")
-	}
-}
-
-func TestProcessIngestBlocksFiltersByKind(t *testing.T) {
-	dir := t.TempDir()
-	root, err := os.OpenRoot(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer root.Close()
-
-	content := "test content"
-	if err := os.WriteFile(filepath.Join(dir, "test.txt"), []byte(content), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	state := generators.NewPrompts("", nil)
-
-	// Non-ingest blocks must not set hasIngest or append content.
-	// Before kind filtering, hasIngest was set unconditionally
-	// for every block, causing false positives and parse attempts on
-	// non-ingest bodies.
-	blocks := []Block{
-		{Kind: "change", Body: "some change"},
-		{Kind: "summary", Body: "- done"},
-	}
-	_, hasIngest, err := ProcessIngestBlocks(blocks, context.Background(), root, nets.HTTPClient{&http.Client{}}, nil, state)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if hasIngest {
-		t.Fatal("expected hasIngest=false for non-ingest blocks")
-	}
-
-	// Mixed blocks: only ingest blocks should be processed.
-	mixed := []Block{
-		{Kind: "change", Body: "some change"},
-		{Kind: "ingest", Body: `<file path="test.txt" />`},
-		{Kind: "summary", Body: "- done"},
-	}
-	newState, hasIngest, err := ProcessIngestBlocks(mixed, context.Background(), root, nets.HTTPClient{&http.Client{}}, nil, state)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !hasIngest {
-		t.Fatal("expected hasIngest=true for mixed blocks with ingest")
-	}
-	found := false
-	for c := range newState.Contents() {
-		for _, p := range c.Parts {
-			if text, ok := p.(generators.Text); ok {
-				if strings.Contains(string(text), content) {
-					found = true
-				}
-			}
-		}
-	}
-	if !found {
-		t.Fatal("expected ingest block to be processed in mixed blocks")
 	}
 }

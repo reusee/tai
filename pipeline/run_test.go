@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"iter"
 	"log/slog"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -2309,6 +2310,86 @@ func TestRunRemainingBlocksAccumulateAcrossRounds(t *testing.T) {
 		}
 		if !foundDone {
 			t.Fatal("done block from an earlier round must be preserved in Result.RemainingBlocks")
+		}
+	})
+}
+
+func TestRunPrefetchesComputeAtParseTime(t *testing.T) {
+	// The loop starts the side-effect-free Compute of a parsed block in
+	// a background goroutine and hands the future to the component, so
+	// the read-only fetch overlaps the remainder of the generation. The
+	// component consumes the future; the synchronous fallback must not
+	// run for a prefetched block. See components.TheoryOfReadOnlyPrefetch.
+	withRun(t, func(run Run) {
+		asyncComputes := 0
+		syncComputes := 0
+		compute := func(ctx context.Context, block blocks.Block, root *os.Root, httpClient nets.HTTPClient) ([]generators.Part, error) {
+			asyncComputes++
+			return []generators.Part{generators.Text("computed:" + block.Body)}, nil
+		}
+		callCount := 0
+		phaseBuilder := func(g generators.Generator) generators.Phase {
+			callCount++
+			if callCount == 1 {
+				// The prefetched block is emitted together with the
+				// mandatory summary block, so the attempt completes
+				// and the component processing runs.
+				return appendPhase("<<龘靐 fetch-kind\nhello\n龘靐\n<<贞观 summary\nRound 1 done.\n贞观\n")
+			}
+			return appendPhase("<<贞观 summary\nDone.\n贞观\n")
+		}
+		comps := components.ComponentSet{
+			{
+				Kind:    "fetch-kind",
+				Compute: compute,
+				Process: func(ctx context.Context, pctx *components.ProcessContext) components.ProcessResult {
+					var parts []generators.Part
+					for i := range pctx.Blocks {
+						if i < len(pctx.Prefetched) && pctx.Prefetched[i] != nil {
+							outcome := pctx.Prefetched[i].Wait()
+							parts = append(parts, outcome.Parts...)
+							continue
+						}
+						p, err := compute(ctx, pctx.Blocks[i], pctx.Root, pctx.HttpClient)
+						if err != nil {
+							return components.ProcessResult{Err: err}
+						}
+						syncComputes++
+						parts = append(parts, p...)
+					}
+					return components.ProcessResult{Parts: parts}
+				},
+			},
+		}
+		result, err := runOnce(run, RunOptions{
+			Generator:    nil,
+			InitialState: generators.NewPrompts("", nil),
+			Components:   comps,
+			PhaseBuilder: phaseBuilder,
+			HTTPClient:   nets.HTTPClient{},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if callCount != 2 {
+			t.Fatalf("expected 2 generations, got %d", callCount)
+		}
+		if asyncComputes != 1 {
+			t.Fatalf("expected 1 prefetched compute, got %d", asyncComputes)
+		}
+		if syncComputes != 0 {
+			t.Fatalf("the component must consume the prefetched outcome, not recompute synchronously, got %d sync computes", syncComputes)
+		}
+		found := false
+		for c := range result.FinalState.Contents() {
+			for _, p := range c.Parts {
+				if text, ok := p.(generators.Text); ok && strings.Contains(string(text), "computed:hello") {
+					found = true
+				}
+			}
+		}
+		if !found {
+			t.Fatal("expected the prefetched parts in the final state")
 		}
 	})
 }

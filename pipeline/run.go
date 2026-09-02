@@ -359,18 +359,18 @@ func buildContinueReason(triggeredKinds []string, appliedChangeFeedback bool, pa
 	return strings.Join(reasons, " and ") + " scheduled the next generation"
 }
 
-// runGeneration executes one generation: the attempt loop (initial
-// attempt plus retries for missing completion or post-output errors)
-// followed by the success tail (summary synthesis, OnAttemptSuccess,
-// usage recording, completion reporting, correction feedback (parse
-// errors and unknown block kinds), applied-change feedback, component
-// processing, and idle handling). Each attempt is one pass through the
-// phase chain; its lifecycle events — attempt start, request
-// parameters, finish, truncation, handoff, usage, completion — are
-// constructed and yielded the moment their facts are known. See
-// TheoryOfLoops, TheoryOfLoopEvents, and TheoryOfUnknownBlockKinds.
 func (ls *loopState) runGeneration() (generationResult, error) {
 	var collectedBlocks []blocks.Block
+	// prefetchedFutures holds, aligned with collectedBlocks by index,
+	// the future of each block whose kind declares a side-effect-free
+	// per-block Compute: the computation starts in a background
+	// goroutine at parse time, so the read-only fetch overlaps the
+	// remainder of the generation, and the component consumes the
+	// outcome in block order after the generation ends. The slice
+	// resets with the blocks at every attempt, so a failed attempt's
+	// futures are discarded with its blocks. See
+	// components.TheoryOfReadOnlyPrefetch.
+	var prefetchedFutures []components.PrefetchFuture
 	// handledBlocks records the blocks the BlockHandler consumed
 	// without error during the current attempt: for the change
 	// handler, consumption follows a successful application, so this
@@ -382,6 +382,12 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 	var generationParseErrors []*blocks.BlockParseError
 	phaseState := ls.state
 	var generationErr error
+
+	// computes maps the kinds with a side-effect-free per-block
+	// computation declared by the session's components: a parsed block
+	// whose kind has an entry is prefetched at parse time. See
+	// components.TheoryOfReadOnlyPrefetch.
+	computes := ls.opts.Components.Computes()
 
 	// attemptBase is the content count at the start of the current
 	// attempt: the window for the finish-reason extraction, the
@@ -407,6 +413,7 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 		collectedBlocks = nil
 		handledBlocks = nil
 		generationParseErrors = nil
+		prefetchedFutures = nil
 
 		// Attempt open: report to the interaction recorder, emit the
 		// attempt-start event, and reset per-attempt state (e.g.,
@@ -468,7 +475,22 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 					return nil
 				}
 			}
+			// Parse-time prefetch: a block whose kind declares a
+			// side-effect-free per-block Compute starts in a
+			// background goroutine now, so the read-only fetch
+			// overlaps the remainder of the generation. The future is
+			// stored aligned with the collected block; the component
+			// consumes it in block order after the generation ends.
+			// See components.TheoryOfReadOnlyPrefetch.
+			var future components.PrefetchFuture
+			if compute, ok := computes[block.Kind]; ok {
+				future = components.StartPrefetch(func() components.Prefetched {
+					parts, err := compute(ls.ctx, block, ls.opts.Root, ls.opts.HTTPClient)
+					return components.Prefetched{Parts: parts, Err: err}
+				})
+			}
 			collectedBlocks = append(collectedBlocks, block)
+			prefetchedFutures = append(prefetchedFutures, future)
 			return nil
 		}
 
@@ -662,17 +684,28 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 		// Always extract and remove summary blocks from
 		// collectedBlocks. Summaries must be available to
 		// OnAttemptSuccess regardless of whether retry is
-		// enabled. See TheoryOfLoops.
+		// enabled. See TheoryOfLoops. The prefetched futures are
+		// carried along in lockstep, so each surviving block keeps
+		// its own outcome; summary blocks never carry futures, so
+		// their positions contribute nil entries only. See
+		// components.TheoryOfReadOnlyPrefetch.
 		generationSummaries = nil
 		var remaining []blocks.Block
-		for _, block := range collectedBlocks {
+		var remainingFutures []components.PrefetchFuture
+		for i, block := range collectedBlocks {
 			if block.Kind == "summary" {
 				generationSummaries = append(generationSummaries, block.Body)
+				continue
+			}
+			remaining = append(remaining, block)
+			if i < len(prefetchedFutures) {
+				remainingFutures = append(remainingFutures, prefetchedFutures[i])
 			} else {
-				remaining = append(remaining, block)
+				remainingFutures = append(remainingFutures, nil)
 			}
 		}
 		collectedBlocks = remaining
+		prefetchedFutures = remainingFutures
 
 		// If retry is disabled, we're done with this generation.
 		if !ls.opts.RetryOnMissingCompletion {
@@ -968,7 +1001,11 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 		}, nil
 	}
 
-	// Process components.
+	// Process components. The prefetched futures travel with the
+	// collected blocks, so each component consumes its blocks' own
+	// outcomes in block order; the failed attempt's futures were
+	// discarded with its blocks at the attempt reset. See
+	// components.TheoryOfReadOnlyPrefetch.
 	var generationRemaining []blocks.Block
 	var combinedParts []generators.Part
 	var triggered bool
@@ -976,6 +1013,7 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 	generationRemaining, ls.state, combinedParts, triggered, cerr = components.ProcessComponents(
 		ls.ctx, ls.opts.Components, collectedBlocks, ls.state,
 		ls.opts.Root, ls.opts.HTTPClient,
+		prefetchedFutures...,
 	)
 	if cerr != nil {
 		ls.recordAttemptError(cerr)

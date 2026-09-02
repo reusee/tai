@@ -334,51 +334,27 @@ func lspLabel(req IngestRequest) string {
 	return label
 }
 
-// ProcessIngestBlocks checks ingest blocks, fetches the requested content, and
-// appends it as user content to the state. Only blocks with Kind "ingest" are
-// processed. The hasIngest flag indicates whether any ingest blocks were found,
-// so callers can trigger a new round. See TheoryOfIngestBlocks.
-func ProcessIngestBlocks(
-	blocks []Block,
+// FetchIngestBlock computes the user-content parts of one ingest block
+// without side effects: it parses the block body and fetches the
+// requested context. A malformed body yields an error-text part rather
+// than an error, so the model can correct the block in the next round.
+// The per-block shape is what makes the fetch prefetchable at parse
+// time; the caller appends the parts to the state in block order. See
+// TheoryOfIngestBlocks and components.TheoryOfReadOnlyPrefetch.
+func FetchIngestBlock(
+	block Block,
 	ctx context.Context,
 	root *os.Root,
 	httpClient nets.HTTPClient,
 	lsp LSPHandler,
-	state generators.State,
-) (generators.State, bool, error) {
-	hasIngest := false
-	for _, block := range blocks {
-		if block.Kind != "ingest" {
-			continue
-		}
-		hasIngest = true
-		requests, parseErr := parseIngestBody(block.Body)
-		if parseErr != nil {
-			var appendErr error
-			state, appendErr = state.AppendContent(&generators.Content{
-				Role: "user",
-				Parts: []generators.Part{
-					generators.Text(fmt.Sprintf("[ingest block parse error: %v]\n\n", parseErr)),
-				},
-			})
-			if appendErr != nil {
-				return state, hasIngest, appendErr
-			}
-			continue
-		}
-		parts := fetchIngestRequests(ctx, root, httpClient, lsp, requests)
-		if len(parts) > 0 {
-			var appendErr error
-			state, appendErr = state.AppendContent(&generators.Content{
-				Role:  "user",
-				Parts: parts,
-			})
-			if appendErr != nil {
-				return state, hasIngest, appendErr
-			}
-		}
+) ([]generators.Part, error) {
+	requests, parseErr := parseIngestBody(block.Body)
+	if parseErr != nil {
+		return []generators.Part{
+			generators.Text(fmt.Sprintf("[ingest block parse error: %v]\n\n", parseErr)),
+		}, nil
 	}
-	return state, hasIngest, nil
+	return fetchIngestRequests(ctx, root, httpClient, lsp, requests), nil
 }
 
 // readContextFile reads a local file at the given path. Absolute paths are

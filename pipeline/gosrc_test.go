@@ -60,13 +60,22 @@ func TestGoSrcComponentResolvesSymbols(t *testing.T) {
 			if result.Err != nil {
 				t.Fatalf("unexpected error: %v", result.Err)
 			}
-			if len(result.Parts) != 2 {
-				t.Fatalf("expected 2 parts (header + resolved), got %d", len(result.Parts))
+			// Per-block computation: each block carries its own header
+			// and its own resolution, in block order. See
+			// components.TheoryOfReadOnlyPrefetch.
+			if len(result.Parts) != 4 {
+				t.Fatalf("expected 4 parts (2 headers + 2 resolutions), got %d", len(result.Parts))
 			}
 			if !strings.Contains(string(result.Parts[0].(generators.Text)), "Requested source") {
 				t.Fatalf("unexpected header part: %q", result.Parts[0])
 			}
-			if text := string(result.Parts[1].(generators.Text)); text != "resolved: Foo,Bar.Read,*Baz.Write" {
+			if text := string(result.Parts[1].(generators.Text)); text != "resolved: Foo,Bar.Read" {
+				t.Fatalf("unexpected resolved text: %q", text)
+			}
+			if !strings.Contains(string(result.Parts[2].(generators.Text)), "Requested source") {
+				t.Fatalf("unexpected header part: %q", result.Parts[2])
+			}
+			if text := string(result.Parts[3].(generators.Text)); text != "resolved: *Baz.Write" {
 				t.Fatalf("unexpected resolved text: %q", text)
 			}
 			return

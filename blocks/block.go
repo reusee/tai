@@ -49,6 +49,14 @@ and nothing returns mid-response. Change blocks are the same: applied
 atomically after the round succeeds, with apply errors reported in the
 next round.
 
+Parse-time prefetch is the one carve-out: a block kind whose computation
+is side-effect-free (components.Component.Compute) may start in a
+background goroutine as soon as the block is parsed during streaming, so
+the read-only fetch overlaps the remainder of the generation. The
+contract governs delivery, not the start of computation: results still
+arrive only as user content in the next round, and a model must still
+never reason from a request whose result has not been delivered.
+
 The distinction matters because models trained on tool-call APIs expect a
 result before continuing generation; under the block protocol that
 expectation produces hallucinations: the model writes as if a command had

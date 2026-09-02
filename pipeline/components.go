@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"os"
 
 	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/changes"
@@ -9,6 +10,7 @@ import (
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/gotools"
+	"github.com/reusee/tai/nets"
 )
 
 const TheoryOfCodesComponents = `
@@ -65,6 +67,13 @@ emitted in such a session returns an explicit unavailability error part
 rather than being silently ignored, matching the disabled-blocks
 philosophy (see components.TheoryOfDisabledBlocks).
 
+Parse-time prefetch: the go-src and ingest components declare
+side-effect-free per-block Compute functions, so the generation loop starts
+each block's resolution or fetch in a background goroutine as soon as the
+block is parsed during streaming, overlapping the remainder of the
+generation; after the response ends the component consumes the prefetched
+outcomes in block order. See components.TheoryOfReadOnlyPrefetch.
+
 Read-only files, skeleton files, hidden packages, and mandatory planning
 are prompt-only Components: they contribute system prompt sections without
 defining a block kind or processing blocks. The skeleton-files section
@@ -93,6 +102,36 @@ same wording and adds the sequence rule — the block after the kind's
 closing line must be the summary block — so no stop instruction licenses
 omitting the summary block.
 `
+
+// computeGoSrcBlock computes the user-content parts of one go-src
+// block without side effects: the block's symbols are resolved to
+// declaration source, prefixed by a brief header. An empty body feeds
+// back a usage hint instead of a silent no-op, so the model can
+// correct the format in the next round; the feedback ends with a blank
+// line so consecutive parts stay paragraph-separated (see
+// generators.TheoryOfContentUnitSeparation). The per-block shape is
+// what makes the resolution prefetchable at parse time. See
+// gotools.TheoryOfGoSrcBlocks and components.TheoryOfReadOnlyPrefetch.
+func computeGoSrcBlock(
+	ctx context.Context,
+	block blocks.Block,
+	resolveGoSymbols gotools.ResolveGoSymbols,
+) ([]generators.Part, error) {
+	symbols := gotools.ParseGoSrcSymbols([]blocks.Block{block})
+	if len(symbols) == 0 {
+		return []generators.Part{
+			generators.Text("The go-src block body was empty; list one Go symbol per line (plain names or TypeName.MethodName).\n\n"),
+		}, nil
+	}
+	parts, err := resolveGoSymbols(symbols)
+	if err != nil {
+		return nil, err
+	}
+	// A brief header tells the model why the source appeared in the
+	// next generation's user content.
+	return append([]generators.Part{generators.Text(
+		"[Requested source of the go-src symbols]\n\n")}, parts...), nil
+}
 
 const TheoryOfFamilyExtraSystemPrompt = `
 Family-specific extra system prompts extend the generic extra_system_prompt
@@ -123,36 +162,59 @@ type CodesComponents struct {
 // CodesComponents and the ai command's AIComponents. The component teaches
 // the kind through blocks.IngestBlockSystemPrompt — appending the
 // Go-specific lsp tag documentation when a language-server handler is
-// attached — and its Process function fetches the requested context through
-// blocks.ProcessIngestBlocks, appending it as user content so the next
-// generation runs with the fetched context. A nil handler keeps the lsp
-// section out of the prompt; an emitted lsp tag then returns an explicit
-// unavailability error part instead of being silently ignored. The caller's
-// RunOptions must carry the filesystem root and the HTTP client the
-// component's file and fetch tags need. See TheoryOfCodesComponents,
-// blocks.TheoryOfIngestBlocks, and cmd/tai.TheoryOfAIComponents.
+// attached — and its Compute computes one block's parts through
+// blocks.FetchIngestBlock without side effects, so the generation loop
+// prefetches it at parse time; its Process consumes the prefetched
+// outcomes in block order, falling back to a synchronous compute when no
+// future exists, and appends the collected parts as user content so the
+// next generation runs with the fetched context. A nil handler keeps the
+// lsp section out of the prompt; an emitted lsp tag then returns an
+// explicit unavailability error part instead of being silently ignored.
+// The caller's RunOptions must carry the filesystem root and the HTTP
+// client the component's file and fetch tags need. See
+// TheoryOfCodesComponents, blocks.TheoryOfIngestBlocks,
+// cmd/tai.TheoryOfAIComponents, and components.TheoryOfReadOnlyPrefetch.
 func NewIngestComponent(lspHandler blocks.LSPHandler) components.Component {
 	ingestPrompt := blocks.IngestBlockSystemPrompt
 	if lspHandler != nil {
 		ingestPrompt += gotools.LSPIngestTagSystemPrompt
 	}
+	computeOne := func(
+		ctx context.Context,
+		block blocks.Block,
+		root *os.Root,
+		httpClient nets.HTTPClient,
+	) ([]generators.Part, error) {
+		return blocks.FetchIngestBlock(block, ctx, root, httpClient, lspHandler)
+	}
 	return components.Component{
 		Kind:          "ingest",
 		PromptSection: ingestPrompt,
+		Compute:       computeOne,
 		Process: func(ctx context.Context, pctx *components.ProcessContext) components.ProcessResult {
-			state, hasIngest, err := blocks.ProcessIngestBlocks(
-				pctx.Blocks, ctx, pctx.Root, pctx.HttpClient, lspHandler, pctx.State,
-			)
-			result := components.ProcessResult{
-				Err: err,
+			parts, err := components.ConsumePrefetchedBlockParts(ctx, pctx,
+				func(ctx context.Context, block blocks.Block) ([]generators.Part, error) {
+					return computeOne(ctx, block, pctx.Root, pctx.HttpClient)
+				})
+			if err != nil {
+				return components.ProcessResult{Err: err}
 			}
-			// Only set State when ingest blocks were found and fetched
-			// content was appended, so that result.State != nil reliably
-			// signals a state modification that triggers a new generation.
-			if hasIngest {
-				result.State = state
+			// State is set whenever ingest blocks were processed, so
+			// result.State != nil reliably signals a state modification
+			// that triggers a new generation, mirroring the previous
+			// hasIngest flag: an ingest block whose fetches yielded no
+			// parts still signals the round.
+			if len(parts) > 0 {
+				newState, appendErr := pctx.State.AppendContent(&generators.Content{
+					Role:  "user",
+					Parts: parts,
+				})
+				if appendErr != nil {
+					return components.ProcessResult{Err: appendErr}
+				}
+				return components.ProcessResult{State: newState}
 			}
-			return result
+			return components.ProcessResult{State: pctx.State}
 		},
 	}
 }
@@ -230,35 +292,23 @@ func (Module) CodesComponents(
 	// source. Read-only and unconditional: symbol resolution reuses the
 	// packages the loader already fetched, so it is always available in
 	// the codes pipeline. Placed with ingest before shell and continue
-	// so fetched context is available for the next generation.
-	// See gotools.TheoryOfGoSrcBlocks and gotools.TheoryOfGoSrcResolution.
+	// so fetched context is available for the next generation. Compute
+	// resolves one block's symbols without side effects, so the
+	// generation loop prefetches the resolution at parse time. See
+	// computeGoSrcBlock, gotools.TheoryOfGoSrcBlocks, and
+	// components.TheoryOfReadOnlyPrefetch.
 	comps = append(comps, components.Component{
 		Kind:          "go-src",
 		PromptSection: gotools.GoSrcBlockSystemPrompt,
+		Compute: func(ctx context.Context, block blocks.Block, root *os.Root, httpClient nets.HTTPClient) ([]generators.Part, error) {
+			return computeGoSrcBlock(ctx, block, resolveGoSymbols)
+		},
 		Process: func(ctx context.Context, pctx *components.ProcessContext) components.ProcessResult {
-			symbols := gotools.ParseGoSrcSymbols(pctx.Blocks)
-			if len(symbols) == 0 {
-				// An empty go-src block is a format error the model can
-				// correct: feed back a usage hint instead of a silent
-				// no-op, so the next generation can list the symbols
-				// properly. The feedback ends with a blank line so
-				// consecutive parts stay paragraph-separated; see
-				// generators.TheoryOfContentUnitSeparation.
-				return components.ProcessResult{
-					Parts: []generators.Part{
-						generators.Text("The go-src block body was empty; list one Go symbol per line (plain names or TypeName.MethodName).\n\n"),
-					},
-				}
-			}
-			parts, err := resolveGoSymbols(symbols)
-			if err != nil {
-				return components.ProcessResult{Err: err}
-			}
-			// A brief header tells the model why the source appeared in
-			// the next generation's user content.
-			parts = append([]generators.Part{generators.Text(
-				"[Requested source of the go-src symbols]\n\n")}, parts...)
-			return components.ProcessResult{Parts: parts}
+			parts, err := components.ConsumePrefetchedBlockParts(ctx, pctx,
+				func(ctx context.Context, block blocks.Block) ([]generators.Part, error) {
+					return computeGoSrcBlock(ctx, block, resolveGoSymbols)
+				})
+			return components.ProcessResult{Parts: parts, Err: err}
 		},
 	})
 
