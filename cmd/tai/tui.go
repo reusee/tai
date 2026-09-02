@@ -704,6 +704,13 @@ type TUI struct {
 	eventSections  map[outputSectionOwner]int
 	pendingOwner   *outputSectionOwner
 
+	// outputPreview reports whether the Output tab's global preview is
+	// on: the projection collapses every section to its first source
+	// line so the whole output structure fits the visible area, and a
+	// press on any preview row jumps to that section's full view.
+	// Guarded by mu. See TheoryOfOutputControls.
+	outputPreview bool
+
 	// The Output tab's per-section projection state, guarded by mu. See
 	// TheoryOfOutputControls. projWidth keys the caches: a content-width
 	// change resets them. projDisplay holds the projected display rows;
@@ -1235,6 +1242,8 @@ func (t *TUI) handleKey(key string) bool {
 		t.jumpToTransition(-1)
 	case key == "next-transition":
 		t.jumpToTransition(1)
+	case key == "preview":
+		t.toggleOutputPreview()
 	case key == "up":
 		t.scroll(-1)
 	case key == "down":
@@ -1301,6 +1310,8 @@ func mapTUIKey(key string) string {
 		return "split"
 	case "m", "M":
 		return "mouse"
+	case "p", "P":
+		return "preview"
 	case "?":
 		return "help"
 	case "[":
@@ -1421,6 +1432,13 @@ func (t *TUI) handleMouseKey(key string) {
 		// ordinary press handling runs, so clicking a pane hands the
 		// keyboard back to navigation. See TheoryOfTUIChatInput.
 		t.inputFocused = false
+		// In the global preview a press anywhere in the Output tab's
+		// content area jumps to the pressed section's full view: every
+		// preview row is exactly one section. See
+		// TheoryOfOutputControls.
+		if t.previewClickToSection(x, y) {
+			return
+		}
 		// A press on the Output tab's control column toggles the
 		// section under the control instead of driving tab
 		// interaction. See TheoryOfOutputControls.

@@ -66,6 +66,16 @@ Output tab control column theory (cmd/tai):
   to its header. Collapse is a display projection over the append-only
   buffer: the projection re-derives from the source, so toggling back
   re-reveals every line. See TheoryOfTUINoTruncation.
+- The global preview (the p key) collapses every section to its first
+  source line at once, so the whole output structure fits the visible
+  area. A press on any preview row — content or control column —
+  leaves the preview and jumps the Output tab to the pressed section's
+  full view, so the fold controls are not rendered in the preview:
+  their toggle semantics are replaced by the jump. Entering the
+  preview expands and focuses the Output tab when needed and shows the
+  overview from the top; leaving lands on the section at the top of
+  the preview viewport, so the reading position carries into the
+  restored view.
 - A section may carry several controls. The column shows the first
   control per row; when the pointer hovers the control column on a
   control's row, all of the section's controls display horizontally,
@@ -74,7 +84,8 @@ Output tab control column theory (cmd/tai):
 - The projection is incremental: each completed source line wraps at
   most once per content width behind a left-to-right pointer, the
   trailing partial line re-wraps fresh every frame, and a section
-  toggle or a content-width change resets the projection.
+  toggle, the preview toggle, or a content-width change resets the
+  projection.
 `
 
 // controlColumnWidth is the control column's width in terminal cells:
@@ -157,14 +168,23 @@ func sectionCollapsedRow(line taiui.Line, contentWidth int) taiui.Line {
 	}
 }
 
+// sectionCollapsed reports the section's projected form: the global
+// preview collapses every section to its first source line at once,
+// so the whole output structure fits the visible area; otherwise the
+// section's own collapsed state decides. The caller holds t.mu. See
+// TheoryOfOutputControls.
+func (t *TUI) sectionCollapsed(idx int) bool {
+	return t.outputPreview || t.outputSections[idx].collapsed
+}
+
 // outputDisplay renders the Output tab's display: the projection of the
 // append-only output buffer where every collapsed section contributes
 // one row — its first source line — and every other line wraps in
-// full. Each completed source line wraps at most once per content
-// width behind a left-to-right pointer; the trailing partial line
-// re-wraps fresh every frame; a section toggle or a content-width
-// change resets the projection. The caller holds t.mu. See
-// TheoryOfOutputControls.
+// full. The global preview collapses every section the same way. Each
+// completed source line wraps at most once per content width behind a
+// left-to-right pointer; the trailing partial line re-wraps fresh
+// every frame; a section toggle or a content-width change resets the
+// projection. The caller holds t.mu. See TheoryOfOutputControls.
 func (t *TUI) outputDisplay(contentWidth int) []taiui.Line {
 	lines := t.output.Lines()
 	completed := len(t.output.CompletedLines())
@@ -214,7 +234,7 @@ func (t *TUI) outputDisplay(contentWidth int) []taiui.Line {
 				i++
 			}
 			to = sections[i+1].startLine
-			if sections[i].collapsed {
+			if t.sectionCollapsed(i) {
 				if t.projCounts[i] == 0 && to > sections[i].startLine {
 					t.projDisplay = append(t.projDisplay, sectionCollapsedRow(lines[sections[i].startLine], contentWidth))
 					t.projCounts[i] = 1
@@ -228,7 +248,7 @@ func (t *TUI) outputDisplay(contentWidth int) []taiui.Line {
 			// The last section's territory; the partial line that
 			// sectionedLines may cover wraps after the loop.
 			to = min(t.sectionedLines, completed)
-			if sections[last].collapsed {
+			if t.sectionCollapsed(last) {
 				if t.projCounts[last] == 0 && to > sections[last].startLine {
 					t.projDisplay = append(t.projDisplay, sectionCollapsedRow(lines[sections[last].startLine], contentWidth))
 					t.projCounts[last] = 1
@@ -255,7 +275,7 @@ func (t *TUI) outputDisplay(contentWidth int) []taiui.Line {
 		switch {
 		case len(sections) == 0 || completed < sections[0].startLine:
 		case completed < t.sectionedLines:
-			show = !sections[last].collapsed
+			show = !t.sectionCollapsed(last)
 		}
 		if show {
 			before := len(t.projDisplay)
@@ -271,11 +291,12 @@ func (t *TUI) outputDisplay(contentWidth int) []taiui.Line {
 // closed form when a newer section opens: an expanded section absorbs
 // the tail rows and wraps its remaining unprocessed lines; a collapsed
 // section drops the tail rows its single row hides and, when its span
-// stayed empty until now, renders its first-line row. See
+// stayed empty until now, renders its first-line row. The global
+// preview collapses every section the same way. See
 // TheoryOfOutputControls.
 func (t *TUI) finalizeProjectedSection(idx int, spanEnd int, lines []taiui.Line, contentWidth int) {
 	sec := t.outputSections[idx]
-	if sec.collapsed {
+	if t.sectionCollapsed(idx) {
 		t.projDisplay = t.projDisplay[:len(t.projDisplay)-t.projTailRows]
 		t.projTailRows = 0
 		if t.projCounts[idx] == 0 && spanEnd > sec.startLine {
@@ -324,6 +345,27 @@ func (t *TUI) outputSectionOffset(idx int) int {
 	return top
 }
 
+// outputSectionAtOffset locates the section whose projected rows cover
+// the given display offset in the current projection: the prefix rows
+// clamp to the first section and the tail rows fall back to the last,
+// so every display offset maps onto a section when one exists. The
+// projection must have been computed for the current content width.
+// The caller holds t.mu. See TheoryOfOutputControls.
+func (t *TUI) outputSectionAtOffset(offset int) int {
+	if len(t.outputSections) == 0 {
+		return -1
+	}
+	if offset < t.projPrefixRows {
+		return 0
+	}
+	for i, count := range t.projCounts {
+		if offset < t.outputSectionOffset(i)+count {
+			return i
+		}
+	}
+	return len(t.outputSections) - 1
+}
+
 // outputControlRows computes the control column's rows for the current
 // view: one row per section with at least one visible display row,
 // pinned to the section's first display row or the viewport top when
@@ -358,10 +400,15 @@ func (t *TUI) outputControlRows(box taiui.Box, display []taiui.Line, offset int)
 // press must land in the control column, and while the hover strip
 // shows, the press column maps onto the strip's slots — one Han-width
 // slot per control, the fold toggle first. It reports whether a control
-// consumed the press. A minimal TUI without the output buffer carries
-// no sections and no controls, so nothing consumes the press. The
-// caller holds t.mu. See TheoryOfOutputControls.
+// consumed the press. In the global preview the fold controls are not
+// rendered and every press is a jump handled before this method. A
+// minimal TUI without the output buffer carries no sections and no
+// controls, so nothing consumes the press. The caller holds t.mu. See
+// TheoryOfOutputControls.
 func (t *TUI) toggleControlAtClick(x, y int) bool {
+	if t.outputPreview {
+		return false
+	}
 	if !t.tabs.Expanded[0] || t.output == nil {
 		return false
 	}
@@ -612,4 +659,96 @@ func (t *TUI) showOutputSection(idx int) {
 	offset := t.outputSectionOffset(idx)
 	t.scrolls[0].Offset = taiui.ClampOffset(offset, len(display), t.tuiPaneHeight(0, box))
 	t.scrolls[0].Follow = false
+}
+
+// previewClickToSection maps a press inside the preview's content area
+// onto the section of the pressed display row and leaves the preview
+// with the Output tab scrolled to that section's full view: every
+// preview row is exactly one section, so any row is a jump target. It
+// reports whether the press jumped. The caller holds t.mu. See
+// TheoryOfOutputControls.
+func (t *TUI) previewClickToSection(x, y int) bool {
+	if !t.outputPreview || !t.tabs.Expanded[0] || t.output == nil {
+		return false
+	}
+	box := t.tabs.Boxes(t.width, t.height)[0]
+	if x < box.Left || x >= box.Right {
+		return false
+	}
+	panelBottom := box.Bottom
+	if t.interactive {
+		panelBottom--
+	}
+	if y < box.Top+1 || y >= panelBottom {
+		return false
+	}
+	display := wrappedDisplay(t, 0, box)
+	if len(display) == 0 {
+		return false
+	}
+	offset := taiui.ClampOffset(t.scrolls[0].Offset, len(display), t.tuiPaneHeight(0, box))
+	row := offset + (y - box.Top - 1)
+	idx := t.outputSectionAtOffset(row)
+	if idx < 0 {
+		return false
+	}
+	t.exitOutputPreviewLocked(idx)
+	return true
+}
+
+// previewTopSectionLocked returns the section covering the top row of
+// the preview viewport, or -1 when the Output tab shows nothing. The
+// caller holds t.mu. See TheoryOfOutputControls.
+func (t *TUI) previewTopSectionLocked() int {
+	if !t.tabs.Expanded[0] || t.output == nil {
+		return -1
+	}
+	box := t.tabs.Boxes(t.width, t.height)[0]
+	if box.Width() <= 0 || box.Height() <= 0 {
+		return -1
+	}
+	display := wrappedDisplay(t, 0, box)
+	if len(display) == 0 {
+		return -1
+	}
+	offset := taiui.ClampOffset(t.scrolls[0].Offset, len(display), t.tuiPaneHeight(0, box))
+	return t.outputSectionAtOffset(offset)
+}
+
+// exitOutputPreviewLocked leaves preview mode, landing the restored
+// full view on the given section; a negative target keeps the plain
+// restore. The caller holds t.mu. See TheoryOfOutputControls.
+func (t *TUI) exitOutputPreviewLocked(target int) {
+	if !t.outputPreview {
+		return
+	}
+	t.outputPreview = false
+	t.resetProjectionLocked()
+	if target >= 0 {
+		t.showOutputSection(target)
+	}
+}
+
+// toggleOutputPreview switches the Output tab's global preview: the
+// projection collapses every section to its first source line, so the
+// whole output structure fits the visible area, and a press on any
+// preview row jumps to that section's full view. Entering expands and
+// focuses the Output tab when needed and shows the overview from the
+// top; leaving lands on the section at the top of the preview
+// viewport, so the reading position carries into the restored view.
+// See TheoryOfOutputControls.
+func (t *TUI) toggleOutputPreview() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if !t.outputPreview {
+		if !t.tabs.Expanded[0] || t.tabs.Focus != 0 {
+			t.tabs.Toggle(0)
+		}
+		t.outputPreview = true
+		t.resetProjectionLocked()
+		t.scrolls[0].Offset = 0
+		t.scrolls[0].Follow = false
+		return
+	}
+	t.exitOutputPreviewLocked(t.previewTopSectionLocked())
 }
