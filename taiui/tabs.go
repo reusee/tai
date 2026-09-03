@@ -454,13 +454,18 @@ func renderPanel(p _Panel, box Box, style Style, draw drawFunc, cursor cursorFun
 
 	// Header row: the label centers across the full box width, and the
 	// row is filled first so the centered label never leaves an
-	// unpainted gap on either side.
+	// unpainted gap on either side. The blank part carries a dim
+	// strike-through rule as a subtle visual separator; the label is
+	// drawn over it with the plain header style, so only the blank
+	// cells show the rule.
 	headerStyle := style.WithBg(base).WithFg(labelFg)
 	if p.focus {
 		headerStyle = withAttrOn(headerStyle, true, vt.Bold)
 	}
+	headerRuleStyle := withAttrOn(withAttrOn(headerStyle, true, vt.StrikeThrough), true, vt.Dim)
+	headerRuleStyle = withAttrOn(headerRuleStyle, false, vt.Bold)
 	for x := box.Left; x < box.Right; x++ {
-		draw(x, box.Top, ' ', nil, headerStyle)
+		draw(x, box.Top, ' ', nil, headerRuleStyle)
 	}
 	labelX := box.Left + max((box.Width()-lineWidth(options, p.label, iter))/2, 0)
 	renderListLine(p.label, Box{
@@ -566,15 +571,23 @@ func CollapsedPanel(box Box, label string, focus, unseen bool, style PanelStyle)
 			lines = append(lines, string(r))
 		}
 		// The vertical label centers in the strip: VAlignMiddle
-		// centers the line block, the extra row going below.
+		// centers the line block, the extra row going below. The
+		// strip's blank part carries the dim strike-through rule; the
+		// label turns the rule attributes off so only the blank cells
+		// show it.
 		var panel Element = Rect(
 			Box(box),
 			Fill(true),
 			BGColor(base),
+			FGColor(labelFg),
+			Dim(true),
+			StrikeThrough(true),
 			Text(
 				lines,
 				Bold(focus),
 				FGColor(labelFg),
+				Dim(false),
+				StrikeThrough(false),
 				VAlignMiddle,
 			),
 		)
@@ -591,15 +604,22 @@ func CollapsedPanel(box Box, label string, focus, unseen bool, style PanelStyle)
 		))
 	}
 	// The horizontal label centers across the strip: Text applies the
-	// centering, the extra column going to the right.
+	// centering, the extra column going to the right. The strip's blank
+	// part carries the dim strike-through rule; the label turns the
+	// rule attributes off so only the blank cells show it.
 	panel := Rect(
 		Box(box),
 		Fill(true),
 		BGColor(base),
+		FGColor(labelFg),
+		Dim(true),
+		StrikeThrough(true),
 		Text(
 			label,
 			Bold(focus),
 			FGColor(labelFg),
+			Dim(false),
+			StrikeThrough(false),
 			AlignCenter,
 		),
 	)

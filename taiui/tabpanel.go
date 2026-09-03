@@ -20,6 +20,10 @@ taiui tab panel theory:
   content rows from the box's left edge, reserving the strip for
   callers that draw controls beside the content; the title row never
   carries the indent.
+- The blank part of a tab title — the title row's empty stretch and a
+  collapsed strip's blank cells — carries a dim strike-through rule
+  (the label foreground under vt.Dim) as a subtle visual separator;
+  the label cells themselves stay plain.
 - PaneHeight derives the scroll view height from the panel box: the
   one-row label strip pinned to the top leaves box height minus one row
   for content, never less than one.
