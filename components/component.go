@@ -82,13 +82,19 @@ The generation loop starts one goroutine per parsed block whose kind has
 a Compute, delivering the outcome through a buffered PrefetchFuture.
 Futures travel with the collected blocks: they are per attempt, reset
 with the blocks, and a failed attempt's futures are discarded with its
-blocks. ProcessComponents passes each component the futures aligned with
-its filtered blocks; the component consumes every prefetched outcome in
-block order and falls back to a synchronous Compute call when no future
-exists (direct callers, tests), so the applied parts keep the block
-order regardless of completion order. A dropped future leaks nothing:
-the buffered channel lets the computing goroutine finish, and a
-panicking computation is recovered and delivered as an error outcome.
+blocks. ProcessComponents passes each component the futures aligned
+with its filtered blocks by the blocks' original indexes: components
+run in registration order and each removes its own blocks, shifting
+the remaining indexes left, so a lookup by the shifted index reads
+another block's future — a second Wait on an already-consumed future
+deadlocks the loop (the attempt ends but the run never continues),
+and an unconsumed foreign future hands the component foreign parts.
+The component consumes every prefetched outcome in block order and
+falls back to a synchronous Compute call when no future exists
+(direct callers, tests), so the applied parts keep the block order
+regardless of completion order. A dropped future leaks nothing: the
+buffered channel lets the computing goroutine finish, and a panicking
+computation is recovered and delivered as an error outcome.
 `
 
 // ComponentProcessFunc processes blocks of a specific kind from the parser
@@ -408,10 +414,14 @@ func (c ComponentSet) Processable() []Component {
 // and run-duration control belongs to the caller via
 // pipeline.RunOptions.MaxGenerations.
 //
-// prefetched optionally carries, aligned with allBlocks by index, the
-// prefetched computation of each block: a non-nil entry delivers the
-// block's side-effect-free outcome to the component, a nil entry or a
-// missing tail leaves the component computing the block synchronously.
+// prefetched optionally carries, aligned with the original allBlocks
+// order, the prefetched computation of each block: a non-nil entry
+// delivers the block's side-effect-free outcome to its component, a
+// nil entry or a missing tail leaves the component computing the block
+// synchronously. Components are processed in registration order and
+// each removes its own blocks, so lookups key on the block's original
+// index: a lookup by the shifted index would read another block's
+// future, and the second Wait on an already-consumed future deadlocks.
 // The alignment lets a component consume each prefetched outcome with
 // its own block, so duplicate blocks keep their own results. See
 // TheoryOfReadOnlyPrefetch.
@@ -434,6 +444,15 @@ func ProcessComponents(
 	triggered bool,
 	err error,
 ) {
+	// originalIndices carries, for each block in allBlocks, its index in
+	// the caller's original block list. Earlier components remove their
+	// blocks and shift the remaining indexes left, so the future must be
+	// looked up by the original index. See TheoryOfReadOnlyPrefetch.
+	originalIndices := make([]int, len(allBlocks))
+	for i := range originalIndices {
+		originalIndices[i] = i
+	}
+
 	for _, comp := range comps.Processable() {
 		if comp.Kind == "" {
 			continue
@@ -441,23 +460,28 @@ func ProcessComponents(
 
 		// Filter blocks by this component's kind, carrying the aligned
 		// prefetched futures along so each block keeps its own outcome.
-		// See TheoryOfReadOnlyPrefetch.
+		// The future is looked up by the block's original index. See
+		// TheoryOfReadOnlyPrefetch.
 		var compBlocks []blocks.Block
 		var compFutures []PrefetchFuture
 		var otherBlocks []blocks.Block
+		var otherIndices []int
 		for i, b := range allBlocks {
 			if b.Kind == comp.Kind {
 				compBlocks = append(compBlocks, b)
-				if i < len(prefetched) {
-					compFutures = append(compFutures, prefetched[i])
+				orig := originalIndices[i]
+				if orig < len(prefetched) {
+					compFutures = append(compFutures, prefetched[orig])
 				} else {
 					compFutures = append(compFutures, nil)
 				}
 			} else {
 				otherBlocks = append(otherBlocks, b)
+				otherIndices = append(otherIndices, originalIndices[i])
 			}
 		}
 		allBlocks = otherBlocks
+		originalIndices = otherIndices
 
 		if len(compBlocks) == 0 {
 			continue

@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/generators"
@@ -519,4 +520,81 @@ func TestProcessComponentsConsumesPrefetched(t *testing.T) {
 	if computed != 1 {
 		t.Fatalf("expected 1 synchronous compute (the non-prefetched block), got %d", computed)
 	}
+}
+
+func TestProcessComponentsPrefetchAlignmentAcrossKinds(t *testing.T) {
+	// A go-src block followed by an ingest block: the go-src component
+	// (registered before ingest) removes its block, shifting the ingest
+	// block's index left. The ingest component must receive the ingest
+	// block's own future; a lookup by the shifted index hands it the
+	// already-consumed go-src future, and the second Wait deadlocks —
+	// the attempt finishes but the run never continues. See
+	// TheoryOfReadOnlyPrefetch.
+	comps := ComponentSet{
+		{
+			Kind: "go-src",
+			Process: func(ctx context.Context, pctx *ProcessContext) ProcessResult {
+				return ProcessResult{Parts: waitAllPrefetched(pctx)}
+			},
+		},
+		{
+			Kind: "ingest",
+			Process: func(ctx context.Context, pctx *ProcessContext) ProcessResult {
+				return ProcessResult{Parts: waitAllPrefetched(pctx)}
+			},
+		},
+	}
+	allBlocks := []blocks.Block{
+		{Kind: "go-src", Body: "symbol"},
+		{Kind: "ingest", Body: "file"},
+	}
+	prefetched := []PrefetchFuture{
+		StartPrefetch(func() Prefetched {
+			return Prefetched{Parts: []generators.Part{generators.Text("gosrc result")}}
+		}),
+		StartPrefetch(func() Prefetched {
+			return Prefetched{Parts: []generators.Part{generators.Text("ingest result")}}
+		}),
+	}
+
+	type outcome struct {
+		parts []generators.Part
+		err   error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		_, _, parts, _, err := ProcessComponents(
+			context.Background(), comps, allBlocks, nil, nil, nets.HTTPClient{},
+			prefetched...,
+		)
+		done <- outcome{parts: parts, err: err}
+	}()
+	select {
+	case o := <-done:
+		if o.err != nil {
+			t.Fatalf("unexpected error: %v", o.err)
+		}
+		if len(o.parts) != 2 {
+			t.Fatalf("expected 2 parts, got %d", len(o.parts))
+		}
+		if string(o.parts[0].(generators.Text)) != "gosrc result" ||
+			string(o.parts[1].(generators.Text)) != "ingest result" {
+			t.Fatalf("each kind must consume its own future, got %v", o.parts)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("ProcessComponents deadlocked: a component consumed another kind's already-consumed future")
+	}
+}
+
+func waitAllPrefetched(pctx *ProcessContext) []generators.Part {
+	var parts []generators.Part
+	for i := range pctx.Blocks {
+		if i < len(pctx.Prefetched) && pctx.Prefetched[i] != nil {
+			outcome := pctx.Prefetched[i].Wait()
+			parts = append(parts, outcome.Parts...)
+			continue
+		}
+		parts = append(parts, generators.Text("sync "+pctx.Blocks[i].Body))
+	}
+	return parts
 }
