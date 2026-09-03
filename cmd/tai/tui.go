@@ -75,9 +75,10 @@ withTUIOutputObserver taps the run's event iterator and forwards every
 event to handleEvent, so every Events-tab line originates from a pipeline
 event (see pipeline.TheoryOfLoopEvents), and EventFinish clears the
 Output tab's "generating..." hint. The Logs tab renders consecutive
-lines with alternating background shades so entries are visually distinct;
-the two shades derive from the tab's focused or unfocused background, so the
-alternation stays subtle in either state. The Events tab renders the
+lines with alternating background shades so entries are visually distinct
+when a background is configured; the panels paint no background by
+default, the alternation is inert without one, and the two shades derive
+from whatever backgrounds the tui config section sets. The Events tab renders the
 stream as a tree (see TheoryOfEventTree): each goal loop is one branch
 rooted at its loop-start event, an attempt nests under it, and the
 attempt's lifecycle events nest under its start; display order is a
@@ -124,8 +125,9 @@ in the Output tab. Content is colored by role, matching the non-TUI output
 colors (see generators/colors.go): user input is blue, tool calls and
 results yellow, system messages cyan, log records red, and thoughts bright
 magenta; model output keeps the default foreground. Role colors are ANSI 16
-palette colors, so text uses only the standard 16-color SGR codes; only
-backgrounds use true-color hex values. Colors are carried per output line
+palette colors by default, and every color is configurable through the
+tui config section (see UIStyle); by default no background is painted.
+Colors are carried per output line
 through wrapping, so a wrapped line keeps its role color. The keys
 1, 2, and 3 select the corresponding tab (Output, Events, Logs
 respectively); the number-key collapse/expand and focus-handoff semantics,
@@ -440,20 +442,13 @@ func (t Tui) Keys() map[string]string {
 	}
 }
 
-// panelStyle styles the three tab panels: dark blue for unfocused tabs,
-// dark gray for the focused tab, a highlight color for the active
-// request label, and red for the unseen dot of a collapsed strip — the
-// horizontal glyph's foreground and the one-column strip's fallback
-// background. It is the single style definition shared by the panel
-// rendering and the tests.
-var panelStyle = taiui.PanelStyle{
-	BaseBG:         taiui.HexColor(tabUnfocusBG),
-	FocusBG:        taiui.HexColor(tabFocusBG),
-	LabelFG:        color.PaletteColor(8),
-	FocusLabelFG:   color.PaletteColor(15),
-	ActiveLabelFG:  color.PaletteColor(int(tabActiveLabelFg)),
-	UnseenDotColor: taiui.HexColor(0xd23b3b),
-}
+// panelStyle styles the three tab panels: no background by default —
+// backgrounds are configured through the tui config section (see
+// UIStyle) — the palette foregrounds for labels, and the unseen dot
+// color of a collapsed strip. It is the single style definition
+// shared by the panel rendering and the tests; UIStyle.apply
+// re-derives it from the resolved configuration at startup.
+var panelStyle = UIStyle{}.panelStyleOf()
 
 var (
 	outputColorUserLine    = color.PaletteColor(int(outputColorUser))
@@ -1926,10 +1921,7 @@ func (t *TUI) render() {
 
 var (
 	tabNames = [...]string{"Output", "Events", "Logs"}
-	// tabUnfocusBG is the dark blue background of every unfocused tab.
-	tabUnfocusBG int32 = 0x0a1428
-	// tabFocusBG is the dark gray background of the focused tab.
-	tabFocusBG       int32 = 0x2e2e2e
+
 	tabActiveLabelFg int32 = 10
 )
 
@@ -2022,6 +2014,11 @@ func forkTUIDisplay(scope dscope.Scope, tui *TUI) dscope.Scope {
 }
 
 func runWithTUI(app apps.App, scope dscope.Scope) {
+	// The display colors come from the resolved tui config section:
+	// apply re-derives the package-level style values before the
+	// TUI's first render. The built-in defaults paint no background.
+	// See TheoryOfUIStyle.
+	scope.Get[UIStyle]().apply()
 	tui, err := newTUI()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "cannot start TUI: %v; continuing without TUI\n", err)
@@ -2075,8 +2072,8 @@ func runWithTUI(app apps.App, scope dscope.Scope) {
 
 	// The TUI's raw-thought display is governed by -no-thoughts alone:
 	// -summarize-thoughts adds periodic summaries in the Events tab but
-	// never suppresses the raw stream, because blanking the focused
-	// Output tab during long thinking phases leaves no live feedback and
+	// never suppresses the raw stream, because blanking the focused Output
+	// tab during long thinking phases leaves no live feedback and
 	// makes the session look stalled. The flag is resolved from the
 	// scope before the generation goroutine starts, so the policy is
 	// fixed for the session. See TheoryOfTUI.

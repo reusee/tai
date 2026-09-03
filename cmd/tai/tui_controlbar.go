@@ -213,10 +213,11 @@ func menuDropdownBox(width, height, openMenu int) (taiui.Box, bool) {
 }
 
 // menuDropdownElement renders the open menu's dropdown over the tabs:
-// a filled, borderless box holding exactly the item rows, one per
-// row, with one cell of side padding; the item under the pointer
-// renders reversed. It returns nil when no menu is open or the box
-// degenerates. See TheoryOfControlBar.
+// a borderless box holding exactly the item rows, one per row, with
+// one cell of side padding; the fill paints the panel background (the
+// terminal default when unconfigured), erasing the tabs under it. The
+// item under the pointer renders reversed. It returns nil when no
+// menu is open or the box degenerates. See TheoryOfControlBar.
 func menuDropdownElement(width, height, openMenu, hoverItem int) taiui.Element {
 	box, ok := menuDropdownBox(width, height, openMenu)
 	if !ok {
@@ -226,7 +227,7 @@ func menuDropdownElement(width, height, openMenu, hoverItem int) taiui.Element {
 	children := []any{taiui.Rect(
 		box,
 		taiui.Fill(true),
-		taiui.BGColor(taiui.HexColor(tabUnfocusBG)),
+		taiui.BGColor(panelStyle.BaseBG),
 	)}
 	for i, item := range entry.items {
 		specs := []any{item.label,

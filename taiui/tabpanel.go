@@ -14,7 +14,9 @@ taiui tab panel theory:
   The one-column vertical strip falls back to a red background cell,
   because the horizontal label cannot fit there.
 - The panel's title row centers its label across the full box width,
-  filled edge to edge. An optional ContentIndent spec indents the
+  filled edge to edge, and a collapsed strip's title centers along the
+  strip's long axis the same way: vertically in a narrow column,
+  horizontally in a short row. An optional ContentIndent spec indents the
   content rows from the box's left edge, reserving the strip for
   callers that draw controls beside the content; the title row never
   carries the indent.

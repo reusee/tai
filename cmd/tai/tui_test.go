@@ -535,7 +535,7 @@ func TestTuiLogsWriterWritesToLogs(t *testing.T) {
 }
 
 func TestPlainOutputLinesAlternatesBackgrounds(t *testing.T) {
-	base := taiui.HexColor(tabUnfocusBG)
+	base := taiui.HexColor(0x0a1428)
 	lines := taiui.PlainLines([]string{"a", "b", "c"}, base)
 	if len(lines) != 3 {
 		t.Fatalf("expected 3 lines, got %d", len(lines))
@@ -558,7 +558,7 @@ func TestPlainOutputLinesAlternatesBackgrounds(t *testing.T) {
 }
 
 func TestLogAltBG(t *testing.T) {
-	for _, base := range []taiui.Color{taiui.HexColor(tabUnfocusBG), taiui.HexColor(tabFocusBG)} {
+	for _, base := range []taiui.Color{taiui.HexColor(0x0a1428), taiui.HexColor(0x2e2e2e)} {
 		r1, g1, b1 := base.RGB()
 		r2, g2, b2 := taiui.AltBG(base).RGB()
 		if !(r2 > r1 && g2 > g1 && b2 > b1) {
@@ -569,9 +569,10 @@ func TestLogAltBG(t *testing.T) {
 }
 
 func TestColoredTextAlternatingBackgrounds(t *testing.T) {
-	alt := taiui.AltBG(taiui.HexColor(tabUnfocusBG))
+	base := taiui.HexColor(0x0a1428)
+	alt := taiui.AltBG(base)
 	lines := []taiui.Line{
-		{Text: "first", BGColor: taiui.HexColor(tabUnfocusBG)},
+		{Text: "first", BGColor: base},
 		{Text: "second", BGColor: alt},
 	}
 	element := taiui.LinesElement(lines, taiui.Box{Top: 0, Left: 0, Bottom: 2, Right: 10})
@@ -582,13 +583,13 @@ func TestColoredTextAlternatingBackgrounds(t *testing.T) {
 	}
 	frame := screen.frames[len(screen.frames)-1]
 
-	wantR, wantG, wantB := taiui.HexColor(tabUnfocusBG).RGB()
+	wantR, wantG, wantB := base.RGB()
 	cell := frame.Cells[9]
 	if !cell.Set {
 		t.Fatal("expected the first row painted with its background")
 	}
 	if r, g, b := cell.Style.Bg().RGB(); r != wantR || g != wantG || b != wantB {
-		t.Fatalf("expected base background %#x, got %#x %#x %#x", tabUnfocusBG, r, g, b)
+		t.Fatalf("expected base background %#x, got %#x %#x %#x", base, r, g, b)
 	}
 
 	wantR, wantG, wantB = alt.RGB()
@@ -728,45 +729,6 @@ func TestTUIPanelShowsTailOfWrappedContent(t *testing.T) {
 	frame := screen.frames[len(screen.frames)-1]
 	if cell := frame.Cells[9*frame.Width+0]; cell.Rune != 'T' {
 		t.Fatalf("expected THE-END at the pane's bottom row (9,0), got %v", cell.Rune)
-	}
-}
-
-func TestTUIPanelBackgroundColors(t *testing.T) {
-	renderPanel := func(focus bool) taiui.Frame {
-		element := taiui.Panel(
-			taiui.Box{Top: 0, Left: 0, Bottom: 4, Right: 12},
-			"Output", false,
-			[]taiui.Line{{Text: "content"}},
-			0, focus, true, panelStyle,
-		)
-		screen := &panelTestScreen{width: 12, height: 4}
-		taiui.Render(element, screen)
-		if len(screen.frames) == 0 {
-			t.Fatal("expected a rendered frame")
-		}
-		return screen.frames[len(screen.frames)-1]
-	}
-
-	cases := []struct {
-		focus bool
-		want  [3]int32
-	}{
-		{false, [3]int32{0x0a, 0x14, 0x28}},
-		{true, [3]int32{0x2e, 0x2e, 0x2e}},
-	}
-	for _, tc := range cases {
-		frame := renderPanel(tc.focus)
-		for _, y := range []int{0, 1} {
-			cell := frame.Cells[y*frame.Width+0]
-			if !cell.Set {
-				t.Fatalf("focus=%v: expected row %d to be painted", tc.focus, y)
-			}
-			r, g, b := cell.Style.Bg().RGB()
-			if r != tc.want[0] || g != tc.want[1] || b != tc.want[2] {
-				t.Fatalf("focus=%v row %d: expected background %#x %#x %#x, got %#x %#x %#x",
-					tc.focus, y, tc.want[0], tc.want[1], tc.want[2], r, g, b)
-			}
-		}
 	}
 }
 
@@ -2319,6 +2281,39 @@ func TestWrapTabLinesCarriesColors(t *testing.T) {
 	for i := range want {
 		if wrapped[i] != want[i] {
 			t.Fatalf("line %d: got %+v, want %+v", i, wrapped[i], want[i])
+		}
+	}
+}
+
+// TestTUIPanelNoBackgroundByDefault verifies the default style paints
+// no background: every panel row is painted, and its background stays
+// the terminal default. Configured backgrounds come from the tui
+// config section (see UIStyle).
+func TestTUIPanelNoBackgroundByDefault(t *testing.T) {
+	renderPanel := func(focus bool) taiui.Frame {
+		element := taiui.Panel(
+			taiui.Box{Top: 0, Left: 0, Bottom: 4, Right: 12},
+			"Output", false,
+			[]taiui.Line{{Text: "content"}},
+			0, focus, true, panelStyle,
+		)
+		screen := &panelTestScreen{width: 12, height: 4}
+		taiui.Render(element, screen)
+		if len(screen.frames) == 0 {
+			t.Fatal("expected a rendered frame")
+		}
+		return screen.frames[len(screen.frames)-1]
+	}
+	for _, focus := range []bool{false, true} {
+		frame := renderPanel(focus)
+		for _, y := range []int{0, 1} {
+			cell := frame.Cells[y*frame.Width+0]
+			if !cell.Set {
+				t.Fatalf("focus=%v: expected row %d to be painted", focus, y)
+			}
+			if cell.Style.Bg().Valid() {
+				t.Fatalf("focus=%v row %d: expected no background by default, got %v", focus, y, cell.Style.Bg())
+			}
 		}
 	}
 }

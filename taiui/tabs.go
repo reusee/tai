@@ -546,10 +546,10 @@ func renderPanel(p _Panel, box Box, style Style, draw drawFunc, cursor cursorFun
 const unseenDotGlyph = "∘"
 
 // CollapsedPanel renders a collapsed tab as a thin strip showing the
-// tab's title. In a narrow column the label is written vertically; in
-// a short row it is written horizontally. An unseen tab carries a red
+// tab's title, centered along the strip's long axis: vertically in a
+// narrow column, horizontally in a short row. An unseen tab carries a
 // dot glyph right after the label. The one-column vertical strip
-// cannot hold the horizontal label — the mark falls back to a red
+// cannot hold the horizontal label — the mark falls back to a
 // background cell there.
 func CollapsedPanel(box Box, label string, focus, unseen bool, style PanelStyle) Element {
 	base := style.BaseBG
@@ -565,6 +565,8 @@ func CollapsedPanel(box Box, label string, focus, unseen bool, style PanelStyle)
 		for _, r := range label {
 			lines = append(lines, string(r))
 		}
+		// The vertical label centers in the strip: VAlignMiddle
+		// centers the line block, the extra row going below.
 		var panel Element = Rect(
 			Box(box),
 			Fill(true),
@@ -573,21 +575,23 @@ func CollapsedPanel(box Box, label string, focus, unseen bool, style PanelStyle)
 				lines,
 				Bold(focus),
 				FGColor(labelFg),
+				VAlignMiddle,
 			),
 		)
 		if !unseen {
 			return panel
 		}
-		// The fallback dot sits right below the vertical label,
-		// clamped to the strip's last row when the label fills the
-		// strip.
-		dotRow := min(box.Top+len(label), box.Bottom-1)
+		// The fallback dot sits right below the centered label,
+		// clamped to the strip's last row when the label reaches it.
+		dotRow := min(box.Top+(box.Height()+len(label))/2, box.Bottom-1)
 		return Overlay(panel, Rect(
 			Box{Top: dotRow, Left: box.Left, Bottom: dotRow + 1, Right: box.Left + 1},
 			Fill(true),
 			BGColor(style.UnseenDotColor),
 		))
 	}
+	// The horizontal label centers across the strip: Text applies the
+	// centering, the extra column going to the right.
 	panel := Rect(
 		Box(box),
 		Fill(true),
@@ -596,17 +600,21 @@ func CollapsedPanel(box Box, label string, focus, unseen bool, style PanelStyle)
 			label,
 			Bold(focus),
 			FGColor(labelFg),
+			AlignCenter,
 		),
 	)
 	if !unseen {
 		return panel
 	}
-	// The unseen mark is a red dot glyph right after the label: a
+	// The unseen mark is a dot glyph right after the centered label: a
 	// colorable character carrying the unseen color as its foreground.
+	// The centered label starts at left + (width-labelWidth)/2, so it
+	// ends at left + (width+labelWidth)/2.
 	options := DisplayWidthOptions()
 	iter := getGraphemeIter()
 	defer putGraphemeIter(iter)
-	dotCol := box.Left + lineWidth(options, label, iter)
+	labelWidth := lineWidth(options, label, iter)
+	dotCol := box.Left + (box.Width()+labelWidth)/2
 	if dotCol >= box.Right {
 		// The label fills the strip: there is no room for the mark.
 		return panel

@@ -3,7 +3,6 @@ package main
 import (
 	"strings"
 
-	"github.com/gdamore/tcell/v3/color"
 	"github.com/reusee/tai/taiui"
 )
 
@@ -257,13 +256,9 @@ func (t *TUI) outputPanelView(box taiui.Box, display []taiui.Line, label string,
 	return taiui.Overlay(children...)
 }
 
-// inputBarStyle styles the chat input bar from the panel style: the
-// bar's background follows the Output tab's focus state, a focused bar
-// shows bright text, an unfocused bar dim text. See TheoryOfTUIChatInput
-// and taiui.TheoryOfInputBar.
-var inputBarStyle = taiui.InputBarStyle{
-	BaseBG:      panelStyle.BaseBG,
-	FocusBG:     panelStyle.FocusBG,
-	FocusedFG:   color.PaletteColor(15),
-	UnfocusedFG: color.PaletteColor(8),
-}
+// inputBarStyle styles the chat input bar: the bar's background
+// follows the panels' (none by default), a focused bar shows bright
+// text, an unfocused bar dim text. UIStyle.apply re-derives it from
+// the resolved configuration at startup. See TheoryOfTUIChatInput and
+// taiui.TheoryOfInputBar.
+var inputBarStyle = UIStyle{}.inputBarStyleOf()

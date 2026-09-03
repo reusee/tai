@@ -145,15 +145,16 @@ func TestCollapsedPanelUnseenDot(t *testing.T) {
 			t.Fatal("expected a rendered frame")
 		}
 		frame := screen.frames[len(screen.frames)-1]
-		// The label "Summary" ends at column 6; the unseen dot glyph
-		// sits right after it at column 7, in the unseen color.
-		cell := frame.Cells[7]
+		// The centered label "Summary" starts at column (20-7)/2 = 6
+		// and ends at column 12; the unseen dot glyph sits right after
+		// it at column 13, in the unseen color.
+		cell := frame.Cells[13]
 		if cell.Rune != '∘' {
-			t.Fatalf("expected the unseen dot glyph at (7,0), got %v", cell.Rune)
+			t.Fatalf("expected the unseen dot glyph at (13,0), got %v", cell.Rune)
 		}
 		wantR, wantG, wantB := style.UnseenDotColor.RGB()
 		if r, g, b := cell.Style.Fg().RGB(); r != wantR || g != wantG || b != wantB {
-			t.Fatalf("expected the unseen color foreground at (7,0), got %#x %#x %#x", r, g, b)
+			t.Fatalf("expected the unseen color foreground at (13,0), got %#x %#x %#x", r, g, b)
 		}
 	})
 
@@ -167,11 +168,12 @@ func TestCollapsedPanelUnseenDot(t *testing.T) {
 		frame := screen.frames[len(screen.frames)-1]
 		// The one-column strip cannot hold the horizontal label, so the
 		// mark falls back to a red background cell right below the
-		// label, which occupies rows 0..6.
-		cell := frame.Cells[7*frame.Width]
+		// label: the 7-row label centers at rows 2..8, and the mark
+		// sits at row 9.
+		cell := frame.Cells[9*frame.Width]
 		wantR, wantG, wantB := style.UnseenDotColor.RGB()
 		if r, g, b := cell.Style.Bg().RGB(); r != wantR || g != wantG || b != wantB {
-			t.Fatalf("expected the unseen dot background at (0,7), got %#x %#x %#x", r, g, b)
+			t.Fatalf("expected the unseen dot background at (0,9), got %#x %#x %#x", r, g, b)
 		}
 	})
 
@@ -413,8 +415,14 @@ func TestCollapsedPanelRendering(t *testing.T) {
 			t.Fatal("expected a rendered frame")
 		}
 		frame := screen.frames[len(screen.frames)-1]
-		if cell := frame.Cells[0]; cell.Rune != 'O' {
-			t.Fatalf("expected 'O' at (0,0), got %v", cell.Rune)
+		// The label centers across the strip: 6 cells of label in a
+		// 12-cell strip start at column (12-6)/2 = 3, leaving the
+		// edges blank.
+		if cell := frame.Cells[3]; cell.Rune != 'O' {
+			t.Fatalf("expected 'O' at (3,0), got %v", cell.Rune)
+		}
+		if cell := frame.Cells[0]; cell.Rune != ' ' {
+			t.Fatalf("expected a blank left edge at (0,0), got %v", cell.Rune)
 		}
 	})
 
@@ -426,8 +434,14 @@ func TestCollapsedPanelRendering(t *testing.T) {
 			t.Fatal("expected a rendered frame")
 		}
 		frame := screen.frames[len(screen.frames)-1]
-		if cell := frame.Cells[0]; cell.Rune != 'O' {
-			t.Fatalf("expected 'O' at (0,0), got %v", cell.Rune)
+		// The vertical label centers along the strip: 6 rows of label
+		// in an 8-row strip start at row (8-6)/2 = 1, leaving the
+		// edges blank.
+		if cell := frame.Cells[1*frame.Width]; cell.Rune != 'O' {
+			t.Fatalf("expected 'O' at (0,1), got %v", cell.Rune)
+		}
+		if cell := frame.Cells[0]; cell.Rune != ' ' {
+			t.Fatalf("expected a blank top edge at (0,0), got %v", cell.Rune)
 		}
 	})
 }

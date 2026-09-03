@@ -261,6 +261,38 @@ functions?: [...{
   returns: [..._var]
 }]
 
+// tui configures the colors of the terminal UI. Each field accepts a
+// W3C color name (e.g., "red") or a hex value (e.g., "#ff0000").
+// Backgrounds left empty paint no background; foregrounds left empty
+// keep the built-in defaults.
+tui?: {
+	// tab_unfocused_bg is the background of unfocused tabs.
+	tab_unfocused_bg?: string
+	// tab_focused_bg is the background of the focused tab.
+	tab_focused_bg?: string
+	// label_fg is the label color of an unfocused tab.
+	label_fg?: string
+	// focus_label_fg is the label color of the focused tab.
+	focus_label_fg?: string
+	// active_label_fg highlights a label with an active request.
+	active_label_fg?: string
+	// unseen_dot_color colors the unseen dot on a collapsed strip.
+	unseen_dot_color?: string
+	// user_color colors user input lines.
+	user_color?: string
+	// tool_color colors tool call lines.
+	tool_color?: string
+	// system_color colors system message lines.
+	system_color?: string
+	// log_color colors log and event lines.
+	log_color?: string
+	// thought_color colors thought summary headers.
+	thought_color?: string
+	// input_focused_fg colors the chat input line while focused.
+	input_focused_fg?: string
+	// input_unfocused_fg colors the chat input line while unfocused.
+	input_unfocused_fg?: string
+}
 // thoughts_summarize_language sets the output language for thought summaries.
 // When empty (the default), no language hint is given to the summarizer.
 // When set (e.g., "zh", "en"), the summarizer is instructed to output

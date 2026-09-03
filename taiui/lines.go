@@ -27,7 +27,9 @@ taiui TUI content lines theory:
   background shades so consecutive log entries are visually distinct.
   The alternate shade shifts each channel of the base background toward
   the mid-gray, so the alternation stays visible on both light and dark
-  tab backgrounds.
+  tab backgrounds. An unset base (NoColor) disables the alternation:
+  AltBG returns the base unchanged when no background is set, so
+  backgrounds and their alternation appear only when configured.
 - Rendering turns a set of lines into a single element: consecutive
   lines with identical colors are grouped into one text carrying the
   group's colors, so a wrapped log line keeps one background across its
@@ -233,9 +235,15 @@ func WrapPlainLinesInto(lines []string, base Color, width int, startIdx int, out
 }
 
 // AltBG returns the alternate shade for odd-numbered log lines: each
-// channel of the base background is shifted toward the mid-gray, so the
-// alternation stays visible on both light and dark backgrounds.
+// channel of the base background is shifted toward the mid-gray, so
+// the alternation stays visible on both light and dark backgrounds.
+// An unset base (NoColor) returns NoColor: with no background there
+// is nothing to alternate, so the alternation is inert by default and
+// activates only when a base background is configured.
 func AltBG(base Color) Color {
+	if base == NoColor {
+		return NoColor
+	}
 	shift := func(x int32) int32 {
 		if x > 128 {
 			return x - AltBGDiff
