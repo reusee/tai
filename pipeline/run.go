@@ -953,10 +953,12 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 
 	// The successful attempt joins the session tree: the response
 	// node, one summary node per summary body, and the block batch
-	// (handled plus collected). A naming fault discards the block
-	// batch and is fed back through the shared correction decision
-	// below. See TheoryOfSessionTree.
-	blockNodeNames := ls.recordAttemptTree(phaseState, attemptBase, generationSummaries, handledBlocks, collectedBlocks)
+	// (handled plus collected). Blocks whose parent names a node an
+	// earlier block of the batch creates are deferred; the runner
+	// writes them after the components have produced the named nodes.
+	// A naming fault discards the block batch and is fed back through
+	// the shared correction decision below. See TheoryOfSessionTree.
+	blockNodeNames, deferredBlockIndexes := ls.recordAttemptTree(phaseState, attemptBase, generationSummaries, handledBlocks, collectedBlocks)
 
 	ls.state = phaseState
 
@@ -1075,6 +1077,11 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 	}
 	ls.remainingBlocks = append(ls.remainingBlocks, generationRemaining...)
 
+	// The deferred block nodes are written now: their parents name
+	// nodes the batch's new-plan and response components created, and
+	// the components have run, so the named nodes exist. See
+	// TheoryOfSessionTree.
+	treeOut = writeDeferredBlockNodes(treeOut, ls.currentResponse, collectedBlocks, blockNodeNames, deferredBlockIndexes)
 	// Block-result nodes attach to the block nodes written at the
 	// attempt's success: one result child per block when the
 	// component produced one part per block, a shared result node

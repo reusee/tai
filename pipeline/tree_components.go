@@ -37,6 +37,15 @@ immutable tree.
   whole batch, writes an error node, and joins the shared
   block-correction budget (see TheoryOfUnknownBlockKinds), so the
   model re-emits the batch with corrected parameters.
+- In-batch references: a collected block may name as its parent a node
+  that an earlier new-plan or response block of the same batch
+  declares. The reference passes validation, the block node's write is
+  deferred, and writeDeferredBlockNodes records it after the
+  components have created the named node, so one response's tree
+  writes stay atomic with respect to naming. A declared name used
+  twice in one batch, or a reference to a name declared later in the
+  batch — the components write in block order, so the named node
+  would not exist yet — is a naming fault like any other.
 - Malformed blocks and unavailable-kind blocks join the tree as error
   nodes (program author) under the current response, written by
   recordAttemptErrorNodes regardless of the correction budget: the
@@ -66,7 +75,9 @@ immutable tree.
   detail (see tree.TheoryOfSubtree).
 - The run's Result carries the final session tree, so callers outside
   the loop — a review pass, a display front-end — extract subtree
-  projections from it (see tree.TheoryOfSubtree).
+  projections from it (see tree.TheoryOfSubtree). In goal mode the
+  runner accumulates every loop's final tree into GoalResult.Trees, in
+  loop order.
 `
 
 const SessionTreeSystemPrompt = `
@@ -82,6 +93,9 @@ session's structure stays visible.
   parameter (parent=<node-name>): the block node is recorded under that
   node. Without it, the block is recorded under the current round's
   response node.
+- A block may reference a parent node that an earlier new-plan or
+  response block of the same response declares: the program records
+  such a block once that node exists.
 - new-plan and response blocks MUST carry both parent and name
   parameters (parent=<node-name>&name=<unique-name>).
 - Node names are globally unique and validated by the program. A
@@ -245,23 +259,46 @@ func writeNamedTreeNodes(pctx *components.ProcessContext, typ tree.Type, prefix 
 // batch: handled blocks (consumed by the BlockHandler during streaming)
 // get auto-named nodes with an applied result child; collected blocks
 // are pre-validated — one naming fault discards the whole batch, writes
-// an error node, and returns the naming errors. The returned names
-// align with collected by index. See TheoryOfSessionTree.
+// an error node, and returns the naming errors. The batch's new-plan
+// and response blocks declare named nodes the components will create:
+// a collected block may reference such a name as its parent, so its
+// node write is deferred — deferredIndexes lists those blocks' indexes
+// into collected, their names stay empty, and writeDeferredBlockNodes
+// fills both after the components have run. The returned names align
+// with collected by index. See TheoryOfSessionTree.
 func writeBlockNodes(
 	tr *tree.Tree,
 	currentResponse string,
 	handled, collected []blocks.Block,
 ) (
 	collectedNames []string,
+	deferredIndexes []int,
 	namingErrs []string,
 	newTr *tree.Tree,
 ) {
 	if tr == nil {
-		return nil, nil, tr
+		return nil, nil, nil, tr
 	}
+	// Validation runs against the pre-batch tree plus the names the
+	// batch's own earlier blocks declare. A reference to a name declared
+	// later in the batch fails, because the components write in block
+	// order and the named node would not exist yet.
+	declared := make(map[string]bool)
 	for _, block := range collected {
-		if err := validateBlockParent(tr, currentResponse, block); err != nil {
+		if err := validateBlockParent(tr, currentResponse, block, declared); err != nil {
 			namingErrs = append(namingErrs, err.Error())
+		}
+		if block.Kind != "new-plan" && block.Kind != "response" {
+			continue
+		}
+		if name := block.Attributes["name"]; name != "" {
+			if declared[name] {
+				namingErrs = append(namingErrs, fmt.Sprintf(
+					"block kind %q (boundary %q) declares name %q, which an earlier block of the same batch already declares",
+					block.Kind, block.Boundary, name))
+			} else {
+				declared[name] = true
+			}
 		}
 	}
 	if len(namingErrs) > 0 {
@@ -269,7 +306,7 @@ func writeBlockNodes(
 			"session-tree naming errors discarded the whole block batch:\n"+strings.Join(namingErrs, "\n")); err == nil {
 			tr = next
 		}
-		return nil, namingErrs, tr
+		return nil, nil, namingErrs, tr
 	}
 	cur := tr
 	for _, block := range handled {
@@ -288,11 +325,18 @@ func writeBlockNodes(
 		if block.Kind == "done" {
 			typ = tree.TypeDone
 		}
+		parent := parentAttribute(block, currentResponse)
+		if _, ok := cur.Node(parent); !ok {
+			// The parent names a node an earlier block of the batch will
+			// create: defer the node write until the components have run.
+			deferredIndexes = append(deferredIndexes, i)
+			continue
+		}
 		var name string
-		cur, name = writeBlockNode(cur, parentAttribute(block, currentResponse), typ, block)
+		cur, name = writeBlockNode(cur, parent, typ, block)
 		names[i] = name
 	}
-	return names, nil, cur
+	return names, deferredIndexes, nil, cur
 }
 
 // writeBlockNode writes one auto-named block node; a failed write keeps
@@ -321,9 +365,11 @@ func parentAttribute(block blocks.Block, currentResponse string) string {
 }
 
 // validateBlockParent checks one block's session-tree placement: the
-// parent (after defaulting) must exist, and new-plan and response
-// blocks must carry both parent and name. See TheoryOfSessionTree.
-func validateBlockParent(tr *tree.Tree, currentResponse string, block blocks.Block) error {
+// parent (after defaulting) must exist in the tree, or be a name an
+// earlier block of the same batch declares (declared); new-plan and
+// response blocks must carry both parent and name. See
+// TheoryOfSessionTree.
+func validateBlockParent(tr *tree.Tree, currentResponse string, block blocks.Block, declared map[string]bool) error {
 	switch block.Kind {
 	case "new-plan", "response":
 		if block.Attributes["parent"] == "" {
@@ -333,11 +379,15 @@ func validateBlockParent(tr *tree.Tree, currentResponse string, block blocks.Blo
 			return fmt.Errorf("block kind %q (boundary %q) needs a name header parameter", block.Kind, block.Boundary)
 		}
 	}
-	if _, ok := tr.Node(parentAttribute(block, currentResponse)); !ok {
-		return fmt.Errorf("block kind %q (boundary %q) names parent %q, which does not exist in the session tree",
-			block.Kind, block.Boundary, parentAttribute(block, currentResponse))
+	parent := parentAttribute(block, currentResponse)
+	if _, ok := tr.Node(parent); ok {
+		return nil
 	}
-	return nil
+	if declared[parent] {
+		return nil
+	}
+	return fmt.Errorf("block kind %q (boundary %q) names parent %q, which does not exist in the session tree",
+		block.Kind, block.Boundary, parent)
 }
 
 // writeBlockResultNodes attaches block-result nodes to the component
@@ -384,6 +434,42 @@ func blockNodeName(originalIndex int, collectedNames []string) string {
 		return ""
 	}
 	return collectedNames[originalIndex]
+}
+
+// writeDeferredBlockNodes writes the deferred block nodes after the
+// components have run: a deferred block's parent names a node that an
+// earlier block of its batch created, which exists only once the
+// component has written it. Each write takes a fresh auto name, and
+// names is filled in place so the block-result nodes can attach. See
+// TheoryOfSessionTree.
+func writeDeferredBlockNodes(
+	tr *tree.Tree,
+	currentResponse string,
+	collected []blocks.Block,
+	names []string,
+	deferredIndexes []int,
+) *tree.Tree {
+	if tr == nil || len(deferredIndexes) == 0 {
+		return tr
+	}
+	cur := tr
+	for _, i := range deferredIndexes {
+		if i < 0 || i >= len(collected) || i >= len(names) {
+			continue
+		}
+		block := collected[i]
+		typ := tree.TypeBlock
+		if block.Kind == "done" {
+			typ = tree.TypeDone
+		}
+		var name string
+		cur, name = writeBlockNode(cur, parentAttribute(block, currentResponse), typ, block)
+		if name == "" {
+			continue
+		}
+		names[i] = name
+	}
+	return cur
 }
 
 // joinTextParts concatenates the Text parts verbatim; the callers
@@ -482,18 +568,21 @@ func extractUserTextsSince(state generators.State, sinceCount int) string {
 
 // recordAttemptTree writes the successful attempt's nodes: the response
 // node (the attempt's model-role Text parts), one summary node per
-// summary body, and the block batch (handled plus collected). On a
-// naming fault the batch is discarded, the error node recorded, the
-// errors stored for the shared correction decision, and the returned
-// names are nil. See TheoryOfSessionTree.
+// summary body, and the block batch (handled plus collected). Blocks
+// whose parent names a node an earlier block of the batch creates are
+// deferred: their collected indexes return to the caller, and
+// writeDeferredBlockNodes writes their nodes after the components have
+// run. On a naming fault the batch is discarded, the error node
+// recorded, the errors stored for the shared correction decision, and
+// the returned names are nil. See TheoryOfSessionTree.
 func (ls *loopState) recordAttemptTree(
 	phaseState generators.State,
 	attemptBase int,
 	summaries []string,
 	handled, collected []blocks.Block,
-) (collectedNames []string) {
+) (collectedNames []string, deferredIndexes []int) {
 	if ls.sessionTree == nil {
-		return nil
+		return nil, nil
 	}
 	next, responseName, err := ls.sessionTree.WriteAuto("root", "response", tree.TypeResponse, tree.AuthorModel, extractModelTexts(phaseState, attemptBase))
 	if err != nil {
@@ -509,14 +598,14 @@ func (ls *loopState) recordAttemptTree(
 			}
 		}
 	}
-	names, namingErrs, blockTree := writeBlockNodes(ls.sessionTree, ls.currentResponse, handled, collected)
+	names, deferred, namingErrs, blockTree := writeBlockNodes(ls.sessionTree, ls.currentResponse, handled, collected)
 	if len(namingErrs) > 0 {
 		ls.namingErrs = namingErrs
 		ls.sessionTree = blockTree
-		return nil
+		return nil, nil
 	}
 	ls.sessionTree = blockTree
-	return names
+	return names, deferred
 }
 
 // writeFeedbackInputNode records round feedback as an input node

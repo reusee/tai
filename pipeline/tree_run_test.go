@@ -51,7 +51,7 @@ func TestWriteBlockNodesCollectedAndHandled(t *testing.T) {
 	// default to the current response as parent. See TheoryOfSessionTree.
 	handled := []blocks.Block{{Kind: "change", Body: "func Foo() {}"}}
 	collected := []blocks.Block{{Kind: "shell", Body: "echo hi"}}
-	names, namingErrs, tr := writeBlockNodes(base, respName, handled, collected)
+	names, _, namingErrs, tr := writeBlockNodes(base, respName, handled, collected)
 	if len(namingErrs) != 0 {
 		t.Fatalf("unexpected naming errors: %v", namingErrs)
 	}
@@ -71,7 +71,7 @@ func TestWriteBlockNodesCollectedAndHandled(t *testing.T) {
 	}
 
 	// A done block becomes a done node.
-	doneNames, _, doneTree := writeBlockNodes(tr, respName, nil, []blocks.Block{{Kind: "done", Body: "goal achieved"}})
+	doneNames, _, _, doneTree := writeBlockNodes(tr, respName, nil, []blocks.Block{{Kind: "done", Body: "goal achieved"}})
 	if len(doneNames) != 1 || doneNames[0] == "" {
 		t.Fatalf("expected a done node name, got %v", doneNames)
 	}
@@ -87,7 +87,7 @@ func TestWriteBlockNodesCollectedAndHandled(t *testing.T) {
 		{Kind: "new-plan", Boundary: "甲乙", Body: "plan"},
 		{Kind: "shell", Body: "echo again"},
 	}
-	batchNames, batchErrs, batchTree := writeBlockNodes(doneTree, respName, nil, invalid)
+	batchNames, _, batchErrs, batchTree := writeBlockNodes(doneTree, respName, nil, invalid)
 	if len(batchErrs) == 0 {
 		t.Fatal("expected naming errors for the new-plan block without parent")
 	}
@@ -111,7 +111,7 @@ func TestWriteBlockResultNodesZip(t *testing.T) {
 		t.Fatal(err)
 	}
 	collected := []blocks.Block{{Kind: "shell", Body: "a"}, {Kind: "shell", Body: "b"}}
-	names, _, tr := writeBlockNodes(base, respName, nil, collected)
+	names, _, _, tr := writeBlockNodes(base, respName, nil, collected)
 
 	// One part per block: a result child per block node.
 	zipped := writeBlockResultNodes(tr, []components.ComponentOutput{{
@@ -143,6 +143,111 @@ func TestWriteBlockResultNodesZip(t *testing.T) {
 	}
 	if kids := second.Children(); len(kids) != 0 {
 		t.Fatalf("the second block must stay childless under a shared result, got %d children", len(kids))
+	}
+}
+
+// TestWriteBlockNodesInBatchReferences verifies that a collected block
+// may reference a parent node an earlier new-plan block of the same
+// batch declares: the reference passes validation, the block node's
+// write is deferred, and writeDeferredBlockNodes records it under the
+// named node once the component has created it. A duplicate declared
+// name and a forward reference are naming faults. See
+// TheoryOfSessionTree.
+func TestWriteBlockNodesInBatchReferences(t *testing.T) {
+	base, respName, err := tree.New().WriteAuto("root", "response", tree.TypeResponse, tree.AuthorModel, "resp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	collected := []blocks.Block{
+		{Kind: "new-plan", Attributes: map[string]string{"parent": "root", "name": "plan-1"}, Body: "plan"},
+		{Kind: "shell", Attributes: map[string]string{"parent": "plan-1"}, Body: "echo hi"},
+	}
+	names, deferred, namingErrs, tr := writeBlockNodes(base, respName, nil, collected)
+	if len(namingErrs) != 0 {
+		t.Fatalf("unexpected naming errors: %v", namingErrs)
+	}
+	if len(deferred) != 1 || deferred[0] != 1 {
+		t.Fatalf("expected the shell block deferred, got %v", deferred)
+	}
+	if names[1] != "" {
+		t.Fatalf("the deferred block's name must stay empty until written, got %q", names[1])
+	}
+	if names[0] == "" {
+		t.Fatal("expected the new-plan block node written immediately")
+	}
+	// The new-plan component writes the named plan node.
+	tr, err = tr.Write("root", "plan-1", tree.TypePlan, tree.AuthorModel, "plan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr = writeDeferredBlockNodes(tr, respName, collected, names, deferred)
+	shellNode, ok := tr.Node(names[1])
+	if !ok || shellNode.Parent != "plan-1" {
+		t.Fatalf("expected the deferred block under plan-1, got ok=%v node=%+v", ok, shellNode)
+	}
+
+	// Two blocks declaring the same name discard the batch.
+	dup := []blocks.Block{
+		{Kind: "new-plan", Attributes: map[string]string{"parent": "root", "name": "plan-1"}, Body: "a"},
+		{Kind: "new-plan", Attributes: map[string]string{"parent": "root", "name": "plan-1"}, Body: "b"},
+	}
+	_, _, dupErrs, _ := writeBlockNodes(base, respName, nil, dup)
+	if len(dupErrs) == 0 {
+		t.Fatal("expected a naming error for the duplicate declared name")
+	}
+
+	// A reference to a name declared later in the batch is a naming
+	// fault, because the components write in block order.
+	fwd := []blocks.Block{
+		{Kind: "shell", Attributes: map[string]string{"parent": "plan-2"}, Body: "echo"},
+		{Kind: "new-plan", Attributes: map[string]string{"parent": "root", "name": "plan-2"}, Body: "p"},
+	}
+	_, _, fwdErrs, _ := writeBlockNodes(base, respName, nil, fwd)
+	if len(fwdErrs) == 0 {
+		t.Fatal("expected a naming error for the forward reference")
+	}
+}
+
+// TestRunGoalCarriesLoopTrees verifies that the goal runner accumulates
+// every executed loop's final session tree into GoalResult.Trees, in
+// loop order, so callers extract subtree projections across the whole
+// run. See TheoryOfGoalMode and tree.TheoryOfSubtree.
+func TestRunGoalCarriesLoopTrees(t *testing.T) {
+	tr1, name1, err := tree.New().WriteAuto("root", "response", tree.TypeResponse, tree.AuthorModel, "loop one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr2, name2, err := tree.New().WriteAuto("root", "response", tree.TypeResponse, tree.AuthorModel, "loop two")
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	res := RunGoal(context.Background(), GoalOptions{
+		Output: &strings.Builder{},
+		Generate: func(ctx context.Context, _ int, _ GoalFeedback, _ GoalLoopSummaries, _ string) (Result, []AttemptStat, error) {
+			calls++
+			if calls == 1 {
+				return Result{SessionTree: tr1}, nil, nil
+			}
+			// The second loop emits the done block without changes: the
+			// run's only exit. See TheoryOfGoalMode.
+			result := doneResult()
+			result.SessionTree = tr2
+			return result, nil, nil
+		},
+		Review: noopReview,
+	})
+	if calls != 2 {
+		t.Fatalf("ran %d loops, want 2", calls)
+	}
+	if len(res.Trees) != 2 {
+		t.Fatalf("expected 2 accumulated trees, got %d", len(res.Trees))
+	}
+	if node, ok := res.Trees[0].Node(name1); !ok || node.Content != "loop one" {
+		t.Fatalf("expected loop one's response node, got ok=%v node=%+v", ok, node)
+	}
+	if node, ok := res.Trees[1].Node(name2); !ok || node.Content != "loop two" {
+		t.Fatalf("expected loop two's response node, got ok=%v node=%+v", ok, node)
 	}
 }
 

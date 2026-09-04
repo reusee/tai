@@ -12,6 +12,7 @@ import (
 	"github.com/reusee/prompts"
 	"github.com/reusee/tai/changes"
 	"github.com/reusee/tai/flags"
+	"github.com/reusee/tai/tree"
 )
 
 const TheoryOfGoalMode = `
@@ -112,7 +113,11 @@ attempt statistics of every loop — with AttemptStat.Loop set to the loop
 number — into GoalResult.Stats, so a caller can review the entire
 process in a single view: token usage, durations, and attempt summaries
 across all loops, with the Loop field identifying which goal loop
-produced each attempt.
+produced each attempt. The runner also accumulates every executed loop's
+final session tree into GoalResult.Trees, in loop order, so callers
+extract subtree projections across the whole run; each loop's tree is an
+independent session tree, and callers project it with Extract (see
+tree.TheoryOfSubtree).
 
 RunGoal is the plain implementation so tests exercise the loop logic with
 fake per-loop generators; Module.GoalRun is the dscope provider that injects
@@ -373,6 +378,12 @@ type GoalResult struct {
 	// Stats carries the attempt statistics of every loop, with the Loop
 	// field identifying the goal loop that produced each attempt.
 	Stats []AttemptStat
+	// Trees carries every executed loop's final session tree, in loop
+	// order. Each loop is an independent session with its own tree, so
+	// callers extract per-loop subtree projections from these entries
+	// and compose them across loops. See TheoryOfGoalMode and
+	// tree.TheoryOfSubtree.
+	Trees []*tree.Tree
 }
 
 // GoalRun runs the goal loop mechanism: repeated fresh generation loops
@@ -635,6 +646,7 @@ func RunGoal(ctx context.Context, opts GoalOptions) GoalResult {
 	state := &goalLoopState{}
 	var allStats []AttemptStat
 	var allDiffs []changes.FileDiff
+	var trees []*tree.Tree
 	loopsRun := 0
 
 	// runOneLoop executes one generation loop and folds its outcome into
@@ -654,6 +666,11 @@ func RunGoal(ctx context.Context, opts GoalOptions) GoalResult {
 			reviewModel = opts.ReviewModels[index]
 		}
 		result, stats, err := opts.Generate(ctx, loopsRun, state.feedback, state.summaries, reviewModel)
+		// Every executed loop's final session tree joins the run's
+		// accumulated trees, in loop order. See TheoryOfGoalMode.
+		if result.SessionTree != nil {
+			trees = append(trees, result.SessionTree)
+		}
 		// A loop without a task is terminal: the generation pipeline has
 		// no chat input to generate against, so retrying loops cannot
 		// supply one. Stop with the reason instead of looping. See
@@ -700,6 +717,7 @@ func RunGoal(ctx context.Context, opts GoalOptions) GoalResult {
 		Achieved: state.achieved,
 		LoopsRun: loopsRun,
 		Stats:    allStats,
+		Trees:    trees,
 	}
 }
 
