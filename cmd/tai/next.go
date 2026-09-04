@@ -54,7 +54,7 @@ causing blocks to be parsed but not applied to disk.
 The -summarize-thoughts flag wires pipeline.NewThoughtsSummarize around the
 output layer, mirroring the ai command (see pipeline.TheoryOfThoughtsSummarize).
 
-The user prompt places the -chat arguments before the parts provider content
+The user prompt places the chat arguments before the parts provider content
 when given, following pipeline.TheoryOfChatBracketing.
 `
 

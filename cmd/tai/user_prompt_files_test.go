@@ -18,7 +18,7 @@ import (
 // file, so a provider call with empty patterns would scan it; the prompt
 // must instead be empty, with no directory content, no working directory
 // hint, no chat bracketing copy (there is no context to bracket; the
-// -chat text reaches the model through the command's user input marker),
+// chat text reaches the model through the command's user input marker),
 // and no system prompt restate (an empty user prompt is trivially within
 // the restate threshold). See TheoryOfUserPromptFileContext and
 // components.SystemPromptRestateForUserPrompt.

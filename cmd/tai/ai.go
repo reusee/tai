@@ -93,7 +93,7 @@ is omitted when the assembled prompt sits within
 components.SystemPromptRestateThreshold. With -file patterns the
 provider expands them, renders every file with begin/end markers (read-only
 annotations included), applies the token budget derived from the spec's
-ContextTokens, and brackets the file context with the -chat input (see
+ContextTokens, and brackets the file context with the chat input (see
 pipeline.TheoryOfChatBracketing), so the task precedes the context. The
 command scope forks SystemPrompt to the AI assistant system prompt, so the
 restate the provider appends repeats the prompt the session actually runs

@@ -56,7 +56,10 @@ Output tab control column theory (cmd/tai):
 - Every section carries a fold control: the unicode triangle ▾ while
   the section is expanded, ▸ while collapsed, drawn in the default
   foreground so it never competes with the content. A press on the
-  control's cells toggles the section's collapsed state.
+  control's cells toggles the section's collapsed state; expanding a
+  collapsed section scrolls the view so the section's first display
+  row lands at the pane top and stops following the tail, so the
+  expanded content opens at its beginning.
 - The c key collapses every section at once, folding the whole output
   structure to one row per section. A press on any collapsed section's
   display row expands it, so the collapsed structure doubles as the
@@ -512,7 +515,13 @@ func (t *TUI) toggleControlAtClick(x, y int) bool {
 		if slot != 0 {
 			return true
 		}
+		wasCollapsed := t.outputSections[row.section].collapsed
 		t.toggleOutputSectionLocked(row.section)
+		if wasCollapsed {
+			// Expanding a collapsed section scrolls the view to the
+			// section's first display row. See TheoryOfOutputControls.
+			t.scrollToOutputSection(row.section)
+		}
 		return true
 	}
 	return false
@@ -530,11 +539,13 @@ func (t *TUI) setControlHoverLocked(x, y int) {
 // expandCollapsedSectionAtClick expands the collapsed section whose
 // display row the press hit: every row of a collapsed section is its
 // expansion target, the click behavior that replaces the removed
-// global preview. Expanded sections are inert here — only the control
-// column collapses them — so reading inside an expanded section never
-// folds it. The Output tab takes the focus so the expansion result is
-// visible. It reports whether the press expanded a section. The caller
-// holds t.mu. See TheoryOfOutputControls.
+// global preview. The view scrolls to the section's first display row,
+// so the expanded content opens at its beginning, and the Output tab
+// takes the focus so the result is visible. Expanded sections are
+// inert here — only the control column collapses them — so reading
+// inside an expanded section never folds it. It reports whether the
+// press expanded a section. The caller holds t.mu. See
+// TheoryOfOutputControls.
 func (t *TUI) expandCollapsedSectionAtClick(x, y int) bool {
 	if !t.tabs.Expanded[0] || t.output == nil {
 		return false
@@ -564,6 +575,7 @@ func (t *TUI) expandCollapsedSectionAtClick(x, y int) bool {
 	if t.tabs.Focus != 0 {
 		t.tabs.FocusTab(0)
 	}
+	t.scrollToOutputSection(idx)
 	return true
 }
 
@@ -740,6 +752,19 @@ func (t *TUI) showOutputSection(idx int) {
 	if !t.tabs.Expanded[0] || t.tabs.Focus != 0 {
 		t.tabs.Toggle(0)
 	}
+	t.scrollToOutputSection(idx)
+}
+
+// scrollToOutputSection scrolls the Output tab's view so section idx's
+// first display row lands at the top of the pane, stopping the live
+// tail — the view keeps the section anchored until the user scrolls
+// back to the latest row. The projection is derived for the current
+// content width, so the call is safe right after a projection reset.
+// The caller holds t.mu. See TheoryOfOutputControls.
+func (t *TUI) scrollToOutputSection(idx int) {
+	if idx < 0 || idx >= len(t.outputSections) {
+		return
+	}
 	boxes := t.tabs.Boxes(t.width, t.height)
 	box := boxes[0]
 	if box.Width() <= 0 || box.Height() <= 0 {
@@ -750,9 +775,7 @@ func (t *TUI) showOutputSection(idx int) {
 		return
 	}
 	// The projected display records each section's row count, so the
-	// offset derives from the projection. See
-	// TheoryOfTUIOutputSections.
-	offset := t.outputSectionOffset(idx)
-	t.scrolls[0].Offset = taiui.ClampOffset(offset, len(display), t.tuiPaneHeight(0, box))
+	// offset derives from the projection. See TheoryOfTUIOutputSections.
+	t.scrolls[0].Offset = taiui.ClampOffset(t.outputSectionOffset(idx), len(display), t.tuiPaneHeight(0, box))
 	t.scrolls[0].Follow = false
 }

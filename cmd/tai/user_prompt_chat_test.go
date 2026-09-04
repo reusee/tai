@@ -12,7 +12,7 @@ import (
 )
 
 func TestUserPromptChatInputPrecedesContext(t *testing.T) {
-	// The chat input must precede the parts provider content: the -chat
+	// The chat input must precede the parts provider content: the chat
 	// arguments are prepended as the first user prompt part (ending with
 	// a blank line) so the model reads the task before the long file
 	// context. userPromptMockGenerator carries a positive context window

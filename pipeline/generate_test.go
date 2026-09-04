@@ -1423,7 +1423,7 @@ func TestGenerateDebugPromptsWrittenToOutput(t *testing.T) {
 
 func TestGenerateChatInputBracketsContext(t *testing.T) {
 	// The chat input must bracket the parts provider content: the initial
-	// user content starts with a copy of the joined -chat arguments
+	// user content starts with a copy of the joined chat arguments
 	// (ending with a blank line) before the provider parts, and the chat
 	// input itself is appended after the restate as the freshest input.
 	// Content.Merge concatenates every adjacent Text part — the initial

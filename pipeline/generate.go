@@ -516,7 +516,7 @@ func (Module) GenerateWithResult(
 const TheoryOfChatBracketing = `
 Chat bracketing: at user prompt assembly points backed by a parts
 provider, the chat input is placed before the parts provider content as
-well as after it. The pipeline prepends a copy of the joined -chat
+well as after it. The pipeline prepends a copy of the joined chat
 arguments before the provider parts and keeps appending the chat input
 itself after the system prompt restate — or after the provider parts
 when the restate is omitted within
@@ -665,7 +665,7 @@ func (Module) GenerateWithResultWithStats(
 		}
 
 		// The chat input brackets the parts provider content: a copy of
-		// the joined -chat arguments is prepended before the context so
+		// the joined chat arguments is prepended before the context so
 		// the model knows the task while reading it, and the chat input
 		// itself still follows the context after the restate. The
 		// prepended copy ends with a blank line so the context starts

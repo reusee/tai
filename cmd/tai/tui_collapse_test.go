@@ -341,6 +341,96 @@ func TestClickExpandsCollapsedSection(t *testing.T) {
 	tui.mu.Unlock()
 }
 
+// TestExpandSectionScrollsToItsStart verifies that expanding a
+// collapsed section — by pressing its collapsed row or its control —
+// scrolls the Output tab's view so the section's first display row
+// lands at the top of the pane, and the live tail stops. See
+// TheoryOfOutputControls.
+func TestExpandSectionScrollsToItsStart(t *testing.T) {
+	tui := newTUIForTest()
+	tui.width, tui.height = 40, 10
+
+	tui.writeOutputPart(generators.RoleUser, outputColorUserLine, false,
+		"question one\nquestion two\nquestion three\n")
+	tui.writeOutputPart(generators.RoleModel, outputColorThoughtLine, true,
+		"thought one\nthought two\nthought three\n")
+	tui.writeOutputPart(generators.RoleModel, taiui.NoColor, false,
+		"answer one\nanswer two\nanswer three\nanswer four\nanswer five\n"+
+			"answer six\nanswer seven\nanswer eight\nanswer nine\n"+
+			"answer ten\nanswer eleven\nanswer twelve\n")
+
+	box := tui.tabs.Boxes(40, 10)[0]
+
+	// Collapse the last section while the view follows the tail.
+	tui.mu.Lock()
+	tui.toggleOutputSectionLocked(2)
+	display := wrappedDisplay(tui, 0, box)
+	tui.scrolls[0].Follow = true
+	tui.scrolls[0].Update(len(display), tui.tuiPaneHeight(0, box))
+	before := tui.scrolls[0].Offset
+	tui.mu.Unlock()
+
+	// The press expands the section and scrolls the view so the
+	// section's first display row lands at the pane top.
+	tui.mu.Lock()
+	collapsedRow := tui.outputSectionOffset(2)
+	y := box.Top + 1 + (collapsedRow - tui.scrolls[0].Offset)
+	ok := tui.expandCollapsedSectionAtClick(box.Left+5, y)
+	expanded := !tui.outputSections[2].collapsed
+	start := tui.outputSectionOffset(2)
+	scrolled := tui.scrolls[0].Offset
+	follow := tui.scrolls[0].Follow
+	tui.mu.Unlock()
+	if before == start {
+		t.Fatalf("precondition: the view already sat at the section start (%d)", before)
+	}
+	if !ok || !expanded {
+		t.Fatalf("expected the press to expand section 2, ok=%v expanded=%v", ok, expanded)
+	}
+	if scrolled != start {
+		t.Fatalf("expanding did not scroll to the section start: offset %d, start %d", scrolled, start)
+	}
+	if follow {
+		t.Fatal("expanding must stop following the tail")
+	}
+
+	// The pane top row shows the section's first source line.
+	tui.mu.Lock()
+	top := displayTexts(wrappedDisplay(tui, 0, box))[start]
+	tui.mu.Unlock()
+	if top != "answer one" {
+		t.Fatalf("the section start row shows %q, want %q", top, "answer one")
+	}
+
+	// The control-column toggle expands the same way.
+	tui.mu.Lock()
+	tui.toggleOutputSectionLocked(2)
+	display = wrappedDisplay(tui, 0, box)
+	tui.scrolls[0].Update(len(display), tui.tuiPaneHeight(0, box))
+	rows := tui.outputControlRows(box, display, tui.scrolls[0].Offset)
+	controlRow := -1
+	for _, row := range rows {
+		if row.section == 2 {
+			controlRow = row.row
+		}
+	}
+	tui.mu.Unlock()
+	if controlRow < 0 {
+		t.Fatal("the collapsed section carries no control row")
+	}
+	tui.mu.Lock()
+	ok = tui.toggleControlAtClick(box.Left, controlRow)
+	expanded = !tui.outputSections[2].collapsed
+	scrolled = tui.scrolls[0].Offset
+	tui.mu.Unlock()
+	if !ok || !expanded {
+		t.Fatalf("expected the control press to expand section 2, ok=%v expanded=%v", ok, expanded)
+	}
+	if scrolled != start {
+		t.Fatalf("control expansion did not scroll to the section start: offset %d, start %d", scrolled, start)
+	}
+}
+
 // TestOutputControlColumnBesideContent pins the control column's place
 // in the layout: the column paints only the content rows, the title
 // row spans the full tab width with a centered label, and the content

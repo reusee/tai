@@ -100,14 +100,14 @@ func (Module) UserPrompt(
 		// components.TheoryOfComponents.
 		maxInputTokens -= systemPromptTokens * 2
 
-		// The chat input precedes the parts provider content when -chat
+		// The chat input precedes the parts provider content when chat
 		// arguments are given: the model reads the task before the long file
 		// context, while the restate after the context re-exposes the rules
 		// immediately before generating. The copy exists only when file
 		// context is assembled — it brackets the provider content; without
 		// file context there is nothing to bracket, and the command's user
 		// input marker (appended after the restate) is the only carrier of
-		// the -chat text. The part ends with a blank line so the context
+		// the chat text. The part ends with a blank line so the context
 		// starts a fresh paragraph. See pipeline.TheoryOfChatBracketing and
 		// generators.TheoryOfContentUnitSeparation.
 		if chats := strings.Join(flagChats, "\n"); chats != "" {

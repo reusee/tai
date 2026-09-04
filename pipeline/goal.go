@@ -616,7 +616,7 @@ func (r goalReporter) failure(text string) {
 // no chat input was provided, so there is nothing to generate against.
 // Retrying loops cannot supply a task — only the user can — so the goal
 // runner stops the run on it instead of looping. See TheoryOfGoalNoTask.
-var ErrNoTask = errors.New("no task provided; describe the task with -chat")
+var ErrNoTask = errors.New("no task provided; describe the task with chat")
 
 func RunGoal(ctx context.Context, opts GoalOptions) GoalResult {
 	if opts.Output == nil {
@@ -659,7 +659,7 @@ func RunGoal(ctx context.Context, opts GoalOptions) GoalResult {
 		// supply one. Stop with the reason instead of looping. See
 		// ErrNoTask.
 		if errors.Is(err, ErrNoTask) {
-			reporter.message("\n[No task provided; describe the task with -chat]\n")
+			reporter.message("\n[No task provided; describe the task with chat]\n")
 			state.stopRequested = true
 			return true
 		}
