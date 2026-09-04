@@ -341,6 +341,31 @@ func TestSubtreeAndDepth(t *testing.T) {
 	}
 }
 
+func TestSubtreeToDepth(t *testing.T) {
+	tr, err := New().WriteAll(
+		WriteOp{Parent: "root", Name: "a", Type: TypeResponse, Author: AuthorModel, Content: "a"},
+		WriteOp{Parent: "a", Name: "b", Type: TypeBlock, Author: AuthorModel, Content: "b"},
+		WriteOp{Parent: "b", Name: "c", Type: TypeBlockResult, Author: AuthorProgram, Content: "c"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shallow := tr.SubtreeToDepth("root", 1)
+	if len(shallow) != 2 || shallow[0].Name != "root" || shallow[1].Name != "a" {
+		t.Fatalf("depth-1 subtree = %v", shallow)
+	}
+	if got := tr.SubtreeToDepth("root", 0); len(got) != 1 || got[0].Name != "root" {
+		t.Fatalf("depth-0 subtree = %v", got)
+	}
+	full := tr.SubtreeToDepth("b", 5)
+	if len(full) != 2 || full[0].Name != "b" || full[1].Name != "c" {
+		t.Fatalf("subtree of b = %v", full)
+	}
+	if got := tr.SubtreeToDepth("missing", 2); got != nil {
+		t.Fatal("missing subtree must be nil")
+	}
+}
+
 func TestByTypeByAuthor(t *testing.T) {
 	tr, err := New().WriteAll(
 		WriteOp{Parent: "root", Name: "i", Type: TypeInput, Author: AuthorUser, Content: ""},
@@ -364,6 +389,63 @@ func TestByTypeByAuthor(t *testing.T) {
 	// root, r, and res all contain "r".
 	if got := tr.Filter(func(n *Node) bool { return strings.Contains(n.Name, "r") }); len(got) != 3 {
 		t.Fatalf("Filter = %d, want 3", len(got))
+	}
+}
+
+func TestExtract(t *testing.T) {
+	insertTime := time.Date(2024, 5, 6, 7, 8, 9, 0, time.UTC)
+	tr, err := New().WriteAll(
+		WriteOp{Parent: "root", Name: "a", Type: TypeResponse, Author: AuthorModel, Content: "a", InsertTime: insertTime},
+		WriteOp{Parent: "a", Name: "b", Type: TypeBlock, Author: AuthorModel, Content: "b"},
+		WriteOp{Parent: "b", Name: "c", Type: TypeBlockResult, Author: AuthorProgram, Content: "c"},
+		WriteOp{Parent: "root", Name: "d", Type: TypeInput, Author: AuthorUser, Content: "d"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proj := tr.Extract(func(n *Node) bool {
+		return n.Type != TypeBlock && n.Type != TypeBlockResult
+	})
+	if _, ok := proj.Node("b"); ok {
+		t.Fatal("a pruned node must be absent from the projection")
+	}
+	if _, ok := proj.Node("c"); ok {
+		t.Fatal("the descendant of a pruned node must be absent")
+	}
+	a, ok := proj.Node("a")
+	if !ok || a.Parent != "root" {
+		t.Fatalf("a matching node must keep its ancestor path: %+v", a)
+	}
+	if !a.InsertTime.Equal(insertTime) {
+		t.Fatal("the projection must preserve insert times")
+	}
+	if _, ok := proj.Node("d"); !ok {
+		t.Fatal("the other matching node must be kept")
+	}
+	if _, ok := tr.Node("b"); !ok {
+		t.Fatal("the receiver must be unchanged")
+	}
+
+	// The ancestors above a selection stay as path context even when
+	// they do not match.
+	only := tr.Extract(func(n *Node) bool { return n.Type == TypeBlockResult })
+	if _, ok := only.Node("c"); !ok {
+		t.Fatal("the selected node must be kept")
+	}
+	if _, ok := only.Node("d"); ok {
+		t.Fatal("a node off the selected path must be pruned")
+	}
+	if d := only.Depth("c"); d != 3 {
+		t.Fatalf("the selected node must keep its ancestor chain, depth = %d", d)
+	}
+
+	// The projection is a tree in its own right: it accepts further writes.
+	grown, err := proj.Write("a", "e", TypeSummary, AuthorModel, "e")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := grown.Node("e"); !ok {
+		t.Fatal("the projection must accept further writes")
 	}
 }
 

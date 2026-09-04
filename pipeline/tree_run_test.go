@@ -385,6 +385,47 @@ func TestRunHandoffInputCarriesTreeOutline(t *testing.T) {
 	})
 }
 
+// TestHandoffInputPrunesExecutionNodes verifies that the handoff input's
+// tree outline is the decision-level projection: block and block-result
+// nodes are pruned, while the input, response, and summary nodes stay.
+// See TheoryOfSessionTree and tree.TheoryOfSubtree.
+func TestHandoffInputPrunesExecutionNodes(t *testing.T) {
+	tr, err := tree.New().WriteAll(
+		tree.WriteOp{Parent: "root", Name: "input-1", Type: tree.TypeInput, Author: tree.AuthorUser, Content: "task"},
+		tree.WriteOp{Parent: "root", Name: "response-1", Type: tree.TypeResponse, Author: tree.AuthorModel, Content: "resp"},
+		tree.WriteOp{Parent: "response-1", Name: "summary-1", Type: tree.TypeSummary, Author: tree.AuthorModel, Content: "sum"},
+		tree.WriteOp{Parent: "response-1", Name: "block-1", Type: tree.TypeBlock, Author: tree.AuthorModel, Content: "change"},
+		tree.WriteOp{Parent: "block-1", Name: "result-1", Type: tree.TypeBlockResult, Author: tree.AuthorProgram, Content: "applied"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := handoffInput("incomplete output", tr)
+	for _, want := range []string{
+		"input-1 [input/user]",
+		"response-1 [response/model]",
+		"summary-1 [summary/model]",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected %q in the handoff outline, got: %s", want, out)
+		}
+	}
+	for _, gone := range []string{"block-1", "result-1"} {
+		if strings.Contains(out, gone) {
+			t.Fatalf("execution node %q must be pruned from the handoff outline, got: %s", gone, out)
+		}
+	}
+	if !strings.Contains(out, "incomplete output") {
+		t.Fatal("the incomplete output must follow the outline")
+	}
+	if got := handoffInput("", tr); got != "" {
+		t.Fatalf("an empty output must yield an empty input, got %q", got)
+	}
+	if got := handoffInput("text", nil); got != "text" {
+		t.Fatalf("a nil tree must yield the bare output, got %q", got)
+	}
+}
+
 func TestRecordIdleUserInput(t *testing.T) {
 	ls := &loopState{sessionTree: tree.New()}
 	state := generators.NewPrompts("", []*generators.Content{

@@ -50,12 +50,17 @@ tree theory: one write operation, immutable path-copying trees.
 const TheoryOfSubtree = `
 Subtree extraction theory:
 - The session history is a tree, so the context for different consumers is
-  a subtree: Subtree walks depth-first from a named node; RenderSubtree
-  renders an indented outline with truncated content previews. The handoff
-  content, the per-round tree outline fed back to the model, and review
-  views are all subtree projections.
+  a subtree: Subtree walks depth-first from a named node, SubtreeToDepth
+  bounds the walk by a relative depth from the named node, and
+  RenderSubtree renders an indented outline with truncated content
+  previews. The handoff content, the per-round tree outline fed back to
+  the model, and review views are all subtree projections.
 - ByType, ByAuthor, and Filter select nodes across the whole tree so
   consumers compose projections without walking the tree themselves.
+- Extract projects the nodes matching a predicate, plus every ancestor
+  above them, onto a new immutable tree: the projection keeps its path
+  context, prunes everything else, preserves insert times, and composes
+  with Merge, so concurrently processed subtrees rejoin into one tree.
 `
 
 // Type classifies a node's role in the session.
@@ -401,6 +406,30 @@ func (t *Tree) Subtree(name string) []*Node {
 	return out
 }
 
+// SubtreeToDepth returns the named node and its descendants down to the
+// given relative depth, the start node at depth 0; descendants deeper
+// than maxDepth are omitted. maxDepth < 0 returns only the start node. A
+// missing node returns nil. See TheoryOfSubtree.
+func (t *Tree) SubtreeToDepth(name string, maxDepth int) []*Node {
+	start, ok := t.byName[name]
+	if !ok {
+		return nil
+	}
+	var out []*Node
+	var walk func(n *Node, depth int)
+	walk = func(n *Node, depth int) {
+		out = append(out, n)
+		if depth >= maxDepth {
+			return
+		}
+		for _, c := range n.children {
+			walk(c, depth+1)
+		}
+	}
+	walk(start, 0)
+	return out
+}
+
 // Depth returns the depth of the named node, the root at depth 0. A
 // missing node returns -1.
 func (t *Tree) Depth(name string) int {
@@ -440,6 +469,51 @@ func (t *Tree) ByType(typ Type) []*Node {
 // ByAuthor returns every node written by the given author.
 func (t *Tree) ByAuthor(author Author) []*Node {
 	return t.Filter(func(n *Node) bool { return n.Author == author })
+}
+
+// Extract returns a new tree carrying every node matching pred together
+// with the ancestors above them: the projection keeps its path context,
+// prunes every node off the selected paths, and preserves each kept
+// node's InsertTime. A matching node's descendants stay only when they
+// also match or contain a match. The projection is a fresh tree that
+// never shares nodes with the receiver, and it composes with Merge, so
+// subtrees processed concurrently rejoin into one. See TheoryOfSubtree.
+func (t *Tree) Extract(pred func(*Node) bool) *Tree {
+	// keep[n.Name] reports whether n or one of its descendants matches,
+	// so an ancestor of a match stays on the projection's path.
+	keep := make(map[string]bool, len(t.byName))
+	var mark func(n *Node) bool
+	mark = func(n *Node) bool {
+		matched := pred(n)
+		for _, c := range n.children {
+			if mark(c) {
+				matched = true
+			}
+		}
+		keep[n.Name] = matched
+		return matched
+	}
+	mark(t.root)
+	byName := make(map[string]*Node, len(t.byName))
+	var build func(src *Node) *Node
+	build = func(src *Node) *Node {
+		node := &Node{
+			Name:       src.Name,
+			Parent:     src.Parent,
+			Type:       src.Type,
+			Author:     src.Author,
+			Content:    src.Content,
+			InsertTime: src.InsertTime,
+		}
+		byName[src.Name] = node
+		for _, c := range src.children {
+			if keep[c.Name] {
+				node.children = append(node.children, build(c))
+			}
+		}
+		return node
+	}
+	return &Tree{root: build(t.root), byName: byName}
 }
 
 // RenderOutline renders the whole tree as indented outline lines.

@@ -59,9 +59,11 @@ immutable tree.
   node (program author). The idle handler's user input is recorded as
   an input node (user author), extracted by content-count delta: only
   the delta is visible, not the handler's internal loop.
-- The handoff input prefixes the incomplete output with the tree
-  outline, so the handoff summary carries the session's structure —
-  plans, decisions, and earlier summaries — into the retry attempt.
+- The handoff input prefixes the incomplete output with the handoff
+  subtree: the tree projected onto its decision-level nodes (every
+  type except block and block-result), so the summary carries the
+  session's plans, decisions, and earlier summaries without execution
+  detail (see tree.TheoryOfSubtree).
 - The run's Result carries the final session tree, so callers outside
   the loop — a review pass, a display front-end — extract subtree
   projections from it (see tree.TheoryOfSubtree).
@@ -408,16 +410,32 @@ func treeOutlinePart(tr *tree.Tree) generators.Text {
 	return generators.Text("[Session tree]\n" + tr.RenderOutline(40) + "\n")
 }
 
-// handoffInput prefixes the incomplete output with the session tree
-// outline, so the handoff summary carries the session's structure —
-// plans, decisions, and earlier summaries — into the retry attempt.
-// An empty output yields an empty input, keeping the caller's
-// threshold gate. See TheoryOfSessionTree and tree.TheoryOfSubtree.
+// handoffOutlinePart renders the handoff's tree outline: the projection
+// of the tree onto its decision-level nodes — every type except block
+// and block-result — so the handoff summary carries the session's
+// plans, decisions, and earlier summaries without execution detail.
+// See TheoryOfSessionTree and tree.TheoryOfSubtree.
+func handoffOutlinePart(tr *tree.Tree) string {
+	if tr == nil {
+		return ""
+	}
+	proj := tr.Extract(func(n *tree.Node) bool {
+		return n.Type != tree.TypeBlock && n.Type != tree.TypeBlockResult
+	})
+	return "[Session tree]\n" + proj.RenderOutline(40) + "\n"
+}
+
+// handoffInput prefixes the incomplete output with the handoff subtree
+// outline, so the handoff summary carries the session's plans, decisions,
+// and earlier summaries — without the block and block-result execution
+// detail — into the retry attempt. An empty output yields an empty input,
+// keeping the caller's threshold gate. See TheoryOfSessionTree and
+// tree.TheoryOfSubtree.
 func handoffInput(incompleteText string, tr *tree.Tree) string {
 	if incompleteText == "" {
 		return ""
 	}
-	outline := string(treeOutlinePart(tr))
+	outline := handoffOutlinePart(tr)
 	if outline == "" {
 		return incompleteText
 	}
