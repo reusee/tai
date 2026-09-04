@@ -57,21 +57,24 @@ func unknownKindBlocks(collected []blocks.Block, knownKinds func(kind string) bo
 
 // decideBlockCorrectionFeedback decides whether to feed unprocessable
 // blocks back to the model for self-correction: parse errors (malformed
-// blocks) and unknown-kind blocks (well-formed blocks whose kind the
-// session cannot process). Both categories wasted the attempt's output
-// without taking effect, so they share one correction round and one
-// cumulative per-run budget: the budget resets only when a generation
-// produces neither (returning a reset counter), so a model that
-// persistently emits unprocessable blocks cannot restart the correction
-// cycle indefinitely when other components keep triggering generations.
-// When the budget is exhausted, no feedback is produced and the
-// generation's parse errors are returned as uncorrected so the caller
-// can record them in Result.ParseErrors; unknown-kind blocks beyond the
-// budget stay in the remaining blocks. See TheoryOfLoops and
-// TheoryOfUnknownBlockKinds.
+// blocks), unknown-kind blocks (well-formed blocks whose kind the
+// session cannot process), and naming errors (blocks whose session-tree
+// parent/name parameters failed validation, discarding the whole
+// batch). All categories wasted the attempt's output without taking
+// effect, so they share one correction round and one cumulative
+// per-run budget: the budget resets only when a generation produces
+// none (returning a reset counter), so a model that persistently emits
+// unprocessable blocks cannot restart the correction cycle indefinitely
+// when other components keep triggering generations. When the budget is
+// exhausted, no feedback is produced and the generation's parse errors
+// are returned as uncorrected so the caller can record them in
+// Result.ParseErrors; unknown-kind blocks beyond the budget stay in the
+// remaining blocks. See TheoryOfLoops, TheoryOfUnknownBlockKinds, and
+// TheoryOfSessionTree.
 func decideBlockCorrectionFeedback(
 	generationParseErrors []*blocks.BlockParseError,
 	unknownKinds []blocks.Block,
+	namingErrs []string,
 	correctionCount int,
 ) (
 	feedback []generators.Part,
@@ -79,7 +82,7 @@ func decideBlockCorrectionFeedback(
 	skipOnAttemptStart bool,
 	uncorrected []*blocks.BlockParseError,
 ) {
-	if len(generationParseErrors) == 0 && len(unknownKinds) == 0 {
+	if len(generationParseErrors) == 0 && len(unknownKinds) == 0 && len(namingErrs) == 0 {
 		return nil, 0, false, nil
 	}
 	if correctionCount < maxParseErrorCorrections {
@@ -91,9 +94,33 @@ func decideBlockCorrectionFeedback(
 		if len(unknownKinds) > 0 {
 			parts = append(parts, generators.Text(formatUnknownKindFeedback(unknownKinds, correctionCount, maxParseErrorCorrections)))
 		}
+		if len(namingErrs) > 0 {
+			parts = append(parts, generators.Text(formatNamingErrors(namingErrs, correctionCount, maxParseErrorCorrections)))
+		}
 		return parts, correctionCount, true, nil
 	}
 	return nil, correctionCount, false, generationParseErrors
+}
+
+// formatNamingErrors formats session-tree naming errors (duplicate node
+// names, unknown parents, missing required parent/name attributes) as
+// user content fed back to the model for correction. The whole block
+// batch was discarded — no block node was written — so the model must
+// re-emit every block of the batch with corrected parent/name header
+// parameters. The message shares the parse-error style: it states the
+// correction attempt against the shared budget and carries the resume
+// directive. See TheoryOfSessionTree and TheoryOfUnknownBlockKinds.
+func formatNamingErrors(namingErrs []string, attempt, maxAttempts int) string {
+	var sb strings.Builder
+	sb.WriteString("[System note: The blocks listed below could not be recorded in the session tree, and the WHOLE batch of block nodes from the previous response was discarded — no block was recorded, though blocks of other kinds may still have been processed. Fix the parent/name header parameters named below and re-emit every block of the batch. ")
+	fmt.Fprintf(&sb, "This is correction attempt %d of %d; naming errors that persist after the final attempt are dropped without effect. ", attempt, maxAttempts)
+	sb.WriteString("After the correction, CONTINUE the original task exactly where it stopped: the correction is not the completion of the task. Then end your response with a summary block.]\n\n")
+	for _, namingErr := range namingErrs {
+		sb.WriteString(namingErr)
+		sb.WriteString("\n")
+	}
+	sb.WriteString("\n")
+	return sb.String()
 }
 
 // formatUnknownKindFeedback formats collected unknown-kind blocks as

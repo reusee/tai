@@ -55,13 +55,14 @@ func TestIngestComponentPassesLSPHandler(t *testing.T) {
 		}
 		defer root.Close()
 
-		remaining, newState, _, triggered, err := components.ProcessComponents(
+		remaining, newState, _, _, _, triggered, err := components.ProcessComponents(
 			context.Background(),
 			comps.ComponentSet,
 			[]blocks.Block{{Kind: "ingest", Body: `<lsp method="hover" symbol="Foo" />`}},
 			generators.NewPrompts("", nil),
 			root,
 			nets.HTTPClient{&http.Client{}},
+			nil,
 		)
 		if err != nil {
 			t.Fatal(err)

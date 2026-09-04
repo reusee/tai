@@ -15,6 +15,7 @@ import (
 	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/nets"
 	"github.com/reusee/tai/records"
+	"github.com/reusee/tai/tree"
 )
 
 const TheoryOfContextPhilosophy = `
@@ -332,6 +333,20 @@ type loopState struct {
 	// precedence. See TheoryOfLoopEvents.
 	temperatureFlag generators.TemperatureFlag
 	effortFlag      generators.EffortFlag
+
+	// sessionTree is the immutable session tree the loop owns: every
+	// operation of the run — initial input, responses, summaries,
+	// blocks, results, feedback — is written as a node. It never joins
+	// the generators.State chain. See TheoryOfSessionTree.
+	sessionTree *tree.Tree
+	// currentResponse names the response node of the latest successful
+	// attempt; block nodes default to it as their parent. See
+	// TheoryOfSessionTree.
+	currentResponse string
+	// namingErrs holds the latest attempt's session-tree naming errors,
+	// consumed by the shared block-correction decision and cleared
+	// after it. See TheoryOfSessionTree and TheoryOfUnknownBlockKinds.
+	namingErrs []string
 }
 
 // buildContinueReason describes why the generation loop continues to
@@ -674,6 +689,10 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 					if appendErr != nil {
 						break
 					}
+					// The retry feedback joins the session tree as an
+					// input node. See TheoryOfSessionTree.
+					ls.writeFeedbackInputNode(retryParts)
+
 					generationErr = nil
 					continue
 				}
@@ -825,6 +844,9 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 		if appendErr != nil {
 			break
 		}
+		// The retry feedback joins the session tree as an input node.
+		// See TheoryOfSessionTree.
+		ls.writeFeedbackInputNode(retryParts)
 
 		// The retry attempt opens on the next loop iteration: its
 		// attempt-start event and OnAttemptStart hook fire there,
@@ -922,15 +944,25 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 		Summaries: generationSummaries,
 	})
 
+	// The successful attempt joins the session tree: the response
+	// node, one summary node per summary body, and the block batch
+	// (handled plus collected). A naming fault discards the block
+	// batch and is fed back through the shared correction decision
+	// below. See TheoryOfSessionTree.
+	blockNodeNames := ls.recordAttemptTree(phaseState, attemptBase, generationSummaries, handledBlocks, collectedBlocks)
+
 	ls.state = phaseState
 
-	// Correction feedback: parse errors and unknown block kinds are
-	// both unprocessable output — a malformed block cannot be parsed, a
-	// well-formed block of an unavailable kind cannot take effect — so
-	// they share one decision and one correction budget. Unknown kinds
-	// are computed from the collected blocks; summary blocks were
-	// already extracted above, so the summary kind never reaches the
-	// predicate. See TheoryOfUnknownBlockKinds.
+	// Correction feedback: parse errors, unknown block kinds, and
+	// session-tree naming errors are all unprocessable output — a
+	// malformed block cannot be parsed, a well-formed block of an
+	// unavailable kind cannot take effect, a mis-named block batch
+	// cannot be recorded — so they share one decision and one
+	// correction budget. Unknown kinds are computed from the
+	// collected blocks; summary blocks were already extracted above,
+	// so the summary kind never reaches the predicate. The naming
+	// errors were stored by recordAttemptTree and are consumed here.
+	// See TheoryOfUnknownBlockKinds and TheoryOfSessionTree.
 	var unknownKinds []blocks.Block
 	if ls.opts.KnownBlockKinds != nil {
 		unknownKinds = unknownKindBlocks(collectedBlocks, ls.opts.KnownBlockKinds)
@@ -938,7 +970,8 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 	var correctionParts []generators.Part
 	var generationUncorrected []*blocks.BlockParseError
 	correctionParts, ls.parseErrorCorrections, ls.skipOnAttemptStart, generationUncorrected =
-		decideBlockCorrectionFeedback(generationParseErrors, unknownKinds, ls.parseErrorCorrections)
+		decideBlockCorrectionFeedback(generationParseErrors, unknownKinds, ls.namingErrs, ls.parseErrorCorrections)
+	ls.namingErrs = nil
 	if len(generationUncorrected) > 0 {
 		ls.uncorrectedParseErrors = appendUncorrectedParseErrors(ls.uncorrectedParseErrors, generationUncorrected)
 	}
@@ -971,6 +1004,10 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 	if len(ls.opts.Components) == 0 {
 		if len(correctionParts) > 0 || len(appliedParts) > 0 {
 			feedbackParts := append(correctionParts, appliedParts...)
+			// The feedback closes with the session tree outline, so
+			// the model sees the whole session's structure. See
+			// TheoryOfSessionTree.
+			feedbackParts = append(feedbackParts, treeOutlinePart(ls.sessionTree))
 			var aerr error
 			ls.state, aerr = ls.state.AppendContent(&generators.Content{
 				Role:  generators.RoleUser,
@@ -980,6 +1017,7 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 				ls.recordAttemptError(aerr)
 				return generationResult{state: ls.state}, aerr
 			}
+			ls.writeFeedbackInputNode(feedbackParts)
 			ls.emitEvent(Event{
 				Kind:    EventComponentsTriggered,
 				Attempt: ls.attempt,
@@ -1004,15 +1042,19 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 	// Process components. The prefetched futures travel with the
 	// collected blocks, so each component consumes its blocks' own
 	// outcomes in block order; the failed attempt's futures were
-	// discarded with its blocks at the attempt reset. See
-	// components.TheoryOfReadOnlyPrefetch.
+	// discarded with its blocks at the attempt reset. The session
+	// tree is threaded through the tree-writing components. See
+	// components.TheoryOfReadOnlyPrefetch and TheoryOfSessionTree.
 	var generationRemaining []blocks.Block
 	var combinedParts []generators.Part
+	var outputs []components.ComponentOutput
+	var treeOut *tree.Tree
 	var triggered bool
 	var cerr error
-	generationRemaining, ls.state, combinedParts, triggered, cerr = components.ProcessComponents(
+	generationRemaining, ls.state, combinedParts, outputs, treeOut, triggered, cerr = components.ProcessComponents(
 		ls.ctx, ls.opts.Components, collectedBlocks, ls.state,
 		ls.opts.Root, ls.opts.HTTPClient,
+		ls.sessionTree,
 		prefetchedFutures...,
 	)
 	if cerr != nil {
@@ -1020,6 +1062,12 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 		return generationResult{state: ls.state}, cerr
 	}
 	ls.remainingBlocks = append(ls.remainingBlocks, generationRemaining...)
+
+	// Block-result nodes attach to the block nodes written at the
+	// attempt's success: one result child per block when the
+	// component produced one part per block, a shared result node
+	// otherwise. See TheoryOfSessionTree.
+	ls.sessionTree = writeBlockResultNodes(treeOut, outputs, blockNodeNames)
 
 	if len(correctionParts) > 0 || len(appliedParts) > 0 {
 		combinedParts = append(correctionParts, combinedParts...)
@@ -1053,6 +1101,10 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 			len(appliedParts) > 0,
 			len(generationParseErrors) > 0,
 			len(unknownKinds) > 0)
+		// The feedback closes with the session tree outline, so the
+		// model sees the whole session's structure. See
+		// TheoryOfSessionTree.
+		combinedParts = append(combinedParts, treeOutlinePart(ls.sessionTree))
 		if len(combinedParts) > 0 {
 			var aerr error
 			ls.state, aerr = ls.state.AppendContent(&generators.Content{
@@ -1063,6 +1115,7 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 				ls.recordAttemptError(aerr)
 				return generationResult{state: ls.state}, aerr
 			}
+			ls.writeFeedbackInputNode(combinedParts)
 		}
 		if ls.rec != nil && ls.rec.Enabled() {
 			ls.rec.Event("decision", continueReason)
@@ -1082,12 +1135,17 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 
 	if ls.opts.OnIdle != nil {
 		var idleContinue bool
+		// The content count before the idle handler runs bounds the
+		// user-input extraction: only the handler's delta is recorded
+		// as the input node. See TheoryOfSessionTree.
+		prevCount := generators.CountContents(ls.state)
 		ls.state, idleContinue, cerr = ls.opts.OnIdle(ls.ctx, ls.state)
 		if cerr != nil {
 			ls.recordAttemptError(cerr)
 			return generationResult{state: ls.state}, cerr
 		}
 		if idleContinue {
+			ls.recordIdleUserInput(ls.state, prevCount)
 			if ls.rec != nil && ls.rec.Enabled() {
 				ls.rec.Event("decision", "idle handler returned user input; starting a new generation")
 			}
@@ -1581,6 +1639,12 @@ func (Module) Run(
 			if ls.maxRetries == 0 && (opts.RetryOnMissingCompletion || opts.RetryOnError) {
 				ls.maxRetries = defaultMaxRetries
 			}
+
+			// The session tree opens with the run: root, system prompt,
+			// and the merged initial user input. Every later operation of
+			// the run — responses, summaries, blocks, results, feedback —
+			// writes into it. See TheoryOfSessionTree.
+			ls.sessionTree = buildInitialTree(opts.InitialState)
 
 			recording := rec != nil && rec.Enabled()
 			if recording {

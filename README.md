@@ -142,6 +142,7 @@ Gemini, OpenAI, DeepSeek, Volcano Engine (Huoshan), Baidu, Tencent, Alibaba Clou
 | `changes` | Change block parsing and application |
 | `blocks` | Heredoc block format parsing |
 | `components` | Component mechanism for block processing |
+| `tree` | Immutable session tree (path-copying writes) |
 | `configs` | CUE configuration loading |
 | `flags` | Command-line flag parsing |
 | `security` | Container isolation and shell security |
@@ -164,7 +165,11 @@ func Foo() {
 貞觀
 ```
 
-Block kinds: `change`, `shell`, `go-test`, `go-src`, `continue`, `summary`, `ingest`, `memory`, `done`.
+Block kinds: `change`, `shell`, `go-test`, `go-src`, `continue`, `summary`, `ingest`, `memory`, `done`, `new-plan`, `response`.
+
+### Session Tree
+
+Every operation of a run — user input, model response, summary, blocks, block results, errors, round feedback, and idle input — is expressed as a write to one immutable session tree (the `tree` package). Writes use path copying: a write copies only its path to the root, so untouched subtrees are shared by pointer, and the tree never joins the generation state chain. After a successful attempt the loop writes the response node, one summary node per summary body, and one validated batch of block nodes; each block's execution result hangs under it as a block-result child. A block header may carry an optional `parent` parameter; the `new-plan` and `response` block kinds must carry both `parent` and `name`. Node names are validated by the program: a duplicate name or an unknown parent discards the whole block batch and is fed back as a System note. A plan is revised by aborting the old plan node (an abort child records who and why) and writing a new one, never by mutation. Every round-triggering feedback closes with the session tree outline, so the model sees the session's structure. Change blocks carry no `parent` or `name` header — they are recorded post hoc with auto names — and are the one exception.
 
 ### Context Pipeline
 

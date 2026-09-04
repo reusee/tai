@@ -2531,10 +2531,16 @@ func TestRunStateModificationTriggersRound(t *testing.T) {
 			t.Fatalf("expected 2 rounds (state modification triggers next), got %d", callCount)
 		}
 
+		// The round-triggering feedback closes with the session tree
+		// outline part (TheoryOfSessionTree), and the state layer merges
+		// adjacent same-role contents, joining Text parts verbatim
+		// (generators.TheoryOfContentUnitSeparation) — so the component's
+		// "fetched context" and the outline land in one user part. The
+		// assertion matches the substring, not the exact part.
 		found := false
 		for c := range result.FinalState.Contents() {
 			for _, p := range c.Parts {
-				if text, ok := p.(generators.Text); ok && string(text) == "fetched context" {
+				if text, ok := p.(generators.Text); ok && strings.Contains(string(text), "fetched context") {
 					found = true
 				}
 			}

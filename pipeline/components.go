@@ -20,15 +20,25 @@ the ai command's AIComponents).
 
 The pipeline reuses components.CommonComponents for the shell and continue
 component kinds, prepending its codes-specific components (change, go-test,
-go-src, ingest) and appending summary, read-only files (prompt-only),
-skeleton files (prompt-only), hidden packages (prompt-only, conditional),
-mandatory planning (prompt-only, conditional), and extra system prompt
-(prompt-only).
+go-src, ingest, new-plan, response) and appending summary, read-only files
+(prompt-only), skeleton files (prompt-only), hidden packages (prompt-only,
+conditional), mandatory planning (prompt-only, conditional), and extra
+system prompt (prompt-only).
 
 The unified block format prompt (blocks.BlockFormatSystemPrompt) is included
 as the first prompt-only component: every block-using component set must carry
 it, and the kind prompts describe only their kind-specific semantics without
 restating the heredoc format. See blocks.TheoryOfBlockFormatGeneral.
+
+The session tree is taught by a prompt-only component placed right after
+the block-format one (SessionTreeSystemPrompt): every block kind's header
+may carry an optional parent parameter, new-plan and response blocks must
+carry parent and name, node naming is program-validated — a duplicate name
+or unknown parent discards the whole block batch and is fed back as a
+System note through the shared block-correction budget — and every
+round-triggering feedback closes with the session tree outline. The
+new-plan and response components follow the ingest component; declaring
+their kinds registers them in KnownKinds. See TheoryOfSessionTree.
 
 When the shell flag is off, the set carries the disabled-blocks notice for
 shell (components.DisabledBlocksComponent), so the model is explicitly told
@@ -245,6 +255,15 @@ func (Module) CodesComponents(
 		PromptSection: blocks.BlockFormatSystemPrompt,
 	})
 
+	// Session tree teaching: any block kind's header may carry a
+	// parent parameter, every round's feedback closes with the tree
+	// outline, and node names are program-validated — a duplicate
+	// name or unknown parent discards the whole block batch and is
+	// fed back as a System note. See TheoryOfSessionTree.
+	comps = append(comps, components.Component{
+		PromptSection: SessionTreeSystemPrompt,
+	})
+
 	// Change component: prompt always included (from the change block
 	// prompt, which describes only the change-kind semantics; the unified
 	// block format is the first component above). Processing is
@@ -321,6 +340,13 @@ func (Module) CodesComponents(
 	// documentation when one resolves. See NewIngestComponent,
 	// blocks.TheoryOfIngestBlocks, and TheoryOfCodesComponents.
 	comps = append(comps, NewIngestComponent(lspHandler))
+
+	// Named plan and response nodes: the model names the node via
+	// parent/name header parameters and the component writes it;
+	// declaring the kinds registers them in KnownKinds. See
+	// TheoryOfSessionTree.
+	comps = append(comps, NewPlanComponent())
+	comps = append(comps, ResponseComponent())
 
 	// Common components: shell (conditional on flagShell) and continue.
 	// Reused from components.CommonComponents so that shell and continue

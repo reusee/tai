@@ -9,6 +9,7 @@ import (
 	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/nets"
+	"github.com/reusee/tai/tree"
 )
 
 const TheoryOfComponents = `
@@ -176,6 +177,12 @@ type ProcessContext struct {
 	Root *os.Root
 	// HttpClient is the HTTP client for network operations.
 	HttpClient nets.HTTPClient
+	// SessionTree is the session tree the generation loop owns.
+	// Tree-writing components (e.g., new-plan) read it and return the
+	// updated tree through ProcessResult.Tree; ProcessComponents threads
+	// the tree from component to component. See
+	// pipeline.TheoryOfSessionTree.
+	SessionTree *tree.Tree
 }
 
 // ProcessResult holds the outcome of processing blocks of a single kind.
@@ -187,6 +194,11 @@ type ProcessResult struct {
 	// Parts are user parts to append to the state, triggering a new
 	// generation.
 	Parts []generators.Part
+	// Tree is the updated session tree when the component wrote nodes.
+	// When non-nil, ProcessComponents threads it into the next
+	// component's context and returns it to the caller. See
+	// pipeline.TheoryOfSessionTree.
+	Tree *tree.Tree
 	// Err is the error encountered during processing, if any.
 	Err error
 }
@@ -403,16 +415,37 @@ func (c ComponentSet) Processable() []Component {
 	return result
 }
 
+// ComponentOutput records one component's processing outcome: the kind,
+// the blocks it consumed with their original indexes in the caller's
+// block list, and the parts it produced. The generation loop uses the
+// indexes to attach block-result nodes to the right block nodes in the
+// session tree. See pipeline.TheoryOfSessionTree.
+type ComponentOutput struct {
+	Kind         string
+	Blocks       []blocks.Block
+	BlockIndexes []int
+	Parts        []generators.Part
+}
+
 // ProcessComponents iterates over processable components in registration order,
 // filtering blocks by each component's Kind and calling the component's Process
 // function with the matching blocks. It returns the remaining blocks (not
 // matched by any component), the updated State (if any component modified it),
-// combined Parts from all components, whether any component triggered a new
-// generation (produced Parts or modified State), and an error if any component
-// failed. There are no per-component generation limits: a component may
+// combined Parts from all components, one ComponentOutput per component that
+// processed blocks (the consumed blocks with their original indexes, and the
+// parts produced), the session tree after every tree-writing component has
+// run, whether any component triggered a new generation (produced Parts or
+// modified State), and an error if any component failed. There are no
+// per-component generation limits: a component may
 // trigger generations for as long as the model keeps emitting its blocks,
 // and run-duration control belongs to the caller via
 // pipeline.RunOptions.MaxGenerations.
+//
+// sessionTree is the session tree the caller owns. Tree-writing components
+// read it through ProcessContext.SessionTree and return the updated tree
+// through ProcessResult.Tree; the tree is threaded from component to
+// component and returned as treeOut. A nil tree passes through unchanged.
+// See pipeline.TheoryOfSessionTree.
 //
 // prefetched optionally carries, aligned with the original allBlocks
 // order, the prefetched computation of each block: a non-nil entry
@@ -436,14 +469,19 @@ func ProcessComponents(
 	state generators.State,
 	root *os.Root,
 	httpClient nets.HTTPClient,
+	sessionTree *tree.Tree,
 	prefetched ...PrefetchFuture,
 ) (
 	remainingBlocks []blocks.Block,
 	newState generators.State,
 	combinedParts []generators.Part,
+	outputs []ComponentOutput,
+	treeOut *tree.Tree,
 	triggered bool,
 	err error,
 ) {
+	treeOut = sessionTree
+
 	// originalIndices carries, for each block in allBlocks, its index in
 	// the caller's original block list. Earlier components remove their
 	// blocks and shift the remaining indexes left, so the future must be
@@ -464,11 +502,13 @@ func ProcessComponents(
 		// TheoryOfReadOnlyPrefetch.
 		var compBlocks []blocks.Block
 		var compFutures []PrefetchFuture
+		var compIndexes []int
 		var otherBlocks []blocks.Block
 		var otherIndices []int
 		for i, b := range allBlocks {
 			if b.Kind == comp.Kind {
 				compBlocks = append(compBlocks, b)
+				compIndexes = append(compIndexes, originalIndices[i])
 				orig := originalIndices[i]
 				if orig < len(prefetched) {
 					compFutures = append(compFutures, prefetched[orig])
@@ -488,16 +528,26 @@ func ProcessComponents(
 		}
 
 		result := comp.Process(ctx, &ProcessContext{
-			Blocks:     compBlocks,
-			Prefetched: compFutures,
-			State:      state,
-			Root:       root,
-			HttpClient: httpClient,
+			Blocks:      compBlocks,
+			Prefetched:  compFutures,
+			State:       state,
+			Root:        root,
+			HttpClient:  httpClient,
+			SessionTree: treeOut,
 		})
 		if result.Err != nil {
-			return allBlocks, state, combinedParts, triggered, result.Err
+			return allBlocks, state, combinedParts, outputs, treeOut, triggered, result.Err
 		}
 
+		outputs = append(outputs, ComponentOutput{
+			Kind:         comp.Kind,
+			Blocks:       compBlocks,
+			BlockIndexes: compIndexes,
+			Parts:        result.Parts,
+		})
+		if result.Tree != nil {
+			treeOut = result.Tree
+		}
 		if result.State != nil {
 			state = result.State
 			triggered = true
@@ -508,5 +558,5 @@ func ProcessComponents(
 		}
 	}
 
-	return allBlocks, state, combinedParts, triggered, nil
+	return allBlocks, state, combinedParts, outputs, treeOut, triggered, nil
 }
