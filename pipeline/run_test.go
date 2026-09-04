@@ -584,17 +584,13 @@ func TestRunBlockHandlerConsumed(t *testing.T) {
 	})
 }
 
-// TestRunAppliedChangeBlocksFeedback verifies that change blocks consumed
-// by the BlockHandler during a successful attempt are fed back as user
-// content listing the applied op, target, and file, and that the feedback
-// alone schedules the next generation. See TheoryOfStreamingApply.
 func TestRunAppliedChangeBlocksFeedback(t *testing.T) {
 	withRun(t, func(run Run) {
 		callCount := 0
 		phaseBuilder := func(g generators.Generator) generators.Phase {
 			callCount++
 			if callCount == 1 {
-				return appendPhase("<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/x/a.go\")\nfunc Foo() {}\n龘靐\n<<贞观 summary\nChanges applied.\n贞观\n")
+				return appendPhase("<<龘靐 change:?op=MODIFY&target=Foo&file-path=%2Fx%2Fa.go\nfunc Foo() {}\n龘靐\n<<贞观 summary\nChanges applied.\n贞观\n")
 			}
 			return appendPhase("<<贞观 summary\nVerified.\n贞观\n")
 		}
@@ -649,16 +645,13 @@ func TestRunAppliedChangeBlocksFeedback(t *testing.T) {
 	})
 }
 
-// TestRunAppliedChangeBlocksFeedbackDisabled verifies that without the
-// FeedbackAppliedChangeBlocks flag, consumed change blocks do not trigger
-// a verification round. See TheoryOfStreamingApply.
 func TestRunAppliedChangeBlocksFeedbackDisabled(t *testing.T) {
 	withRun(t, func(run Run) {
 		callCount := 0
 		phaseBuilder := func(g generators.Generator) generators.Phase {
 			callCount++
 			if callCount == 1 {
-				return appendPhase("<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/x/a.go\")\nfunc Foo() {}\n龘靐\n<<贞观 summary\nChanges applied.\n贞观\n")
+				return appendPhase("<<龘靐 change:?op=MODIFY&target=Foo&file-path=%2Fx%2Fa.go\nfunc Foo() {}\n龘靐\n<<贞观 summary\nChanges applied.\n贞观\n")
 			}
 			return appendPhase("<<贞观 summary\nVerified.\n贞观\n")
 		}
@@ -687,10 +680,6 @@ func TestRunAppliedChangeBlocksFeedbackDisabled(t *testing.T) {
 	})
 }
 
-// TestRunAppliedChangeBlocksResetOnRetry verifies that change blocks
-// consumed by a failed (truncated) attempt never reach the applied-change
-// feedback: the per-attempt record resets with each attempt, mirroring
-// the MemoryStore reset. See TheoryOfStreamingApply.
 func TestRunAppliedChangeBlocksResetOnRetry(t *testing.T) {
 	withRun(t, func(run Run) {
 		callCount := 0
@@ -699,7 +688,7 @@ func TestRunAppliedChangeBlocksResetOnRetry(t *testing.T) {
 			if callCount == 1 {
 				// Consumed change block without a summary block: the
 				// attempt is truncated and retried.
-				return appendPhase("<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/x/a.go\")\nfunc Foo() {}\n龘靐\n")
+				return appendPhase("<<龘靐 change:?op=MODIFY&target=Foo&file-path=%2Fx%2Fa.go\nfunc Foo() {}\n龘靐\n")
 			}
 			return appendPhase("<<贞观 summary\nDone.\n贞观\n")
 		}

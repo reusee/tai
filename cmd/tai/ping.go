@@ -29,28 +29,28 @@ parameter pairs in its opening header and exactly the listed body, and
 validates the parsed output after generation positionally: block i must
 match spec i in kind, attributes, and body, and no extra block may appear.
 One random parameter value in each run is replaced with a tricky value that
-exercises the header parser's escape handling (embedded quotes, backslashes,
-tabs, or newlines); the prompt shows one valid escaping and validation
-compares decoded values, so any equivalent escaping passes. The random
-specs — produced by RandomPingBlocks from short lowercase letter strings —
-are unknown before each run, so a correct result demonstrates genuine
-instruction following, format ability, function-call header parameter
-ability, escape-sequence ability, and body fidelity rather than pattern
-memory. The block-format
-instructions live in the system prompt (blocks.BlockFormatSystemPrompt); the
-user message (pingBlockPrompt) states only the test requirements — the kinds,
-their exact parameter pairs, and their exact bodies — without repeating the
-format description. The system prompt also carries the
-user-configured extra system prompts (extra_system_prompt and
-family_extra_system_prompt), so ping honors the same configuration as the
-other generation commands. The block format prompt requires a distinct
-delimiter per block: blocks sharing a delimiter would be mis-parsed as
-nested (see blocks.TheoryOfNestedBlockParsing), so identical delimiters
-cannot pass the test. Validation reads the blocks collected in
-pipeline.Result.RemainingBlocks: ping runs without components, so no block kind
-is consumed. A validation failure prints the observed outcome and exits with
-status 1, making the command scriptable; on success the verdict is printed
-to the command Output writer after the streamed output.
+exercises the header parser's percent-decoding (embedded quotes,
+backslashes, tabs, or newlines); the prompt shows one valid encoding and
+validation compares decoded values, so any equivalent encoding passes. The
+random specs — produced by RandomPingBlocks from short lowercase letter
+strings — are unknown before each run, so a correct result demonstrates
+genuine instruction following, format ability, URI header parameter
+ability, percent-encoding ability, and body fidelity rather than pattern
+memory. The block-format instructions live in the system prompt
+(blocks.BlockFormatSystemPrompt); the user message (pingBlockPrompt) states
+only the test requirements — the kinds, their exact parameter pairs, and
+their exact bodies — without repeating the format description. The system
+prompt also carries the user-configured extra system prompts
+(extra_system_prompt and family_extra_system_prompt), so ping honors the
+same configuration as the other generation commands. The block format
+prompt requires a distinct delimiter per block: blocks sharing a delimiter
+would be mis-parsed as nested (see blocks.TheoryOfNestedBlockParsing), so
+identical delimiters cannot pass the test. Validation reads the blocks
+collected in pipeline.Result.RemainingBlocks: ping runs without components,
+so no block kind is consumed. A validation failure prints the observed
+outcome and exits with status 1, making the command scriptable; on success
+the verdict is printed to the command Output writer after the streamed
+output.
 
 The command requires a model to be specified via -model; without it, resolving
 the default generator fails, making the dependency on an explicit model
@@ -65,9 +65,9 @@ suppresses them, matching the next command's output behavior.
 // kind, the exact parameter pairs the block's opening header must carry,
 // and the exact body text the block must contain. Validation compares the
 // parsed attributes by decoded value and the trimmed body exactly, so a
-// correct emission demonstrates the model can use the function-call
-// header format with named parameters — including escape-sequence values
-// — and reproduce a verbatim body, not only a bare kind.
+// correct emission demonstrates the model can use the URI header format
+// with percent-encoded query parameters — including escape-sensitive
+// values — and reproduce a verbatim body, not only a bare kind.
 // See TheoryOfPingCommand.
 type PingBlockSpec struct {
 	Kind       string
@@ -81,10 +81,10 @@ type PingBlockSpec struct {
 // parameter pairs whose names and values are random lowercase letter
 // strings, so the model can reproduce them exactly yet cannot match the
 // request from pattern memory; one random parameter value in the run is
-// replaced with a tricky value that exercises the header parser's escape
-// handling. A correct emission demonstrates instruction-following,
-// block-format, function-call header parameter, escape-sequence, and
-// body-fidelity ability. See TheoryOfPingCommand.
+// replaced with a tricky value that exercises the header parser's
+// percent-decoding. A correct emission demonstrates instruction-following,
+// block-format, URI header parameter, percent-encoding, and body-fidelity
+// ability. See TheoryOfPingCommand.
 type RandomPingBlocks func() []PingBlockSpec
 
 func (Module) RandomPingBlocks() RandomPingBlocks {
@@ -109,8 +109,8 @@ func (Module) RandomPingBlocks() RandomPingBlocks {
 			specs[2] = spec()
 		}
 		// Replace one random parameter value with a tricky value so every
-		// run exercises the header parser's escape handling. The prompt
-		// renders the value in one valid escaped form; validation compares
+		// run exercises the header parser's percent-decoding. The prompt
+		// renders the value in one valid encoded form; validation compares
 		// decoded values. See TheoryOfPingCommand.
 		target := &specs[rand.IntN(len(specs))]
 		names := slices.Collect(maps.Keys(target.Attributes))
@@ -122,7 +122,7 @@ func (Module) RandomPingBlocks() RandomPingBlocks {
 // randomPingWord returns a random lowercase letter string whose length is
 // between min and max, inclusive. Plain letters only: kind names,
 // parameter names, and parameter values must be reproducible exactly, and
-// letters avoid escape-sequence complexity in the quoted header values.
+// letters avoid percent-encoding complexity in the query values.
 // See TheoryOfPingCommand.
 func randomPingWord(min, max int) string {
 	const letters = "abcdefghijklmnopqrstuvwxyz"
@@ -148,11 +148,11 @@ func randomPingBody() string {
 }
 
 // pingTrickyValues lists parameter values that exercise the header
-// parser's escape handling: embedded double quotes, an apostrophe, a
+// parser's percent-decoding: embedded double quotes, an apostrophe, a
 // backslash, a tab, a newline, and multi-word spaces. Each entry is the
-// DECODED value; the prompt renders it via escapePingValue and the model
-// may answer with any equivalent escaping. See TheoryOfPingCommand and
-// blocks.TheoryOfHeaderTokenizing.
+// DECODED value; the prompt renders it via percentEncodePingValue and the
+// model may answer with any equivalent encoding. See TheoryOfPingCommand
+// and blocks.TheoryOfHeaderTokenizing.
 var pingTrickyValues = []string{
 	`say "hi"`,
 	`it's fine`,
@@ -172,50 +172,44 @@ func pingBlockPrompt(specs []PingBlockSpec) string {
 	}
 	b.WriteString(`
 Rules:
-- Each block's opening header must carry EXACTLY the parameter pairs listed for its kind: same names, same values. The listed values show one valid escaping; any equivalent escaping that decodes to the same value is accepted.
+- Each block's opening header must carry EXACTLY the parameter pairs listed for its kind: same names, same decoded values. The listed values show one valid percent-encoding; any equivalent encoding that decodes to the same value is accepted.
 - The body of each block must be EXACTLY the listed body text, and nothing else.
 - The blocks must appear in the listed order.
 - Emit only the required blocks and nothing else: no prose, no explanations, no additional blocks.`)
 	return b.String()
 }
 
-// formatPingBlockSpec renders one required block as kind(name="value", ...)
-// with the parameter pairs sorted by name, for deterministic prompts and
-// error messages. Values are rendered in the double-quoted escaped form.
+// formatPingBlockSpec renders one required block as
+// kind:?k=v&k2=v2 — the URI header form with the parameter pairs
+// percent-encoded and sorted by name — for deterministic prompts and
+// error messages. Values are rendered in the percent-encoded form.
 func formatPingBlockSpec(spec PingBlockSpec) string {
+	if len(spec.Attributes) == 0 {
+		return spec.Kind
+	}
 	pairs := make([]string, 0, len(spec.Attributes))
 	for _, name := range slices.Sorted(maps.Keys(spec.Attributes)) {
-		pairs = append(pairs, name+"="+escapePingValue(spec.Attributes[name]))
+		pairs = append(pairs, name+"="+percentEncodePingValue(spec.Attributes[name]))
 	}
-	return fmt.Sprintf("%s(%s)", spec.Kind, strings.Join(pairs, ", "))
+	return fmt.Sprintf("%s:?%s", spec.Kind, strings.Join(pairs, "&"))
 }
 
-// escapePingValue renders a decoded parameter value in the double-quoted
-// escaped form of the block header format, escaping exactly the
-// characters blocks.TheoryOfHeaderTokenizing defines. The prompt shows
-// this form as one valid encoding; validation compares decoded values, so
-// any equivalent escaping (e.g., single quotes around a value containing
-// a double quote) also passes.
-func escapePingValue(value string) string {
+// percentEncodePingValue renders a decoded parameter value in the
+// percent-encoded form of the URI header format, encoding every byte
+// outside the RFC 3986 unreserved set (A-Z a-z 0-9 - . _ ~) as %XX. The
+// prompt shows this form as one valid encoding; validation compares
+// decoded values, so any equivalent encoding also passes.
+func percentEncodePingValue(value string) string {
+	const unreserved = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"
 	var b strings.Builder
-	b.WriteByte('"')
-	for _, r := range value {
-		switch r {
-		case '"':
-			b.WriteString(`\"`)
-		case '\\':
-			b.WriteString(`\\`)
-		case '\n':
-			b.WriteString(`\n`)
-		case '\t':
-			b.WriteString(`\t`)
-		case '\r':
-			b.WriteString(`\r`)
-		default:
-			b.WriteRune(r)
+	for i := 0; i < len(value); i++ {
+		c := value[i]
+		if strings.IndexByte(unreserved, c) >= 0 {
+			b.WriteByte(c)
+		} else {
+			fmt.Fprintf(&b, "%%%02X", c)
 		}
 	}
-	b.WriteByte('"')
 	return b.String()
 }
 

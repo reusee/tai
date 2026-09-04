@@ -6,7 +6,7 @@ import (
 )
 
 func TestParseFirstBoundaryChangeBlock(t *testing.T) {
-	content := "<<龘靐 change(op=\"MODIFY\", target=\"myFunc\", file-path=\"/file.go\")\nfunc myFunc() {}\n龘靐\n"
+	content := "<<龘靐 change:?op=MODIFY&target=myFunc&file-path=%2Ffile.go\nfunc myFunc() {}\n龘靐\n"
 	h, start, end, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -32,7 +32,7 @@ func TestParseFirstBoundaryChangeBlock(t *testing.T) {
 	}
 	_ = start
 
-	content2 := "<<齉爩 change(op=\"MODIFY\", target=\"myFunc\", file-path=\"/file.go\")\nop: MODIFY // comment in body\nfunc myFunc() {}\n齉爩\n"
+	content2 := "<<齉爩 change:?op=MODIFY&target=myFunc&file-path=%2Ffile.go\nop: MODIFY // comment in body\nfunc myFunc() {}\n齉爩\n"
 	h2, _, _, ok2, err2 := ParseFirstBoundaryChangeBlock([]byte(content2))
 	if err2 != nil {
 		t.Fatalf("unexpected error: %v", err2)
@@ -48,7 +48,7 @@ func TestParseFirstBoundaryChangeBlock(t *testing.T) {
 	}
 
 	t.Run("RENAME", func(t *testing.T) {
-		content := "<<龘靐 change(op=\"RENAME\", target=\"new.go\", file-path=\"old.go\")\n龘靐\n"
+		content := "<<龘靐 change:?op=RENAME&target=new.go&file-path=old.go\n龘靐\n"
 		h, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -74,13 +74,13 @@ func TestParseFirstBoundaryChangeBlock(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if ok {
-			t.Fatal("header-based format should be rejected (no op parameter in function call)")
+			t.Fatal("bare kind without a query carries no op parameter and must be rejected")
 		}
 	})
 }
 
 func TestParseFirstBoundaryChangeBlockXML(t *testing.T) {
-	content := "<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nfunc Foo() {}\n龘靐\n"
+	content := "<<龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ftest.go\nfunc Foo() {}\n龘靐\n"
 	h, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -103,7 +103,7 @@ func TestParseFirstBoundaryChangeBlockXML(t *testing.T) {
 }
 
 func TestParseFirstBoundaryChangeBlockXMLRename(t *testing.T) {
-	content := "<<龘靐 change(op=\"RENAME\", target=\"new.go\", file-path=\"old.go\")\n龘靐\n"
+	content := "<<龘靐 change:?op=RENAME&target=new.go&file-path=old.go\n龘靐\n"
 	h, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -120,7 +120,7 @@ func TestParseFirstBoundaryChangeBlockXMLRename(t *testing.T) {
 }
 
 func TestParseFirstBoundaryChangeBlockWrite(t *testing.T) {
-	content := "<<龘靐 change(op=\"WRITE\", file-path=\"/test.go\")\npackage x\n\nfunc New() {}\n龘靐\n"
+	content := "<<龘靐 change:?op=WRITE&file-path=%2Ftest.go\npackage x\n\nfunc New() {}\n龘靐\n"
 	h, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -144,7 +144,7 @@ func TestParseFirstBoundaryChangeBlockWrite(t *testing.T) {
 
 func TestParseFirstBoundaryChangeBlockNonGoFileRestriction(t *testing.T) {
 	t.Run("WriteSucceeds", func(t *testing.T) {
-		content := "<<龘靐 change(op=\"WRITE\", file-path=\"/test.md\")\n# Markdown\n龘靐\n"
+		content := "<<龘靐 change:?op=WRITE&file-path=%2Ftest.md\n# Markdown\n龘靐\n"
 		h, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -158,7 +158,7 @@ func TestParseFirstBoundaryChangeBlockNonGoFileRestriction(t *testing.T) {
 	})
 
 	t.Run("ModifyOnUnregisteredFileFails", func(t *testing.T) {
-		content := "<<龘靐 change(op=\"MODIFY\", target=\"someDecl\", file-path=\"/test.zqx\")\nModified\n龘靐\n"
+		content := "<<龘靐 change:?op=MODIFY&target=someDecl&file-path=%2Ftest.zqx\nModified\n龘靐\n"
 		_, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
 		if err == nil {
 			t.Fatal("expected error for MODIFY on a file without a registered grammar")
@@ -169,7 +169,7 @@ func TestParseFirstBoundaryChangeBlockNonGoFileRestriction(t *testing.T) {
 	})
 
 	t.Run("ModifyOnRegisteredNonGoFileValidates", func(t *testing.T) {
-		content := "<<龘靐 change(op=\"MODIFY\", target=\"someHeading\", file-path=\"/test.md\")\n# Modified\n龘靐\n"
+		content := "<<龘靐 change:?op=MODIFY&target=someHeading&file-path=%2Ftest.md\n# Modified\n龘靐\n"
 		h, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -183,7 +183,7 @@ func TestParseFirstBoundaryChangeBlockNonGoFileRestriction(t *testing.T) {
 	})
 
 	t.Run("AddBeforeOnUnregisteredFileFails", func(t *testing.T) {
-		content := "<<龘靐 change(op=\"ADD_BEFORE\", target=\"someDecl\", file-path=\"/test.zqx\")\nnew content\n龘靐\n"
+		content := "<<龘靐 change:?op=ADD_BEFORE&target=someDecl&file-path=%2Ftest.zqx\nnew content\n龘靐\n"
 		_, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
 		if err == nil {
 			t.Fatal("expected error for ADD_BEFORE on a file without a registered grammar")
@@ -194,7 +194,7 @@ func TestParseFirstBoundaryChangeBlockNonGoFileRestriction(t *testing.T) {
 	})
 
 	t.Run("AddAfterOnUnregisteredFileFails", func(t *testing.T) {
-		content := "<<龘靐 change(op=\"ADD_AFTER\", target=\"someDecl\", file-path=\"/test.zqx\")\nnew content\n龘靐\n"
+		content := "<<龘靐 change:?op=ADD_AFTER&target=someDecl&file-path=%2Ftest.zqx\nnew content\n龘靐\n"
 		_, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
 		if err == nil {
 			t.Fatal("expected error for ADD_AFTER on a file without a registered grammar")
@@ -205,7 +205,7 @@ func TestParseFirstBoundaryChangeBlockNonGoFileRestriction(t *testing.T) {
 	})
 
 	t.Run("DeleteAllSucceeds", func(t *testing.T) {
-		content := "<<龘靐 change(op=\"DELETE\", target=\"*\", file-path=\"/test.md\")\n龘靐\n"
+		content := "<<龘靐 change:?op=DELETE&target=%2A&file-path=%2Ftest.md\n龘靐\n"
 		h, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -219,7 +219,7 @@ func TestParseFirstBoundaryChangeBlockNonGoFileRestriction(t *testing.T) {
 	})
 
 	t.Run("DeleteSpecificOnUnregisteredFileFails", func(t *testing.T) {
-		content := "<<龘靐 change(op=\"DELETE\", target=\"someDecl\", file-path=\"/test.zqx\")\n龘靐\n"
+		content := "<<龘靐 change:?op=DELETE&target=someDecl&file-path=%2Ftest.zqx\n龘靐\n"
 		_, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
 		if err == nil {
 			t.Fatal("expected error for DELETE with a specific target on a file without a registered grammar")
@@ -230,7 +230,7 @@ func TestParseFirstBoundaryChangeBlockNonGoFileRestriction(t *testing.T) {
 	})
 
 	t.Run("DeleteSpecificOnRegisteredFileValidates", func(t *testing.T) {
-		content := "<<龘靐 change(op=\"DELETE\", target=\"someHeading\", file-path=\"/test.md\")\n龘靐\n"
+		content := "<<龘靐 change:?op=DELETE&target=someHeading&file-path=%2Ftest.md\n龘靐\n"
 		h, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -244,7 +244,7 @@ func TestParseFirstBoundaryChangeBlockNonGoFileRestriction(t *testing.T) {
 	})
 
 	t.Run("RenameSucceeds", func(t *testing.T) {
-		content := "<<龘靐 change(op=\"RENAME\", target=\"/new.md\", file-path=\"/old.md\")\n龘靐\n"
+		content := "<<龘靐 change:?op=RENAME&target=%2Fnew.md&file-path=%2Fold.md\n龘靐\n"
 		h, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -258,7 +258,7 @@ func TestParseFirstBoundaryChangeBlockNonGoFileRestriction(t *testing.T) {
 	})
 
 	t.Run("ModifyGoFileSucceeds", func(t *testing.T) {
-		content := "<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nfunc Foo() {}\n龘靐\n"
+		content := "<<龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ftest.go\nfunc Foo() {}\n龘靐\n"
 		h, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -274,7 +274,7 @@ func TestParseFirstBoundaryChangeBlockNonGoFileRestriction(t *testing.T) {
 
 func TestParseFirstBoundaryChangeBlockPackageImportTargets(t *testing.T) {
 	t.Run("ModifyPackageSucceeds", func(t *testing.T) {
-		content := "<<龘靐 change(op=\"MODIFY\", target=\"package\", file-path=\"/test.go\")\npackage newpkg\n龘靐\n"
+		content := "<<龘靐 change:?op=MODIFY&target=package&file-path=%2Ftest.go\npackage newpkg\n龘靐\n"
 		h, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -288,7 +288,7 @@ func TestParseFirstBoundaryChangeBlockPackageImportTargets(t *testing.T) {
 	})
 
 	t.Run("ModifyImportSucceeds", func(t *testing.T) {
-		content := "<<龘靐 change(op=\"MODIFY\", target=\"import\", file-path=\"/test.go\")\nimport \"fmt\"\n龘靐\n"
+		content := "<<龘靐 change:?op=MODIFY&target=import&file-path=%2Ftest.go\nimport \"fmt\"\n龘靐\n"
 		h, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -302,7 +302,7 @@ func TestParseFirstBoundaryChangeBlockPackageImportTargets(t *testing.T) {
 	})
 
 	t.Run("DeletePackageFails", func(t *testing.T) {
-		content := "<<龘靐 change(op=\"DELETE\", target=\"package\", file-path=\"/test.go\")\n龘靐\n"
+		content := "<<龘靐 change:?op=DELETE&target=package&file-path=%2Ftest.go\n龘靐\n"
 		_, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
 		if err == nil {
 			t.Fatal("expected error for non-MODIFY op on package target")
@@ -313,7 +313,7 @@ func TestParseFirstBoundaryChangeBlockPackageImportTargets(t *testing.T) {
 	})
 
 	t.Run("AddBeforeImportFails", func(t *testing.T) {
-		content := "<<龘靐 change(op=\"ADD_BEFORE\", target=\"import\", file-path=\"/test.go\")\nsome text\n龘靐\n"
+		content := "<<龘靐 change:?op=ADD_BEFORE&target=import&file-path=%2Ftest.go\nsome text\n龘靐\n"
 		_, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
 		if err == nil {
 			t.Fatal("expected error for ADD_BEFORE on import target")
@@ -324,7 +324,7 @@ func TestParseFirstBoundaryChangeBlockPackageImportTargets(t *testing.T) {
 	})
 
 	t.Run("ModifyPackageOnNonGoFileFails", func(t *testing.T) {
-		content := "<<龘靐 change(op=\"MODIFY\", target=\"package\", file-path=\"/test.md\")\n# Title\n龘靐\n"
+		content := "<<龘靐 change:?op=MODIFY&target=package&file-path=%2Ftest.md\n# Title\n龘靐\n"
 		_, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
 		if err == nil {
 			t.Fatal("expected error for MODIFY package on non-Go file")
@@ -335,7 +335,7 @@ func TestParseFirstBoundaryChangeBlockPackageImportTargets(t *testing.T) {
 	})
 
 	t.Run("ModifyImportOnNonGoFileFails", func(t *testing.T) {
-		content := "<<龘靐 change(op=\"MODIFY\", target=\"import\", file-path=\"/test.md\")\n# Title\n龘靐\n"
+		content := "<<龘靐 change:?op=MODIFY&target=import&file-path=%2Ftest.md\n# Title\n龘靐\n"
 		_, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
 		if err == nil {
 			t.Fatal("expected error for MODIFY import on non-Go file")
@@ -348,7 +348,7 @@ func TestParseFirstBoundaryChangeBlockPackageImportTargets(t *testing.T) {
 
 func TestParseFirstBoundaryChangeBlockTextLevelOps(t *testing.T) {
 	t.Run("ReplaceOnNonGoFile", func(t *testing.T) {
-		content := "<<龘靐 change(op=\"REPLACE\", find=\"old text\", file-path=\"/test.md\")\nnew text\n龘靐\n"
+		content := "<<龘靐 change:?op=REPLACE&find=old%20text&file-path=%2Ftest.md\nnew text\n龘靐\n"
 		h, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -371,7 +371,7 @@ func TestParseFirstBoundaryChangeBlockTextLevelOps(t *testing.T) {
 	})
 
 	t.Run("InsertBeforeOnNonGoFile", func(t *testing.T) {
-		content := "<<龘靐 change(op=\"INSERT_BEFORE\", find=\"anchor\", file-path=\"/test.md\")\ninserted text\n龘靐\n"
+		content := "<<龘靐 change:?op=INSERT_BEFORE&find=anchor&file-path=%2Ftest.md\ninserted text\n龘靐\n"
 		h, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -388,7 +388,7 @@ func TestParseFirstBoundaryChangeBlockTextLevelOps(t *testing.T) {
 	})
 
 	t.Run("InsertAfterOnNonGoFile", func(t *testing.T) {
-		content := "<<龘靐 change(op=\"INSERT_AFTER\", find=\"anchor\", file-path=\"/test.md\")\ninserted text\n龘靐\n"
+		content := "<<龘靐 change:?op=INSERT_AFTER&find=anchor&file-path=%2Ftest.md\ninserted text\n龘靐\n"
 		h, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -405,7 +405,7 @@ func TestParseFirstBoundaryChangeBlockTextLevelOps(t *testing.T) {
 	})
 
 	t.Run("ReplaceWithoutFindFails", func(t *testing.T) {
-		content := "<<龘靐 change(op=\"REPLACE\", file-path=\"/test.md\")\nnew text\n龘靐\n"
+		content := "<<龘靐 change:?op=REPLACE&file-path=%2Ftest.md\nnew text\n龘靐\n"
 		_, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
 		if err == nil {
 			t.Fatal("expected error for REPLACE without find parameter")
@@ -416,7 +416,7 @@ func TestParseFirstBoundaryChangeBlockTextLevelOps(t *testing.T) {
 	})
 
 	t.Run("InsertBeforeWithoutFindFails", func(t *testing.T) {
-		content := "<<龘靐 change(op=\"INSERT_BEFORE\", file-path=\"/test.md\")\ninserted text\n龘靐\n"
+		content := "<<龘靐 change:?op=INSERT_BEFORE&file-path=%2Ftest.md\ninserted text\n龘靐\n"
 		_, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
 		if err == nil {
 			t.Fatal("expected error for INSERT_BEFORE without find parameter")
@@ -427,7 +427,7 @@ func TestParseFirstBoundaryChangeBlockTextLevelOps(t *testing.T) {
 	})
 
 	t.Run("ReplaceOnGoFileFails", func(t *testing.T) {
-		content := "<<龘靐 change(op=\"REPLACE\", find=\"old string\", file-path=\"/test.go\")\nnew string\n龘靐\n"
+		content := "<<龘靐 change:?op=REPLACE&find=old%20string&file-path=%2Ftest.go\nnew string\n龘靐\n"
 		_, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
 		if err == nil {
 			t.Fatal("expected error for REPLACE on Go file")
@@ -441,7 +441,7 @@ func TestParseFirstBoundaryChangeBlockTextLevelOps(t *testing.T) {
 	})
 
 	t.Run("InsertBeforeOnGoFileFails", func(t *testing.T) {
-		content := "<<龘靐 change(op=\"INSERT_BEFORE\", find=\"old string\", file-path=\"/test.go\")\nnew string\n龘靐\n"
+		content := "<<龘靐 change:?op=INSERT_BEFORE&find=old%20string&file-path=%2Ftest.go\nnew string\n龘靐\n"
 		_, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
 		if err == nil {
 			t.Fatal("expected error for INSERT_BEFORE on Go file")
@@ -455,7 +455,7 @@ func TestParseFirstBoundaryChangeBlockTextLevelOps(t *testing.T) {
 	})
 
 	t.Run("InsertAfterOnGoFileFails", func(t *testing.T) {
-		content := "<<龘靐 change(op=\"INSERT_AFTER\", find=\"old string\", file-path=\"/test.go\")\nnew string\n龘靐\n"
+		content := "<<龘靐 change:?op=INSERT_AFTER&find=old%20string&file-path=%2Ftest.go\nnew string\n龘靐\n"
 		_, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
 		if err == nil {
 			t.Fatal("expected error for INSERT_AFTER on Go file")

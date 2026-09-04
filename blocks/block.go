@@ -101,10 +101,10 @@ guarantee corrupts the block.
 
 const TheoryOfNestedBlockParsing = `
 The parser supports nested blocks: when a block body contains another block opening
-marker (<<DELIMITER kind(...)), the inner block's closing marker does not prematurely
+marker (<<DELIMITER kind:?k=v), the inner block's closing marker does not prematurely
 close the outer block. The closing-marker scanner maintains a delimiter stack
 initialized with the outer block's delimiter. A line that starts with "<<" and
-contains a valid function-call header after the delimiter is treated as a nested opening
+contains a valid URI header after the delimiter is treated as a nested opening
 only when its delimiter matches the outer block's delimiter; matching delimiters are
 pushed onto the stack. A line that is a closing marker of the delimiter at the top of
 the stack — the delimiter alone on its own line, or the lenient delimiter+">>" form
@@ -117,16 +117,19 @@ starts with "<<" but is not a block opening.
 
 const TheoryOfBlockFormat = `
 The parser uses a heredoc-style block format. The delimiter precedes the header:
-<<DELIMITER kind(param1="value1", ...) ... DELIMITER. The delimiter is extracted as the text
-between << and the first whitespace or ( character on the opening line. The closing marker
-is the delimiter alone on its own line (with one lenient exception: a trailing ">>"; see
-TheoryOfLenientClosingMarkers).
+<<DELIMITER kind:?param1=value1&param2=value2 ... DELIMITER, where the header
+is RFC 3986 URI syntax: the scheme is the block kind, the optional path
+follows the colon, and the query holds key=value pairs. A bare kind without
+the colon is also accepted (see TheoryOfBareKinds). The delimiter is extracted
+as the text between << and the first whitespace or ( character on the opening
+line. The closing marker is the delimiter alone on its own line (with one
+lenient exception: a trailing ">>"; see TheoryOfLenientClosingMarkers).
 
 An opening marker whose line extends to the end of the content (no trailing newline)
 is a truncated block. The parser reports an unclosed-block error.
 
 An opening line with a valid two-character Han delimiter followed by an invalid or
-incomplete function-call header is a malformed block reported as a parse error.
+incomplete URI header is a malformed block reported as a parse error.
 `
 
 // TheoryOfLenientOpeningMarkers documents the lenient acceptance of opening
@@ -181,25 +184,25 @@ collision hints.
 
 const TheoryOfBareKinds = `
 Models may emit block opening markers with a bare kind when no parameters are needed:
-<<DELIMITER kind instead of <<DELIMITER kind(). Both forms are accepted on equal footing.
+<<DELIMITER kind instead of <<DELIMITER kind:. Both no-parameter forms are accepted
+on equal footing.
 `
 
 const TheoryOfOpFunctionNameHeaders = `
 Models sometimes emit change blocks with an operation name as the header's
-function name: <<DELIMITER MODIFY(op="MODIFY", target=..., file-path=...)
-instead of <<DELIMITER change(op="MODIFY", ...). After the header parses,
-tryParseBlock rewrites such a block: when the function name is one of the
-change operation names (changeOpKinds), the kind becomes "change", and a
-missing or empty op attribute is derived from the function name; an
-explicit non-empty op attribute takes precedence. The bare form
-(<<DELIMITER MODIFY) is normalized the same way: an operation name is never
-a valid kind of another block, so the rewrite is unambiguous.
+scheme: <<DELIMITER MODIFY:?target=...&file-path=... instead of
+<<DELIMITER change:?op=MODIFY&.... After the header parses, tryParseBlock
+rewrites such a block: when the scheme is one of the change operation
+names (changeOpKinds), the kind becomes "change", and a missing or empty
+op attribute is derived from the scheme; an explicit non-empty op
+attribute takes precedence. The bare form (<<DELIMITER MODIFY) is
+normalized the same way: an operation name is never a valid kind of
+another block, so the rewrite is unambiguous.
 
 The operation set is mirrored in this package because changes imports
 blocks and the reverse import would cycle. This is a recovery path for
 nonconforming output, not an advertised format: no prompt teaches the
-op-name form, and the change-kind function-call form remains the only
-taught form.
+op-name form, and the change-kind form remains the only taught form.
 `
 
 const TheoryOfKindlessBlocks = `
@@ -214,8 +217,8 @@ kinded block is found, since a kindless block is often the intended output.
 `
 
 // changeOpKinds is the set of change operation names that models sometimes
-// emit as a block header's function name instead of the change kind. The
-// set mirrors the op values of the change block format. See
+// emit as a block header's scheme instead of the change kind. The set
+// mirrors the op values of the change block format. See
 // TheoryOfOpFunctionNameHeaders.
 var changeOpKinds = map[string]bool{
 	"MODIFY":        true,
@@ -247,27 +250,27 @@ Use heredoc-delimited blocks to include structured content in responses.
 This format avoids escaping issues and is easy to parse.
 
 **Block Format:**
-<<DELIMITER kind(param1="value1", param2="value2")
+<<DELIMITER kind:?param1=value1&param2=value2
 <kind-specific content>
 DELIMITER
 
 - DELIMITER: An uncommon Chinese two-character word (e.g., 龃龉) that does not appear in the block body. The rarity of the characters ensures the delimiter cannot conflict with any content. Use a different pair of uncommon Chinese characters for each block in the same response. The same delimiter MUST be used for the start marker and the closing line.
-- kind: The type of block, specified as a function name. The kind name may contain hyphens (e.g., parse-input, record-entry). The valid kinds and their content formats are defined by the specific kind documentation. Parameters on the function call provide kind-specific metadata as named arguments.
-- Parameters: Named arguments inside parentheses, in the form param="value". Values are quoted with single or double quotes. If no parameters are needed, the parentheses may be omitted entirely (just the kind name).
+- kind: The type of block, specified as the URI scheme. The kind name may contain hyphens (e.g., parse-input, record-entry). The valid kinds and their content formats are defined by the specific kind documentation.
+- Parameters: Key-value pairs in the query after ?, joined by &. Percent-encode every value character outside A-Z a-z 0-9 - . _ ~ as %XX (space %20, newline %0A, tab %09, double quote %22, backslash %5C). When no parameters are needed, omit the query: write the bare kind, or the kind followed by a colon (kind or kind:).
 - Content: The body between the start marker and the closing line is defined by the specific kind. See the kind-specific format documentation for details.
 - Content outside blocks is preserved verbatim.
 - No blank lines are required before or after a block. A block can appear on consecutive lines with other text or other blocks, but the opening marker must start at the beginning of its own line and the closing delimiter must be on its own line.
 - If no blocks are needed, simply omit them.
 
 **Line-Start Requirement (CRITICAL):**
-- The opening marker (<<DELIMITER kind(...)) MUST appear at the beginning of a line — immediately after a newline character or at the very start of the response.
+- The opening marker (<<DELIMITER kind:?param=value) MUST appear at the beginning of a line — immediately after a newline character or at the very start of the response.
 - **Self-check (run it every time)**: Before emitting <<, look at the character you are writing it after. It MUST be a newline — or nothing, when the marker is the first output of the response. When anything else precedes it — a word, a punctuation mark, a space, a list bullet, a code fence — emit a newline first, then the marker.
 - The closing marker (DELIMITER) MUST appear on its own line — the delimiter alone, with nothing else on that line.
 - NEVER place the opening marker at the end of a line of text. If prose immediately precedes a block, end the prose with a newline first, then start the marker on its own new line.
 - Any ` + "`<<`" + ` that is not at the start of a line is treated as regular content and will NOT be recognized as a block marker; the block will be silently ignored and its content will be lost.
 - Do this (marker starts on its own line after the prose):
   Some explanation text.
-  <<龃龉 example(param="value")
+  <<龃龉 example:?param=value
   <block body>
   龃龉
 
@@ -278,7 +281,7 @@ DELIMITER
 - **Body-disjointness (HARD REQUIREMENT)**: The delimiter MUST NOT appear anywhere in the block body (the code or text between the markers). Because the parser closes the block at the first line matching the delimiter, a body line that matches the delimiter prematurely closes the block and truncates all remaining content. Two uncommon Chinese characters are very unlikely to appear in code or prose, but MUST verify the chosen pair is absent from the body before emitting the block. This is not a suggestion: a delimiter that appears in the body corrupts the block.
 
 **Delimiter Matching (CRITICAL):**
-- The opening marker and the closing line form a MATCHED PAIR: a block opened with <<龃龉 example(...) MUST be closed with the EXACT same delimiter string 龃龉, never 彳亍 or any other delimiter.
+- The opening marker and the closing line form a MATCHED PAIR: a block opened with <<龃龉 example:?param=value MUST be closed with the EXACT same delimiter string 龃龉, never 彳亍 or any other delimiter.
 - A closing line that does not match the opening delimiter is treated as body content, not a closing marker. The parser continues scanning for the matching delimiter; if no matching closing line is found, the block is unclosed — the opening marker's block never completes and its content is discarded.
 - Always close a block with the same delimiter used to open it. Before writing each closing line, verify it matches the opening delimiter of the same block. The most common cause of mismatched delimiters is copying a delimiter from another block or from an example instead of reusing the opening delimiter.
 
@@ -443,7 +446,7 @@ func tryParseBlock(content []byte, openingLine string, lineEnd, blockStart int) 
 				Boundary:  delimiter,
 				Content:   string(content[blockStart:]),
 				Line:      bytes.Count(content[:blockStart], []byte("\n")) + 1,
-				Reason:    "has an invalid or incomplete function-call header",
+				Reason:    "has an invalid or incomplete header; expected kind[:path][?key=value&...]",
 			}
 			return
 		}

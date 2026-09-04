@@ -17,7 +17,6 @@ func TestTokenizeHeader(t *testing.T) {
 			name:     "bare kind",
 			input:    `summary`,
 			kind:     "summary",
-			attrs:    nil,
 			ok:       true,
 			consumed: 7,
 		},
@@ -25,97 +24,22 @@ func TestTokenizeHeader(t *testing.T) {
 			name:     "bare kind with hyphen",
 			input:    `go-test`,
 			kind:     "go-test",
-			attrs:    nil,
 			ok:       true,
 			consumed: 7,
 		},
 		{
-			name:     "kind with empty parens",
-			input:    `summary()`,
+			name:     "kind followed by paren is accepted with trailing content",
+			input:    `summary(`,
 			kind:     "summary",
-			attrs:    map[string]string{},
 			ok:       true,
-			consumed: 9,
+			consumed: 7,
 		},
 		{
-			name:  "kind with double-quoted parameters",
-			input: `change(op="MODIFY", target="Foo", file-path="/test.go")`,
-			kind:  "change",
-			attrs: map[string]string{
-				"op":        "MODIFY",
-				"target":    "Foo",
-				"file-path": "/test.go",
-			},
+			name:     "kind followed by equals is accepted with trailing content",
+			input:    `summary=`,
+			kind:     "summary",
 			ok:       true,
-			consumed: len(`change(op="MODIFY", target="Foo", file-path="/test.go")`),
-		},
-		{
-			name:  "kind with single-quoted parameters",
-			input: `change(op='MODIFY', target='Foo')`,
-			kind:  "change",
-			attrs: map[string]string{
-				"op":     "MODIFY",
-				"target": "Foo",
-			},
-			ok:       true,
-			consumed: len(`change(op='MODIFY', target='Foo')`),
-		},
-		{
-			name:  "space-separated parameters without commas",
-			input: `change(op="MODIFY" target="Foo")`,
-			kind:  "change",
-			attrs: map[string]string{
-				"op":     "MODIFY",
-				"target": "Foo",
-			},
-			ok:       true,
-			consumed: len(`change(op="MODIFY" target="Foo")`),
-		},
-		{
-			name:  "unquoted values",
-			input: `change(op=MODIFY, target=Foo)`,
-			kind:  "change",
-			attrs: map[string]string{
-				"op":     "MODIFY",
-				"target": "Foo",
-			},
-			ok:       true,
-			consumed: len(`change(op=MODIFY, target=Foo)`),
-		},
-		{
-			name:  "escaped quotes in value",
-			input: `change(find="foo\"bar")`,
-			kind:  "change",
-			attrs: map[string]string{
-				"find": `foo"bar`,
-			},
-			ok:       true,
-			consumed: len(`change(find="foo\"bar")`),
-		},
-		{
-			name:  "escaped newlines and tabs",
-			input: `change(find="line1\n\tline2")`,
-			kind:  "change",
-			attrs: map[string]string{
-				"find": "line1\n\tline2",
-			},
-			ok:       true,
-			consumed: len(`change(find="line1\n\tline2")`),
-		},
-		{
-			name:  "incomplete header unclosed paren",
-			input: `change(op="MODIFY"`,
-			ok:    false,
-		},
-		{
-			name:  "incomplete header unclosed quote",
-			input: `change(op="MODIFY)`,
-			ok:    false,
-		},
-		{
-			name:  "missing equals sign",
-			input: `change(op)`,
-			ok:    false,
+			consumed: 7,
 		},
 		{
 			name:  "empty string",
@@ -152,102 +76,78 @@ func TestTokenizeHeader(t *testing.T) {
 	}
 }
 
-func TestTokenizeHeaderAttributeOnly(t *testing.T) {
+// TestTokenizeHeaderURI covers the taught RFC 3986 URI header form: the
+// scheme is the kind, the optional path precedes the query, and the query
+// holds percent-decoded key=value pairs. See TheoryOfHeaderTokenizing.
+func TestTokenizeHeaderURI(t *testing.T) {
 	tests := []struct {
 		name     string
 		input    string
 		kind     string
+		path     string
 		attrs    map[string]string
 		ok       bool
 		consumed int
 	}{
 		{
-			name:     "double-quoted kind",
-			input:    `kind="summary"`,
+			name:     "scheme with colon",
+			input:    `summary:`,
 			kind:     "summary",
-			attrs:    map[string]string{"kind": "summary"},
 			ok:       true,
-			consumed: len(`kind="summary"`),
+			consumed: len(`summary:`),
 		},
 		{
-			name:     "single-quoted kind",
-			input:    `kind='go-test'`,
-			kind:     "go-test",
-			attrs:    map[string]string{"kind": "go-test"},
+			name:     "scheme and query without path",
+			input:    `change:?op=MODIFY&target=Foo`,
+			kind:     "change",
+			attrs:    map[string]string{"op": "MODIFY", "target": "Foo"},
 			ok:       true,
-			consumed: len(`kind='go-test'`),
+			consumed: len(`change:?op=MODIFY&target=Foo`),
 		},
 		{
-			name:     "unquoted kind",
-			input:    `kind=summary`,
-			kind:     "summary",
-			attrs:    map[string]string{"kind": "summary"},
+			name:     "path and query",
+			input:    `change:/x.go?op=WRITE&file-path=%2Fhome%2Fx.go`,
+			kind:     "change",
+			path:     "/x.go",
+			attrs:    map[string]string{"op": "WRITE", "file-path": "/home/x.go"},
 			ok:       true,
-			consumed: len(`kind=summary`),
+			consumed: len(`change:/x.go?op=WRITE&file-path=%2Fhome%2Fx.go`),
 		},
 		{
-			name:     "spaces around equals",
-			input:    `kind = "summary"`,
-			kind:     "summary",
-			attrs:    map[string]string{"kind": "summary"},
+			name:     "path only",
+			input:    `change:/x.go`,
+			kind:     "change",
+			path:     "/x.go",
+			attrs:    map[string]string{},
 			ok:       true,
-			consumed: len(`kind = "summary"`),
+			consumed: len(`change:/x.go`),
 		},
 		{
-			name:  "multiple parameters comma-separated",
-			input: `kind="change", op="MODIFY", target="Foo"`,
-			kind:  "change",
-			attrs: map[string]string{
-				"kind":   "change",
-				"op":     "MODIFY",
-				"target": "Foo",
-			},
+			name:     "percent-decoded value",
+			input:    `handoff:?note=hello%20world%22q%22%5C%09%0Aend`,
+			kind:     "handoff",
+			attrs:    map[string]string{"note": "hello world\"q\"\\\t\nend"},
 			ok:       true,
-			consumed: len(`kind="change", op="MODIFY", target="Foo"`),
+			consumed: len(`handoff:?note=hello%20world%22q%22%5C%09%0Aend`),
 		},
 		{
-			name:  "multiple parameters space-separated",
-			input: `op="WRITE" kind="go-test" file-path="/x.go"`,
-			kind:  "go-test",
-			attrs: map[string]string{
-				"op":        "WRITE",
-				"kind":      "go-test",
-				"file-path": "/x.go",
-			},
-			ok:       true,
-			consumed: len(`op="WRITE" kind="go-test" file-path="/x.go"`),
-		},
-		{
-			name:     "trailing space",
-			input:    `kind="summary" `,
-			kind:     "summary",
-			attrs:    map[string]string{"kind": "summary"},
-			ok:       true,
-			consumed: len(`kind="summary" `),
-		},
-		{
-			name:  "missing kind attribute",
-			input: `op="MODIFY" target="Foo"`,
+			name:  "query without colon rejected",
+			input: `summary?a=b`,
 			ok:    false,
 		},
 		{
-			name:  "empty kind value",
-			input: `kind=""`,
+			name:  "pair without equals rejected",
+			input: `change:?flag`,
 			ok:    false,
 		},
 		{
-			name:  "unclosed quote",
-			input: `kind="summary`,
+			name:  "empty key rejected",
+			input: `change:?=v`,
 			ok:    false,
 		},
 		{
-			name:  "trailing junk without equals",
-			input: `kind="summary" junk`,
-			ok:    false,
-		},
-		{
-			name:  "stray closing paren",
-			input: `kind="summary")`,
+			name:  "malformed escape rejected",
+			input: `change:?key=%zz`,
 			ok:    false,
 		},
 	}
@@ -263,6 +163,9 @@ func TestTokenizeHeaderAttributeOnly(t *testing.T) {
 			}
 			if token.Kind != tc.kind {
 				t.Fatalf("expected kind %q, got %q", tc.kind, token.Kind)
+			}
+			if token.Path != tc.path {
+				t.Fatalf("expected path %q, got %q", tc.path, token.Path)
 			}
 			if tc.consumed > 0 && consumed != tc.consumed {
 				t.Fatalf("expected consumed=%d, got %d", tc.consumed, consumed)
@@ -282,7 +185,7 @@ func TestTokenizeHeaderAttributeOnly(t *testing.T) {
 
 func TestParseHeader(t *testing.T) {
 	t.Run("ValidHeaderNoTrailing", func(t *testing.T) {
-		kind, attrs, ok := parseHeader(`change(op="MODIFY")`)
+		kind, attrs, ok := parseHeader(`change:?op=MODIFY`)
 		if !ok {
 			t.Fatal("expected ok")
 		}
@@ -294,10 +197,41 @@ func TestParseHeader(t *testing.T) {
 		}
 	})
 
+	t.Run("SchemeOnly", func(t *testing.T) {
+		kind, attrs, ok := parseHeader(`summary:`)
+		if !ok {
+			t.Fatal("expected ok")
+		}
+		if kind != "summary" || len(attrs) != 0 {
+			t.Fatalf("expected summary with no attrs, got %s %v", kind, attrs)
+		}
+	})
+
 	t.Run("HeaderWithTrailingProseRejected", func(t *testing.T) {
-		_, _, ok := parseHeader(`change(op="MODIFY") trailing text`)
+		_, _, ok := parseHeader(`change:?op=MODIFY trailing text`)
 		if ok {
 			t.Fatal("expected header with trailing text to be rejected")
+		}
+	})
+
+	t.Run("FunctionCallFormRejected", func(t *testing.T) {
+		_, _, ok := parseHeader(`change(op="MODIFY")`)
+		if ok {
+			t.Fatal("expected the deleted function-call form to be rejected")
+		}
+	})
+
+	t.Run("AttributeOnlyFormRejected", func(t *testing.T) {
+		_, _, ok := parseHeader(`kind="summary"`)
+		if ok {
+			t.Fatal("expected the deleted attribute-only form to be rejected")
+		}
+	})
+
+	t.Run("FragmentRejected", func(t *testing.T) {
+		_, _, ok := parseHeader(`change:/x.go#frag`)
+		if ok {
+			t.Fatal("expected a header carrying a fragment to be rejected")
 		}
 	})
 
@@ -314,9 +248,11 @@ func TestExtractKindName(t *testing.T) {
 		input string
 		want  string
 	}{
-		{`change(op="MODIFY"`, "change"},
+		{`change:?op=MOD`, "change"},
 		{`go-test`, "go-test"},
-		{`  ingest(param="v"`, "ingest"},
+		{`  ingest:?pattern=v`, "ingest"},
+		{`summary:`, "summary"},
+		{`summary?a=b`, "summary"},
 		{``, ""},
 		{`(invalid)`, ""},
 	}

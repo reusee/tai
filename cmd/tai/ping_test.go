@@ -119,14 +119,14 @@ func TestPingBlockPrompt(t *testing.T) {
 	}
 	prompt := pingBlockPrompt(specs)
 	// The prompt carries the kinds, their exact parameter pairs — sorted
-	// by name, with tricky values shown in one valid escaped form — the
-	// exact bodies, and the ordering requirement, so the model can
-	// reproduce them exactly.
+	// by name, percent-encoded, with tricky values shown in one valid
+	// encoded form — the exact bodies, and the ordering requirement, so
+	// the model can reproduce them exactly.
 	for _, s := range []string{
 		"abc",
 		"xyz",
-		`foo="bar", id="qux"`,
-		"tag=\"say \\\"hi\\\"\"",
+		"abc:?foo=bar&id=qux",
+		"xyz:?tag=say%20%22hi%22",
 		"first body",
 		"second body",
 		"in this exact order",
@@ -166,9 +166,9 @@ func TestValidatePingBlocks(t *testing.T) {
 	})
 
 	t.Run("TrickyValueDecoding", func(t *testing.T) {
-		// The prompt shows key="say \"hi\""; the header parser decodes
-		// the escape, so validation compares against the decoded value
-		// and any equivalent escaping passes.
+		// The prompt shows key=say%20%22hi%22; the header parser
+		// percent-decodes the value, so validation compares against the
+		// decoded value and any equivalent encoding passes.
 		// See TheoryOfPingCommand.
 		tricky := []PingBlockSpec{
 			{Kind: "abc", Attributes: map[string]string{"key": `say "hi"`}, Body: "body one"},
@@ -350,7 +350,7 @@ func TestPingCommandUsesRunLoop(t *testing.T) {
 			t.Fatalf("expected required kind %q in the user prompt", kind)
 		}
 	}
-	for _, pair := range []string{`foo="bar"`, `tag="qux"`, "key=\"say \\\"hi\\\"\""} {
+	for _, pair := range []string{"foo=bar", "tag=qux", "key=say%20%22hi%22"} {
 		if !strings.Contains(prompt.String(), pair) {
 			t.Fatalf("expected required parameter pair %q in the user prompt", pair)
 		}

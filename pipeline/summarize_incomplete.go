@@ -172,7 +172,7 @@ Prioritize:
 - Guidance on task partitioning: which changes to complete first in the upcoming round and how to use continue blocks for remaining work to avoid output truncation
 
 BLOCK FORMAT REQUIREMENT (CRITICAL):
-- Wrap the handoff summary in a boundary-delimited block. The block kind is "handoff": a bare function name written immediately after the delimiter in the opening header line, with no parentheses and no parameters. The kind is a function name, never a named parameter.
+- Wrap the handoff summary in a boundary-delimited block. The block kind is "handoff": a bare kind written immediately after the delimiter in the opening header line, with no colon and no query. The kind is a scheme, never a query parameter.
 - The opening header line consists of exactly two words: your chosen two-character delimiter, then the word handoff.
 - The block body must contain ONLY the handoff summary text.
 - Do not output any prose before or after the block.

@@ -158,9 +158,10 @@ func ValidateChangeBlock(h ChangeBlock) error {
 }
 
 // ParseChangeBlock extracts a ChangeBlock from a change block's attributes
-// and body. In the function-call format, the change block's metadata
-// (op, target, file-path, find) is specified as named parameters on the opening header,
-// and the body contains only the complete declaration code or replacement text.
+// and body. In the URI header format, the change block's metadata (op,
+// target, file-path, find) is specified as key=value pairs in the opening
+// header's query, and the body contains only the complete declaration code
+// or replacement text.
 func ParseChangeBlock(block blocks.Block) (h ChangeBlock, ok bool) {
 	if block.Kind != "change" {
 		return h, false
@@ -206,10 +207,10 @@ func ParseFirstBoundaryChangeBlock(content []byte) (h ChangeBlock, start int, en
 
 const ChangeBlockPrompt = `**Change Block Kind:**
 
-Use the "change" kind to define code modifications using the heredoc block format. The opening tag's function-call parameters specify the operation, target, and file path. The body is the complete declaration code.
+Use the "change" kind to define code modifications using the heredoc block format. The opening header is RFC 3986 URI syntax: the scheme is the kind "change", and the query after ? carries the parameters as key=value pairs joined by &, for example change:?op=MODIFY&target=Foo&file-path=/test.go. Percent-encode every parameter value character outside A-Z a-z 0-9 - . _ ~ as %XX (space %20, newline %0A, tab %09, double quote %22, backslash %5C). The body is the complete declaration code.
 
 **Rules:**
-- The function-call parameters:
+- The query parameters:
   - ` + "`op`" + `: The operation to perform:
     - MODIFY: Replace an existing top-level declaration. Also supports the special Go-only targets ` + "`package`" + ` and ` + "`import`" + ` to replace the package clause or all import declarations as a group (see below).
     - ADD_BEFORE: Add new code before an existing declaration.
@@ -222,7 +223,7 @@ Use the "change" kind to define code modifications using the heredoc block forma
     - INSERT_AFTER: Insert the body content after a unique anchor string (specified by the ` + "`find`" + ` parameter) in the file. The find string must be unique. Works on non-Go text files only. For Go files, use structural operations (MODIFY, ADD_BEFORE, ADD_AFTER) instead.
   - ` + "`target`" + `: For MODIFY, ADD_BEFORE, ADD_AFTER, and DELETE operations, the exact name of **exactly ONE** top-level declaration (function, method, type, const, var), or BEGIN/END for file-level operations, or — on non-Go files with a registered grammar — a dotted outline path (see Tree-Structured Targets below). For DELETE, target can also be * to delete the entire file. The target must uniquely identify a single top-level entity. For methods, use TypeName.MethodName or *TypeName.MethodName. For RENAME operation, ` + "`target`" + ` is the new file path (relative or absolute). For WRITE, REPLACE, INSERT_BEFORE, and INSERT_AFTER, ` + "`target`" + ` is ignored.
   - ` + "`find`" + `: For REPLACE, INSERT_BEFORE, and INSERT_AFTER operations, the exact string to search for in the file. The string must be unique (appear exactly once) in the file. If the string cannot be made unique, use WRITE to replace the entire file instead. For other operations, ` + "`find`" + ` is ignored.
-- The code body directly follows the opening tag on the next line, with no blank line required before or after it. The code body is the COMPLETE definition of the target entity, including its signature, body, and associated comments. The code block MUST contain ONLY the target entity's definition and MUST NOT include any other top-level declarations. Do NOT use ellipsis (...) or placeholders. The code must be complete and properly formatted. For DELETE and RENAME operations, the code section can be empty. For WRITE, the code body is the complete new file content, including the package declaration for Go files. For REPLACE, the body is the replacement text. For INSERT_BEFORE and INSERT_AFTER, the body is the text to insert.
+- The code body directly follows the opening header on the next line, with no blank line required before or after it. The code body is the COMPLETE definition of the target entity, including its signature, body, and associated comments. The code block MUST contain ONLY the target entity's definition and MUST NOT include any other top-level declarations. Do NOT use ellipsis (...) or placeholders. The code must be complete and properly formatted. For DELETE and RENAME operations, the code section can be empty. For WRITE, the code body is the complete new file content, including the package declaration for Go files. For REPLACE, the body is the replacement text. For INSERT_BEFORE and INSERT_AFTER, the body is the text to insert.
 - **STRICT ONE-ENTITY RULE**: Each change block MUST target exactly ONE top-level entity and contain ONLY that entity's complete definition. If you need to modify or add a type together with its methods, you MUST use SEPARATE blocks for each entity. For example: to add a struct with methods, use one block for the type definition, and individual blocks for each method (targeted as TypeName.MethodName). Do NOT group a type definition with its methods in the same block.
 - **Non-Go file support**: For non-Go files (files not ending in .go), file-level operations (WRITE, RENAME, DELETE with target=*) and text-level operations (REPLACE, INSERT_BEFORE, INSERT_AFTER) are always supported. Non-Go files whose format has a registered grammar additionally support tree-structured operations — MODIFY, ADD_BEFORE, ADD_AFTER, and DELETE with a specific target — addressed by outline path (see the Tree-Structured Targets section below). For non-Go files without a registered grammar, use REPLACE, INSERT_BEFORE, or INSERT_AFTER with a unique find string for partial edits, and WRITE for full-file replacement.
 - **Go file restriction**: Text-level operations (REPLACE, INSERT_BEFORE, INSERT_AFTER) are not supported for Go files because the model cannot reliably reproduce whitespace characters (indentation, blank lines) in the find string, causing matching failures. For Go files, use structural operations (MODIFY, ADD_BEFORE, ADD_AFTER, DELETE) instead, which use AST-based declaration matching and do not depend on exact whitespace reproduction.

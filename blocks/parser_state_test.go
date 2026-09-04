@@ -68,7 +68,7 @@ func TestParserStateStreamParsing(t *testing.T) {
 	// Fragment 2: opening marker and partial body (no end marker yet)
 	newState, err = ps.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
-		Parts: []generators.Part{generators.Text("<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nfunc Foo() {}\n")},
+		Parts: []generators.Part{generators.Text("<<龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ftest.go\nfunc Foo() {}\n")},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -111,7 +111,7 @@ func TestParserStateLenientFullStopStreaming(t *testing.T) {
 	state, err = state.AppendContent(&generators.Content{
 		Role: generators.RoleModel,
 		Parts: []generators.Part{
-			generators.Text("prose。<<龃龉 change(op=\"MODIFY\")\nbody"),
+			generators.Text("prose。<<龃龉 change:?op=MODIFY\nbody"),
 		},
 	})
 	if err != nil {
@@ -152,7 +152,7 @@ func TestParserStateMultipleBlocks(t *testing.T) {
 		return nil
 	})
 
-	text := "<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nfunc Foo() {}\n龘靐\n<<齉爩 change(op=\"DELETE\", target=\"Bar\", file-path=\"/test.go\")\n齉爩\n<<麤黿 summary\n- Done.\n麤黿\n"
+	text := "<<龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ftest.go\nfunc Foo() {}\n龘靐\n<<齉爩 change:?op=DELETE&target=Bar&file-path=%2Ftest.go\n齉爩\n<<麤黿 summary\n- Done.\n麤黿\n"
 	newState, err := ps.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(text)},
@@ -256,7 +256,7 @@ func TestParserStateIgnoresThoughts(t *testing.T) {
 	content := &generators.Content{
 		Role: generators.RoleAssistant,
 		Parts: []generators.Part{
-			generators.Thought("<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nfunc Foo() {}\n龘靐\n"),
+			generators.Thought("<<龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ftest.go\nfunc Foo() {}\n龘靐\n"),
 		},
 	}
 	newState, err := ps.AppendContent(content)
@@ -276,8 +276,8 @@ func TestParserStateIgnoresThoughts(t *testing.T) {
 	content2 := &generators.Content{
 		Role: generators.RoleAssistant,
 		Parts: []generators.Part{
-			generators.Thought("<<齉爩 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nbody\n齉爩\n"),
-			generators.Text("<<麤黿 change(op=\"MODIFY\", target=\"Bar\", file-path=\"/test.go\")\nfunc Bar() {}\n麤黿\n"),
+			generators.Thought("<<齉爩 change:?op=MODIFY&target=Foo&file-path=%2Ftest.go\nbody\n齉爩\n"),
+			generators.Text("<<麤黿 change:?op=MODIFY&target=Bar&file-path=%2Ftest.go\nfunc Bar() {}\n麤黿\n"),
 		},
 	}
 	newState, err = ps.AppendContent(content2)
@@ -304,7 +304,7 @@ func TestParserStatePendingText(t *testing.T) {
 	// Append incomplete block
 	newState, err := ps.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
-		Parts: []generators.Part{generators.Text("prose before\n<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nbody")},
+		Parts: []generators.Part{generators.Text("prose before\n<<龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ftest.go\nbody")},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -369,7 +369,7 @@ func TestParserStateNonMatchingEndInBodyThenMatchingEnd(t *testing.T) {
 		return nil
 	})
 
-	text := "<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nbody line 1\n齉爩\nbody line 2\n龘靐\n"
+	text := "<<龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ftest.go\nbody line 1\n齉爩\nbody line 2\n龘靐\n"
 	newState, err := ps.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(text)},
@@ -401,7 +401,7 @@ func TestParserStateNestedBlocksSameDelimiter(t *testing.T) {
 		return nil
 	})
 
-	text := "<<龘靐 change(op=\"MODIFY\", target=\"Outer\", file-path=\"/outer.go\")\n<<龘靐 change(op=\"MODIFY\", target=\"Inner\", file-path=\"/inner.go\")\nfunc Inner() {}\n龘靐\nfunc Outer() {}\n龘靐\n"
+	text := "<<龘靐 change:?op=MODIFY&target=Outer&file-path=%2Fouter.go\n<<龘靐 change:?op=MODIFY&target=Inner&file-path=%2Finner.go\nfunc Inner() {}\n龘靐\nfunc Outer() {}\n龘靐\n"
 	newState, err := ps.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(text)},
@@ -436,7 +436,7 @@ func TestParserStateNestedDifferentDelimiterOpeningWithoutClosing(t *testing.T) 
 		return nil
 	})
 
-	text := "<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\n<<齉爩 tag\nfunc Foo() {}\n龘靐\n"
+	text := "<<龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ftest.go\n<<齉爩 tag\nfunc Foo() {}\n龘靐\n"
 	newState, err := ps.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(text)},
@@ -538,7 +538,7 @@ func TestParserStateFlushSucceedsWithCompleteBlocks(t *testing.T) {
 		return nil
 	})
 
-	text := "<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nfunc Foo() {}\n龘靐\n"
+	text := "<<龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ftest.go\nfunc Foo() {}\n龘靐\n"
 	newState, err := ps.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(text)},
@@ -685,7 +685,7 @@ func TestParserStateEndMarkerNoTrailingNewline(t *testing.T) {
 		return nil
 	})
 
-	text := "<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nfunc Foo() {}\n龘靐"
+	text := "<<龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ftest.go\nfunc Foo() {}\n龘靐"
 	newState, err := ps.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(text)},
@@ -726,7 +726,7 @@ func TestParserStateBlockHandler(t *testing.T) {
 			return nil
 		})
 
-		text := "<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nfunc Foo() {}\n龘靐\n"
+		text := "<<龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ftest.go\nfunc Foo() {}\n龘靐\n"
 		newState, err := ps.AppendContent(&generators.Content{
 			Role:  generators.RoleAssistant,
 			Parts: []generators.Part{generators.Text(text)},
@@ -754,7 +754,7 @@ func TestParserStateBlockHandler(t *testing.T) {
 			return nil
 		})
 
-		text := "<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nfunc Foo() {}\n龘靐\n"
+		text := "<<龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ftest.go\nfunc Foo() {}\n龘靐\n"
 		_, err := ps.AppendContent(&generators.Content{
 			Role:  generators.RoleAssistant,
 			Parts: []generators.Part{generators.Text(text)},
@@ -775,7 +775,7 @@ func TestParserStateBlockHandler(t *testing.T) {
 			return nil
 		})
 
-		text1 := "<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nfunc Foo() {}\n龘靐\n"
+		text1 := "<<龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ftest.go\nfunc Foo() {}\n龘靐\n"
 		newState, err := ps.AppendContent(&generators.Content{
 			Role:  generators.RoleAssistant,
 			Parts: []generators.Part{generators.Text(text1)},
@@ -788,7 +788,7 @@ func TestParserStateBlockHandler(t *testing.T) {
 			t.Fatalf("expected 1 handler call, got %d", callCount)
 		}
 
-		text2 := "<<齉爩 change(op=\"MODIFY\", target=\"Bar\", file-path=\"/test.go\")\nfunc Bar() {}\n齉爩\n"
+		text2 := "<<齉爩 change:?op=MODIFY&target=Bar&file-path=%2Ftest.go\nfunc Bar() {}\n齉爩\n"
 		newState, err = ps.AppendContent(&generators.Content{
 			Role:  generators.RoleAssistant,
 			Parts: []generators.Part{generators.Text(text2)},
@@ -810,7 +810,7 @@ func TestParserStateBlockHandler(t *testing.T) {
 			return nil
 		})
 
-		text := "<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nfunc Foo() {}\n"
+		text := "<<龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ftest.go\nfunc Foo() {}\n"
 		newState, err := ps.AppendContent(&generators.Content{
 			Role:  generators.RoleAssistant,
 			Parts: []generators.Part{generators.Text(text)},
@@ -844,7 +844,7 @@ func TestParserStateBlockHandler(t *testing.T) {
 			return nil
 		})
 
-		text := "<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nfunc Foo() {\n\t// truncated"
+		text := "<<龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ftest.go\nfunc Foo() {\n\t// truncated"
 		newState, err := ps.AppendContent(&generators.Content{
 			Role:  generators.RoleAssistant,
 			Parts: []generators.Part{generators.Text(text)},
@@ -874,7 +874,7 @@ func TestParserStateNoHandler(t *testing.T) {
 	upstream := &mockState{systemPrompt: "system prompt"}
 	ps := NewParserState(upstream)
 
-	text := "<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nfunc Foo() {}\n龘靐\n"
+	text := "<<龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ftest.go\nfunc Foo() {}\n龘靐\n"
 	newState, err := ps.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(text)},

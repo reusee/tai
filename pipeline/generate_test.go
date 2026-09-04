@@ -285,15 +285,14 @@ func TestHandoffSystemPromptSelfContainedAndReferenceOriented(t *testing.T) {
 
 func TestHandoffSystemPromptRequiresHandoffBlock(t *testing.T) {
 	// The handoff prompt must instruct the model to wrap the handoff
-	// summary in a boundary-delimited block whose kind is the bare
-	// function name "handoff" — written after the delimiter with no
-	// parentheses and no parameters. Framing the kind as a named
-	// parameter produced malformed headers carrying kind="handoff".
-	// See TheoryOfHandoff.
+	// summary in a boundary-delimited block whose kind is the bare kind
+	// "handoff" — written after the delimiter with no colon and no query.
+	// Framing the kind as a named parameter produced malformed headers
+	// carrying kind="handoff". See TheoryOfHandoff.
 	for _, want := range []string{
 		"boundary-delimited block",
 		`The block kind is "handoff"`,
-		"no parentheses and no parameters",
+		"no colon and no query",
 		"block body must contain ONLY the handoff summary text",
 	} {
 		if !strings.Contains(HandoffSystemPrompt, want) {
