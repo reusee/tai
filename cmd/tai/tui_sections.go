@@ -20,6 +20,10 @@ Output tab sections and event-to-output navigation theory (cmd/tai):
   records the source-line index where it starts in the output buffer,
   so a section is an append-only slice of the stream.
 
+- The user's chat input opens the first section: displayChatInput
+  opens a section before writing the chats, so the initial input is
+  collapsible like every other section. See TheoryOfOutputControls.
+
 - The attempt-start line carries the 👉 jump marker (eventJumpMarker):
   a left press on the marker's cells jumps the Output tab's view to
   the section the attempt wrote — the only Events-tab press that

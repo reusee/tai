@@ -306,6 +306,36 @@ func TestDisplayChatInputSetsOutputRole(t *testing.T) {
 	}
 }
 
+// TestDisplayChatInputCollapsibleSection verifies that the chat input
+// opens the Output tab's first collapsible section: the fold machinery
+// treats it like every other section, so collapsing it reduces it to
+// its first line and expanding re-reveals every line. See
+// TheoryOfTUIOutputSections and TheoryOfOutputControls.
+func TestDisplayChatInputCollapsibleSection(t *testing.T) {
+	tui := newTUIForTest()
+	box := taiui.Box{Top: 0, Left: 0, Bottom: 20, Right: 40}
+
+	displayChatInput(tui, flags.Chats{"user request"})
+	tui.writeOutputPart(generators.RoleModel, outputColorThoughtLine, true,
+		"thought line one\nthought line two\n")
+
+	tui.mu.Lock()
+	defer tui.mu.Unlock()
+	if len(tui.outputSections) != 2 {
+		t.Fatalf("expected 2 sections (chat input, thoughts), got %d", len(tui.outputSections))
+	}
+	tui.toggleOutputSectionLocked(0)
+	collapsed := displayTexts(wrappedDisplay(tui, 0, box))
+	tui.toggleOutputSectionLocked(0)
+	expandedDisplay := wrappedDisplay(tui, 0, box)
+	expanded := displayTexts(expandedDisplay)
+	assertTexts(t, collapsed, "user request", "thought line one", "thought line two")
+	assertTexts(t, expanded, "user request", "", "thought line one", "thought line two")
+	if expandedDisplay[0].Color != outputColorUserLine {
+		t.Fatalf("expected the user color on the chat input row, got %#x", expandedDisplay[0].Color)
+	}
+}
+
 func TestTuiStateWriteLogs(t *testing.T) {
 	tui := newTUIForTest()
 	tui.writeLogs([]byte("hello\nworld\n"))

@@ -1063,12 +1063,27 @@ func (t *TUI) writeOutputPart(role generators.Role, color taiui.Color, isThought
 		t.beginOutputSection(owner)
 	}
 	t.writeColored(color, []byte(text))
-	// Record the sectioned high-water mark: every line the buffer holds
-	// after this append, including a trailing partial line, belongs to a
-	// section. Lines appended outside this path (command output, stderr)
-	// stay outside and render in full. Locked because the render loop
-	// reads the mark. See TheoryOfTUIOutputSections.
+	// Record the sectioned high-water mark and the collapsed last
+	// section's show line; shared with the chat-input path.
+	// See TheoryOfTUIOutputSections and TheoryOfOutputControls.
+	t.coverOutputLines()
+	t.lastOutputRole = role
+	t.lastWasThought = isThought
+	t.hasOutput = true
+}
+
+// coverOutputLines records the sectioned high-water mark for every line
+// the output buffer holds after an append, including a trailing partial
+// line, and moves a collapsed last section's show line to the newest
+// line. Lines appended outside the sectioned paths (command output,
+// stderr) stay outside and render in full. The streamed content path
+// (writeOutputPart) and the chat-input path (displayChatInput) share
+// it, so both keep the projection's sectioning in sync. Locked because
+// the render loop reads the mark. See TheoryOfTUIOutputSections and
+// TheoryOfOutputControls.
+func (t *TUI) coverOutputLines() {
 	t.mu.Lock()
+	defer t.mu.Unlock()
 	covered := len(t.output.CompletedLines())
 	if t.output.HasPartial() {
 		covered++
@@ -1087,10 +1102,6 @@ func (t *TUI) writeOutputPart(role generators.Role, color taiui.Color, isThought
 			sec.showLine = covered - 1
 		}
 	}
-	t.mu.Unlock()
-	t.lastOutputRole = role
-	t.lastWasThought = isThought
-	t.hasOutput = true
 }
 
 // separateOutput writes a blank line separator between different output
@@ -2121,5 +2132,11 @@ func displayChatInput(tui *TUI, chats flags.Chats) {
 	tui.lastWasThought = false
 	tui.hasOutput = true
 	tui.mu.Unlock()
+	// The chat input opens the Output tab's first section, so the
+	// initial input is collapsible like every other section: the
+	// section starts at the next line the buffer will create, before
+	// the write below. See TheoryOfOutputControls.
+	tui.beginOutputSection(nil)
 	tui.writeColored(outputColorUserLine, []byte(strings.Join(chats, "\n")+"\n"))
+	tui.coverOutputLines()
 }
