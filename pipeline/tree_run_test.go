@@ -613,3 +613,59 @@ func TestRunFeedbackCarriesTreeOutline(t *testing.T) {
 		}
 	})
 }
+
+// TestRunInertProcessAttachesBlockResult verifies that a component
+// whose Process function returns an empty ProcessResult — the shape of
+// the ai command's memory component, whose actual profile update runs
+// in the OnAttemptSuccess hook — still records a ComponentOutput, so
+// the block node carries a block-result child instead of reading as
+// unprocessed, and the inert processing triggers no new generation.
+// See TheoryOfSessionTree.
+func TestRunInertProcessAttachesBlockResult(t *testing.T) {
+	withRun(t, func(run Run) {
+		callCount := 0
+		phaseBuilder := func(g generators.Generator) generators.Phase {
+			callCount++
+			if callCount > 1 {
+				t.Fatal("an inert component processing must not trigger a new generation")
+			}
+			return appendPhase("<<萬曆 memory\n<memory>\n  <memory-item>likes go</memory-item>\n</memory>\n萬曆\n<<天祐 summary\nDone.\n天祐\n")
+		}
+		comps := components.ComponentSet{
+			{
+				Kind: "memory",
+				Process: func(ctx context.Context, pctx *components.ProcessContext) components.ProcessResult {
+					return components.ProcessResult{}
+				},
+			},
+		}
+		result, err := runOnce(run, RunOptions{
+			Generator:    nil,
+			InitialState: generators.NewPrompts("", nil),
+			Components:   comps,
+			PhaseBuilder: phaseBuilder,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if callCount != 1 {
+			t.Fatalf("expected 1 generation, got %d", callCount)
+		}
+		if result.SessionTree == nil {
+			t.Fatal("expected the result to carry the session tree")
+		}
+		var memNode *tree.Node
+		for _, n := range result.SessionTree.ByType(tree.TypeBlock) {
+			if strings.Contains(n.Content, "memory-item") {
+				memNode = n
+			}
+		}
+		if memNode == nil {
+			t.Fatal("expected a memory block node in the session tree")
+		}
+		kids := memNode.Children()
+		if len(kids) != 1 || kids[0].Type != tree.TypeBlockResult {
+			t.Fatalf("the processed block node must carry a block-result child, got %+v", kids)
+		}
+	})
+}

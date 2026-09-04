@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"strings"
 
 	"github.com/reusee/tai/blocks"
@@ -21,61 +22,15 @@ resolution) rather than at prompt assembly time. BlockFormatSystemPrompt is a
 prompt-only Component that teaches the model the boundary-delimited block
 format used by memory blocks.
 
-The base AI assistant prompt text and the config-derived ExtraSystemPrompt are
-prompt-only Components, unifying all system prompt contributions under the
-Component framework. AISystemPrompt assembles only the dynamic current time,
-which must be computed at call time.
-
-Disabled blocks are announced explicitly: the set carries
-components.DisabledBlocksComponent listing every kind this session cannot
-process — the pipeline kinds (change, go-test, go-src), the
-deliberately excluded continue (OnIdle is the sole input gateway), and
-conditionally shell (-shell off) and memory (-no-memory). Without the notice
-the model may emit these kinds from habit; the blocks would be silently
-ignored while implying actions that never happened. The notice is static per
-configuration and placed before the config-derived extras and the dynamic
-memory section, keeping the cacheable prefix stable. See
-components.TheoryOfDisabledBlocks.
-
-The ingest component is shared with the codes pipeline through
-pipeline.NewIngestComponent: the ai session teaches and processes the kind
-identically, with the session's language-server handler attached so the
-Go-specific lsp tag documentation joins the prompt when the handler resolves.
-Fetched content is appended as user content and triggers the next generation,
-so context fetching is an automated action that runs before OnIdle prompts
-the user (see pipeline.TheoryOfIdleHandler). The command's RunOptions wiring
-for the component's file reads and fetches is documented in
-TheoryOfAiCommand.
-
-The memory component is appended last, after the static shell and
-extra prompt components, so that the dynamic user profile text — which
-changes across sessions as the profile accumulates — never shifts the
-position of static system prompt sections. When the profile changes, only
-the final memory section changes; the base, block-format, shell,
-and extra prompt sections remain byte-identical and fully cacheable. This
-applies the dynamic-content-last principle to the system prompt; the same
-principle places the current time at the end of the system prompt and the
-user input at the end of the user prompt (see TheoryOfAiCommand). See
-TheoryOfPrefixCaching in generators/state_func_map.go.
-
-The shell component is reused from components.CommonComponents. The continue
-component is deliberately excluded. In the interactive ai chat, the user's
-next input is provided through pipeline.BuildChatIdle (OnIdle), invoked by
-the generation loop when no component triggers. A continue block would have its
-body fed back as user content without a human supplying it, letting the model
-drive an unlimited self-prompt loop and emit meaningless content such as
-"Please provide the next task or user input." Because OnIdle is the single
-gateway for interactive input, no continue component is configured: the model
-never sees continue-block instructions, and any stray continue block is not
-processed.
-
-AIComponents is a distinct named type embedding components.ComponentSet so that
-dscope resolves it independently from the pipeline module's CodesComponents
-provider.
-
-The components carry no reminder text of their own; the late reminder role
-belongs to the verbatim system prompt restate (see
-components.TheoryOfComponents).
+The memory component carries a Process function that produces no parts and
+no state: its only effect is the ComponentOutput the loop records, which
+attaches a block-result child to every memory block node in the session
+tree, marking the blocks processed. The actual profile update runs in
+ai.go's OnAttemptSuccess hook via memories.UpdateMemoryFromBlock, so the
+component's Process must stay inert — returning parts would trigger a
+generation round and double the memory update. The block node in the
+session tree then carries a result child and no longer reads as
+unprocessed. See TheoryOfSessionTree.
 `
 
 // baseAISystemPrompt is the base AI assistant prompt text, a prompt-only
@@ -196,9 +151,15 @@ func (Module) AIComponents(
 	// shifts the position of the static components above. When the profile
 	// changes, only this final section changes; the base, block-format,
 	// shell, and extra prompt sections remain byte-identical and fully
-	// cacheable. Processing is done post-loop in ai.go via
-	// memories.UpdateMemoryFromBlock, not in the generation loop.
-	// See TheoryOfAIComponents.
+	// cacheable. The Process function is inert on purpose: the actual
+	// profile update runs post-loop in ai.go's OnAttemptSuccess hook
+	// (memories.UpdateMemoryFromBlock), and the inert Process exists so
+	// the loop records a ComponentOutput for memory blocks, which
+	// attaches a block-result child to each memory block node in the
+	// session tree — without it the block node reads as unprocessed. A
+	// nil Process leaves the block childless, so the loop must see a
+	// Process, and parts or state must stay empty so no extra generation
+	// round is triggered. See TheoryOfAIComponents.
 	if !noMemory {
 		var profileText string
 		if entry, err := currentMemory(); err == nil && entry != nil {
@@ -207,6 +168,9 @@ func (Module) AIComponents(
 		comps = append(comps, components.Component{
 			Kind:          "memory",
 			PromptSection: memoryBlockSystemPrompt(profileText),
+			Process: func(ctx context.Context, pctx *components.ProcessContext) components.ProcessResult {
+				return components.ProcessResult{}
+			},
 		})
 	}
 
