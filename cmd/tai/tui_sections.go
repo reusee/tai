@@ -60,12 +60,16 @@ Output tab control column theory (cmd/tai):
   collapsed section scrolls the view so the section's first display
   row lands at the pane top and stops following the tail, so the
   expanded content opens at its beginning.
-- The c key collapses every section at once, folding the whole output
-  structure to one row per section. A press on any collapsed section's
-  display row expands it, so the collapsed structure doubles as the
-  table of contents. Expanded sections are inert to body presses —
-  only the control column collapses them — so reading inside an
-  expanded section never folds it.
+- The c key toggles the whole structure: when not every section is
+  collapsed, it snapshots the per-section collapsed state and folds
+  every section to one row; when every section is collapsed, it
+  restores the snapshotted state. A manual expand breaks the
+  all-collapsed state, so the next press folds and re-snapshots rather
+  than restoring. A press on any collapsed section's display row
+  expands it, so the collapsed structure doubles as the table of
+  contents. Expanded sections are inert to body presses — only the
+  control column collapses them — so reading inside an expanded
+  section never folds it.
 - The control follows the content: it renders at the section's first
   display row, clamped into the viewport when that row has scrolled
   above it, so every section with a visible row stays addressable while
@@ -356,23 +360,53 @@ func (t *TUI) resetProjectionLocked() {
 	t.projWidth = -1
 }
 
-// collapseAllSections collapses every output section, folding the whole
-// output structure to one row per section — the overview the c key
-// provides, replacing the removed global preview. Every collapsed
-// section shows its header; new output switches a collapsed section's
-// row to its latest line. See TheoryOfOutputControls.
+// collapseAllSections toggles the collapse-all key's two states: when
+// not every section is collapsed, it snapshots the per-section
+// collapsed state and folds the whole output structure to one row per
+// section; when every section is collapsed, it restores the state
+// snapshotted by the last fold instead. A manual expand breaks the
+// all-collapsed state, so the next press folds and re-snapshots rather
+// than restoring. Every folded section shows its header; new output
+// switches a collapsed section's row to its latest line. See
+// TheoryOfOutputControls.
 func (t *TUI) collapseAllSections() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	allCollapsed := true
+	for i := range t.outputSections {
+		if !t.outputSections[i].collapsed {
+			allCollapsed = false
+			break
+		}
+	}
+	if allCollapsed && t.collapseAllSaved != nil {
+		// Restore the state from before the last fold. Sections created
+		// after the snapshot arrive expanded, so restoring expands them.
+		for i := range t.outputSections {
+			sec := &t.outputSections[i]
+			if i < len(t.collapseAllSaved) {
+				sec.collapsed = t.collapseAllSaved[i]
+			} else {
+				sec.collapsed = false
+			}
+		}
+		t.resetProjectionLocked()
+		return
+	}
+	// Fold branch: snapshot the current collapsed state, then fold
+	// everything, re-anchoring drifted show lines to the headers.
+	saved := make([]bool, len(t.outputSections))
 	changed := false
 	for i := range t.outputSections {
 		sec := &t.outputSections[i]
+		saved[i] = sec.collapsed
 		if !sec.collapsed || sec.showLine != sec.startLine {
 			sec.collapsed = true
 			sec.showLine = sec.startLine
 			changed = true
 		}
 	}
+	t.collapseAllSaved = saved
 	if changed {
 		t.resetProjectionLocked()
 	}

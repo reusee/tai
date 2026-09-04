@@ -209,6 +209,57 @@ func TestCollapseAllSections(t *testing.T) {
 	assertTexts(t, displayTexts(display), "question", "thought one", "answer two")
 }
 
+// TestCollapseAllSectionsRestore verifies the collapse-all key's toggle
+// semantics: the first press snapshots the collapsed state and folds
+// everything, the next press restores the snapshot, and a manual expand
+// after the fold makes the press fold again instead of restoring.
+// See TheoryOfOutputControls.
+func TestCollapseAllSectionsRestore(t *testing.T) {
+	tui := newTUIForTest()
+	box := taiui.Box{Top: 0, Left: 0, Bottom: 20, Right: 40}
+
+	tui.writeOutputPart(generators.RoleUser, outputColorUserLine, false, "question\n")
+	tui.writeOutputPart(generators.RoleModel, outputColorThoughtLine, true,
+		"thought one\nthought two\nthought three\n")
+	tui.writeOutputPart(generators.RoleModel, taiui.NoColor, false, "answer\n")
+
+	// First press folds everything to one row per section.
+	tui.collapseAllSections()
+	tui.mu.Lock()
+	display := wrappedDisplay(tui, 0, box)
+	tui.mu.Unlock()
+	assertTexts(t, displayTexts(display), "question", "thought one", "answer")
+
+	// A manual expand breaks the all-collapsed state: the next press
+	// folds again instead of restoring.
+	tui.mu.Lock()
+	tui.toggleOutputSectionLocked(1)
+	tui.mu.Unlock()
+	tui.collapseAllSections()
+	tui.mu.Lock()
+	display = wrappedDisplay(tui, 0, box)
+	tui.mu.Unlock()
+	assertTexts(t, displayTexts(display), "question", "thought one", "answer")
+
+	// Now fully collapsed: the press restores the state snapshotted by
+	// the last fold — section 1 expanded, the others collapsed.
+	tui.collapseAllSections()
+	tui.mu.Lock()
+	display = wrappedDisplay(tui, 0, box)
+	tui.mu.Unlock()
+	assertTexts(t, displayTexts(display),
+		"question", "thought one", "thought two", "thought three", "", "answer")
+
+	// Folding and pressing once more restores the same state again.
+	tui.collapseAllSections()
+	tui.collapseAllSections()
+	tui.mu.Lock()
+	display = wrappedDisplay(tui, 0, box)
+	tui.mu.Unlock()
+	assertTexts(t, displayTexts(display),
+		"question", "thought one", "thought two", "thought three", "", "answer")
+}
+
 func TestOutputControlRowsPinned(t *testing.T) {
 	tui := newTUIForTest()
 	box := taiui.Box{Top: 0, Left: 0, Bottom: 10, Right: 40}

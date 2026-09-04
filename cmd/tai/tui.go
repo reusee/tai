@@ -715,6 +715,14 @@ type TUI struct {
 	eventSections  map[outputSectionOwner]int
 	pendingOwner   *outputSectionOwner
 
+	// collapseAllSaved snapshots the per-section collapsed state taken
+	// when the collapse-all key last folded the output, so pressing the
+	// key again while every section is collapsed restores it. A manual
+	// expand breaks the all-collapsed state, so the next press folds and
+	// re-snapshots instead of restoring. Nil until the first fold.
+	// Guarded by mu. See TheoryOfOutputControls.
+	collapseAllSaved []bool
+
 	// The Output tab's per-section projection state, guarded by mu. See
 	// TheoryOfOutputControls. projWidth keys the caches: a content-width
 	// change resets them. projDisplay holds the projected display rows;

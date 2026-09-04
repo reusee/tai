@@ -108,7 +108,7 @@ var tuiHelpLines = []string{
 	"page up / down\tscroll focused pane by page",
 	"home / end\tjump to start / end of focused pane",
 	"[ / ]\tjump to previous / next section start or end",
-	"c\tcollapse all sections; click a collapsed section to expand it",
+	"c\tcollapse all sections; press again to restore; click a collapsed section to expand it",
 	"enter\tsend the input line when focused; toggle latest handoff otherwise",
 	"click\tselect / toggle tab under cursor; click the input row to focus input",
 	"output column\tclick ▸ / ▾ at a section's first row to collapse / expand it",
