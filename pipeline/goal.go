@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -121,6 +122,17 @@ without duplication. Verdicts and failure notes are routed through
 goalReporter: as EventGoal events through GoalEventObserver when one is
 set (a display front-end's Events tab), or written to the output writer
 (failure notes to stderr) otherwise.
+`
+
+const TheoryOfGoalNoTask = `
+Goal no-task theory:
+- A loop whose generation session has no task — no chat input was
+  provided — is terminal, not a retryable failure: the pipeline has
+  nothing to generate against, so retrying loops cannot supply a task,
+  and only the user can. The per-loop generator returns ErrNoTask
+  before any session runs, and the runner stops with the reason instead
+  of carrying corrective feedback into the next loop. See ErrNoTask and
+  TheoryOfGoalMode.
 `
 
 // TheoryOfGoalReviewModel documents the model used by the goal loops after a
@@ -600,6 +612,12 @@ func (r goalReporter) failure(text string) {
 	fmt.Fprint(os.Stderr, text)
 }
 
+// ErrNoTask reports that a goal loop's generation session has no task:
+// no chat input was provided, so there is nothing to generate against.
+// Retrying loops cannot supply a task — only the user can — so the goal
+// runner stops the run on it instead of looping. See TheoryOfGoalNoTask.
+var ErrNoTask = errors.New("no task provided; describe the task with -chat")
+
 func RunGoal(ctx context.Context, opts GoalOptions) GoalResult {
 	if opts.Output == nil {
 		opts.Output = os.Stdout
@@ -636,6 +654,15 @@ func RunGoal(ctx context.Context, opts GoalOptions) GoalResult {
 			reviewModel = opts.ReviewModels[index]
 		}
 		result, stats, err := opts.Generate(ctx, loopsRun, state.feedback, state.summaries, reviewModel)
+		// A loop without a task is terminal: the generation pipeline has
+		// no chat input to generate against, so retrying loops cannot
+		// supply one. Stop with the reason instead of looping. See
+		// ErrNoTask.
+		if errors.Is(err, ErrNoTask) {
+			reporter.message("\n[No task provided; describe the task with -chat]\n")
+			state.stopRequested = true
+			return true
+		}
 		allStats = append(allStats, stats...)
 		for i := loopStart; i < len(allStats); i++ {
 			allStats[i].Loop = loopsRun
@@ -700,8 +727,10 @@ func appendLoopSummaries(summaries GoalLoopSummaries, loop int, stats []AttemptS
 // number, and runs on the requested model. Generation streams to
 // os.Stdout: in TUI mode the terminal's stdout is the null device and
 // the display captures output through state decorators, so a per-loop
-// writer would duplicate output. See TheoryOfGoalMode and
-// TheoryOfGoalReviewModel.
+// writer would duplicate output. When no chat input is configured, the
+// loop returns ErrNoTask before any session runs, so the goal runner
+// stops instead of looping on empty outcomes. See TheoryOfGoalNoTask,
+// TheoryOfGoalMode and TheoryOfGoalReviewModel.
 func makeGoalLoopGenerator(reset dscope.Reset) GoalLoopGenerator {
 	return func(ctx context.Context, loop int, feedback GoalFeedback, summaries GoalLoopSummaries, reviewModel string) (Result, []AttemptStat, error) {
 		scope := reset()
@@ -718,7 +747,22 @@ func makeGoalLoopGenerator(reset dscope.Reset) GoalLoopGenerator {
 		var result Result
 		var stats []AttemptStat
 		var err error
-		scope.Call(func(generate GenerateWithResultWithStats) {
+		scope.Call(func(generate GenerateWithResultWithStats, chats flags.Chats) {
+			// The chat input is the task: without any non-empty chat
+			// argument the pipeline has nothing to generate against.
+			// Return the sentinel before the session runs, so the
+			// runner stops instead of looping. See ErrNoTask.
+			var hasTask bool
+			for _, chat := range chats {
+				if chat != "" {
+					hasTask = true
+					break
+				}
+			}
+			if !hasTask {
+				err = ErrNoTask
+				return
+			}
 			result, stats, err = generate(ctx, os.Stdout)
 		})
 		return result, stats, err
