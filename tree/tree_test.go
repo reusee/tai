@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestNewTreeRootOnly(t *testing.T) {
@@ -114,6 +115,77 @@ func TestPathCopyingDeepPath(t *testing.T) {
 	}
 }
 
+func TestMerge(t *testing.T) {
+	base, err := New().Write("root", "shared", TypeInput, AuthorUser, "s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	branch1, err := base.WriteAll(
+		WriteOp{Parent: "shared", Name: "a", Type: TypeResponse, Author: AuthorModel, Content: "a"},
+		WriteOp{Parent: "root", Name: "z", Type: TypeInput, Author: AuthorUser, Content: "z"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	branch2, err := base.WriteAll(
+		WriteOp{Parent: "shared", Name: "b", Type: TypeResponse, Author: AuthorModel, Content: "b"},
+		WriteOp{Parent: "b", Name: "c", Type: TypeBlock, Author: AuthorModel, Content: "c"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bOriginal := mustNode(t, branch2, "b")
+
+	merged, err := branch1.Merge(branch2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := mustNode(t, merged, "b")
+	if b.Parent != "shared" || b.Type != TypeResponse || b.Author != AuthorModel || b.Content != "b" {
+		t.Fatalf("grafted node unexpected: %+v", b)
+	}
+	if !b.InsertTime.Equal(bOriginal.InsertTime) {
+		t.Fatal("grafted node must keep its original insert time")
+	}
+	if _, ok := merged.Node("c"); !ok {
+		t.Fatal("a nested node must graft under its already-grafted parent")
+	}
+	if _, ok := merged.Node("a"); !ok {
+		t.Fatal("the receiver's nodes must survive")
+	}
+	if mustNode(t, merged, "z") != mustNode(t, branch1, "z") {
+		t.Fatal("a node off every graft path must be shared by pointer")
+	}
+	if _, ok := branch1.Node("b"); ok {
+		t.Fatal("the receiver must be unchanged")
+	}
+	if _, ok := branch2.Node("a"); ok {
+		t.Fatal("the merged-in tree must be unchanged")
+	}
+	if same, err := branch1.Merge(nil); err != nil || same != branch1 {
+		t.Fatal("merging nil must return the receiver unchanged")
+	}
+}
+
+func TestMergeConflict(t *testing.T) {
+	base := New()
+	tr1, err := base.Write("root", "n", TypeInput, AuthorUser, "one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr2, err := base.Write("root", "n", TypeInput, AuthorUser, "two")
+	if err != nil {
+		t.Fatal(err)
+	}
+	merged, err := tr1.Merge(tr2)
+	if !errors.Is(err, ErrDuplicateName) {
+		t.Fatalf("want ErrDuplicateName, got %v", err)
+	}
+	if merged != nil {
+		t.Fatal("a failed merge must return no tree")
+	}
+}
+
 func mustNode(t *testing.T, tr *Tree, name string) *Node {
 	t.Helper()
 	n, ok := tr.Node(name)
@@ -160,6 +232,25 @@ func TestWriteAllAtomicFailure(t *testing.T) {
 	}
 	if _, ok := base.Node("new"); ok {
 		t.Fatal("failed batch must leave the receiver untouched")
+	}
+}
+
+func TestWriteOpInsertTime(t *testing.T) {
+	at := time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC)
+	tr, err := New().WriteAll(
+		WriteOp{Parent: "root", Name: "a", Type: TypeInput, Author: AuthorUser, Content: "x", InsertTime: at},
+		WriteOp{Parent: "root", Name: "b", Type: TypeInput, Author: AuthorUser, Content: "y"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, _ := tr.Node("a")
+	if !a.InsertTime.Equal(at) {
+		t.Fatalf("explicit insert time = %v, want %v", a.InsertTime, at)
+	}
+	b, _ := tr.Node("b")
+	if b.InsertTime.IsZero() {
+		t.Fatal("a zero insert time must take the current time")
 	}
 }
 

@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -145,11 +146,243 @@ func TestWriteBlockResultNodesZip(t *testing.T) {
 	}
 }
 
+// TestRunErrorNodesRecorded verifies that an attempt's unprocessable
+// output joins the tree as error nodes under the current response,
+// visible in the feedback's tree outline: a malformed block the parser
+// could not parse and a well-formed block of an unavailable kind each
+// produce one. The nodes are the record; the correction budget governs
+// only the feedback. Phases flush the state, so the unclosed block is
+// collected as a parse error at Flush. See TheoryOfSessionTree.
+func TestRunErrorNodesRecorded(t *testing.T) {
+	withRun(t, func(run Run) {
+		t.Run("malformed block", func(t *testing.T) {
+			callCount := 0
+			phaseBuilder := func(g generators.Generator) generators.Phase {
+				callCount++
+				if callCount == 1 {
+					return appendPhaseWithFlush("<<貞觀 summary\nRound 1.\n貞觀\n<<龘靐 shell\necho hi\n")
+				}
+				return appendPhaseWithFlush("<<貞觀 summary\nDone.\n貞觀\n")
+			}
+			result, err := runOnce(run, RunOptions{
+				Generator:    nil,
+				InitialState: generators.NewPrompts("", nil),
+				PhaseBuilder: phaseBuilder,
+			})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			var userText string
+			for c := range result.FinalState.Contents() {
+				if c.Role == generators.RoleUser {
+					for _, p := range c.Parts {
+						if text, ok := p.(generators.Text); ok {
+							userText += string(text)
+						}
+					}
+				}
+			}
+			for _, want := range []string{
+				"error-1 [error/program]",
+				"malformed block",
+			} {
+				if !strings.Contains(userText, want) {
+					t.Fatalf("expected %q in the feedback's tree outline, got: %s", want, userText)
+				}
+			}
+		})
+		t.Run("unavailable kind", func(t *testing.T) {
+			callCount := 0
+			phaseBuilder := func(g generators.Generator) generators.Phase {
+				callCount++
+				if callCount == 1 {
+					return appendPhaseWithFlush("<<永樂 mystery\nbody\n永樂\n<<崇禎 summary\nDone.\n崇禎\n")
+				}
+				return appendPhaseWithFlush("<<崇禎 summary\nDone.\n崇禎\n")
+			}
+			comps := components.ComponentSet{
+				{Kind: "summary", PromptSection: "summary prompt"},
+			}
+			result, err := runOnce(run, RunOptions{
+				Generator:       nil,
+				InitialState:    generators.NewPrompts("", nil),
+				Components:      comps,
+				PhaseBuilder:    phaseBuilder,
+				KnownBlockKinds: comps.KnownKinds(),
+			})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			var userText string
+			for c := range result.FinalState.Contents() {
+				if c.Role == generators.RoleUser {
+					for _, p := range c.Parts {
+						if text, ok := p.(generators.Text); ok {
+							userText += string(text)
+						}
+					}
+				}
+			}
+			for _, want := range []string{
+				"error-1 [error/program]",
+				"unavailable kind",
+			} {
+				if !strings.Contains(userText, want) {
+					t.Fatalf("expected %q in the feedback's tree outline, got: %s", want, userText)
+				}
+			}
+		})
+	})
+}
+
 func TestTreeOutlinePart(t *testing.T) {
 	got := string(treeOutlinePart(tree.New()))
 	if !strings.Contains(got, "[Session tree]") || !strings.Contains(got, "root [root/]") {
 		t.Fatalf("unexpected outline part: %q", got)
 	}
+}
+
+// assertUserTextContains joins the user-role Text parts of the result's
+// final state and asserts every want substring is present.
+func assertUserTextContains(t *testing.T, result Result, wants ...string) {
+	t.Helper()
+	var userText string
+	for c := range result.FinalState.Contents() {
+		if c.Role != generators.RoleUser {
+			continue
+		}
+		for _, p := range c.Parts {
+			if text, ok := p.(generators.Text); ok {
+				userText += string(text)
+			}
+		}
+	}
+	for _, want := range wants {
+		if !strings.Contains(userText, want) {
+			t.Fatalf("expected %q in the user content, got: %s", want, userText)
+		}
+	}
+}
+
+// TestResultCarriesSessionTree verifies that the run's result carries
+// the final session tree, so callers outside the loop can extract
+// subtree projections from it. See TheoryOfSessionTree.
+func TestResultCarriesSessionTree(t *testing.T) {
+	withRun(t, func(run Run) {
+		result, err := runOnce(run, RunOptions{
+			Generator:    nil,
+			InitialState: generators.NewPrompts("", nil),
+			Components:   nil,
+			PhaseBuilder: func(g generators.Generator) generators.Phase {
+				return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
+			},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result.SessionTree == nil {
+			t.Fatal("expected the result to carry the session tree")
+		}
+		if _, ok := result.SessionTree.Node("response-1"); !ok {
+			t.Fatal("expected the attempt's response node in the result's tree")
+		}
+	})
+}
+
+// TestRunRetryFeedbackCarriesTreeOutline verifies that the retry
+// feedback of a truncated or errored attempt ends with the session
+// tree outline: the retry is a round-triggering feedback. See
+// TheoryOfSessionTree.
+func TestRunRetryFeedbackCarriesTreeOutline(t *testing.T) {
+	withRun(t, func(run Run) {
+		t.Run("missing summary", func(t *testing.T) {
+			callCount := 0
+			phaseBuilder := func(g generators.Generator) generators.Phase {
+				callCount++
+				if callCount == 1 {
+					return appendPhase("incomplete output without summary")
+				}
+				return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
+			}
+			result, err := runOnce(run, RunOptions{
+				Generator: nil,
+				InitialState: generators.NewPrompts("", []*generators.Content{
+					{Role: generators.RoleUser, Parts: []generators.Part{generators.Text("task input")}},
+				}),
+				Components:               nil,
+				PhaseBuilder:             phaseBuilder,
+				RetryOnMissingCompletion: true,
+				MaxRetries:               3,
+				Handoff: func(text string) (*Handoff, error) {
+					return &Handoff{Summary: "summary", Prompt: "retry prompt"}, nil
+				},
+			})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			assertUserTextContains(t, result, "[Session tree]", "input-1 [input/user]")
+		})
+		t.Run("error retry", func(t *testing.T) {
+			callCount := 0
+			phaseBuilder := func(g generators.Generator) generators.Phase {
+				callCount++
+				if callCount == 1 {
+					return appendThenErrorPhase("partial output", errors.New("boom"))
+				}
+				return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
+			}
+			result, err := runOnce(run, RunOptions{
+				Generator: nil,
+				InitialState: generators.NewPrompts("", []*generators.Content{
+					{Role: generators.RoleUser, Parts: []generators.Part{generators.Text("task input")}},
+				}),
+				Components:   nil,
+				PhaseBuilder: phaseBuilder,
+				RetryOnError: true,
+				MaxRetries:   3,
+			})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			assertUserTextContains(t, result, "[Session tree]", "input-1 [input/user]")
+		})
+	})
+}
+
+// TestRunHandoffInputCarriesTreeOutline verifies that the handoff input
+// prefixes the incomplete output with the session tree outline, so the
+// handoff summary carries the session's structure into the retry
+// attempt. See TheoryOfSessionTree.
+func TestRunHandoffInputCarriesTreeOutline(t *testing.T) {
+	withRun(t, func(run Run) {
+		var capturedInput string
+		phaseBuilder := func(g generators.Generator) generators.Phase {
+			return appendPhase("incomplete output without summary")
+		}
+		_, err := runOnce(run, RunOptions{
+			Generator: nil,
+			InitialState: generators.NewPrompts("", []*generators.Content{
+				{Role: generators.RoleUser, Parts: []generators.Part{generators.Text("task input")}},
+			}),
+			Components:               nil,
+			PhaseBuilder:             phaseBuilder,
+			RetryOnMissingCompletion: true,
+			MaxRetries:               1,
+			Handoff: func(text string) (*Handoff, error) {
+				capturedInput = text
+				return &Handoff{Summary: "summary", Prompt: "retry prompt"}, nil
+			},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !strings.Contains(capturedInput, "[Session tree]") {
+			t.Fatalf("expected the tree outline in the handoff input, got: %s", capturedInput)
+		}
+		if !strings.Contains(capturedInput, "incomplete output without summary") {
+			t.Fatalf("expected the incomplete output in the handoff input, got: %s", capturedInput)
+		}
+	})
 }
 
 func TestRecordIdleUserInput(t *testing.T) {

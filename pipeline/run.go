@@ -637,7 +637,7 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 								Kind:    EventHandoffStart,
 								Attempt: ls.attempt,
 							})
-							handoff, handoffErr := ls.opts.Handoff(incompleteText)
+							handoff, handoffErr := ls.opts.Handoff(handoffInput(incompleteText, ls.sessionTree))
 							if handoffErr == nil && handoff != nil {
 								summary = handoff.Summary
 								retryPrompt = handoff.Prompt
@@ -680,6 +680,10 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 						retryParts = append(retryParts, generators.Text(
 							formatHandoffPrompt(retryPrompt, retry+1, ls.maxRetries)))
 					}
+					// The retry feedback is a round-triggering
+					// feedback: it ends with the session tree
+					// outline. See TheoryOfSessionTree.
+					retryParts = append(retryParts, treeOutlinePart(ls.sessionTree))
 
 					var appendErr error
 					ls.state, appendErr = ls.state.AppendContent(&generators.Content{
@@ -786,7 +790,7 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 					Kind:    EventHandoffStart,
 					Attempt: ls.attempt,
 				})
-				handoff, rerr := ls.opts.Handoff(incompleteText)
+				handoff, rerr := ls.opts.Handoff(handoffInput(incompleteText, ls.sessionTree))
 				if rerr == nil && handoff != nil {
 					summary = handoff.Summary
 					retryPrompt = handoff.Prompt
@@ -836,6 +840,9 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 		if retryPrompt != "" {
 			retryParts = append(retryParts, generators.Text(retryPrompt))
 		}
+		// The retry feedback is a round-triggering feedback: it ends
+		// with the session tree outline. See TheoryOfSessionTree.
+		retryParts = append(retryParts, treeOutlinePart(ls.sessionTree))
 		var appendErr error
 		ls.state, appendErr = ls.state.AppendContent(&generators.Content{
 			Role:  generators.RoleUser,
@@ -880,7 +887,7 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 				Kind:    EventHandoffStart,
 				Attempt: ls.attempt,
 			})
-			if handoff, serr := ls.opts.Handoff(incompleteText); serr == nil && handoff != nil {
+			if handoff, serr := ls.opts.Handoff(handoffInput(incompleteText, ls.sessionTree)); serr == nil && handoff != nil {
 				// Report the synthesized completion summary to the
 				// event stream. See TheoryOfLoopEvents.
 				ls.emitEvent(Event{
@@ -967,6 +974,11 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 	if ls.opts.KnownBlockKinds != nil {
 		unknownKinds = unknownKindBlocks(collectedBlocks, ls.opts.KnownBlockKinds)
 	}
+	// The attempt's unprocessable output joins the tree as an error
+	// node under the current response, regardless of the correction
+	// budget: the node is the record; the budget governs only whether
+	// the model is asked to correct. See TheoryOfSessionTree.
+	ls.recordAttemptErrorNodes(generationParseErrors, unknownKinds)
 	var correctionParts []generators.Part
 	var generationUncorrected []*blocks.BlockParseError
 	correctionParts, ls.parseErrorCorrections, ls.skipOnAttemptStart, generationUncorrected =
@@ -1285,7 +1297,7 @@ func (ls *loopState) endOnDiskChange(err error, phaseState generators.State, att
 				AttemptInGeneration: ls.attemptInGeneration,
 				MaxAttempts:         ls.maxRetries,
 			})
-			if h, herr := ls.opts.Handoff(incompleteText); herr == nil && h != nil {
+			if h, herr := ls.opts.Handoff(handoffInput(incompleteText, ls.sessionTree)); herr == nil && h != nil {
 				handoff = h
 				ls.emitEvent(Event{
 					Kind:                EventHandoff,
@@ -1311,6 +1323,10 @@ func (ls *loopState) finishWithError(err error, finalState generators.State) {
 	ls.result.FinalState = finalState
 	ls.result.RemainingBlocks = ls.remainingBlocks
 	ls.result.ParseErrors = ls.uncorrectedParseErrors
+	// The result carries the run's final session tree so callers
+	// outside the loop can extract subtree projections from it. See
+	// TheoryOfSessionTree.
+	ls.result.SessionTree = ls.sessionTree
 	ls.runErr = err
 	ls.emitTerminal(Event{
 		Kind:    EventRunError,
@@ -1325,6 +1341,10 @@ func (ls *loopState) finish(finalState generators.State, finalBlocks []blocks.Bl
 	ls.result.FinalState = finalState
 	ls.result.RemainingBlocks = finalBlocks
 	ls.result.ParseErrors = ls.uncorrectedParseErrors
+	// The result carries the run's final session tree so callers
+	// outside the loop can extract subtree projections from it. See
+	// TheoryOfSessionTree.
+	ls.result.SessionTree = ls.sessionTree
 }
 
 // BlockHandler processes a block during streaming. If consumed is true,
@@ -1527,6 +1547,11 @@ type Result struct {
 	// inspect this to detect silent change loss from persistently
 	// malformed model output. See TheoryOfLoops.
 	ParseErrors []*blocks.BlockParseError
+	// SessionTree is the run's final session tree: every operation of
+	// the run — inputs, responses, summaries, blocks, results, errors
+	// — is a node, and callers outside the loop extract subtree
+	// projections from it. See TheoryOfSessionTree.
+	SessionTree *tree.Tree
 	// Diffs are the session diffs of all changes applied through the
 	// in-memory file store during this run. They are used by the review
 	// loop to present the changes to a second model. See

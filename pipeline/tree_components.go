@@ -37,6 +37,14 @@ immutable tree.
   whole batch, writes an error node, and joins the shared
   block-correction budget (see TheoryOfUnknownBlockKinds), so the
   model re-emits the batch with corrected parameters.
+- Malformed blocks and unavailable-kind blocks join the tree as error
+  nodes (program author) under the current response, written by
+  recordAttemptErrorNodes regardless of the correction budget: the
+  nodes are the tree's error record, extractable with ByType; the
+  shared budget governs only whether the model is asked to correct.
+  Unavailable-kind block nodes stay childless — the childless node is
+  the unprocessed signal — so their correction error is recorded as a
+  sibling error node.
 - A block node without children reads as an unprocessed block, except
   done and summary. Component outputs with one part per block attach a
   block-result child per block; any other shape attaches one shared
@@ -45,11 +53,18 @@ immutable tree.
   child for the same reason. Change blocks carry no parent/name header
   — the changes package stays untouched — and are recorded post hoc
   with auto names; they are the one exception.
-- Every round-triggering feedback ends with the tree outline part, and
-  the feedback content is written as an input node (program author).
-  The idle handler's user input is recorded as an input node (user
-  author), extracted by content-count delta: only the delta is
-  visible, not the handler's internal loop.
+- Every round-triggering feedback — the component feedback and the
+  retry feedback of a truncated or errored attempt — ends with the
+  tree outline part, and the feedback content is written as an input
+  node (program author). The idle handler's user input is recorded as
+  an input node (user author), extracted by content-count delta: only
+  the delta is visible, not the handler's internal loop.
+- The handoff input prefixes the incomplete output with the tree
+  outline, so the handoff summary carries the session's structure —
+  plans, decisions, and earlier summaries — into the retry attempt.
+- The run's Result carries the final session tree, so callers outside
+  the loop — a review pass, a display front-end — extract subtree
+  projections from it (see tree.TheoryOfSubtree).
 `
 
 const SessionTreeSystemPrompt = `
@@ -393,6 +408,22 @@ func treeOutlinePart(tr *tree.Tree) generators.Text {
 	return generators.Text("[Session tree]\n" + tr.RenderOutline(40) + "\n")
 }
 
+// handoffInput prefixes the incomplete output with the session tree
+// outline, so the handoff summary carries the session's structure —
+// plans, decisions, and earlier summaries — into the retry attempt.
+// An empty output yields an empty input, keeping the caller's
+// threshold gate. See TheoryOfSessionTree and tree.TheoryOfSubtree.
+func handoffInput(incompleteText string, tr *tree.Tree) string {
+	if incompleteText == "" {
+		return ""
+	}
+	outline := string(treeOutlinePart(tr))
+	if outline == "" {
+		return incompleteText
+	}
+	return outline + "\n" + incompleteText
+}
+
 // extractModelTexts joins the Text parts of the model-role contents
 // appended after sinceCount; Thought parts never enter the tree. See
 // TheoryOfSessionTree.
@@ -490,6 +521,39 @@ func (ls *loopState) recordIdleUserInput(state generators.State, sinceCount int)
 		return
 	}
 	if next, _, err := ls.sessionTree.WriteAuto("root", "input", tree.TypeInput, tree.AuthorUser, text); err == nil {
+		ls.sessionTree = next
+	}
+}
+
+// recordAttemptErrorNodes writes the attempt's unprocessable output as
+// an error node (program author) under the current response: the
+// malformed blocks the parser could not parse and the well-formed
+// blocks whose kind the session cannot process. The node is recorded
+// regardless of the correction budget — it is the tree's error record,
+// extractable with ByType; the shared budget governs only whether the
+// model is asked to correct. Unavailable-kind block nodes stay
+// childless, so the childless node keeps its unprocessed meaning. See
+// TheoryOfSessionTree.
+func (ls *loopState) recordAttemptErrorNodes(
+	parseErrors []*blocks.BlockParseError,
+	unknownKinds []blocks.Block,
+) {
+	if ls.sessionTree == nil || ls.currentResponse == "" {
+		return
+	}
+	if len(parseErrors) == 0 && len(unknownKinds) == 0 {
+		return
+	}
+	var sb strings.Builder
+	for _, parseErr := range parseErrors {
+		sb.WriteString("malformed block: ")
+		sb.WriteString(parseErr.Error())
+		sb.WriteString("\n")
+	}
+	for _, block := range unknownKinds {
+		fmt.Fprintf(&sb, "unavailable kind: kind %q, boundary %q was never processed\n", block.Kind, block.Boundary)
+	}
+	if next, _, err := ls.sessionTree.WriteAuto(ls.currentResponse, "error", tree.TypeError, tree.AuthorProgram, sb.String()); err == nil {
 		ls.sessionTree = next
 	}
 }

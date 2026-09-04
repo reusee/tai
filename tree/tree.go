@@ -24,11 +24,21 @@ tree theory: one write operation, immutable path-copying trees.
   into each copied ancestor's children slice, and returns a new Tree.
   Untouched subtrees share node pointers with the old tree, so a write
   costs O(depth) node copies. The byName index is rebuilt by whole-map copy
-  per write, an O(n) cost accepted for a pure-value tree.
+  per write, an O(n) cost accepted for a pure-value tree. Write and Merge
+  share one path-copying core, so their immutability semantics stay
+  identical.
 - Batch writes are atomic: WriteAll stages the writes in order on an
   intermediate tree; a failing op returns an error and leaves the receiver
   untouched, and a successful batch returns one tree carrying every write.
   Later ops in a batch may reference nodes written earlier in the batch.
+- A write carries an insert time: the batch op form accepts one, the zero
+  time takes the current time, and Merge keeps every grafted node's
+  original time, so a replayed or merged subtree preserves its chronology.
+- Concurrent branches merge: Merge grafts the nodes of another tree that
+  the receiver lacks under the shared ancestors, preserving their original
+  InsertTime values; a node present in both trees must be logically
+  identical (same parent, type, author, and content) or the merge fails
+  and the receiver is unchanged.
 - Plan revision is Abort plus a new node: Abort writes an abort child under
   the abandoned node, recording who aborted and why; the revised plan is a
   new node, never a mutation.
@@ -156,24 +166,49 @@ func validateWrite(name string, author Author) error {
 // tree is unchanged; nodes off the write path are shared by pointer.
 // See TheoryOfTree.
 func (t *Tree) Write(parent, name string, typ Type, author Author, content string) (*Tree, error) {
-	if err := validateWrite(name, author); err != nil {
+	return t.writeOp(WriteOp{
+		Parent:  parent,
+		Name:    name,
+		Type:    typ,
+		Author:  author,
+		Content: content,
+	})
+}
+
+// writeOp applies one write: validation, duplicate check, the zero insert
+// time taking the current time, and the shared path-copying core. Write
+// and WriteAll delegate here, so both carry identical semantics.
+// See TheoryOfTree.
+func (t *Tree) writeOp(op WriteOp) (*Tree, error) {
+	if err := validateWrite(op.Name, op.Author); err != nil {
 		return nil, err
 	}
-	if _, exists := t.byName[name]; exists {
-		return nil, fmt.Errorf("%w: %q", ErrDuplicateName, name)
+	if _, exists := t.byName[op.Name]; exists {
+		return nil, fmt.Errorf("%w: %q", ErrDuplicateName, op.Name)
 	}
-	parentNode, ok := t.byName[parent]
-	if !ok {
-		return nil, fmt.Errorf("%w: %q", ErrUnknownParent, parent)
+	insertTime := op.InsertTime
+	if insertTime.IsZero() {
+		insertTime = time.Now()
 	}
-
 	child := &Node{
-		Name:       name,
-		Parent:     parent,
-		Type:       typ,
-		Author:     author,
-		Content:    content,
-		InsertTime: time.Now(),
+		Name:       op.Name,
+		Parent:     op.Parent,
+		Type:       op.Type,
+		Author:     op.Author,
+		Content:    op.Content,
+		InsertTime: insertTime,
+	}
+	return t.writeChild(child)
+}
+
+// writeChild attaches a fully built child node — unique name, existing
+// parent — by path copying. It is the shared core of Write and Merge, so
+// both carry identical path-copying and re-indexing semantics. See
+// TheoryOfTree.
+func (t *Tree) writeChild(child *Node) (*Tree, error) {
+	parentNode, ok := t.byName[child.Parent]
+	if !ok {
+		return nil, fmt.Errorf("%w: %q", ErrUnknownParent, child.Parent)
 	}
 
 	// Path copying: copy the parent, append the child, then copy every
@@ -183,7 +218,7 @@ func (t *Tree) Write(parent, name string, typ Type, author Author, content strin
 
 	copied := []*Node{newParent}
 	cur := newParent
-	curName := parent
+	curName := child.Parent
 	for {
 		ancestorName := cur.Parent
 		if ancestorName == "" {
@@ -211,9 +246,63 @@ func (t *Tree) Write(parent, name string, typ Type, author Author, content strin
 	for _, n := range copied {
 		byName[n.Name] = n
 	}
-	byName[name] = child
+	byName[child.Name] = child
 
 	return &Tree{root: newRoot, byName: byName}, nil
+}
+
+// Merge returns a new tree carrying every node of other that the
+// receiver lacks, grafted under the shared ancestors of the two trees;
+// both inputs are unchanged, and nodes off every graft path are shared
+// by pointer. A node present in both trees must be logically identical —
+// same parent, type, author, and content — or the merge fails with
+// ErrDuplicateName and no tree is returned. Grafted nodes keep their
+// original InsertTime. See TheoryOfTree.
+func (t *Tree) Merge(other *Tree) (*Tree, error) {
+	if other == nil {
+		return t, nil
+	}
+	cur := t
+	var graft func(n *Node) error
+	graft = func(n *Node) error {
+		if existing, ok := cur.byName[n.Name]; ok {
+			// The node exists in both trees: it is the same write only
+			// when every identity field matches.
+			if existing.Parent != n.Parent || existing.Type != n.Type ||
+				existing.Author != n.Author || existing.Content != n.Content {
+				return fmt.Errorf("%w: %q conflicts with the receiver's node", ErrDuplicateName, n.Name)
+			}
+		} else {
+			child := &Node{
+				Name:       n.Name,
+				Parent:     n.Parent,
+				Type:       n.Type,
+				Author:     n.Author,
+				Content:    n.Content,
+				InsertTime: n.InsertTime,
+			}
+			next, err := cur.writeChild(child)
+			if err != nil {
+				return err
+			}
+			cur = next
+		}
+		for _, c := range n.children {
+			if err := graft(c); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	// The roots are the same node conceptually; graft from the root's
+	// children, depth-first, so a parent is always present before its
+	// children are grafted.
+	for _, c := range other.root.children {
+		if err := graft(c); err != nil {
+			return nil, err
+		}
+	}
+	return cur, nil
 }
 
 // shallowCopy copies a node's value fields. The children slice is left nil:
@@ -225,13 +314,16 @@ func shallowCopy(n *Node) *Node {
 	return &c
 }
 
-// WriteOp is one write of a batch.
+// WriteOp is one write of a batch. InsertTime is optional: the zero time
+// takes the current time, and a replayed op carries its original time so
+// a merged or replayed subtree keeps its chronology. See TheoryOfTree.
 type WriteOp struct {
-	Parent  string
-	Name    string
-	Type    Type
-	Author  Author
-	Content string
+	Parent     string
+	Name       string
+	Type       Type
+	Author     Author
+	Content    string
+	InsertTime time.Time
 }
 
 // WriteAll applies the writes in order, atomically: every write stages on
@@ -241,7 +333,7 @@ type WriteOp struct {
 func (t *Tree) WriteAll(ops ...WriteOp) (*Tree, error) {
 	cur := t
 	for _, op := range ops {
-		next, err := cur.Write(op.Parent, op.Name, op.Type, op.Author, op.Content)
+		next, err := cur.writeOp(op)
 		if err != nil {
 			return nil, err
 		}
