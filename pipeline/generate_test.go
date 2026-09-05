@@ -20,6 +20,7 @@ import (
 	"github.com/reusee/tai/modes"
 	"github.com/reusee/tai/pipeline/codetypes"
 	"github.com/reusee/tai/records"
+	"github.com/reusee/tai/tree"
 )
 
 func TestPrintAttemptStats(t *testing.T) {
@@ -1399,8 +1400,8 @@ func TestGenerateDebugPromptsWrittenToOutput(t *testing.T) {
 			}
 		},
 		func() Run {
-			return func(ctx context.Context, opts RunOptions, result *Result) iter.Seq2[Event, error] {
-				return func(yield func(Event, error) bool) {}
+			return func(ctx context.Context, opts RunOptions, result *Result) iter.Seq2[*tree.Tree, error] {
+				return func(yield func(*tree.Tree, error) bool) {}
 			}
 		},
 	).Call(func(
@@ -1449,9 +1450,9 @@ func TestGenerateChatInputBracketsContext(t *testing.T) {
 			}
 		},
 		func() Run {
-			return func(ctx context.Context, opts RunOptions, result *Result) iter.Seq2[Event, error] {
+			return func(ctx context.Context, opts RunOptions, result *Result) iter.Seq2[*tree.Tree, error] {
 				capturedState = opts.InitialState
-				return func(yield func(Event, error) bool) {}
+				return func(yield func(*tree.Tree, error) bool) {}
 			}
 		},
 	).Call(func(

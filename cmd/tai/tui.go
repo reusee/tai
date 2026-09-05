@@ -19,6 +19,7 @@ import (
 	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/pipeline"
 	"github.com/reusee/tai/taiui"
+	"github.com/reusee/tai/tree"
 )
 
 const (
@@ -40,52 +41,35 @@ per-tab panel construction (taiui.TabPanel and taiui.PaneHeight), pointer
 tab interaction (taiui.TabMouse), section navigation, quit confirmation
 and help overlays, and the session event loop (taiui.Session). This
 command wires them with tai-specific capture:
-generators.Content is converted to taiui.Line by captureContent, pipeline
-events are rendered into Events-tab lines by handleEvent and eventLines,
-and the request lifecycle is tracked by isGeneratingLog and outputTabLabel.
+generators.Content is converted to taiui.Line by captureContent, the
+session tree pipeline.Run yields is rendered by the Tree tab
+(TheoryOfTreeTab), and the request lifecycle is tracked by
+isGeneratingLog and outputTabLabel.
 
-The TUI interface replaces stdout with a three-tab terminal UI: the Output
-tab streams the model output, the Events tab renders the generation loop's
-event stream — attempt starts ("🚀 [Attempt N start]"), the request
-parameter lines ("📡 [Attempt N request] ...") that precede each request,
-attempt summaries, truncations, retries, handoff starts and
-synthesized summaries, the finish reasons ("🏁 [Finish: stop]"), the
-per-attempt usage lines ("📊 [Usage] ..."), the thought summaries when
--summarize-thoughts is enabled, the component/idle continuations, the
-loop-start that roots each goal loop's branch, and the goal-mode
-verdicts ("🎯 [Goal Achieved after N loop(s)]") and failure
-notes from EventGoal — and the Logs tab collects
-log records. Every event kind renders: each event's first line starts
-with the kind's emoji (eventEmoji) followed by a bracketed label, one
-display style shared by every kind and by the goal verdicts the pipeline
-emits (pipeline.RunGoal).
-Goal-loop runs attribute the per-attempt events to their loop: attempt
-starts, requests, and completions render "[loop L attempt N ...]" and
-usage lines render "[Usage] loop L attempt N: ..."; non-goal runs omit
-the attribution and keep their display bytes unchanged.
-A completed attempt with no summary
-shows a completion line ("✅ [Attempt N complete]"), and an unknown kind shows
-a generic "❓ [Event <kind>]" line, so no pipeline event type is silently
-dropped. Events are constructed and yielded the moment their facts are
-known: an attempt-start precedes its work, a request event precedes the
-attempt's request, a handoff-start precedes the handoff request, and a
-truncation fires before the handoff summary is
-requested. The Events tab's only content source is pipeline.Run:
-withTUIOutputObserver taps the run's event iterator and forwards every
-event to handleEvent, so every Events-tab line originates from a pipeline
-event (see pipeline.TheoryOfLoopEvents), and EventFinish clears the
-Output tab's "generating..." hint. The Logs tab renders consecutive
-lines with alternating background shades so entries are visually distinct
-when a background is configured; the panels paint no background by
-default, the alternation is inert without one, and the two shades derive
-from whatever backgrounds the tui config section sets. The Events tab renders the
-stream as a tree (see TheoryOfEventTree): each goal loop is one branch
-rooted at its loop-start event, an attempt nests under it, and the
-attempt's lifecycle events nest under its start; display order is a
-depth-first walk, so out-of-order arrival renders in tree order, and
-every line carries two Han-character widths of indent per depth. The tab
-alternates the same two shades per event: all display lines of one event
-share one shade, and consecutive events alternate. Model output is captured from the
+The TUI interface replaces stdout with a three-tab terminal UI: the
+Output tab streams the model output, the Tree tab renders the session
+tree the pipeline writes — every node the run records: user inputs,
+responses and their summaries, blocks and their results, the loop's own
+event nodes (attempt starts, request parameters, finish reasons,
+per-attempt usage, truncations, retries, handoffs, completions,
+component and idle continuations, thought summaries, and the terminal
+error), and the goal runner's verdict nodes in goal mode — and the Logs
+tab collects log records. The Tree tab renders the SAME tree the
+pipeline writes: withTUIOutputObserver taps the run's tree iterator and
+forwards every yielded tree to setTree, so the tab never maintains a
+separate display state; the v key cycles projections over the tree
+(all nodes, only the event nodes, only the summaries, or only one
+author's nodes), so the tree's internal representation is inspectable
+(see TheoryOfTreeTab and pipeline.TheoryOfLoopEvents). A finish event
+node clears the Output tab's "generating..." hint. The Logs tab renders
+consecutive lines with alternating background shades so entries are
+visually distinct when a background is configured; the panels paint no
+background by default, the alternation is inert without one, and the
+two shades derive from whatever backgrounds the tui config section
+sets. The Tree tab walks the tree depth-first, one line per node by
+default, with per-node expand toggles, per-node alternating shades, and
+the attempt-start node's 👉 jump marker (see TheoryOfTreeTab). Model
+output is captured from the
 generation state by the tuiOutputState decorator, passed through
 RunOptions.StateDecorators by runWithTUI: text parts stream to the Output
 tab, thoughts are colored distinctly and separated from non-thought content
@@ -93,9 +77,10 @@ by a blank line, tool calls render as markers, and errors are shown inline.
 Raw thoughts are suppressed
 from the Output tab only when -no-thoughts is set; when
 -summarize-thoughts is enabled, the raw stream keeps flowing to
-the Output tab while the periodic summaries render in the Events tab from
-EventThoughtSummary (see pipeline.TheoryOfThoughtsSummarize), and the
-per-attempt usage lines render from EventUsage (see
+the Output tab while the periodic summaries render in the Tree tab from
+the thought-summary event nodes (see
+pipeline.TheoryOfThoughtsSummarize), and the
+per-attempt usage lines render from the usage event nodes (see
 pipeline.TheoryOfUsageLogging). Suppressing the raw stream under
 -summarize-thoughts would blank the focused Output tab during long
 thinking phases — leaving no live feedback and making the session look
@@ -111,16 +96,15 @@ re-parsed or re-displayed, because unstructured text must not be
 imperfectly parsed. The one exception is the user's chat input: runWithTUI
 writes the flags.Chats content to the Output tab in the user role color
 before the command starts, so the user sees what the model was asked even
-though the chat lives in the initial state. Attempt summaries are rendered
-from EventAttemptCompleted, EventTruncated, and
-EventSynthesizedSummary, so the TUI never parses streamed text for
-blocks, never scans rendered text for "[Finish: ...]" markers, and never
-captures model output through a
-stdout pipe; retry feedback cannot duplicate summary content because the
-loop's events are the single authority. The goal-mode verdicts and
-failure notes are pipeline events too (EventGoal), so they render in the
-Events tab and never reach the Output
-tab. stdout is discarded in TUI mode, while stderr stays visible
+though the chat lives in the initial state. Attempt summaries render
+from the tree's completed, truncated, and synthesized-summary event
+nodes, so the TUI never parses streamed text for blocks, never scans
+rendered text for completion markers, and never captures model output
+through a stdout pipe; retry feedback cannot duplicate summary content
+because the session tree is the single authority. The goal-mode verdicts
+and failure notes are goal event nodes in the same tree (RunGoal records
+them through GoalTreeObserver), so they render in the Tree tab and never
+reach the Output tab. stdout is discarded in TUI mode, while stderr stays visible
 in the Output tab. Content is colored by role, matching the non-TUI output
 colors (see generators/colors.go): user input is blue, tool calls and
 results yellow, system messages cyan, log records red, and thoughts bright
@@ -129,16 +113,17 @@ palette colors by default, and every color is configurable through the
 tui config section (see UIStyle); by default no background is painted.
 Colors are carried per output line
 through wrapping, so a wrapped line keeps its role color. The keys
-1, 2, and 3 select the corresponding tab (Output, Events, Logs
+1, 2, and 3 select the corresponding tab (Output, Tree, Logs
 respectively); the number-key collapse/expand and focus-handoff semantics,
-first-content auto-expansion, the unseen emoji on collapsed strips, and
+first-content auto-expansion, the unseen dot on collapsed strips, and
 the weighted layout (the focused tab weighs 3, every other expanded tab 1)
 are the taiui tab state machine's (taiui.TheoryOfTabs) and are not
-repeated here. The Output tab starts expanded and focused, following the
+repeated here. The v key cycles the Tree tab's projection. The Output
+tab starts expanded and focused, following the
 live tail — the model's stream is the pane the user watches, so it is open
-from the first frame — while the Events and Logs tabs stay collapsed and
-expand on their first content (the Events tab on its first rendered event
-line, the Logs tab on any log record), so the interface surfaces panes
+from the first frame — while the Tree and Logs tabs stay collapsed and
+expand on their first content (the Tree tab on its first event node,
+the Logs tab on any log record), so the interface surfaces panes
 only when they have something to show. The Logs tab caps its box at
 logsMaxBoxHeight rows while expanded but not focused — logs are internal
 diagnostics, so an unfocused pane shows only the latest lines — and the
@@ -176,12 +161,13 @@ content-width change resets the projection. The Logs tab wraps through
 a taiui.WrapCache so that
 when new output streams in, only the newly arrived completed lines and
 the trailing partial line are wrapped, avoiding O(N) full re-wrapping of
-large buffers on every frame; the Events tab caches each event node's
-wrapped lines instead (see TheoryOfEventTree), so a frame re-wraps only
+large buffers on every frame; the Tree tab caches each node's wrapped
+lines instead (see TheoryOfTreeTab), so a frame re-wraps only
 nodes that are new or repositioned.
 When the display width or tab background changes, the cache is reset
 and recomputed. The TUI holds nothing but the raw state values — line
-buffers, tab machine, scroll offsets, events, and session flags.
+buffers, tab machine, scroll offsets, the session tree, and session
+flags.
 `
 
 // logsMaxBoxHeight bounds the Logs tab's box height while it is expanded
@@ -279,25 +265,27 @@ pipeline.Run — Module.Run — binds logs.Logger from the scope at
 provider-resolution time, so the loop must be resolved AFTER the forks
 take effect: a loop resolved before them binds the pre-fork Logger built
 during startup on the real stderr, painting the raw terminal where the
-next repaint erases it. The Events tab needs no writer fork:
+next repaint erases it. The Tree tab needs no writer fork:
 withTUIOutputObserver, layered in the second fork's Run wrapper, taps
-the run's event iterator and forwards every event to the TUI (see
-pipeline.TheoryOfLoopEvents), and the goal event observer is forked to
-the same handler, so the goal runner's EventGoal verdicts reach the
-Events tab through the tap path. The state-decorator and
-event-tap Run wrapper is layered in a second fork so its pipeline.Run
-def does not resolve itself recursively.
+the run's tree iterator and forwards every yielded tree to setTree (see
+pipeline.TheoryOfLoopEvents), and the goal tree observer is forked to
+the same setTree path, so the goal runner's verdict nodes reach the
+Tree tab through the tap path. The state-decorator and tree-tap Run
+wrapper is layered in a second fork so its pipeline.Run def does not
+resolve itself recursively.
 `
 
 const TheoryOfTUINoTruncation = `
 Display buffers are unbounded and no information is ever truncated: the
-Output tab retains every streamed line, the Logs tab every log record, and
-the Events tab every event line. A
-bounded buffer silently drops the oldest entries past its ceiling, making
-the TUI's record of the session incomplete and shifting a scrolled-back
-view by one row on each new line. Whatever the volume, losing information
-is unacceptable; the memory cost of unbounded retention is accepted in
-exchange for a complete browsable session record.
+Output tab retains every streamed line, the Logs tab every log record,
+and the Tree tab every node of the session tree — the tree itself is
+immutable and complete, so the tab renders its full projection. A
+bounded buffer silently drops the oldest entries past its ceiling,
+making the TUI's record of the session incomplete and shifting a
+scrolled-back view by one row on each new line. Whatever the volume,
+losing information is unacceptable; the memory cost of unbounded
+retention is accepted in exchange for a complete browsable session
+record.
 `
 
 const TheoryOfMouseSupport = `
@@ -315,19 +303,19 @@ the focused tab's strip collapses it and moves the focus to the expanded
 tab that was last focused; pressing another tab's strip takes the focus
 without collapsing and keeps that tab's current view. A press inside an
 expanded tab's scroll area focuses the tab (when it was not already
-focused) and records the origin of a drag-scroll. Inside the Events
-pane, a left press is inert unless it lands on the attempt-start line's
-👉 jump marker, which jumps the Output tab to the section that attempt
-wrote (see TheoryOfTUIOutputSections); a press on a handoff node's rows
-still toggles it. In the Output tab, a press on the control column
-toggles the section under the control, a press on a collapsed section's
-row expands it, and both preempt the ordinary press handling (see
-TheoryOfOutputControls). Presses outside every panel,
-middle and right presses are ignored; no-button motion (mode 1003)
-drives the control column's hover strip and the menu bar's pointer
-hover: the hovered category title and the open dropdown's item render
-reversed, and while a dropdown is open, motion over another title
-switches menus (see TheoryOfControlBar).
+focused) and records the origin of a drag-scroll. Inside the Tree pane,
+a left press is inert unless it lands on the attempt-start node's 👉
+jump marker, which jumps the Output tab to the section that attempt
+wrote (see TheoryOfTUIOutputSections); any other press on a node
+toggles its expansion (see TheoryOfTreeTab). In the Output tab, a press
+on the control column toggles the section under the control, a press on
+a collapsed section's row expands it, and both preempt the ordinary
+press handling (see TheoryOfOutputControls). Presses outside every
+panel, middle and right presses are ignored; no-button motion
+(mode 1003) drives the control column's hover strip and the menu bar's
+pointer hover: the hovered category title and the open dropdown's item
+render reversed, and while a dropdown is open, motion over another
+title switches menus (see TheoryOfControlBar).
 
 In interactive sessions, the Output tab's input row is the one press
 target with its own semantics: a left press on the chat input bar's row
@@ -464,10 +452,10 @@ var (
 // thoughts stream to the Output tab (thoughts wrapped in the
 // thinking/response markers the terminal Output layer uses), function
 // calls and results render as markers, and errors are shown inline.
-// Finish reasons are not captured here: they arrive as EventFinish on
-// the event stream that withTUIOutputObserver taps, and the finish event
-// clears the Output tab's "generating..." hint. See TheoryOfTUI and
-// pipeline.TheoryOfLoopEvents.
+// Finish reasons are not captured here: they arrive as finish event
+// nodes in the session tree that withTUIOutputObserver forwards to
+// setTree, and a finish node clears the Output tab's "generating..."
+// hint. See TheoryOfTUI and pipeline.TheoryOfLoopEvents.
 type tuiOutputState struct {
 	upstream generators.State
 	tui      *TUI
@@ -599,16 +587,20 @@ type TUI struct {
 	tabs    *taiui.Tabs
 	scrolls [3]taiui.ScrollState
 
-	// events is the Events tab's event forest: pipeline events are
-	// filed into it by their (loop, sequence) identity and rendered
-	// depth-first with cached wrapping, elapsed timers, and alternating
-	// shades. The tree mechanism lives in taiui; see
-	// taiui.TheoryOfEventTree and TheoryOfEventTree. Guarded by mu.
-	events taiui.EventTree
+	// treeView is the latest session tree pipeline.Run yielded: the
+	// Tree tab renders — and projects — this same tree, never a
+	// separately maintained copy. Guarded by mu. See TheoryOfTreeTab.
+	treeView *tree.Tree
+	// treeTab is the Tree tab's interaction state: the projection
+	// mode, the per-node expansion toggles, the event nodes already
+	// consumed for the display signals, the wrapped-line cache, and
+	// the row ranges of the last display. Guarded by mu. See
+	// TheoryOfTreeTab.
+	treeTab treeTabState
 
-	// startTime anchors the Events tab's elapsed-time timer: every
-	// event records the duration from startTime to its arrival, shown
-	// at the right edge of its first display line. See TheoryOfEventTree.
+	// startTime anchors the Tree tab's elapsed-time timer: every node's
+	// first display line right-aligns the duration from startTime to
+	// the node's insert time. See TheoryOfTreeTab.
 	startTime time.Time
 
 	logsCache taiui.WrapCache
@@ -625,11 +617,11 @@ type TUI struct {
 	quit taiui.QuitConfirm
 	// generating reports whether a generation request is in flight. It
 	// is set when the generator's "generating" log record is observed
-	// and cleared by an EventFinish or by the session
-	// ending. While a request is in flight the Output tab title keeps
-	// the "generating..." hint regardless of how long the model is
-	// silent (e.g., long thinking phases without streamed output).
-	// See TheoryOfTUI.
+	// and cleared by a finish event node or by the session ending.
+	// While a request is in flight the Output tab title keeps the
+	// "generating..." hint regardless of how long the model is silent
+	// (e.g., long thinking phases without streamed output). See
+	// TheoryOfTUI.
 	generating bool
 	// handoff reports whether a handoff generation request is in flight.
 	// It is set by HandoffStart and cleared by HandoffEnd, and takes
@@ -679,7 +671,7 @@ type TUI struct {
 	// showThoughts reports whether raw reasoning thoughts are displayed
 	// in the Output tab. It is false only when -no-thoughts is set;
 	// -summarize-thoughts never suppresses the raw stream in the TUI —
-	// the periodic summaries render in the Events tab concurrently, so
+	// the periodic summaries render in the Tree tab concurrently, so
 	// the focused Output tab keeps live feedback during long thinking
 	// phases. runWithTUI sets it before the generation goroutine starts;
 	// it is read only by captureContent on the generation goroutine. See
@@ -705,12 +697,11 @@ type TUI struct {
 	// outputSections organizes the Output tab's stream into sections:
 	// each records the source-line index in the output buffer where the
 	// section begins, so navigation can scroll the pane to a section's
-	// first display line. eventSections binds a pipeline event's
-	// (run, sequence) identity to the section the event's attempt
-	// wrote, and pendingOwner carries an attempt-start event's identity
-	// to the next visible content part, which then opens the event's
-	// section. All three are guarded by mu. See
-	// TheoryOfTUIOutputSections.
+	// first display line. eventSections binds an attempt number to the
+	// section the attempt wrote, and pendingOwner carries an
+	// attempt-start event node's attempt number to the next visible
+	// content part, which then opens the attempt's section. All three
+	// are guarded by mu. See TheoryOfTUIOutputSections.
 	outputSections []outputSection
 	eventSections  map[outputSectionOwner]int
 	pendingOwner   *outputSectionOwner
@@ -800,9 +791,9 @@ func newTUI() (*TUI, error) {
 	tabs.TopInset = 1
 	return &TUI{
 		// Every display buffer is unbounded: the Output tab retains each
-		// streamed line, the Logs tab each log record, and the Events
-		// tab each event line. Truncation would silently discard
-		// information, leaving the TUI's record of the session
+		// streamed line, the Logs tab each log record, and the Tree tab
+		// each node of the session tree. Truncation would silently
+		// discard information, leaving the TUI's record of the session
 		// incomplete. See TheoryOfTUINoTruncation.
 		output: taiui.NewLineBuffer(0),
 		logs:   taiui.NewStringBuffer(0),
@@ -820,17 +811,14 @@ func newTUI() (*TUI, error) {
 			{Offset: 1 << 30},
 			{Offset: 1 << 30},
 		},
-		// The Events tab's elapsed-time timer counts from the session's
-		// start. See TheoryOfEventTree.
+		// The Tree tab's elapsed-time timer counts from the session's
+		// start. See TheoryOfTreeTab.
 		startTime: time.Now(),
-		// The Events tab's event forest; the expand-hint color matches
-		// the log color of event lines. See TheoryOfEventTree.
-		events:   taiui.EventTree{HintColor: outputColorLogLine},
-		tty:      t,
-		screen:   taiui.NewTerminalScreen(t, width, height),
-		updateCh: make(chan struct{}, 1),
-		width:    width,
-		height:   height,
+		tty:       t,
+		screen:    taiui.NewTerminalScreen(t, width, height),
+		updateCh:  make(chan struct{}, 1),
+		width:     width,
+		height:    height,
 	}, nil
 }
 
@@ -1270,6 +1258,8 @@ func (t *TUI) handleKey(key string) bool {
 		t.toggleSplit()
 	case key == "mouse":
 		t.toggleMouse()
+	case key == "view":
+		t.cycleTreeView()
 	case key == "prev-transition":
 		t.jumpToTransition(-1)
 	case key == "next-transition":
@@ -1289,7 +1279,7 @@ func (t *TUI) handleKey(key string) bool {
 	case key == "end":
 		t.scrollTo(1 << 30)
 	case key == "enter":
-		t.toggleLastHandoff()
+		t.toggleLastTreeExpandable()
 	case key == "help":
 		t.toggleHelp()
 	case key == "quit":
@@ -1333,6 +1323,8 @@ func mapTUIKey(key string) string {
 		return "split"
 	case "m", "M":
 		return "mouse"
+	case "v", "V":
+		return "view"
 	case "c", "C":
 		return "collapse-all"
 	case "?":
@@ -1517,16 +1509,12 @@ func (t *TUI) handleMouseKey(key string) bool {
 					break
 				}
 				t.mouse.Press(t.tabs, t.scrolls[:], t.width, t.height, x, y)
-				// A press on the attempt-start line's jump marker jumps
-				// the Output tab to the section that attempt wrote;
-				// presses elsewhere in the Events pane are inert. The
-				// jump runs before the handoff toggle so it maps rows
-				// of the last-rendered tree, the same ranges the toggle
-				// consumes. See TheoryOfTUIOutputSections.
-				t.jumpToEventAtClick(x, y)
-				// A press on a handoff node's display rows toggles its
-				// expansion. See TheoryOfEventTree.
-				t.toggleHandoffAtClick(x, y)
+				// A press on the attempt-start node's jump marker jumps
+				// the Output tab to the section that attempt wrote; any
+				// other press on a node toggles its expansion. The
+				// click maps rows of the last-rendered tree. See
+				// TheoryOfTUIOutputSections and TheoryOfTreeTab.
+				t.treeAtClick(x, y)
 			}
 		}
 	case "release":
@@ -1544,249 +1532,11 @@ func (t *TUI) handleMouseKey(key string) bool {
 	return false
 }
 
-// toggleLastHandoff expands or collapses the handoff node displayed
-// last in the Events tab, so Enter works on the most recent handoff
-// summary without a cursor. See TheoryOfEventTree.
-func (t *TUI) toggleLastHandoff() {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.events.ToggleLastExpanded()
-}
-
-// toggleHandoffAtClick toggles a handoff node when a left press lands
-// on its display rows in the Events tab: any row of a collapsed node
-// expands it, and the header row of an expanded node collapses it, so
-// clicking inside a long expanded summary never collapses it by
-// accident. Presses outside the events pane's content area are no-ops.
-// See TheoryOfEventTree.
-func (t *TUI) toggleHandoffAtClick(x, y int) {
-	if !t.tabs.Expanded[1] {
-		return
-	}
-	box := t.tabs.Boxes(t.width, t.height)[1]
-	if x < box.Left || x >= box.Right || y <= box.Top || y >= box.Bottom {
-		return
-	}
-	// The press's screen row maps onto the tab's content row by
-	// dropping the label strip and re-adding the scroll offset; the
-	// tree owns the row-range matching. See taiui.TheoryOfEventTree.
-	t.events.ToggleAtRow(t.scrolls[1].Offset + (y - box.Top - 1))
-}
-
-// handleEvent renders one pipeline.Run event into the Events tab. It is
-// the Events tab's only content source: withTUIOutputObserver taps the
-// run's event iterator and forwards every event here, so every
-// Events-tab line originates from a pipeline event. Each event is filed
-// into the tab's event tree by its sequence and parent numbers, so the
-// tab renders the stream in tree order however the events arrive. See
-// TheoryOfTUI, TheoryOfEventTree and pipeline.TheoryOfLoopEvents.
-func (t *TUI) handleEvent(ev pipeline.Event) {
-	lines := eventLines(ev)
-	if len(lines) == 0 {
-		return
-	}
-	t.mu.Lock()
-	// The finish reason marks the end of the generation request: the
-	// Output tab's "generating..." hint clears once the request has
-	// returned. A new request's "generating" log re-sets it.
-	if ev.Kind == pipeline.EventFinish {
-		t.generating = false
-	}
-	// An attempt start opens the output section the attempt's streamed
-	// content will fill: the next visible content part begins a section
-	// owned by this event, so the Events tab can jump to the attempt's
-	// output. See TheoryOfTUIOutputSections.
-	if ev.Kind == pipeline.EventAttemptStart {
-		t.pendingOwner = &outputSectionOwner{run: ev.Loop, seq: ev.Seq}
-	}
-	if t.tabs.AutoExpand(1) {
-		t.scrolls[1].Follow = true
-	}
-	// A handoff summary with a body is the expandable node; the node's
-	// elapsed time anchors on the session's start. See
-	// taiui.TheoryOfEventTree.
-	t.events.Add(taiui.EventNode{
-		Run:        ev.Loop,
-		Seq:        ev.Seq,
-		ParentSeq:  ev.Parent,
-		Lines:      lines,
-		Expandable: ev.Kind == pipeline.EventHandoff && len(lines) > 1,
-		Elapsed:    time.Since(t.startTime),
-	})
-	t.mu.Unlock()
-	t.notify()
-}
-
-var eventEmoji = map[pipeline.EventKind]string{
-	pipeline.EventAttemptStart:        "🚀",
-	pipeline.EventAttemptCompleted:    "✅",
-	pipeline.EventRequest:             "📡",
-	pipeline.EventTruncated:           "✂️",
-	pipeline.EventRetry:               "🔁",
-	pipeline.EventHandoffStart:        "🤝",
-	pipeline.EventHandoff:             "📝",
-	pipeline.EventSynthesizedSummary:  "🧩",
-	pipeline.EventUsage:               "📊",
-	pipeline.EventFinish:              "🏁",
-	pipeline.EventThoughtSummary:      "💭",
-	pipeline.EventComponentsTriggered: "⚙️",
-	pipeline.EventIdle:                "💤",
-	pipeline.EventRunError:            "❌",
-	pipeline.EventGoal:                "🎯",
-	pipeline.EventLoopStart:           "🌳",
-}
-
-// eventLog renders one event's display line in the log color, prefixed
-// by the kind's emoji; a kind missing from eventEmoji gets the question
-// mark. See eventLines and TheoryOfTUI.
-func eventLog(kind pipeline.EventKind, text string) []taiui.Line {
-	emoji, ok := eventEmoji[kind]
-	if !ok {
-		emoji = "❓"
-	}
-	return logLines(emoji + " " + text)
-}
-
-// loopPrefix renders the attribution of a per-attempt event: "loop N
-// attempt M" when the event carries a goal loop number; the given
-// attempt label unchanged otherwise, so non-goal runs keep their
-// display bytes unchanged — start and completion lines use the
-// capitalized "Attempt M" label and usage lines the lowercase one,
-// exactly as before. See TheoryOfTUI and pipeline.TheoryOfLoopEvents.
-func loopPrefix(loop int, attemptLabel string) string {
-	if loop != 0 {
-		return fmt.Sprintf("loop %d %s", loop, strings.ToLower(attemptLabel))
-	}
-	return attemptLabel
-}
-
-// eventJumpMarker is appended to the Events tab's attempt-start line:
-// a press on the marker's cells is the only Events-tab press that
+// eventJumpMarker is appended to the Tree tab's attempt-start node
+// line: a press on the marker's cells is the only Tree-tab press that
 // jumps the Output tab to the attempt's output section. See
-// TheoryOfTUIOutputSections.
+// TheoryOfTUIOutputSections and TheoryOfTreeTab.
 const eventJumpMarker = "👉"
-
-// eventLines renders one pipeline event as Events-tab lines. The first
-// line of every event starts with the kind's emoji (eventEmoji) followed
-// by a bracketed label — one display style shared by all kinds, so event
-// types are recognized at a glance and no style mixes brackets with
-// banner equals. The attempt start line ends with the jump marker
-// (eventJumpMarker): its cells are the only Events-tab press that jumps
-// the Output tab (see TheoryOfTUIOutputSections). A completed attempt
-// with no summary (single-shot commands like ai produce empty summaries)
-// shows a completion line; a completed attempt with a summary shows the
-// same header followed by the summary body. An unknown kind shows a
-// generic event line, so no pipeline event type is silently dropped.
-// Log-style events use the log color; the thought summary header uses
-// the thought color; summary bodies stay plain. The attempt start,
-// request, completion, and usage lines attribute the attempt to its
-// goal loop via loopPrefix; non-goal runs keep the bare attempt labels.
-// The loop-start event renders the line that roots its goal loop's
-// branch. The goal event renders its message lines in the log color,
-// the emoji on the first line.
-func eventLines(ev pipeline.Event) []taiui.Line {
-	// The "attempt x/y" budget display uses the in-generation
-	// position, pairing with MaxAttempts; hand-constructed events
-	// may carry only the session-wide number, which then stands in.
-	inGeneration := ev.AttemptInGeneration
-	if inGeneration == 0 {
-		inGeneration = ev.Attempt
-	}
-	switch ev.Kind {
-	case pipeline.EventAttemptStart:
-		// The jump marker ends the line: only a press on its cells
-		// jumps the Output tab to the attempt's output section. See
-		// TheoryOfTUIOutputSections.
-		return eventLog(ev.Kind, fmt.Sprintf("[%s start] "+eventJumpMarker,
-			loopPrefix(ev.Loop, fmt.Sprintf("Attempt %d", ev.Attempt))))
-	case pipeline.EventRequest:
-		return eventLog(ev.Kind, fmt.Sprintf("[%s request] %s",
-			loopPrefix(ev.Loop, fmt.Sprintf("Attempt %d", ev.Attempt)), ev.Detail))
-	case pipeline.EventAttemptCompleted:
-		header := eventLog(ev.Kind, fmt.Sprintf("[%s complete]",
-			loopPrefix(ev.Loop, fmt.Sprintf("Attempt %d", ev.Attempt))))
-		if strings.TrimSpace(ev.Summary) == "" {
-			return header
-		}
-		return append(header, summaryLines(ev.Summary)...)
-	case pipeline.EventTruncated:
-		return eventLog(ev.Kind, fmt.Sprintf("[Attempt %d truncated (attempt %d/%d): %s]",
-			ev.Attempt, inGeneration, ev.MaxAttempts, ev.Detail))
-	case pipeline.EventRetry:
-		return eventLog(ev.Kind, fmt.Sprintf("[Retry attempt %d/%d] %v",
-			inGeneration, ev.MaxAttempts, ev.Err))
-	case pipeline.EventRunError:
-		return eventLog(ev.Kind, fmt.Sprintf("[Run error] %v", ev.Err))
-	case pipeline.EventHandoffStart:
-		// Handoff events carry no budget figures: handoff generation
-		// itself retries without an attempt limit, so the header
-		// shows no "attempt x/y" suffix. See pipeline.TheoryOfHandoff.
-		return eventLog(ev.Kind, "[Handoff started]")
-	case pipeline.EventHandoff:
-		return append(eventLog(ev.Kind, "[Handoff summary]"), summaryLines(ev.Summary)...)
-	case pipeline.EventSynthesizedSummary:
-		return append(eventLog(ev.Kind, "[Synthesized completion summary]"), summaryLines(ev.Summary)...)
-	case pipeline.EventUsage:
-		outcome := ""
-		if ev.Detail != "" {
-			outcome = " (" + ev.Detail + ")"
-		}
-		// SpeedSuffix carries the streaming ttft and average generation
-		// speed when measured, staying empty for unmeasured usages.
-		// See TheoryOfUsageTiming.
-		return eventLog(ev.Kind, fmt.Sprintf("[Usage] %s%s: prompt %d, cached %d, completion %d, thoughts %d",
-			loopPrefix(ev.Loop, fmt.Sprintf("attempt %d", ev.Attempt)), outcome,
-			ev.Usage.Prompt.TokenCount,
-			ev.Usage.Prompt.TokenCountCached,
-			ev.Usage.Candidates.TokenCount,
-			ev.Usage.Thoughts.TokenCount,
-		)+ev.Usage.SpeedSuffix())
-	case pipeline.EventFinish:
-		return eventLog(ev.Kind, "[Finish: "+ev.Detail+"]")
-	case pipeline.EventThoughtSummary:
-		return append(
-			[]taiui.Line{{Text: eventEmoji[ev.Kind] + " [Thought Summary]", Color: outputColorThoughtLine}},
-			summaryLines(ev.Summary)...,
-		)
-	case pipeline.EventComponentsTriggered:
-		return eventLog(ev.Kind, fmt.Sprintf("[Attempt %d continues] %s", ev.Attempt, ev.Detail))
-	case pipeline.EventIdle:
-		return eventLog(ev.Kind, "[Idle input received; starting the next generation]")
-	case pipeline.EventLoopStart:
-		return eventLog(ev.Kind, fmt.Sprintf("[Loop %d start]", ev.Loop))
-	case pipeline.EventGoal:
-		// A goal message may span lines (multi-line verdicts); every
-		// line renders in the log color, the first line carrying the
-		// kind's emoji. See pipeline.TheoryOfGoalMode.
-		var lines []taiui.Line
-		for i, line := range strings.Split(ev.Detail, "\n") {
-			if i == 0 {
-				line = eventEmoji[ev.Kind] + " " + line
-			}
-			lines = append(lines, taiui.Line{Text: line, Color: outputColorLogLine})
-		}
-		return lines
-	default:
-		if ev.Detail == "" {
-			return eventLog(ev.Kind, fmt.Sprintf("[Event %s]", ev.Kind))
-		}
-		return eventLog(ev.Kind, fmt.Sprintf("[Event %s] %s", ev.Kind, ev.Detail))
-	}
-}
-
-// logLines renders one single-line log-style event line in the log color.
-func logLines(text string) []taiui.Line {
-	return []taiui.Line{{Text: text, Color: outputColorLogLine}}
-}
-
-// summaryLines renders a multi-line summary body as plain lines.
-func summaryLines(s string) []taiui.Line {
-	var lines []taiui.Line
-	for _, line := range strings.Split(s, "\n") {
-		lines = append(lines, taiui.Line{Text: line})
-	}
-	return lines
-}
 
 func (t *TUI) scroll(delta int) {
 	t.mu.Lock()
@@ -1939,20 +1689,20 @@ func (t *TUI) render() {
 }
 
 var (
-	tabNames = [...]string{"Output", "Events", "Logs"}
+	tabNames = [...]string{"Output", "Tree", "Logs"}
 
 	tabActiveLabelFg int32 = 10
 )
 
-// withTUIOutputObserver connects a pipeline.Run to the TUI: it wraps the
-// state with the tuiOutputState decorator (streaming output content to
-// the Output tab) and taps the run's event iterator, forwarding every
-// event to handleEvent before the command's own consumer sees it. The
-// tap is the Events tab's only content source, so every Events-tab line
-// originates from a pipeline.Run event. See TheoryOfTUI and
+// withTUIOutputObserver connects a pipeline.Run to the TUI: it wraps
+// the state with the tuiOutputState decorator (streaming output content
+// to the Output tab) and taps the run's tree iterator, forwarding every
+// yielded tree to setTree before the command's own consumer sees it.
+// The tap is the Tree tab's only content source, so every Tree-tab node
+// originates from the pipeline's own tree. See TheoryOfTUI and
 // pipeline.TheoryOfLoopEvents.
 func withTUIOutputObserver(run pipeline.Run, tui *TUI) pipeline.Run {
-	return func(ctx context.Context, opts pipeline.RunOptions, result *pipeline.Result) iter.Seq2[pipeline.Event, error] {
+	return func(ctx context.Context, opts pipeline.RunOptions, result *pipeline.Result) iter.Seq2[*tree.Tree, error] {
 		opts.StateDecorators = append(opts.StateDecorators, func(state generators.State) generators.State {
 			// The tuiOutputState layer observes only content appended
 			// after it wraps the state. Initial contents are not parsed
@@ -1964,12 +1714,12 @@ func withTUIOutputObserver(run pipeline.Run, tui *TUI) pipeline.Run {
 			}
 		})
 		inner := run(ctx, opts, result)
-		return func(yield func(pipeline.Event, error) bool) {
-			inner(func(ev pipeline.Event, err error) bool {
-				// Tap unconditionally: the terminal EventRunError
-				// arrives with a non-nil error and must render too.
-				tui.handleEvent(ev)
-				return yield(ev, err)
+		return func(yield func(*tree.Tree, error) bool) {
+			inner(func(tr *tree.Tree, err error) bool {
+				// Tap unconditionally: the terminal error arrives with a
+				// non-nil error and must render too.
+				tui.setTree(tr)
+				return yield(tr, err)
 			})
 		}
 	}
@@ -1977,7 +1727,7 @@ func withTUIOutputObserver(run pipeline.Run, tui *TUI) pipeline.Run {
 
 // tuiShowThoughts returns whether the TUI's Output tab displays raw reasoning
 // thoughts. Only the -thoughts flag governs it: -summarize-thoughts adds
-// periodic summaries in the Events tab but never suppresses the raw stream,
+// periodic summaries in the Tree tab but never suppresses the raw stream,
 // because blanking the focused Output tab during long thinking phases leaves
 // no live feedback and makes the session look stalled. See TheoryOfTUI.
 func tuiShowThoughts(thoughts flags.Thoughts) bool {
@@ -1993,9 +1743,9 @@ func forkTUIDisplay(scope dscope.Scope, tui *TUI) dscope.Scope {
 		// Command-level output (ping verdicts, applied notices) goes
 		// to the Output tab via the dscope-resolved Output writer.
 		// Generation output is captured separately and never routed
-		// here; goal-mode verdicts are pipeline events rendered in the
-		// Events tab through the goal event observer below. See
-		// TheoryOfCommandOutput and TheoryOfTUI.
+		// here; goal-mode verdicts are goal event nodes in the run's
+		// tree, rendered in the Tree tab through the goal tree observer
+		// below. See TheoryOfCommandOutput and TheoryOfTUI.
 		func() Output { return Output(tui.Writer()) },
 		// The TUI owns the terminal's single key reader, so interactive
 		// chat reads lines through the TUI's input bar instead of a
@@ -2018,10 +1768,11 @@ func forkTUIDisplay(scope dscope.Scope, tui *TUI) dscope.Scope {
 			}
 		},
 		func() pipeline.HandoffObserver { return tui },
-		// The goal runner's verdicts and failure notes — EventGoal —
-		// forward to the Events tab through the same handleEvent path
-		// as the run's events. See pipeline.TheoryOfGoalMode.
-		func() pipeline.GoalEventObserver { return tui.handleEvent },
+		// The goal runner's verdicts and failure notes — goal event
+		// nodes in the run's tree — forward to the Tree tab through the
+		// same setTree path as the run's trees. See
+		// pipeline.TheoryOfGoalMode.
+		func() pipeline.GoalTreeObserver { return tui.setTree },
 	)
 	// Resolve the loop from the display scope so Module.Run binds the
 	// Logs-pane Logger at provider-resolution time. See

@@ -85,6 +85,13 @@ const (
 // See pipeline.TheoryOfSessionTree and pipeline.TheoryOfGoalMode.
 const TypeLoop Type = "loop"
 
+// TypeEvent marks one notable occurrence the program records during a
+// run: attempt lifecycle, request parameters, retries, handoffs, token
+// usage, thought summaries, and goal verdicts. Event nodes are program
+// bookkeeping: model-facing outlines exclude them, and the display
+// front-end's Tree tab projects them. See pipeline.TheoryOfLoopEvents.
+const TypeEvent Type = "event"
+
 // Author identifies who wrote a node.
 type Author string
 

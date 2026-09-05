@@ -325,9 +325,10 @@ var PingCommand = apps.New("ping",
 		// observer is applied via RunOptions.StateDecorators when -tui
 		// is enabled. Parsed blocks are collected in result.RemainingBlocks
 		// because no component consumes them. The result is filled into
-		// result as the run progresses; the iterator yields the run's
-		// events, and the terminal error, if any, arrives with the final
-		// yield's error component. See pipeline.TheoryOfLoops,
+		// result as the run progresses; every tree yield carries the
+		// run's full session tree — the loop's own event nodes included —
+		// and the terminal error, if any, arrives with the final yield's
+		// error component. See pipeline.TheoryOfLoops,
 		// pipeline.TheoryOfLoopEvents and TheoryOfTUI.
 		var result pipeline.Result
 		for _, e := range loopRun(ctx, pipeline.RunOptions{

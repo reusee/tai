@@ -2,25 +2,23 @@ package pipeline
 
 import (
 	"context"
-	"slices"
 	"strings"
 	"testing"
 
 	"github.com/reusee/tai/generators"
+	"github.com/reusee/tai/tree"
 )
 
-// TestRunEventStream verifies the loop's event contract: every notable
-// occurrence of a run flows to the consumer as one Event stream, with
-// the terminal error (nil on success) arriving as the error component
-// of the yields. The run's first attempt misses the summary block
-// (truncation retry with a handoff) and its second attempt completes
-// with a summary and a usage part; the test asserts the event sequence,
-// the attempt attribution (the retry happens within the same
-// generation, so the second attempt-start carries attempt 2), and the
-// fields carried by each event. The truncated event is emitted before
-// the handoff request and does not repeat the handoff summary —
-// EventHandoff already carries it. See TheoryOfLoopEvents.
-func TestRunEventStream(t *testing.T) {
+// TestRunRecordsEventNodes verifies the loop's tree contract: every
+// notable occurrence of a run is recorded as an event node in the
+// session tree, and every yield carries the full tree. The run's first
+// attempt misses the summary block (truncation retry with a handoff)
+// and its second attempt completes with a summary and a usage part; the
+// test asserts the ordered event nodes under the session root, the
+// attempt attribution carried in the node contents, and that the
+// handoff node carries the handoff summary as its multi-line body. See
+// TheoryOfLoopEvents.
+func TestRunRecordsEventNodes(t *testing.T) {
 	withRun(t, func(run Run) {
 		usage := generators.Usage{}
 		usage.Prompt.TokenCount = 42
@@ -46,13 +44,13 @@ func TestRunEventStream(t *testing.T) {
 		}
 
 		var result Result
-		var events []Event
+		var lastTree *tree.Tree
 		var terminalErr error
-		for ev, err := range run(context.Background(), opts, &result) {
+		for tr, err := range run(context.Background(), opts, &result) {
 			if err != nil {
 				terminalErr = err
 			}
-			events = append(events, ev)
+			lastTree = tr
 		}
 		if terminalErr != nil {
 			t.Fatalf("unexpected terminal error: %v", terminalErr)
@@ -60,84 +58,62 @@ func TestRunEventStream(t *testing.T) {
 		if callCount != 2 {
 			t.Fatalf("expected 2 attempts (one retry), got %d", callCount)
 		}
-
-		var kinds []EventKind
-		for _, ev := range events {
-			kinds = append(kinds, ev.Kind)
-		}
-		wantKinds := []EventKind{
-			EventAttemptStart,
-			EventTruncated,
-			EventHandoffStart,
-			EventHandoff,
-			EventAttemptStart,
-			EventUsage,
-			EventAttemptCompleted,
-		}
-		if !slices.Equal(kinds, wantKinds) {
-			t.Fatalf("expected event kinds %v, got %v", wantKinds, kinds)
+		if lastTree == nil {
+			t.Fatal("expected the run to yield trees")
 		}
 
-		// The retry is a re-execution of the phase chain within the
-		// same generation: the first attempt-start carries attempt 1
-		// and the retry budget, the second carries attempt 2.
-		startEv := events[0]
-		if startEv.Attempt != 1 || startEv.MaxAttempts != 3 {
-			t.Fatalf("unexpected first attempt-start event: %+v", startEv)
+		nodes := lastTree.ByType(tree.TypeEvent)
+		wantPrefixes := []string{
+			"attempt-start", "truncated", "handoff-start", "handoff",
+			"attempt-start", "usage", "completed",
 		}
-		truncatedEv := events[1]
-		if truncatedEv.Attempt != 1 || truncatedEv.MaxAttempts != 3 ||
-			!strings.Contains(truncatedEv.Detail, "missing completion") {
-			t.Fatalf("unexpected truncated event: %+v", truncatedEv)
+		if len(nodes) != len(wantPrefixes) {
+			t.Fatalf("expected %d event nodes, got %v", len(wantPrefixes), nodeNames(nodes))
 		}
-		if truncatedEv.Summary != "" {
-			t.Fatalf("truncated event must not repeat the handoff summary (EventHandoff carries it), got %q", truncatedEv.Summary)
-		}
-		// Handoff events carry the attempt attribution but no budget
-		// figures: handoff generation itself retries without an
-		// attempt limit, so a budget display would misrepresent it.
-		// See TheoryOfHandoff and TheoryOfLoopEvents.
-		handoffStartEv := events[2]
-		if handoffStartEv.Attempt != 1 ||
-			handoffStartEv.AttemptInGeneration != 0 || handoffStartEv.MaxAttempts != 0 {
-			t.Fatalf("unexpected handoff-start event: %+v", handoffStartEv)
-		}
-		handoffEv := events[3]
-		if handoffEv.Summary != "truncated summary" ||
-			handoffEv.Attempt != 1 ||
-			handoffEv.AttemptInGeneration != 0 || handoffEv.MaxAttempts != 0 ||
-			handoffEv.Handoff == nil || handoffEv.Handoff.Prompt != "retry prompt" {
-			t.Fatalf("unexpected handoff event: %+v", handoffEv)
-		}
-		restartEv := events[4]
-		if restartEv.Attempt != 2 || restartEv.MaxAttempts != 3 {
-			t.Fatalf("unexpected second attempt-start event: %+v", restartEv)
-		}
-		usageEv := events[5]
-		if usageEv.Attempt != 2 ||
-			usageEv.Usage.Prompt.TokenCount != 42 || usageEv.Usage.Candidates.TokenCount != 7 {
-			t.Fatalf("unexpected usage event: %+v", usageEv)
-		}
-		completedEv := events[6]
-		if len(completedEv.Summaries) != 1 ||
-			!strings.Contains(completedEv.Summaries[0], "Done.") ||
-			!strings.Contains(completedEv.Summary, "Done.") {
-			t.Fatalf("unexpected completed event: %+v", completedEv)
-		}
-
-		// A non-goal run carries no loop attribution: every event keeps
-		// Loop 0. See TheoryOfLoopEvents.
-		for _, ev := range events {
-			if ev.Loop != 0 {
-				t.Fatalf("expected Loop 0 on a non-goal run, got %+v", ev)
+		for i, n := range nodes {
+			if !strings.HasPrefix(n.Name, wantPrefixes[i]) {
+				t.Fatalf("event node %d: expected prefix %q, got %q", i, wantPrefixes[i], n.Name)
 			}
+		}
+
+		// The truncated node precedes the handoff nodes and does not
+		// repeat the handoff summary.
+		if strings.Contains(nodes[1].Content, "truncated summary") {
+			t.Fatal("the truncated node must not repeat the handoff summary")
+		}
+		if !strings.Contains(nodes[3].Content, "truncated summary") {
+			t.Fatalf("expected the handoff summary on the handoff node, got %q", nodes[3].Content)
+		}
+		// The second attempt's usage node carries the counters.
+		if got := nodes[5].Content; !strings.Contains(got, "prompt 42") || !strings.Contains(got, "completion 7") {
+			t.Fatalf("unexpected usage node: %q", got)
+		}
+		// The completed node carries the attempt's summary body.
+		if !strings.Contains(nodes[6].Content, "Done.") {
+			t.Fatalf("unexpected completed node: %q", nodes[6].Content)
+		}
+		// The attempt-start nodes carry the session-wide attempt numbers.
+		if got := nodes[0].Content; !strings.Contains(got, "attempt 1") {
+			t.Fatalf("unexpected first attempt-start: %q", got)
+		}
+		if got := nodes[4].Content; !strings.Contains(got, "attempt 2") {
+			t.Fatalf("unexpected second attempt-start: %q", got)
 		}
 	})
 }
 
+// nodeNames collects the names of the given nodes.
+func nodeNames(nodes []*tree.Node) []string {
+	var names []string
+	for _, n := range nodes {
+		names = append(names, n.Name)
+	}
+	return names
+}
+
 // requestEventGenerator is a minimal Generator whose Spec feeds the
-// request-description assertions of TestRunEmitsRequestEvent; its
-// Generate is never called because the test drives its own phase.
+// request-node assertions of TestRunRequestNodeContent; its Generate is
+// never called because the test drives its own phase.
 type requestEventGenerator struct {
 	spec generators.Spec
 }
@@ -154,13 +130,12 @@ func (g requestEventGenerator) Generate(ctx context.Context, state generators.St
 	return state, nil
 }
 
-// TestRunEmitsRequestEvent verifies that each attempt opens with an
-// EventRequest before its request: the event follows the attempt-start
-// event, nests under it, and its Detail describes the actual generation
-// parameters resolved from the generator spec — the flag overrides stay
-// unset in this scope, so the spec values are the effective ones. See
+// TestRunRequestNodeContent verifies that each attempt records a
+// request node whose content describes the actual generation parameters
+// resolved from the generator spec — the flag overrides stay unset in
+// this scope, so the spec values are the effective ones. See
 // TheoryOfLoopEvents.
-func TestRunEmitsRequestEvent(t *testing.T) {
+func TestRunRequestNodeContent(t *testing.T) {
 	withRun(t, func(run Run) {
 		temperature := float32(0.5)
 		maxTokens := 4096
@@ -197,37 +172,25 @@ func TestRunEmitsRequestEvent(t *testing.T) {
 		}
 
 		var result Result
-		var events []Event
+		var lastTree *tree.Tree
 		var terminalErr error
-		for ev, err := range run(context.Background(), opts, &result) {
+		for tr, err := range run(context.Background(), opts, &result) {
 			if err != nil {
 				terminalErr = err
 			}
-			events = append(events, ev)
+			lastTree = tr
 		}
 		if terminalErr != nil {
 			t.Fatalf("unexpected terminal error: %v", terminalErr)
 		}
-
-		var kinds []EventKind
-		for _, ev := range events {
-			kinds = append(kinds, ev.Kind)
+		var requestNode *tree.Node
+		for _, n := range lastTree.ByType(tree.TypeEvent) {
+			if strings.HasPrefix(n.Name, "request") {
+				requestNode = n
+			}
 		}
-		wantKinds := []EventKind{
-			EventAttemptStart,
-			EventRequest,
-			EventFinish,
-			EventAttemptCompleted,
-		}
-		if !slices.Equal(kinds, wantKinds) {
-			t.Fatalf("expected event kinds %v, got %v", wantKinds, kinds)
-		}
-		requestEv := events[1]
-		if requestEv.Attempt != 1 {
-			t.Fatalf("unexpected request event attempt: %+v", requestEv)
-		}
-		if requestEv.Parent != events[0].Seq {
-			t.Fatalf("expected the request event to nest under the attempt start, got parent %d", requestEv.Parent)
+		if requestNode == nil {
+			t.Fatal("expected a request event node")
 		}
 		for _, want := range []string{
 			"model model-a",
@@ -237,12 +200,12 @@ func TestRunEmitsRequestEvent(t *testing.T) {
 			"max tokens 4096",
 			"context 100000",
 		} {
-			if !strings.Contains(requestEv.Detail, want) {
-				t.Fatalf("request detail %q missing %q", requestEv.Detail, want)
+			if !strings.Contains(requestNode.Content, want) {
+				t.Fatalf("request node content %q missing %q", requestNode.Content, want)
 			}
 		}
-		if strings.Contains(requestEv.Detail, "thinking tokens") {
-			t.Fatalf("request detail %q must omit unset thinking tokens", requestEv.Detail)
+		if strings.Contains(requestNode.Content, "thinking tokens") {
+			t.Fatalf("request node content %q must omit unset thinking tokens", requestNode.Content)
 		}
 	})
 }
@@ -307,7 +270,7 @@ func TestDescribeRequest(t *testing.T) {
 
 // eventSummaryGenerator is a minimal generators.Generator whose Generate
 // returns a fixed summary block, so NewSummarizer can be exercised
-// without a real model. See TestRunThoughtSummaryEvent.
+// without a real model. See TestRunThoughtSummaryNode.
 type eventSummaryGenerator struct{}
 
 func (eventSummaryGenerator) Spec() generators.Spec {
@@ -327,11 +290,11 @@ func (eventSummaryGenerator) Generate(ctx context.Context, state generators.Stat
 	})
 }
 
-// TestRunEmitsFinishEvent verifies that each generation attempt's finish
-// reason flows to the event stream as an EventFinish (Detail carrying
-// the reason), emitted immediately after the attempt's finish reason is
-// known, before the attempt completes. See TheoryOfLoopEvents.
-func TestRunEmitsFinishEvent(t *testing.T) {
+// TestRunFinishNodeContent verifies that each generation attempt's finish
+// reason is recorded as a finish event node, emitted immediately after
+// the attempt's finish reason is known, before the attempt completes.
+// See TheoryOfLoopEvents.
+func TestRunFinishNodeContent(t *testing.T) {
 	withRun(t, func(run Run) {
 		opts := RunOptions{
 			InitialState: generators.NewPrompts("", nil),
@@ -354,43 +317,38 @@ func TestRunEmitsFinishEvent(t *testing.T) {
 		}
 
 		var result Result
-		var events []Event
+		var lastTree *tree.Tree
 		var terminalErr error
-		for ev, err := range run(context.Background(), opts, &result) {
+		for tr, err := range run(context.Background(), opts, &result) {
 			if err != nil {
 				terminalErr = err
 			}
-			events = append(events, ev)
+			lastTree = tr
 		}
 		if terminalErr != nil {
 			t.Fatalf("unexpected terminal error: %v", terminalErr)
 		}
-
-		var kinds []EventKind
-		for _, ev := range events {
-			kinds = append(kinds, ev.Kind)
+		var finishNode *tree.Node
+		for _, n := range lastTree.ByType(tree.TypeEvent) {
+			if strings.HasPrefix(n.Name, "finish") {
+				finishNode = n
+			}
 		}
-		wantKinds := []EventKind{
-			EventAttemptStart,
-			EventFinish,
-			EventAttemptCompleted,
+		if finishNode == nil {
+			t.Fatal("expected a finish event node")
 		}
-		if !slices.Equal(kinds, wantKinds) {
-			t.Fatalf("expected event kinds %v, got %v", wantKinds, kinds)
-		}
-		finishEv := events[1]
-		if finishEv.Detail != "stop" || finishEv.Attempt != 1 {
-			t.Fatalf("unexpected finish event: %+v", finishEv)
+		if got := finishNode.Content; got != "finish: stop" {
+			t.Fatalf("unexpected finish node: %q", got)
 		}
 	})
 }
 
-// TestRunThoughtSummaryEvent verifies that a thought summary produced by
-// the ThoughtsSummarize state layer during generation flows to the event
-// stream as an EventThoughtSummary: Module.Run installs the layer's
-// emitter onto the guarded yield, so the summary joins the run's single
-// event channel. See TheoryOfLoopEvents and TheoryOfThoughtsSummarize.
-func TestRunThoughtSummaryEvent(t *testing.T) {
+// TestRunThoughtSummaryNode verifies that a thought summary produced by
+// the ThoughtsSummarize state layer during generation joins the session
+// tree as a thought-summary event node: Module.Run installs the layer's
+// emitter, so the summary is recorded in the run's own tree. See
+// TheoryOfLoopEvents and TheoryOfThoughtsSummarize.
+func TestRunThoughtSummaryNode(t *testing.T) {
 	withRun(t, func(run Run) {
 		summarizer := NewSummarizer(eventSummaryGenerator{})
 		initial := NewThoughtsSummarize(
@@ -423,139 +381,49 @@ func TestRunThoughtSummaryEvent(t *testing.T) {
 		}
 
 		var result Result
-		var kinds []EventKind
-		var summary string
+		var lastTree *tree.Tree
 		var terminalErr error
-		for ev, err := range run(context.Background(), opts, &result) {
+		for tr, err := range run(context.Background(), opts, &result) {
 			if err != nil {
 				terminalErr = err
 			}
-			kinds = append(kinds, ev.Kind)
-			if ev.Kind == EventThoughtSummary {
-				summary = ev.Summary
-			}
+			lastTree = tr
 		}
 		if terminalErr != nil {
 			t.Fatalf("unexpected terminal error: %v", terminalErr)
 		}
-
-		wantKinds := []EventKind{
-			EventAttemptStart,
-			EventThoughtSummary,
-			EventAttemptCompleted,
+		var summaryNode *tree.Node
+		for _, n := range lastTree.ByType(tree.TypeEvent) {
+			if strings.HasPrefix(n.Name, "thought-summary") {
+				summaryNode = n
+			}
 		}
-		if !slices.Equal(kinds, wantKinds) {
-			t.Fatalf("expected event kinds %v, got %v", wantKinds, kinds)
+		if summaryNode == nil {
+			t.Fatal("expected a thought-summary event node")
 		}
-		if summary != "- condensed" {
-			t.Fatalf("unexpected thought summary: %q", summary)
+		if !strings.Contains(summaryNode.Content, "- condensed") {
+			t.Fatalf("unexpected thought summary node: %q", summaryNode.Content)
 		}
 	})
 }
 
-// TestRunEventsCarryLoop verifies that RunOptions.Loop is stamped onto
-// every event the loop emits: a goal run's per-attempt events carry the
-// goal loop number, so a consumer can attribute each attempt and usage
-// to its loop. See TheoryOfLoopEvents.
-func TestRunEventsCarryLoop(t *testing.T) {
-	withRun(t, func(run Run) {
-		opts := RunOptions{
-			Loop:         7,
-			InitialState: generators.NewPrompts("", nil),
-			Components:   nil,
-			PhaseBuilder: func(g generators.Generator) generators.Phase {
-				return appendPhase("<<齉爩 summary\n- done\n齉爩\n")
-			},
-		}
-		var result Result
-		var events []Event
-		for ev, err := range run(context.Background(), opts, &result) {
-			if err != nil {
-				t.Fatalf("unexpected terminal error: %v", err)
-			}
-			events = append(events, ev)
-		}
-		if len(events) == 0 {
-			t.Fatal("expected events")
-		}
-		for _, ev := range events {
-			if ev.Loop != 7 {
-				t.Fatalf("expected Loop 7 on every event, got %+v", ev)
-			}
-		}
-	})
-}
-
-// TestRunEventsFormTree verifies the event tree contract: a goal run
-// opens with the loop-start event, every attempt nests under it, and
-// the attempt's lifecycle events nest under the attempt-start; the
-// sequence numbers increase monotonically. A non-goal run emits no
-// loop-start, so its attempt-start events are roots. See
+// TestTreeOutlineExcludesEventNodes verifies that the model-facing tree
+// outline is a projection without the loop's event nodes: the nodes are
+// program bookkeeping the model never sees. See TheoryOfSessionTree and
 // TheoryOfLoopEvents.
-func TestRunEventsFormTree(t *testing.T) {
-	withRun(t, func(run Run) {
-		var result Result
-		var events []Event
-		opts := RunOptions{
-			Loop:         2,
-			InitialState: generators.NewPrompts("", nil),
-			Components:   nil,
-			PhaseBuilder: func(g generators.Generator) generators.Phase {
-				return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
-			},
-		}
-		for ev, err := range run(context.Background(), opts, &result) {
-			if err != nil {
-				t.Fatalf("unexpected terminal error: %v", err)
-			}
-			events = append(events, ev)
-		}
-		if len(events) < 2 || events[0].Kind != EventLoopStart {
-			t.Fatalf("expected the loop-start event first, got %v", events)
-		}
-		root := events[0]
-		if root.Seq != 1 || root.Parent != 0 || root.Loop != 2 {
-			t.Fatalf("unexpected loop-start event: %+v", root)
-		}
-		attemptSeq := 0
-		lastSeq := 0
-		for _, ev := range events[1:] {
-			if ev.Seq <= lastSeq {
-				t.Fatalf("expected increasing sequence numbers, got %d after %d", ev.Seq, lastSeq)
-			}
-			lastSeq = ev.Seq
-			if ev.Kind == EventAttemptStart {
-				if ev.Parent != root.Seq {
-					t.Fatalf("attempt-start must nest under the loop branch, got %+v", ev)
-				}
-				attemptSeq = ev.Seq
-				continue
-			}
-			want := root.Seq
-			if attemptSeq != 0 {
-				want = attemptSeq
-			}
-			if ev.Parent != want {
-				t.Fatalf("event %v must nest under %d, got %+v", ev.Kind, want, ev)
-			}
-		}
-
-		// A non-goal run emits no loop-start: the attempt-start is the
-		// root of its branch.
-		var plain []Event
-		for ev, err := range run(context.Background(), RunOptions{
-			InitialState: generators.NewPrompts("", nil),
-			PhaseBuilder: func(g generators.Generator) generators.Phase {
-				return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
-			},
-		}, &result) {
-			if err != nil {
-				t.Fatalf("unexpected terminal error: %v", err)
-			}
-			plain = append(plain, ev)
-		}
-		if len(plain) == 0 || plain[0].Kind != EventAttemptStart || plain[0].Parent != 0 {
-			t.Fatalf("expected the attempt-start as the root of a non-goal run, got %v", plain)
-		}
-	})
+func TestTreeOutlineExcludesEventNodes(t *testing.T) {
+	tr, err := tree.New().WriteAll(
+		tree.WriteOp{Parent: "root", Name: "input-1", Type: tree.TypeInput, Author: tree.AuthorUser, Content: "task"},
+		tree.WriteOp{Parent: "root", Name: "attempt-start-1", Type: tree.TypeEvent, Author: tree.AuthorProgram, Content: "attempt 1 start"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := string(treeOutlinePart(tr, "root"))
+	if !strings.Contains(out, "input-1 [input/user]") {
+		t.Fatalf("expected the input node in the outline, got: %s", out)
+	}
+	if strings.Contains(out, "attempt-start-1") {
+		t.Fatalf("event nodes must be pruned from the model-facing outline, got: %s", out)
+	}
 }

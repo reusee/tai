@@ -209,10 +209,10 @@ var NextCommand = apps.New("next",
 		// error message fed back as user content. The interaction
 		// recorder is passed explicitly so the session is captured when
 		// -record is enabled. The result is filled into result as the run
-		// progresses; the iterator yields the run's events, and the
-		// terminal error, if any, arrives with the final yield's error
-		// component. See pipeline.TheoryOfLoops and
-		// pipeline.TheoryOfLoopEvents.
+		// progresses; every tree yield carries the run's full session
+		// tree — the loop's own event nodes included — and the terminal
+		// error, if any, arrives with the final yield's error component.
+		// See pipeline.TheoryOfLoops and pipeline.TheoryOfLoopEvents.
 		var result pipeline.Result
 		for _, e := range loopRun(ctx, pipeline.RunOptions{
 			Generator:           generator,

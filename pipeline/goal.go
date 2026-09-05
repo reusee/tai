@@ -106,30 +106,32 @@ provider-scoped cache is rebuilt and each loop reads the current filesystem
 state. The pipeline holds no process-level caches: all caches, such as loaded
 packages and parsed ASTs, live inside scope provider functions.
 
-Each loop's number is forked into the loop's scope as GoalLoop and passed
-to RunOptions.Loop, so the generation loop stamps every event it emits
-with the loop number (see TheoryOfLoopEvents). The runner accumulates the
-attempt statistics of every loop — with AttemptStat.Loop set to the loop
-number — into GoalResult.Stats, so a caller can review the entire
-process in a single view: token usage, durations, and attempt summaries
-across all loops, with the Loop field identifying which goal loop
-produced each attempt. One run owns one session tree: before each loop
-the runner writes a loop-N node (tree.TypeLoop) under the tree's root
-and passes the run tree with the node into the loop's scope as
-SessionTreeContinuation; the loop writes every session node under its
-loop node and returns the evolved tree in Result.SessionTree, which the
-runner adopts as the run tree. GoalResult.Tree carries the whole run's
-tree, and callers extract per-loop subtree projections from it (see
-TheoryOfSessionTree and tree.TheoryOfSubtree).
+Each loop's session nodes and the generation loop's own event nodes
+hang under its loop-N node in the run's one session tree, so the tree
+position attributes every occurrence to its loop (see
+TheoryOfLoopEvents). The runner accumulates the attempt statistics of
+every loop — with AttemptStat.Loop set to the loop number — into
+GoalResult.Stats, so a caller can review the entire process in a single
+view: token usage, durations, and attempt summaries across all loops,
+with the Loop field identifying which goal loop produced each attempt.
+One run owns one session tree: before each loop the runner writes a
+loop-N node (tree.TypeLoop) under the tree's root and passes the run
+tree with the node into the loop's scope as SessionTreeContinuation;
+the loop writes every session node under its loop node and returns the
+evolved tree in Result.SessionTree, which the runner adopts as the run
+tree. GoalResult.Tree carries the whole run's tree, and callers extract
+per-loop subtree projections from it (see TheoryOfSessionTree and
+tree.TheoryOfSubtree).
 
 RunGoal is the plain implementation so tests exercise the loop logic with
 fake per-loop generators; Module.GoalRun is the dscope provider that injects
 the scope-backed per-loop generator and the review pass. Generation and
 review stream to os.Stdout so a TUI's state decorators capture the output
 without duplication. Verdicts and failure notes are routed through
-goalReporter: as EventGoal events through GoalEventObserver when one is
-set (a display front-end's Events tab), or written to the output writer
-(failure notes to stderr) otherwise.
+goalReporter: recorded as goal event nodes in the run's session tree and
+forwarded through GoalTreeObserver when one is set (a display front-end's
+Tree tab), or written to the output writer (failure notes to stderr)
+otherwise.
 `
 
 const TheoryOfGoalNoTask = `
@@ -265,6 +267,13 @@ type GoalLoopSummary struct {
 // loop's scope. See TheoryOfGoalMode.
 type GoalLoopSummaries []GoalLoopSummary
 
+// GoalTreeObserver receives the goal run's session tree after each
+// progress message is recorded as a goal event node, so a display
+// front-end renders — and projects — the same tree the pipeline
+// writes. When nil (the default), the runner writes verdicts to the
+// output writer and failure notes to stderr. See TheoryOfGoalMode.
+type GoalTreeObserver func(*tree.Tree)
+
 // SystemPromptSection renders the summaries as a system prompt section: a
 // note stating the section's purpose and one bullet per summary, tagged
 // with its goal loop number. An empty list renders the empty string. The
@@ -295,32 +304,33 @@ func (Module) GoalLoopSummaries() GoalLoopSummaries {
 	return nil
 }
 
-// GoalEventObserver provides the default: no observer. The goal runner
-// then writes verdicts to the output writer. A display front-end (e.g.,
-// tai's TUI) forks this provider with its event handler, so the goal
-// verdicts render in its Events tab. See TheoryOfGoalMode.
-func (Module) GoalEventObserver() GoalEventObserver {
-	return nil
-}
-
 // GoalLoop provides the default: zero, a non-goal run. The goal runner
 // forks each loop's number into the loop's scope. See TheoryOfGoalMode.
 func (Module) GoalLoop() GoalLoop { return 0 }
+
+// GoalTreeObserver provides the default: no observer. The goal runner
+// then writes verdicts to the output writer. A display front-end (e.g.,
+// tai's TUI) forks this provider with its tree handler, so the goal
+// verdicts render in its Tree tab. See TheoryOfGoalMode.
+func (Module) GoalTreeObserver() GoalTreeObserver {
+	return nil
+}
 
 // GoalOptions carries the runtime configuration of one goal run. Generate
 // and Review are injected: Module.GoalRun binds the scope-backed
 // implementations; tests inject fakes.
 type GoalOptions struct {
-	// Output receives verdicts and failure notes when no GoalEvents
+	// Output receives verdicts and failure notes when no GoalTree
 	// observer is set. Generation and review output do not go here:
 	// they stream to os.Stdout so a TUI's state decorators capture
 	// them without duplication.
 	Output io.Writer
-	// GoalEvents, when non-nil, receives the goal run's progress as
-	// events: each verdict and failure note as an EventGoal. When nil
-	// (the default), verdicts go to Output and failure notes to
-	// stderr. See GoalEventObserver and TheoryOfGoalMode.
-	GoalEvents GoalEventObserver
+	// GoalTree, when non-nil, receives the run's session tree after
+	// each progress message is recorded as a goal event node, so a
+	// display front-end renders the same tree the pipeline writes.
+	// When nil (the default), verdicts go to Output and failure notes
+	// to stderr. See GoalTreeObserver and TheoryOfGoalMode.
+	GoalTree GoalTreeObserver
 	// Generate runs one goal loop: a fresh generation session that
 	// re-reads the current filesystem state, with the given loop
 	// number, feedback, the previous loops' summaries, and the model
@@ -336,21 +346,11 @@ type GoalOptions struct {
 	ReviewModels []string
 }
 
-// GoalEventObserver receives the goal runner's progress events:
-// verdicts and failure notes as EventGoal. A display front-end (e.g.,
-// tai's TUI) forks this provider to forward the events into its Events
-// tab; when nil (the default), the runner writes verdicts to the output
-// writer and failure notes to stderr. See TheoryOfGoalMode and
-// TheoryOfLoopEvents.
-type GoalEventObserver func(Event)
-
 // GoalLoop is the 1-based number of the goal loop that a generation
 // session serves. The zero value marks a non-goal run (AnyTextCommand,
-// ai, next, ping): the loop's events then carry no loop attribution. The
-// goal runner forks each loop's number into the loop's scope, and
-// GenerateWithResultWithStats passes it into RunOptions.Loop so the
-// loop stamps every event with it. See TheoryOfGoalMode and
-// TheoryOfLoopEvents.
+// ai, next, ping). The goal runner forks each loop's number into the
+// loop's scope; it bounds the handoff retries of goal-mode handoff
+// generation. See TheoryOfGoalMode and TheoryOfHandoff.
 type GoalLoop int
 
 // GoalLoopGenerator runs one goal loop. The loop number, the feedback,
@@ -395,10 +395,11 @@ type GoalResult struct {
 }
 
 // GoalRun runs the goal loop mechanism: repeated fresh generation loops
-// until a change-free loop emits a done block — the run's only exit —
-// the iteration budget is exhausted, or the same error repeats,
-// followed by a review of the accumulated diffs. Verdicts and failure
-// notes go to output. See TheoryOfGoalMode.
+// until a change-free loop emits a done block — the run's only exit — the
+// iteration budget is exhausted, or the same error repeats, followed by a
+// review of the accumulated diffs. Verdicts and failure notes are recorded
+// as goal event nodes in the run's session tree and forwarded to the goal
+// tree observer; with no observer they go to output. See TheoryOfGoalMode.
 type GoalRun func(ctx context.Context, output io.Writer) GoalResult
 
 // GoalSystemPromptText assembles the goal-mode system prompt: the base
@@ -601,34 +602,52 @@ func (s *goalLoopState) applyLoopSuccess(loopsRun int, result Result, reporter g
 }
 
 // goalReporter routes one goal-run progress message to its destination:
-// an EventGoal through the goal event observer when one is set — a
-// display front-end's Events tab — or the output writer (failure notes
-// to stderr) otherwise, preserving the command-line formatting. See
-// TheoryOfGoalMode.
+// recorded as a goal event node in the run's session tree and forwarded
+// through the goal tree observer when one is set — a display front-end's
+// Tree tab — or written to the output writer (failure notes to stderr)
+// otherwise, preserving the command-line formatting. See TheoryOfGoalMode.
 type goalReporter struct {
 	output   io.Writer
-	observer GoalEventObserver
+	observer GoalTreeObserver
+	// tree points at the run's session tree variable, so a message
+	// written between loops lands in the current tree and the updated
+	// tree flows back to RunGoal. See TheoryOfGoalMode.
+	tree **tree.Tree
 }
 
-// message delivers one progress message: an EventGoal carrying the
-// trimmed text through the observer, or the text verbatim to the output
-// writer.
+// message delivers one progress message: a goal event node plus the
+// observer callback, or the text verbatim to the output writer.
 func (r goalReporter) message(text string) {
 	if r.observer != nil {
-		r.observer(Event{Kind: EventGoal, Detail: strings.TrimSpace(text)})
+		r.record(text)
 		return
 	}
 	fmt.Fprint(r.output, text)
 }
 
-// failure delivers one failure note: an EventGoal through the observer,
-// or the text to stderr as before.
+// failure delivers one failure note: a goal event node plus the
+// observer callback, or the text to stderr as before.
 func (r goalReporter) failure(text string) {
 	if r.observer != nil {
-		r.observer(Event{Kind: EventGoal, Detail: strings.TrimSpace(text)})
+		r.record(text)
 		return
 	}
 	fmt.Fprint(os.Stderr, text)
+}
+
+// record writes one goal progress message as a goal event node under
+// the tree root and forwards the updated tree to the observer. See
+// TheoryOfGoalMode and TheoryOfLoopEvents.
+func (r goalReporter) record(text string) {
+	tr := *r.tree
+	if tr == nil {
+		tr = tree.New()
+		*r.tree = tr
+	}
+	if next, _, err := tr.WriteAuto("root", "goal", tree.TypeEvent, tree.AuthorProgram, strings.TrimSpace(text)); err == nil {
+		*r.tree = next
+	}
+	r.observer(*r.tree)
 }
 
 // ErrNoTask reports that a goal loop's generation session has no task:
@@ -642,23 +661,25 @@ func RunGoal(ctx context.Context, opts GoalOptions) GoalResult {
 		opts.Output = os.Stdout
 	}
 
-	// The reporter routes every progress message: as events through the
-	// goal event observer when one is set (a display front-end's Events
-	// tab), or written to the output writer (failure notes to stderr)
-	// otherwise. See TheoryOfGoalMode.
-	reporter := goalReporter{
-		output:   opts.Output,
-		observer: opts.GoalEvents,
-	}
-
-	state := &goalLoopState{}
-	var allStats []AttemptStat
-	var allDiffs []changes.FileDiff
 	// One run, one tree: the run's session tree grows across loops, each
 	// loop writing its session nodes under its loop-N node. See
 	// TheoryOfGoalMode and TheoryOfSessionTree.
 	var runTree *tree.Tree
 	loopsRun := 0
+
+	// The reporter routes every progress message: recorded as a goal
+	// event node plus the observer callback when one is set (a display
+	// front-end's Tree tab), or written to the output writer (failure
+	// notes to stderr) otherwise. See TheoryOfGoalMode.
+	reporter := goalReporter{
+		output:   opts.Output,
+		observer: opts.GoalTree,
+		tree:     &runTree,
+	}
+
+	state := &goalLoopState{}
+	var allStats []AttemptStat
+	var allDiffs []changes.FileDiff
 
 	// runOneLoop executes one generation loop and folds its outcome into
 	// the runner state. It reports whether the run should stop after the
@@ -768,16 +789,16 @@ func appendLoopSummaries(summaries GoalLoopSummaries, loop int, stats []AttemptS
 // the review model — flags.ModelName into it, and resolves
 // GenerateWithResultWithStats from the forked scope, so the loop reads the
 // latest filesystem state, sees the previous loops' feedback and
-// summaries in its system prompt, stamps its events with its loop
-// number, and runs on the requested model. The continuation carries the
-// run's session tree and the loop node into the loop's scope, so the
-// loop writes its session nodes under the node and returns the evolved
-// tree; one run owns one tree. Generation streams to os.Stdout: in TUI
-// mode the terminal's stdout is the null device and the display captures
-// output through state decorators, so a per-loop writer would duplicate
-// output. When no chat input is configured, the loop returns ErrNoTask
-// before any session runs, so the goal runner stops instead of looping
-// on empty outcomes. See TheoryOfGoalNoTask, TheoryOfGoalMode,
+// summaries in its system prompt, records its occurrences as event nodes
+// under its loop node, and runs on the requested model. The continuation
+// carries the run's session tree and the loop node into the loop's scope,
+// so the loop writes its session nodes under the node and returns the
+// evolved tree; one run owns one tree. Generation streams to os.Stdout:
+// in TUI mode the terminal's stdout is the null device and the display
+// captures output through state decorators, so a per-loop writer would
+// duplicate output. When no chat input is configured, the loop returns
+// ErrNoTask before any session runs, so the goal runner stops instead of
+// looping on empty outcomes. See TheoryOfGoalNoTask, TheoryOfGoalMode,
 // TheoryOfGoalReviewModel and TheoryOfSessionTree.
 func makeGoalLoopGenerator(reset dscope.Reset) GoalLoopGenerator {
 	return func(ctx context.Context, loop int, feedback GoalFeedback, summaries GoalLoopSummaries, reviewModel string, continuation SessionTreeContinuation) (Result, []AttemptStat, error) {
@@ -823,14 +844,15 @@ func makeGoalLoopGenerator(reset dscope.Reset) GoalLoopGenerator {
 // GoalRun provider: runs the goal loop mechanism with the scope-backed
 // per-loop generator and the review pass. Each GoalRun resolution binds
 // reset to the resolving scope, so the command's forks (parts provider,
-// goal system prompt) apply to every loop. The goal event observer is
+// goal system prompt) apply to every loop. The goal tree observer is
 // resolved from the scope, so a display front-end's fork receives the
-// goal verdicts as events. The configured review models rotate across
-// the post-done loops, one per done block; see TheoryOfGoalReviewModel.
+// goal verdicts as goal event nodes in the run's tree. The configured
+// review models rotate across the post-done loops, one per done block;
+// see TheoryOfGoalReviewModel.
 func (Module) GoalRun(
 	reset dscope.Reset,
 	runReview RunReview,
-	observeGoal GoalEventObserver,
+	observeGoal GoalTreeObserver,
 	reviewModels ReviewModels,
 ) GoalRun {
 	models := make([]string, 0, len(reviewModels))
@@ -844,7 +866,7 @@ func (Module) GoalRun(
 			Output:       output,
 			Generate:     makeGoalLoopGenerator(reset),
 			Review:       runReview,
-			GoalEvents:   observeGoal,
+			GoalTree:     observeGoal,
 			ReviewModels: models,
 		})
 	}

@@ -20,6 +20,7 @@ import (
 	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/modes"
 	"github.com/reusee/tai/nets"
+	"github.com/reusee/tai/tree"
 )
 
 func withRun(t *testing.T, fn func(Run)) {
@@ -499,9 +500,10 @@ func TestRunMultiGenerationTriggered(t *testing.T) {
 
 // TestRunAttemptNumbersContinueAcrossGenerations verifies the
 // session-wide attempt counter: component-triggered generations
-// continue the attempt sequence instead of restarting at 1, and each
-// attempt-start also carries its position within the generation's
-// retry budget. See TheoryOfLoopEvents.
+// continue the attempt sequence instead of restarting at 1. Each
+// attempt-start event node's content carries the session-wide attempt
+// number and its position within the generation's retry budget. See
+// TheoryOfLoopEvents.
 func TestRunAttemptNumbersContinueAcrossGenerations(t *testing.T) {
 	withRun(t, func(run Run) {
 		comps := components.ComponentSet{
@@ -517,9 +519,9 @@ func TestRunAttemptNumbersContinueAcrossGenerations(t *testing.T) {
 		phaseBuilder := func(g generators.Generator) generators.Phase {
 			return appendPhase("<<龘靐 shell\necho hello\n龘靐\n")
 		}
-		var starts []Event
+		var lastTree *tree.Tree
 		var result Result
-		for ev, err := range run(context.Background(), RunOptions{
+		for tr, err := range run(context.Background(), RunOptions{
 			Generator:      nil,
 			InitialState:   generators.NewPrompts("", nil),
 			Components:     comps,
@@ -530,22 +532,25 @@ func TestRunAttemptNumbersContinueAcrossGenerations(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if ev.Kind == EventAttemptStart {
-				starts = append(starts, ev)
+			lastTree = tr
+		}
+		if lastTree == nil {
+			t.Fatal("expected the run to yield trees")
+		}
+		var starts []string
+		for _, n := range lastTree.ByType(tree.TypeEvent) {
+			if strings.HasPrefix(n.Name, "attempt-start") {
+				starts = append(starts, n.Content)
 			}
 		}
 		if len(starts) != 2 {
-			t.Fatalf("expected 2 attempt-start events, got %d", len(starts))
+			t.Fatalf("expected 2 attempt-start event nodes, got %d", len(starts))
 		}
-		if starts[0].Attempt != 1 {
-			t.Fatalf("first attempt number: got %d, want 1", starts[0].Attempt)
+		if !strings.Contains(starts[0], "attempt 1 start (1/") {
+			t.Fatalf("first attempt content: got %q, want attempt 1 position 1", starts[0])
 		}
-		if starts[1].Attempt != 2 {
-			t.Fatalf("second generation's attempt number must continue the session-wide sequence: got %d, want 2", starts[1].Attempt)
-		}
-		if starts[0].AttemptInGeneration != 1 || starts[1].AttemptInGeneration != 1 {
-			t.Fatalf("each generation's first attempt is position 1 in the retry budget: got %d and %d",
-				starts[0].AttemptInGeneration, starts[1].AttemptInGeneration)
+		if !strings.Contains(starts[1], "attempt 2 start (1/") {
+			t.Fatalf("second generation's attempt number must continue the session-wide sequence: got %q, want attempt 2 position 1", starts[1])
 		}
 	})
 }
@@ -2531,9 +2536,9 @@ func TestRunStateModificationTriggersRound(t *testing.T) {
 	})
 }
 
-// TestRunContinueReasonDescribesTrigger verifies that the
-// components-triggered event states the reason for the next generation
-// — the processed block kinds — instead of a user-part count, which
+// TestRunContinueReasonDescribesTrigger verifies that the continue
+// event node's content states the reason for the next generation —
+// the processed block kinds — instead of a user-part count, which
 // reads as 0 when a component triggers through a state modification
 // alone. See TheoryOfLoops.
 func TestRunContinueReasonDescribesTrigger(t *testing.T) {
@@ -2557,9 +2562,9 @@ func TestRunContinueReasonDescribesTrigger(t *testing.T) {
 					},
 				},
 			}
-			var detail string
+			var lastTree *tree.Tree
 			var result Result
-			for ev, err := range run(context.Background(), RunOptions{
+			for tr, err := range run(context.Background(), RunOptions{
 				Generator:    nil,
 				InitialState: generators.NewPrompts("", nil),
 				Components:   comps,
@@ -2569,12 +2574,16 @@ func TestRunContinueReasonDescribesTrigger(t *testing.T) {
 				if err != nil {
 					t.Fatalf("unexpected error: %v", err)
 				}
-				if ev.Kind == EventComponentsTriggered {
-					detail = ev.Detail
+				lastTree = tr
+			}
+			var detail string
+			for _, n := range lastTree.ByType(tree.TypeEvent) {
+				if strings.HasPrefix(n.Name, "continue") {
+					detail = n.Content
 				}
 			}
-			if detail != "shell blocks scheduled the next generation" {
-				t.Fatalf("expected reason detail, got %q", detail)
+			if !strings.Contains(detail, "shell blocks scheduled the next generation") {
+				t.Fatalf("expected reason detail in the continue node, got %q", detail)
 			}
 		})
 		t.Run("state modification", func(t *testing.T) {
@@ -2601,9 +2610,9 @@ func TestRunContinueReasonDescribesTrigger(t *testing.T) {
 					},
 				},
 			}
-			var detail string
+			var lastTree *tree.Tree
 			var result Result
-			for ev, err := range run(context.Background(), RunOptions{
+			for tr, err := range run(context.Background(), RunOptions{
 				Generator:                nil,
 				InitialState:             generators.NewPrompts("", nil),
 				Components:               comps,
@@ -2614,12 +2623,16 @@ func TestRunContinueReasonDescribesTrigger(t *testing.T) {
 				if err != nil {
 					t.Fatalf("unexpected error: %v", err)
 				}
-				if ev.Kind == EventComponentsTriggered {
-					detail = ev.Detail
+				lastTree = tr
+			}
+			var detail string
+			for _, n := range lastTree.ByType(tree.TypeEvent) {
+				if strings.HasPrefix(n.Name, "continue") {
+					detail = n.Content
 				}
 			}
-			if detail != "state-modifier blocks scheduled the next generation" {
-				t.Fatalf("expected reason detail, got %q", detail)
+			if !strings.Contains(detail, "state-modifier blocks scheduled the next generation") {
+				t.Fatalf("expected reason detail in the continue node, got %q", detail)
 			}
 			if strings.Contains(detail, "user part") {
 				t.Fatalf("detail must not carry a user-part count: %q", detail)

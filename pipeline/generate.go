@@ -198,9 +198,9 @@ separate entries; the completing attempt itself is recorded by
 OnAttemptSuccess. At run end the collected statistics are printed to
 the generation output writer via a deferred call, so the table is still
 shown in command-line mode even when the session ends early due to an
-error; a live consumer reads the per-attempt usage from the run's
-EventUsage events instead (see TheoryOfUsageLogging). When the goal
-runner aggregates the statistics of every loop, it tags each entry with
+error; a live consumer reads the per-attempt usage from the run's usage
+event nodes instead (see TheoryOfUsageLogging). When the goal runner
+aggregates the statistics of every loop, it tags each entry with
 AttemptStat.Loop.
 `
 
@@ -562,7 +562,6 @@ func (Module) GenerateWithResultWithStats(
 	writeTimes *changes.FileWriteTimes,
 	hashes *changes.FileHashes,
 	createHandoff CreateHandoff,
-	goalLoop GoalLoop,
 ) GenerateWithResultWithStats {
 	return func(ctx context.Context, output io.Writer) (Result, []AttemptStat, error) {
 
@@ -751,7 +750,7 @@ func (Module) GenerateWithResultWithStats(
 			// statistics stay visible in command-line mode even when the
 			// session ends early. In TUI mode that writer is the
 			// redirected null device and the TUI reads the usage from
-			// the run's per-attempt EventUsage events instead. See
+			// the run's per-attempt usage event nodes instead. See
 			// TheoryOfAttemptStatistics and TheoryOfUsageLogging.
 			PrintAttemptStats(output, attemptStats)
 		}()
@@ -789,10 +788,10 @@ func (Module) GenerateWithResultWithStats(
 		var fatalErr error
 
 		var result Result
-		// The loop yields one Event per notable occurrence; the terminal
-		// error, if any, arrives with the final yield's error component.
-		// Events with a nil error are informational and do not set err.
-		// See TheoryOfLoopEvents.
+		// The loop yields the full session tree after every event node
+		// write; the terminal error, if any, arrives with the final
+		// yield's error component. Yields with a nil error are
+		// informational and do not set err. See TheoryOfLoopEvents.
 		for _, e := range loopRun(runCtx, RunOptions{
 			Generator:    generator,
 			InitialState: state,
@@ -811,7 +810,6 @@ func (Module) GenerateWithResultWithStats(
 			HTTPClient:          httpClient,
 			Command:             "codes",
 			InteractionRecorder: recorder,
-			Loop:                int(goalLoop),
 
 			OnAttemptStart: func() {
 				memStore.Reset()

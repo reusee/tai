@@ -24,13 +24,13 @@ type ThoughtsSummarize struct {
 	lastSummarize time.Time
 	ctx           context.Context
 
-	// eventEmitter forwards produced summaries into the run's event
-	// stream as EventThoughtSummary. The field is a pointer shared by
-	// every copy of the layer: Module.Run installs the emitter after the
-	// state chain is assembled, and the copies created by AppendContent
-	// and Flush keep forwarding through it. A nil pointer, or a nil
-	// pointed-to function, leaves the layer inert outside the loop.
-	// See TheoryOfLoopEvents.
+	// eventEmitter forwards produced summaries into the run's session
+	// tree as thought-summary event nodes. The field is a pointer shared
+	// by every copy of the layer: Module.Run installs the emitter after
+	// the state chain is assembled, and the copies created by
+	// AppendContent and Flush keep forwarding through it. A nil pointer,
+	// or a nil pointed-to function, leaves the layer inert outside the
+	// loop. See TheoryOfLoopEvents.
 	eventEmitter *func(summary string)
 }
 
@@ -196,8 +196,9 @@ func (s ThoughtsSummarize) Unwrap() generators.State {
 	return s.upstream
 }
 
-// emitThoughtSummary reports a produced summary to the run's event
-// stream when an emitter is installed. The guards keep the layer usable
+// emitThoughtSummary reports a produced summary to the run's session
+// tree — as a thought-summary event node followed by a full-tree yield
+// — when an emitter is installed. The guards keep the layer usable
 // outside the loop (tests, direct construction): with no emitter the
 // summary only reaches the writer. See TheoryOfLoopEvents.
 func (s ThoughtsSummarize) emitThoughtSummary(summary string) {
@@ -209,11 +210,11 @@ func (s ThoughtsSummarize) emitThoughtSummary(summary string) {
 
 // installThoughtSummaryEmitter walks the state chain for a
 // ThoughtsSummarize layer and binds its summary emitter, so summaries
-// produced during generation flow into the run's event stream as
-// EventThoughtSummary. Module.Run installs the emitter before the first
-// round; state copies share the emitter pointer, so every layer copy
-// created by AppendContent and Flush emits through the same function.
-// See TheoryOfLoopEvents and TheoryOfThoughtsSummarize.
+// produced during generation are recorded as thought-summary event
+// nodes and the full tree is yielded. Module.Run installs the emitter
+// before the first round; state copies share the emitter pointer, so
+// every layer copy created by AppendContent and Flush emits through the
+// same function. See TheoryOfLoopEvents and TheoryOfThoughtsSummarize.
 func installThoughtSummaryEmitter(state generators.State, emit func(summary string)) {
 	for s := state; s != nil; s = s.Unwrap() {
 		if ts, ok := s.(ThoughtsSummarize); ok {

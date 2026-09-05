@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/reusee/dscope"
@@ -10,9 +9,14 @@ import (
 	"github.com/reusee/tai/modes"
 	"github.com/reusee/tai/pipeline"
 	"github.com/reusee/tai/taiui"
+	"github.com/reusee/tai/tree"
 )
 
-func TestForkTUIDisplayForwardsEventsToTUI(t *testing.T) {
+// TestForkTUIDisplayForwardsTreesToTUI verifies that the run's tree
+// iterator reaches the TUI through the tap fork: every yielded tree is
+// stored by setTree, so the Tree tab renders the same tree the pipeline
+// writes. See TheoryOfTUIDisplayFork and pipeline.TheoryOfLoopEvents.
+func TestForkTUIDisplayForwardsTreesToTUI(t *testing.T) {
 	tui := newTUIForTest()
 	scope := forkTUIDisplay(
 		dscope.New(modes.ForTest(t), new(pipeline.Module)),
@@ -20,15 +24,8 @@ func TestForkTUIDisplayForwardsEventsToTUI(t *testing.T) {
 	)
 
 	scope.Call(func(run pipeline.Run) {
-		usage := generators.Usage{}
-		usage.Prompt.TokenCount = 100
-		usage.Prompt.TokenCountCached = 20
-		usage.Candidates.TokenCount = 50
-		usage.Thoughts.TokenCount = 10
-
 		var result pipeline.Result
-		var usageEvents []pipeline.Event
-		for ev, err := range run(context.Background(), pipeline.RunOptions{
+		for _, err := range run(context.Background(), pipeline.RunOptions{
 			InitialState: generators.NewPrompts("", nil),
 			PhaseBuilder: func(_ generators.Generator) generators.Phase {
 				return func(_ context.Context, state generators.State) (generators.Phase, generators.State, error) {
@@ -36,7 +33,6 @@ func TestForkTUIDisplayForwardsEventsToTUI(t *testing.T) {
 						Role: generators.RoleModel,
 						Parts: []generators.Part{
 							generators.Text("ok\n"),
-							usage,
 						},
 					})
 					if err != nil {
@@ -49,52 +45,29 @@ func TestForkTUIDisplayForwardsEventsToTUI(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if ev.Kind == pipeline.EventUsage {
-				usageEvents = append(usageEvents, ev)
-			}
-		}
-		if len(usageEvents) != 1 {
-			t.Fatalf("expected 1 EventUsage in the event stream, got %d", len(usageEvents))
-		}
-		if got := usageEvents[0].Usage.Prompt.TokenCount; got != 100 {
-			t.Fatalf("expected the attempt usage on EventUsage, got prompt tokens %d", got)
-		}
-		if got := usageEvents[0].Attempt; got != 1 {
-			t.Fatalf("expected attempt 1 on EventUsage, got %d", got)
 		}
 	})
 
 	tui.mu.Lock()
 	defer tui.mu.Unlock()
-	var texts []string
-	// The events file into a tree: walk it depth-first so nested lines
-	// (e.g., the usage event under its attempt-start) are collected too.
-	var walk func(n *taiui.EventNode)
-	walk = func(n *taiui.EventNode) {
-		for _, line := range n.Lines {
-			texts = append(texts, line.Text)
-		}
-		for _, child := range n.Children {
-			walk(child)
-		}
+	if tui.treeView == nil {
+		t.Fatal("expected the TUI to hold the run's tree")
 	}
-	for _, root := range tui.events.Roots {
-		walk(root)
+	if len(tui.treeView.ByType(tree.TypeEvent)) == 0 {
+		t.Fatal("expected event nodes in the TUI's tree")
 	}
-	joined := strings.Join(texts, "\n")
-	if !strings.Contains(joined, "[Usage] attempt 1") {
-		t.Fatalf("expected the usage line in the Events tab, got %v", texts)
-	}
-	if !strings.Contains(joined, "prompt 100") || !strings.Contains(joined, "thoughts 10") {
-		t.Fatalf("expected the usage counters in the Events tab, got %v", texts)
+	// The tree is the pipeline's own session tree: the attempt's
+	// response node is present.
+	if _, ok := tui.treeView.Node("response-1"); !ok {
+		t.Fatal("expected the response node in the TUI's tree")
 	}
 }
 
+// TestForkTUIDisplayDecoratesHandoffState verifies that the handoff
+// decorator from the display scope observes content parts, so handoff
+// output is highlighted per part and per thinking state in the Output
+// tab. See TheoryOfTUIHandoff.
 func TestForkTUIDisplayDecoratesHandoffState(t *testing.T) {
-	// The handoff decorator from the display scope must observe content
-	// parts, so handoff output is highlighted per part and per thinking
-	// state in the Output tab, the same as regular generation output.
-	// See TheoryOfTUIHandoff.
 	tui := newTUIForTest()
 	scope := forkTUIDisplay(
 		dscope.New(modes.ForTest(t), new(pipeline.Module)),
@@ -138,34 +111,27 @@ func TestForkTUIDisplayDecoratesHandoffState(t *testing.T) {
 	}
 }
 
-// TestForkTUIDisplayForwardsGoalEventsToTUI verifies that the goal
-// event observer forked by forkTUIDisplay forwards the goal runner's
-// verdicts to the TUI, so the Events tab renders them without a writer
+// TestForkTUIDisplayForwardsGoalTreeToTUI verifies that the goal tree
+// observer forked by forkTUIDisplay forwards the goal runner's tree to
+// the TUI, so the Tree tab renders the verdict nodes without a writer
 // fork. See TheoryOfTUIDisplayFork.
-func TestForkTUIDisplayForwardsGoalEventsToTUI(t *testing.T) {
+func TestForkTUIDisplayForwardsGoalTreeToTUI(t *testing.T) {
 	tui := newTUIForTest()
 	scope := forkTUIDisplay(
 		dscope.New(modes.ForTest(t), new(pipeline.Module)),
 		tui,
 	)
 
-	scope.Call(func(observe pipeline.GoalEventObserver) {
+	scope.Call(func(observe pipeline.GoalTreeObserver) {
 		if observe == nil {
-			t.Fatal("expected the TUI fork to provide a goal event observer")
+			t.Fatal("expected the TUI fork to provide a goal tree observer")
 		}
-		observe(pipeline.Event{Kind: pipeline.EventGoal, Detail: "[Goal Achieved after 2 loop(s)]"})
+		observe(tree.New())
 	})
 
 	tui.mu.Lock()
 	defer tui.mu.Unlock()
-	var texts []string
-	for _, node := range tui.events.Roots {
-		for _, line := range node.Lines {
-			texts = append(texts, line.Text)
-		}
-	}
-	joined := strings.Join(texts, "\n")
-	if !strings.Contains(joined, "[Goal Achieved after 2 loop(s)]") {
-		t.Fatalf("expected the goal verdict in the Events tab, got %v", texts)
+	if tui.treeView == nil {
+		t.Fatal("expected the goal tree stored in the TUI")
 	}
 }

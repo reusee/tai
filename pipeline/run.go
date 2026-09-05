@@ -70,15 +70,17 @@ commands (the auto-detected default, ai, next). The core pattern:
 4. Process collected blocks through components (if any)
 5. Repeat until no components trigger or MaxGenerations is reached
 
-Run is exposed as an event iterator: func(ctx, opts, result *Result)
-iter.Seq2[Event, error]. The result is filled incrementally as the run
-progresses; every notable occurrence — attempt lifecycle (start,
-completion, truncation), retry decisions and handoffs, synthesized
-completion summaries, per-attempt token usage, component-triggered and
-idle continuations — is yielded as an Event the moment its facts are
-known (see TheoryOfLoopEvents). The terminal error, if any, arrives with
-the final yield's error component when the run stops. Callers may suspend
-and resume the run via iter.Pull2, inspecting the result between pulls.
+Run is exposed as a tree iterator: func(ctx, opts, result *Result)
+iter.Seq2[*tree.Tree, error]. The result is filled incrementally as
+the run progresses; every notable occurrence — attempt lifecycle
+(start, completion, truncation), retry decisions and handoffs,
+synthesized completion summaries, per-attempt token usage,
+component-triggered and idle continuations — is first recorded as an
+event node in the session tree and then the full tree is yielded the
+moment its facts are known (see TheoryOfLoopEvents). The terminal
+error, if any, arrives with the final yield's error component when
+the run stops. Callers may suspend and resume the run via iter.Pull2,
+inspecting the result between pulls.
 
 A generation is one pass through the user-driven loop: the model
 generates, the summary and parts are collected, and component output (or
@@ -120,9 +122,9 @@ block, because the failed attempt's blocks were discarded.
 When the retry budget is exhausted and the final attempt still lacks a
 summary block, the loop synthesizes a summary from the generation's
 output and appends it to the state as a summary block, so the generation
-has a completion signal for the attempt statistics and the TUI's Events
-tab. The synthesis applies to every exhausted generation, including
-generations whose blocks trigger components.
+has a completion signal for the attempt statistics and the display
+front-end's Tree tab. The synthesis applies to every exhausted
+generation, including generations whose blocks trigger components.
 
 Retry on error: an error after content output retries from the state
 that includes the partial output, appending the error context and the
@@ -166,21 +168,21 @@ const TheoryOfUsageLogging = `
 The token usage of each generation attempt is recorded by the Run loop
 itself, not by individual commands. After each attempt, the usage record
 carries the 1-based attempt number and the prompt, cached, completion,
-and thought token counts from the attempt's final usage. The record
-flows to the run's event stream as an EventUsage — the single display
-source for a live consumer; the TUI renders its "[Usage]" line from the
-event — and to a "usage" log entry, so every generation command — the
-auto-detected default, ai, next, ping — shows token consumption in its logs and in the
-TUI's Logs pane. An attempt that ends with an error carries an outcome
-marker ("error" in the log entry, in the event's Detail, and in the
-rendered line's "(error)" suffix), so token consumption is traceable for
-every attempt, including retries. Attempts that record no token usage
-emit nothing.
+and thought token counts from the attempt's final usage. The record is
+written as a usage event node in the session tree — the single display
+source for a live consumer; the display front-end's Tree tab renders
+its usage line from the node's content — and to a "usage" log entry, so
+every generation command — the auto-detected default, ai, next, ping —
+shows token consumption in its logs and in the TUI's Logs pane. An
+attempt that ends with an error carries an outcome marker ("error" in
+the log entry, in the usage node's content, and in the rendered line's
+"(error)" suffix), so token consumption is traceable for every attempt,
+including retries. Attempts that record no token usage emit nothing.
 
 Streaming requests measure speed onto the final usage (see
 generators.TheoryOfUsageTiming): the loop appends the one-decimal keys
-ttft_seconds and tokens_per_second to the usage log entry, and the TUI's
-"[Usage]" line ends with the same fragment rendered by
+ttft_seconds and tokens_per_second to the usage log entry, and the
+usage node's content ends with the same fragment rendered by
 generators.Usage.SpeedSuffix. Non-streaming usages carry no timings, so
 the keys and the fragment are omitted rather than printed as zeros. The
 statistics table keeps count-only columns and takes its duration from
@@ -239,17 +241,19 @@ var _ InteractionRecorder = (*records.Recorder)(nil)
 // processes blocks via components, and continues if a component
 // triggers a new generation. When Components is empty, the loop runs a
 // single generation (single-shot mode). The result is filled into
-// result as the run progresses, and the returned iterator yields one
-// Event per notable occurrence — attempt lifecycle (start, completion,
-// truncation), request parameters, retries and handoffs, synthesized
-// completion summaries, attempt finish reasons, per-attempt token
-// usage, periodic thought summaries, and component-triggered or idle
-// continuations — constructed and yielded the moment their facts are
-// known, with the terminal error, if any, arriving with the final
-// yield's error component. Callers may suspend and resume the run via
-// iter.Pull2, inspecting the result between pulls. See TheoryOfLoops
-// and TheoryOfLoopEvents.
-type Run func(ctx context.Context, opts RunOptions, result *Result) iter.Seq2[Event, error]
+// result as the run progresses; every notable occurrence — attempt
+// lifecycle (start, completion, truncation), request parameters,
+// retries and handoffs, synthesized completion summaries, attempt
+// finish reasons, per-attempt token usage, periodic thought summaries,
+// and component-triggered or idle continuations — is first recorded as
+// an event node in the session tree and then the full tree is yielded,
+// the moment its facts are known, with the terminal error, if any,
+// arriving with the final yield's error component. Every yield carries
+// the whole tree, so a consumer renders — and projects — the same tree
+// the pipeline writes, with no separately maintained display state.
+// Callers may suspend and resume the run via iter.Pull2, inspecting
+// the result between pulls. See TheoryOfLoops and TheoryOfLoopEvents.
+type Run func(ctx context.Context, opts RunOptions, result *Result) iter.Seq2[*tree.Tree, error]
 
 // generationResult is the outcome of one generation: the updated
 // state, the generation's summary, and the parts that determine whether
@@ -269,29 +273,19 @@ type generationResult struct {
 
 // loopState holds the mutable state of a generation loop run. The main
 // loop in Run executes generations via runGeneration; the state here is
-// updated by each generation and carried into the next. Events are
-// yielded through the guarded emitEvent/emitTerminal methods: after the
-// consumer stops, further events are dropped so the loop's bookkeeping
-// can still complete. See TheoryOfLoops and TheoryOfLoopEvents.
+// updated by each generation and carried into the next. Every event
+// write yields the full session tree through the guarded
+// emitTree/emitTerminalTree methods: after the consumer stops, further
+// yields are dropped so the loop's bookkeeping can still complete. See
+// TheoryOfLoops and TheoryOfLoopEvents.
 type loopState struct {
 	ctx     context.Context
 	opts    RunOptions
 	rec     InteractionRecorder
 	result  *Result
-	yield   func(Event, error) bool
+	yield   func(*tree.Tree, error) bool
 	stopped bool
 	state   generators.State
-
-	// nextSeq numbers the run's events: every emitted event takes the
-	// next value, so the run's events carry unique, increasing
-	// sequence numbers. branchRoot records the sequence number of the
-	// goal run's loop-start event — the branch every attempt nests
-	// under — and stays 0 for a non-goal run; attemptRoot records the
-	// sequence number of the current attempt's start event, the parent
-	// of its lifecycle events. See TheoryOfLoopEvents.
-	nextSeq     int
-	branchRoot  int
-	attemptRoot int
 
 	// attempt is the session-wide 1-based attempt number of the attempt
 	// being executed: it increments across every attempt of the run and
@@ -299,8 +293,8 @@ type loopState struct {
 	// idle-handler inputs continue the sequence instead of restarting
 	// at 1. attemptInGeneration is the attempt's position within its
 	// generation's retry budget (1-based), pairing with maxRetries for
-	// the truncated, retry, and handoff budget display. See
-	// TheoryOfLoopEvents.
+	// the truncated and retry budget lines carried in event node
+	// contents. See TheoryOfLoopEvents.
 	attempt             int
 	attemptInGeneration int
 
@@ -314,25 +308,27 @@ type loopState struct {
 	runErr error
 
 	// logger records the aggregated token usage of each attempt as a
-	// "usage" log entry; the event stream (EventUsage) is the display
-	// source for a live consumer such as the TUI's Events tab. The
-	// logger is dscope provided, captured by the Run provider. See
-	// TheoryOfUsageLogging.
+	// "usage" log entry; the usage event node in the session tree is
+	// the display source for a live consumer such as the TUI's Tree
+	// tab. The logger is dscope provided, captured by the Run provider.
+	// See TheoryOfUsageLogging.
 	logger logs.Logger
 
 	// temperatureFlag and effortFlag carry the dscope-resolved
 	// temperature and reasoning-effort flag values, captured by the Run
-	// provider. The request description (EventRequest) resolves the
-	// effective generation parameters from the generator spec and these
-	// flag overrides, mirroring the generators' flag-over-spec
-	// precedence. See TheoryOfLoopEvents.
+	// provider. The request event node's content resolves the effective
+	// generation parameters from the generator spec and these flag
+	// overrides, mirroring the generators' flag-over-spec precedence.
+	// See TheoryOfLoopEvents.
 	temperatureFlag generators.TemperatureFlag
 	effortFlag      generators.EffortFlag
 
 	// sessionTree is the immutable session tree the loop owns: every
 	// operation of the run — initial input, responses, summaries,
-	// blocks, results, feedback — is written as a node. It never joins
-	// the generators.State chain. See TheoryOfSessionTree.
+	// blocks, results, feedback, and the loop's own event nodes — is
+	// written as a node, and every write is yielded as the full tree.
+	// It never joins the generators.State chain. See
+	// TheoryOfSessionTree.
 	sessionTree *tree.Tree
 	// sessionRoot names the node under which this session writes its
 	// nodes: the tree's root for a fresh run, the goal run's loop-N node
@@ -411,8 +407,8 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 	attemptBase := generators.CountContents(ls.state)
 
 	// Inner retry loop: each iteration is one attempt, opened by the
-	// attempt-start event immediately before its work — including
-	// retries, so every attempt's opening is reported the moment it
+	// attempt-start event node immediately before its work — including
+	// retries, so every attempt's opening is recorded the moment it
 	// begins. The attempt number is session-wide: it increments on
 	// every attempt and never resets across generations;
 	// attemptInGeneration records the position within this
@@ -427,45 +423,37 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 		generationParseErrors = nil
 		prefetchedFutures = nil
 
-		// Attempt open: report to the interaction recorder, emit the
-		// attempt-start event, and reset per-attempt state (e.g.,
+		// Attempt open: report to the interaction recorder, record the
+		// attempt-start event node, and reset per-attempt state (e.g.,
 		// MemoryStore.Reset). Only the generation's first attempt
 		// honors the parse-error correction path's skip; retries
 		// reset unconditionally. See TheoryOfLoopEvents.
 		if ls.rec != nil && ls.rec.Enabled() {
 			ls.rec.AttemptStart()
 		}
-		ls.emitEvent(Event{
-			Kind:                EventAttemptStart,
-			Attempt:             ls.attempt,
-			AttemptInGeneration: ls.attemptInGeneration,
-			MaxAttempts:         ls.maxRetries,
-		})
+		ls.writeEventNode("attempt-start", fmt.Sprintf("attempt %d start (%d/%d)",
+			ls.attempt, ls.attemptInGeneration, ls.maxRetries))
 		if ls.opts.OnAttemptStart != nil && (!ls.skipOnAttemptStart || retry > 0) {
 			ls.opts.OnAttemptStart()
 		}
 
-		// The request event precedes the attempt's request: it
+		// The request node precedes the attempt's request: it
 		// describes the actual generation parameters — the model and
 		// the effective temperature, reasoning effort, and token
 		// limits — resolved from the generator spec with the flag
 		// overrides, mirroring the generators' flag-over-spec
 		// precedence. Unlike the generators' "generating" log, which
 		// records the spec's effort even when the flag overrides it,
-		// the event reports the values the request actually carries.
-		// The loop cannot see retries internal to the generator's
-		// Retrier: one loop attempt may cover several API calls. See
-		// TheoryOfLoopEvents.
+		// the node's content reports the values the request actually
+		// carries. The loop cannot see retries internal to the
+		// generator's Retrier: one loop attempt may cover several API
+		// calls. See TheoryOfLoopEvents.
 		if ls.opts.Generator != nil {
-			ls.emitEvent(Event{
-				Kind:    EventRequest,
-				Attempt: ls.attempt,
-				Detail: describeRequest(
-					ls.opts.Generator.Spec(),
-					ls.temperatureFlag,
-					ls.effortFlag,
-				),
-			})
+			ls.writeEventNode("request", describeRequest(
+				ls.opts.Generator.Spec(),
+				ls.temperatureFlag,
+				ls.effortFlag,
+			))
 		}
 
 		// Create parser handler that collects blocks and
@@ -543,13 +531,13 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 			phaseState = wrappedState
 		}
 
-		// The attempt's finish reason feeds both the event stream —
+		// The attempt's finish reason feeds both the session tree —
 		// every attempt's completion signal, including attempts that
-		// later fail — and the completion check below. Emitted
+		// later fail — and the completion check below. Recorded
 		// immediately when known. See TheoryOfLoopEvents.
 		finishReason := extractFinishReason(phaseState, attemptBase)
 		if finishReason != "" {
-			ls.emitEvent(Event{Kind: EventFinish, Attempt: ls.attempt, Detail: finishReason})
+			ls.writeEventNode("finish", "finish: "+finishReason)
 		}
 
 		if generationErr != nil {
@@ -582,21 +570,15 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 					ls.state = phaseState
 
 					// Report the failed attempt to the
-					// interaction recorder and the retry
-					// decision to the event stream, immediately.
+					// interaction recorder and record the retry
+					// decision as an event node, immediately.
 					// See TheoryOfLoopEvents.
 					if ls.rec != nil && ls.rec.Enabled() {
 						ls.rec.AttemptError(generationErr)
 						ls.rec.Event("decision", fmt.Sprintf("error after partial output triggered retry: attempt %d/%d: %v", retry+1, ls.maxRetries, generationErr))
 					}
-					ls.emitEvent(Event{
-						Kind:                EventRetry,
-						Attempt:             ls.attempt,
-						AttemptInGeneration: ls.attemptInGeneration,
-						MaxAttempts:         ls.maxRetries,
-						Err:                 generationErr,
-						Detail:              "error after partial output",
-					})
+					ls.writeEventNode("retry", fmt.Sprintf("retry attempt %d/%d: %v",
+						retry+1, ls.maxRetries, generationErr))
 
 					var retryParts []generators.Part
 					retryParts = append(retryParts, generators.Text(
@@ -620,9 +602,9 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 					if ls.opts.Handoff != nil {
 						incompleteText := ExtractIncompleteOutput(phaseState, prevCount)
 						if incompleteText != "" {
-							// Report the handoff request's start
+							// Record the handoff request's start
 							// immediately, before the request is
-							// sent. Handoff events carry the
+							// sent. Handoff event nodes carry the
 							// attempt attribution but no budget
 							// figures: handoff generation itself
 							// retries without an attempt limit, so
@@ -630,22 +612,14 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 							// misrepresent it. See
 							// TheoryOfLoopEvents and
 							// TheoryOfHandoff.
-							ls.emitEvent(Event{
-								Kind:    EventHandoffStart,
-								Attempt: ls.attempt,
-							})
+							ls.writeEventNode("handoff-start", "handoff started")
 							handoff, handoffErr := ls.opts.Handoff(handoffInput(incompleteText, ls.sessionTree, ls.sessionParent()))
 							if handoffErr == nil && handoff != nil {
 								summary = handoff.Summary
 								retryPrompt = handoff.Prompt
-								// Report the produced handoff to the
-								// event stream. See TheoryOfLoopEvents.
-								ls.emitEvent(Event{
-									Kind:    EventHandoff,
-									Attempt: ls.attempt,
-									Summary: handoff.Summary,
-									Handoff: handoff,
-								})
+								// Record the produced handoff. See
+								// TheoryOfLoopEvents.
+								ls.writeEventNode("handoff", "handoff summary:\n"+handoff.Summary)
 								// Account the handoff request's own token
 								// spend before the failed attempt is
 								// recorded. The window starts at the
@@ -749,8 +723,8 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 		}
 
 		// Report the truncated attempt to the interaction recorder
-		// and the event stream, immediately, before the handoff
-		// request. See TheoryOfLoopEvents.
+		// and record the truncation as an event node, immediately,
+		// before the handoff request. See TheoryOfLoopEvents.
 		if ls.rec != nil && ls.rec.Enabled() {
 			ls.rec.AttemptTruncated()
 			if isAbnormalFinish {
@@ -763,13 +737,8 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 		if isAbnormalFinish {
 			truncatedDetail = fmt.Sprintf("abnormal finish reason %q", finishReason)
 		}
-		ls.emitEvent(Event{
-			Kind:                EventTruncated,
-			Attempt:             ls.attempt,
-			AttemptInGeneration: ls.attemptInGeneration,
-			MaxAttempts:         ls.maxRetries,
-			Detail:              truncatedDetail,
-		})
+		ls.writeEventNode("truncated", fmt.Sprintf("attempt %d truncated (%d/%d): %s",
+			ls.attempt, ls.attemptInGeneration, ls.maxRetries, truncatedDetail))
 
 		// Perform handoff summary on incomplete output if threshold met.
 		// attemptBase is both the incomplete-output window and the
@@ -781,24 +750,15 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 		if ls.opts.Handoff != nil {
 			incompleteText := ExtractIncompleteOutput(phaseState, attemptBase)
 			if incompleteText != "" {
-				// Report the handoff request's start immediately.
+				// Record the handoff request's start immediately.
 				// See TheoryOfLoopEvents.
-				ls.emitEvent(Event{
-					Kind:    EventHandoffStart,
-					Attempt: ls.attempt,
-				})
+				ls.writeEventNode("handoff-start", "handoff started")
 				handoff, rerr := ls.opts.Handoff(handoffInput(incompleteText, ls.sessionTree, ls.sessionParent()))
 				if rerr == nil && handoff != nil {
 					summary = handoff.Summary
 					retryPrompt = handoff.Prompt
-					// Report the produced handoff to the event
-					// stream. See TheoryOfLoopEvents.
-					ls.emitEvent(Event{
-						Kind:    EventHandoff,
-						Attempt: ls.attempt,
-						Summary: handoff.Summary,
-						Handoff: handoff,
-					})
+					// Record the produced handoff. See TheoryOfLoopEvents.
+					ls.writeEventNode("handoff", "handoff summary:\n"+handoff.Summary)
 					phaseState = appendHandoffUsage(phaseState, attemptBase, handoff.Usage)
 				}
 			}
@@ -853,7 +813,7 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 		ls.writeFeedbackInputNode(retryParts)
 
 		// The retry attempt opens on the next loop iteration: its
-		// attempt-start event and OnAttemptStart hook fire there,
+		// attempt-start node and OnAttemptStart hook fire there,
 		// keeping every attempt's opening bookkeeping in one place.
 		// See TheoryOfLoopEvents.
 	}
@@ -873,26 +833,18 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 	// block. The synthesis applies to every exhausted generation —
 	// including generations whose blocks trigger components — because
 	// the summary block is mandatory in every response: the attempt
-	// statistics and the TUI's Events tab need the completion signal.
-	// See TheoryOfLoops.
+	// statistics and the display front-end's Tree tab need the
+	// completion signal. See TheoryOfLoops.
 	if len(generationSummaries) == 0 && ls.opts.Handoff != nil {
 		incompleteText := ExtractIncompleteOutput(phaseState, attemptBase)
 		if incompleteText != "" {
-			// Report the handoff request's start immediately.
+			// Record the handoff request's start immediately.
 			// See TheoryOfLoopEvents.
-			ls.emitEvent(Event{
-				Kind:    EventHandoffStart,
-				Attempt: ls.attempt,
-			})
+			ls.writeEventNode("handoff-start", "handoff started")
 			if handoff, serr := ls.opts.Handoff(handoffInput(incompleteText, ls.sessionTree, ls.sessionParent())); serr == nil && handoff != nil {
-				// Report the synthesized completion summary to the
-				// event stream. See TheoryOfLoopEvents.
-				ls.emitEvent(Event{
-					Kind:    EventSynthesizedSummary,
-					Attempt: ls.attempt,
-					Summary: handoff.Summary,
-					Handoff: handoff,
-				})
+				// Record the synthesized completion summary. See
+				// TheoryOfLoopEvents.
+				ls.writeEventNode("synthesized-summary", "synthesized completion summary:\n"+handoff.Summary)
 				// Account the handoff request's own token spend so the
 				// synthesized completion's attempt statistics and usage
 				// line include it. The window starts at the final
@@ -935,18 +887,20 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 	}
 
 	// Record the attempt's token usage and report the successfully
-	// completed attempt to the interaction recorder and the event
-	// stream. See TheoryOfUsageLogging and TheoryOfLoopEvents.
+	// completed attempt to the interaction recorder and the session
+	// tree. See TheoryOfUsageLogging and TheoryOfLoopEvents.
 	ls.recordAttemptUsage(phaseState, attemptBase, "")
 	if ls.rec != nil && ls.rec.Enabled() {
 		ls.rec.AttemptCompleted(generationSummaries)
 	}
-	ls.emitEvent(Event{
-		Kind:      EventAttemptCompleted,
-		Attempt:   ls.attempt,
-		Summary:   strings.Join(generationSummaries, "\n"),
-		Summaries: generationSummaries,
-	})
+	// The completed node carries the attempt's summary bodies, so the
+	// Tree tab shows the completion with its summary collapsed by
+	// default. See TheoryOfLoopEvents.
+	completedContent := fmt.Sprintf("attempt %d complete", ls.attempt)
+	if len(generationSummaries) > 0 {
+		completedContent += ":\n" + strings.Join(generationSummaries, "\n")
+	}
+	ls.writeEventNode("completed", completedContent)
 
 	// The successful attempt joins the session tree: the response
 	// node, one summary node per summary body, and the block batch
@@ -1012,13 +966,11 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 				return generationResult{state: ls.state}, aerr
 			}
 			ls.writeFeedbackInputNode(feedbackParts)
-			ls.emitEvent(Event{
-				Kind:    EventComponentsTriggered,
-				Attempt: ls.attempt,
-				Detail: buildContinueReason(nil,
+			ls.writeEventNode("continue", fmt.Sprintf("attempt %d continues: %s",
+				ls.attempt,
+				buildContinueReason(nil,
 					len(generationParseErrors) > 0,
-					len(unknownKinds) > 0),
-			})
+					len(unknownKinds) > 0)))
 			return generationResult{
 				state:        ls.state,
 				summaries:    generationSummaries,
@@ -1115,11 +1067,8 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 		if ls.rec != nil && ls.rec.Enabled() {
 			ls.rec.Event("decision", continueReason)
 		}
-		ls.emitEvent(Event{
-			Kind:    EventComponentsTriggered,
-			Attempt: ls.attempt,
-			Detail:  continueReason,
-		})
+		ls.writeEventNode("continue", fmt.Sprintf("attempt %d continues: %s",
+			ls.attempt, continueReason))
 		return generationResult{
 			state:        ls.state,
 			summaries:    generationSummaries,
@@ -1144,7 +1093,7 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 			if ls.rec != nil && ls.rec.Enabled() {
 				ls.rec.Event("decision", "idle handler returned user input; starting a new generation")
 			}
-			ls.emitEvent(Event{Kind: EventIdle, Attempt: ls.attempt})
+			ls.writeEventNode("idle", "idle input received; starting the next generation")
 			return generationResult{
 				state:        ls.state,
 				summaries:    generationSummaries,
@@ -1160,21 +1109,22 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 }
 
 // describeRequest renders the actual generation parameters of one
-// request as the EventRequest detail: the resolved spec path, the model
-// identity, and the effective temperature, reasoning effort, and token
-// limits. The spec path is the full resolved generator path (Spec.Name
-// after resolveSpec, e.g. "google/flash"); specs constructed without
-// resolution (built-in shortcuts, the ollama shorthand) carry no path
-// and omit the field. The effective values mirror the generators'
-// flag-over-spec precedence — the -temperature and -effort flags
-// override the spec fields (see Gemini.Generate and OpenAI.Generate) —
-// so the event reports the values the request actually carries, unlike
-// the generators' "generating" log, which records the spec's effort
-// even when the flag overrides it. Max generate tokens come from the
-// spec: every built-in command passes nil GenerateOptions, so the spec
-// field is the effective limit; flags.MaxTokens bounds only the input
-// budget and is not part of the request. Unset values are omitted from
-// the detail. See TheoryOfLoopEvents.
+// request as the request event node's content: the resolved spec path,
+// the model identity, and the effective temperature, reasoning effort,
+// and token limits. The spec path is the full resolved generator path
+// (Spec.Name after resolveSpec, e.g. "google/flash"); specs constructed
+// without resolution (built-in shortcuts, the ollama shorthand) carry
+// no path and omit the field. The effective values mirror the
+// generators' flag-over-spec precedence — the -temperature and -effort
+// flags override the spec fields (see Gemini.Generate and
+// OpenAI.Generate) — so the node's content reports the values the
+// request actually carries, unlike the generators' "generating" log,
+// which records the spec's effort even when the flag overrides it. Max
+// generate tokens come from the spec: every built-in command passes nil
+// GenerateOptions, so the spec field is the effective limit;
+// flags.MaxTokens bounds only the input budget and is not part of the
+// request. Unset values are omitted from the detail. See
+// TheoryOfLoopEvents.
 func describeRequest(
 	spec generators.Spec,
 	temperatureFlag generators.TemperatureFlag,
@@ -1211,12 +1161,11 @@ func describeRequest(
 }
 
 // recordAttemptUsage records the aggregated token usage of one attempt:
-// to the run's event stream as an EventUsage (the display source for a
+// as a usage event node in the session tree (the display source for a
 // live consumer) and as a "usage" log entry. Attempts that record no
 // token usage emit nothing. Streaming attempts additionally append the
-// measured timing keys ttft_seconds and tokens_per_second; unmeasured
-// usages leave them out. See TheoryOfUsageLogging and
-// TheoryOfLoopEvents.
+// measured timing fragment to the node's content; unmeasured usages
+// leave it out. See TheoryOfUsageLogging and TheoryOfLoopEvents.
 func (ls *loopState) recordAttemptUsage(state generators.State, attemptBaseCount int, outcome string) {
 	// The usage is the last Usage part among the contents appended since
 	// the attempt started, not a sum of streaming snapshots.
@@ -1228,12 +1177,20 @@ func (ls *loopState) recordAttemptUsage(state generators.State, attemptBaseCount
 		usage.Thoughts.TokenCount == 0 {
 		return
 	}
-	ls.emitEvent(Event{
-		Kind:    EventUsage,
-		Attempt: ls.attempt,
-		Usage:   usage,
-		Detail:  outcome,
-	})
+	outcomeSuffix := ""
+	if outcome != "" {
+		outcomeSuffix = " (" + outcome + ")"
+	}
+	// SpeedSuffix carries the streaming ttft and average generation
+	// speed when measured, staying empty for unmeasured usages.
+	// See TheoryOfUsageTiming.
+	ls.writeEventNode("usage", fmt.Sprintf("attempt %d usage%s: prompt %d, cached %d, completion %d, thoughts %d",
+		ls.attempt, outcomeSuffix,
+		usage.Prompt.TokenCount,
+		usage.Prompt.TokenCountCached,
+		usage.Candidates.TokenCount,
+		usage.Thoughts.TokenCount,
+	)+usage.SpeedSuffix())
 	args := []any{
 		"attempt", ls.attempt,
 		"prompt", usage.Prompt.TokenCount,
@@ -1274,22 +1231,10 @@ func (ls *loopState) endOnDiskChange(err error, phaseState generators.State, att
 	if ls.opts.Handoff != nil {
 		incompleteText := ExtractIncompleteOutput(phaseState, attemptBase)
 		if incompleteText != "" {
-			ls.emitEvent(Event{
-				Kind:                EventHandoffStart,
-				Attempt:             ls.attempt,
-				AttemptInGeneration: ls.attemptInGeneration,
-				MaxAttempts:         ls.maxRetries,
-			})
+			ls.writeEventNode("handoff-start", "handoff started")
 			if h, herr := ls.opts.Handoff(handoffInput(incompleteText, ls.sessionTree, ls.sessionParent())); herr == nil && h != nil {
 				handoff = h
-				ls.emitEvent(Event{
-					Kind:                EventHandoff,
-					Attempt:             ls.attempt,
-					AttemptInGeneration: ls.attemptInGeneration,
-					MaxAttempts:         ls.maxRetries,
-					Summary:             h.Summary,
-					Handoff:             h,
-				})
+				ls.writeEventNode("handoff", "handoff summary:\n"+h.Summary)
 				phaseState = appendHandoffUsage(phaseState, attemptBase, h.Usage)
 			}
 		}
@@ -1300,8 +1245,8 @@ func (ls *loopState) endOnDiskChange(err error, phaseState generators.State, att
 }
 
 // finishWithError fills the result with the final state and yields the
-// terminal error event, ending the run. The caller must return
-// immediately after the call.
+// terminal error, ending the run. The caller must return immediately
+// after the call.
 func (ls *loopState) finishWithError(err error, finalState generators.State) {
 	ls.result.FinalState = finalState
 	ls.result.RemainingBlocks = ls.remainingBlocks
@@ -1311,11 +1256,15 @@ func (ls *loopState) finishWithError(err error, finalState generators.State) {
 	// TheoryOfSessionTree.
 	ls.result.SessionTree = ls.sessionTree
 	ls.runErr = err
-	ls.emitTerminal(Event{
-		Kind:    EventRunError,
-		Attempt: ls.attempt,
-		Err:     err,
-	}, err)
+	// The terminal error joins the tree as an event node before the
+	// final yield, so the record carries it even when the consumer
+	// stops at the terminal yield. See TheoryOfLoopEvents.
+	if ls.sessionTree != nil {
+		if next, _, werr := ls.sessionTree.WriteAuto(ls.sessionParent(), "run-error", tree.TypeEvent, tree.AuthorProgram, "run error: "+err.Error()); werr == nil {
+			ls.sessionTree = next
+		}
+	}
+	ls.emitTerminalTree(err)
 }
 
 // finish fills the result with the final state and ends the run without
@@ -1419,10 +1368,6 @@ type RunOptions struct {
 	// MaxGenerations limits the number of generations. 0 means
 	// unlimited.
 	MaxGenerations int
-	// Loop is the 1-based goal loop number of the run, stamped onto
-	// every event the loop emits so a consumer can attribute each event
-	// to its goal loop. Zero for non-goal runs. See TheoryOfLoopEvents.
-	Loop int
 
 	// InteractionRecorder receives generation events (contents, blocks,
 	// attempt lifecycle) for interaction recording and self-improvement
@@ -1601,11 +1546,11 @@ func (Module) Run(
 	effortFlag generators.EffortFlag,
 	continuation SessionTreeContinuation,
 ) Run {
-	return func(ctx context.Context, opts RunOptions, result *Result) iter.Seq2[Event, error] {
+	return func(ctx context.Context, opts RunOptions, result *Result) iter.Seq2[*tree.Tree, error] {
 		if result == nil {
 			result = &Result{}
 		}
-		return func(yield func(Event, error) bool) {
+		return func(yield func(*tree.Tree, error) bool) {
 			// Determine the active interaction recorder. When the caller does
 			// not pass one explicitly, the provider-injected default is used,
 			// so every loop run records interactions automatically.
@@ -1616,12 +1561,12 @@ func (Module) Run(
 			}
 			opts.InteractionRecorder = rec
 
-			// The loop state carries the mutable state of the run. Events
-			// are yielded through the guarded emitEvent/emitTerminal
-			// methods. The temperature and effort flag values feed the
-			// request description (EventRequest); they are dscope
-			// provided, captured here like the logger. See
-			// TheoryOfLoopEvents.
+			// The loop state carries the mutable state of the run. Every
+			// event write yields the full session tree through the
+			// guarded emitTree/emitTerminalTree methods. The temperature
+			// and effort flag values feed the request event node's
+			// content; they are dscope provided, captured here like the
+			// logger. See TheoryOfLoopEvents.
 			ls := &loopState{
 				ctx:             ctx,
 				opts:            opts,
@@ -1653,6 +1598,11 @@ func (Module) Run(
 				ls.sessionRoot = "root"
 			}
 			ls.sessionTree = writeInitialTreeNodes(ls.sessionTree, ls.sessionRoot, opts.InitialState)
+			// The initial tree — system prompt and input under the
+			// session root — is yielded before the first generation, so
+			// a consumer renders the session from its first pull. See
+			// TheoryOfLoopEvents.
+			ls.emitTree()
 
 			recording := rec != nil && rec.Enabled()
 			if recording {
@@ -1699,30 +1649,25 @@ func (Module) Run(
 				}
 			}
 
-			// Thought summaries produced during generation join the event
-			// stream: bind the ThoughtsSummarize layer's emitter, when the
-			// command wrapped one, to the guarded yield. Summaries are
-			// produced synchronously inside phase execution on this
-			// goroutine, so the reentrant yield is safe. See
-			// TheoryOfLoopEvents and TheoryOfThoughtsSummarize.
+			// Thought summaries produced during generation join the
+			// session tree: bind the ThoughtsSummarize layer's emitter,
+			// when the command wrapped one, to the guarded yield. Each
+			// summary is recorded as a thought-summary event node and the
+			// full tree is yielded. Summaries are produced synchronously
+			// inside phase execution on this goroutine, so the reentrant
+			// yield is safe. See TheoryOfLoopEvents and
+			// TheoryOfThoughtsSummarize.
 			installThoughtSummaryEmitter(ls.state, func(summary string) {
-				ls.emitEvent(Event{Kind: EventThoughtSummary, Attempt: ls.attempt, Summary: summary})
+				ls.writeEventNode("thought-summary", "thought summary:\n"+summary)
 			})
-
-			// A goal run opens its event branch with the loop-start
-			// event: every attempt the loop reports nests under it, so a
-			// display front-end renders each loop as one branch of the
-			// event tree. Non-goal runs emit none. See TheoryOfLoopEvents.
-			if opts.Loop > 0 {
-				ls.emitEvent(Event{Kind: EventLoopStart})
-			}
 
 			// The main loop: each iteration is one generation. A
 			// generation produces a summary and parts; when parts exist,
-			// the next generation starts. The generation's occurrences are
-			// yielded as Events by runGeneration through the guarded
-			// yield; usage recording lives inside runGeneration, scoped to
-			// each attempt. See TheoryOfLoops and TheoryOfLoopEvents.
+			// the next generation starts. The generation's occurrences
+			// are recorded as event nodes and the full tree is yielded by
+			// runGeneration through the guarded yield; usage recording
+			// lives inside runGeneration, scoped to each attempt. See
+			// TheoryOfLoops and TheoryOfLoopEvents.
 			for generation := 1; opts.MaxGenerations == 0 || generation <= opts.MaxGenerations; generation++ {
 				outcome, err := ls.runGeneration()
 				if err != nil {

@@ -9,8 +9,10 @@ const TheoryOfCommandOutput = `
 Command output theory:
 - Output is the dscope-resolved writer for command-level output: verdicts
   and progress messages such as ping results, applied-change notices, and
-  recorded-session listings. Goal verdicts and failure notes are pipeline
-  events (EventGoal) rendered in the Events tab; see TheoryOfTUI.
+  recorded-session listings. Goal verdicts and failure notes are goal
+  event nodes in the run's session tree, rendered in the TUI's Tree tab;
+  this writer carries them only when no tree observer is set. See
+  TheoryOfTUI and pipeline.TheoryOfGoalMode.
 - The default provider writes to os.Stdout. In TUI mode runWithTUI forks
   this type to the TUI's output tab, so command output remains visible in
   the interface instead of being discarded when stdout is redirected to

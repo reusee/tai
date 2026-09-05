@@ -15,6 +15,7 @@ import (
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/pipeline"
 	"github.com/reusee/tai/records"
+	"github.com/reusee/tai/tree"
 )
 
 func TestPingCommandRegistered(t *testing.T) {
@@ -253,22 +254,21 @@ func pingResultBlocks(specs []PingBlockSpec) []blocks.Block {
 
 func TestPingCommandUsesRunLoop(t *testing.T) {
 	// Ping must run through the unified generation loop so it
-	// participates in the TUI mechanism (finish-reason observer,
-	// generating hint) and interaction recording. The fake run simulates
-	// the model emitting exactly the required blocks, in order, with the
-	// exact parameter values (decoded, including the tricky escaped
-	// value) and exact bodies so the validation passes.
-	// See TheoryOfPingCommand.
+	// participates in the TUI mechanism (finish event node, generating
+	// hint) and interaction recording. The fake run simulates the model
+	// emitting exactly the required blocks, in order, with the exact
+	// parameter values (decoded, including the tricky escaped value) and
+	// exact bodies so the validation passes. See TheoryOfPingCommand.
 	specs := []PingBlockSpec{
 		{Kind: "abc", Attributes: map[string]string{"foo": "bar"}, Body: "body one"},
 		{Kind: "xyz", Attributes: map[string]string{"tag": "qux"}, Body: "body two"},
 		{Kind: "zzz", Attributes: map[string]string{"key": `say "hi"`}, Body: "body three"},
 	}
 	var gotOpts pipeline.RunOptions
-	fakeRun := func(ctx context.Context, opts pipeline.RunOptions, result *pipeline.Result) iter.Seq2[pipeline.Event, error] {
+	fakeRun := func(ctx context.Context, opts pipeline.RunOptions, result *pipeline.Result) iter.Seq2[*tree.Tree, error] {
 		gotOpts = opts
 		result.RemainingBlocks = pingResultBlocks(specs)
-		return func(yield func(pipeline.Event, error) bool) {}
+		return func(yield func(*tree.Tree, error) bool) {}
 	}
 
 	// PingCommand is an apps.App whose Main field holds the function
@@ -375,10 +375,10 @@ func TestPingCommandInjectsExtraSystemPrompt(t *testing.T) {
 		{Kind: "xyz", Attributes: map[string]string{"tag": "qux"}, Body: "body two"},
 	}
 	var gotOpts pipeline.RunOptions
-	fakeRun := func(ctx context.Context, opts pipeline.RunOptions, result *pipeline.Result) iter.Seq2[pipeline.Event, error] {
+	fakeRun := func(ctx context.Context, opts pipeline.RunOptions, result *pipeline.Result) iter.Seq2[*tree.Tree, error] {
 		gotOpts = opts
 		result.RemainingBlocks = pingResultBlocks(specs)
-		return func(yield func(pipeline.Event, error) bool) {}
+		return func(yield func(*tree.Tree, error) bool) {}
 	}
 
 	// PingCommand is an apps.App whose Main field holds the function
@@ -493,10 +493,10 @@ func TestPingCommandThoughtsFlag(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var gotOpts pipeline.RunOptions
-			fakeRun := func(ctx context.Context, opts pipeline.RunOptions, result *pipeline.Result) iter.Seq2[pipeline.Event, error] {
+			fakeRun := func(ctx context.Context, opts pipeline.RunOptions, result *pipeline.Result) iter.Seq2[*tree.Tree, error] {
 				gotOpts = opts
 				result.RemainingBlocks = pingResultBlocks(specs)
-				return func(yield func(pipeline.Event, error) bool) {}
+				return func(yield func(*tree.Tree, error) bool) {}
 			}
 
 			// Capture stdout so the thought visibility is asserted and

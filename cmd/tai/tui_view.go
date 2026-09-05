@@ -29,8 +29,8 @@ func outputTabLabel(finished bool, generating bool, handoff bool) (label string,
 // wrappedDisplay computes the wrapped, colored lines of one expanded tab
 // from its content and box: the Output tab renders its per-section
 // projection (see TheoryOfOutputControls), the Logs tab wraps through
-// its cache, and the Events tab walks its event tree
-// (taiui.EventTree). See TheoryOfTUI and TheoryOfEventTree.
+// its cache, and the Tree tab walks the pipeline's session tree with
+// the current projection (see TheoryOfTreeTab). See TheoryOfTUI.
 func wrappedDisplay(t *TUI, idx int, box taiui.Box) []taiui.Line {
 	switch idx {
 	case 0:
@@ -47,7 +47,7 @@ func wrappedDisplay(t *TUI, idx int, box taiui.Box) []taiui.Line {
 		if t.tabs.Focus == 1 {
 			base = panelStyle.FocusBG
 		}
-		return t.events.Display(max(box.Width()-1, 1), base)
+		return t.treeDisplay(max(box.Width()-1, 1), base)
 	case 2:
 		base := panelStyle.BaseBG
 		if t.tabs.Focus == 2 {
@@ -88,7 +88,7 @@ func (t *TUI) helpLines() []string {
 		key, _, _ := strings.Cut(line, "\t")
 		switch key {
 		case "enter":
-			lines = append(lines, "enter\ttoggle latest handoff summary")
+			lines = append(lines, "enter\ttoggle the latest tree node's expansion")
 		case "click":
 			lines = append(lines, "click\tselect / toggle tab under cursor")
 		case "input bar", "submit glyph":
@@ -109,10 +109,11 @@ var tuiHelpLines = []string{
 	"home / end\tjump to start / end of focused pane",
 	"[ / ]\tjump to previous / next section start or end",
 	"c\tcollapse all sections; press again to restore; click a collapsed section to expand it",
-	"enter\tsend the input line when focused; toggle latest handoff otherwise",
+	"v\tcycle the Tree tab's projection (all / events / summary / model / program / user)",
+	"enter\tsend the input line when focused; toggle the latest tree node's expansion otherwise",
 	"click\tselect / toggle tab under cursor; click the input row to focus input",
 	"output column\tclick ▸ / ▾ at a section's first row to collapse / expand it",
-	"events row\tclick 👉 on an attempt-start line to jump the Output tab to its output section",
+	"tree row\tclick 👉 on an attempt-start line to jump the Output tab to its output section; click a node to expand or collapse it",
 	"wheel / drag\tscroll pane under cursor",
 	"m\ttoggle mouse reporting (off: select & copy in the terminal)",
 	"q / Ctrl-C\tquit (press again to confirm)",
@@ -130,6 +131,10 @@ func buildRoot(t *TUI, width, height int, displays [3][]taiui.Line) taiui.Elemen
 		label, highlight := tabNames[i], false
 		if i == 0 {
 			label, highlight = outputTabLabel(t.finished, t.generating, t.handoff)
+		} else if i == 1 {
+			// The Tree tab's label states the current projection: the
+			// v key cycles it. See TheoryOfTreeTab.
+			label = t.treeTabLabel()
 		}
 		box := boxes[i]
 		var inputBar taiui.Element

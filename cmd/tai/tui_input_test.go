@@ -478,11 +478,11 @@ func TestTUIHelpLinesNonInteractive(t *testing.T) {
 			t.Fatalf("non-interactive help must not describe the input row, got %q", line)
 		}
 	}
-	if !slices.Contains(lines, "enter\ttoggle latest handoff summary") {
-		t.Fatal("non-interactive help must document Enter's handoff binding")
+	if !slices.Contains(lines, "enter\ttoggle the latest tree node's expansion") {
+		t.Fatal("non-interactive help must document Enter's tree-node binding")
 	}
-	if !slices.Contains(lines, "events row\tclick 👉 on an attempt-start line to jump the Output tab to its output section") {
-		t.Fatal("help must document the events-row click jump")
+	if !slices.Contains(lines, "tree row\tclick 👉 on an attempt-start line to jump the Output tab to its output section; click a node to expand or collapse it") {
+		t.Fatal("help must document the tree-row click jump")
 	}
 }
 

@@ -48,11 +48,11 @@ indicate severe model failure; unbounded retries would burn the loop's
 budget on a hopeless generation, while attended sessions keep the
 unbounded policy.
 
-The loop's event stream reports the handoff lifecycle as it happens:
-EventHandoffStart is emitted immediately before the handoff request is
-sent, and EventHandoff after the summary is produced, so a live consumer
-sees the request in progress rather than waiting for its result. The
-events carry the attempt attribution but no retry-budget figures:
+The run's session tree reports the handoff lifecycle as it happens: a
+handoff-start event node is written immediately before the handoff request
+is sent, and a handoff node after the summary is produced, so a live
+consumer sees the request in progress rather than waiting for its result.
+The nodes carry the attempt attribution but no retry-budget figures:
 handoff generation's retry policy is not the generation attempt budget
 (unbounded in attended sessions, bounded only in goal mode), so a budget
 display such as "attempt x/y" would misrepresent it. Handoff
@@ -555,8 +555,8 @@ func handoffResponseDetail(attempt int, outputText string, thoughts []string) st
 }
 
 // FormatSummaryBlock wraps a summary in a boundary-delimited summary
-// block with a fresh delimiter, so the TUI's Events tab can display it
-// as the attempt's completion signal.
+// block with a fresh delimiter, so a synthesized summary carries the
+// same completion-signal shape as a model-emitted summary block.
 func FormatSummaryBlock(summary string) string {
 	delimiter := freshDelimiter()
 	return "<<" + delimiter + " summary\n" + summary + "\n" + delimiter

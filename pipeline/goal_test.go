@@ -12,6 +12,7 @@ import (
 	"github.com/reusee/prompts"
 	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/changes"
+	"github.com/reusee/tai/tree"
 )
 
 // doneResult builds a Result whose only remaining block is a done block:
@@ -492,35 +493,41 @@ func TestRunGoalAggregatesStatsWithLoopNumbers(t *testing.T) {
 	}
 }
 
-func TestRunGoalReportsEventsThroughObserver(t *testing.T) {
+// TestRunGoalReportsTreeThroughObserver verifies that the goal tree
+// observer receives the run's session tree after each progress message
+// is recorded as a goal event node, so a display front-end renders the
+// same tree the pipeline writes. See TheoryOfGoalMode and
+// TheoryOfLoopEvents.
+func TestRunGoalReportsTreeThroughObserver(t *testing.T) {
 	output := &bytes.Buffer{}
-	var events []Event
+	var trees []*tree.Tree
 	result := RunGoal(context.Background(), GoalOptions{
 		Output: output,
 		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries, _ string, _ SessionTreeContinuation) (Result, []AttemptStat, error) {
 			return doneResult(), []AttemptStat{{Attempt: 1, PromptTokens: 10}}, nil
 		},
 		Review: noopReview,
-		GoalEvents: func(ev Event) {
-			events = append(events, ev)
+		GoalTree: func(tr *tree.Tree) {
+			trees = append(trees, tr)
 		},
 	})
 	if !result.Achieved {
 		t.Fatal("goal must be achieved")
 	}
+	if len(trees) == 0 {
+		t.Fatal("expected the observer to receive trees")
+	}
 	// A done block emitted by a loop that applied no change blocks
 	// achieves the goal directly: the achieved verdict is the only goal
-	// event.
-	var kinds []EventKind
-	for _, ev := range events {
-		kinds = append(kinds, ev.Kind)
+	// event node.
+	var goalTexts []string
+	for _, n := range trees[len(trees)-1].ByType(tree.TypeEvent) {
+		if strings.HasPrefix(n.Name, "goal") {
+			goalTexts = append(goalTexts, n.Content)
+		}
 	}
-	wantKinds := []EventKind{EventGoal}
-	if !slices.Equal(kinds, wantKinds) {
-		t.Fatalf("expected event kinds %v, got %v", wantKinds, kinds)
-	}
-	if !strings.Contains(events[0].Detail, "Goal Achieved") {
-		t.Fatalf("expected the achieved verdict as an event, got %q", events[0].Detail)
+	if len(goalTexts) == 0 || !strings.Contains(goalTexts[len(goalTexts)-1], "Goal Achieved") {
+		t.Fatalf("expected the achieved verdict as a goal event node, got %v", goalTexts)
 	}
 	if output.Len() != 0 {
 		t.Fatalf("expected the output writer to stay empty when the observer is set, got %q", output.String())
