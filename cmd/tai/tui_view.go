@@ -123,7 +123,7 @@ var tuiHelpLines = []string{
 	"click\tselect / toggle tab under cursor; click the input row to focus input",
 	"output column\tclick ▸ / ▾ at a section's first row to collapse / expand it",
 	"tree row\tclick 👉 on an attempt-start line to jump the Output tab to its output section; double-click a node to expand or collapse it",
-	"tree column\tclick ▸ / ▾ on an expandable node's first row to collapse / expand it",
+	"tree column\tclick ▸ / ▾ on an expandable node's first row (or its first visible row when scrolled) to collapse / expand it",
 	"wheel / drag\tscroll pane under cursor",
 	"m\ttoggle mouse reporting (off: select & copy in the terminal)",
 	"q / Ctrl-C\tquit (press again to confirm)",

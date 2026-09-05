@@ -1703,6 +1703,14 @@ func (t *TUI) render() {
 		t.scrolls[idx].Update(len(displays[idx]), t.tuiPaneHeight(idx, boxes[idx]))
 	}
 
+	// The Tree tab's fold controls follow the content: a node whose
+	// header row scrolled above the viewport carries its fold glyph on
+	// its first visible display row, so an expanded node stays
+	// collapsible while scrolled. Runs after the scroll updates so the
+	// float reads the offsets the panels render with. See
+	// TheoryOfTreeTab.
+	t.floatTreeControls(boxes[1], displays[1])
+
 	taiui.Render(buildRoot(t, width, height, displays), t.screen)
 
 	// The chat input bar carries the terminal cursor while it is

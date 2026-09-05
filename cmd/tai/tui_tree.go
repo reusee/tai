@@ -73,6 +73,17 @@ Tree tab theory (cmd/tai):
   the fold column's cells on a node's first display row toggles the
   node; the slot width is the glyph's display width, so the press
   maps onto the rendered glyph exactly.
+- The fold control follows the content: a node whose header row
+  scrolled above the viewport top carries its fold glyph on its first
+  visible display row — clamped to the viewport top — so an expanded
+  node stays collapsible while scrolled, the same pinned-control rule
+  the Output tab's control column follows (see TheoryOfOutputControls).
+  The floating glyph replaces the row's fold column only when that
+  column holds blank cells (a body row's leading indent), so it never
+  overwrites content, and a pane too narrow for the content column
+  carries no floating control. The render path and the fold-column
+  press path share one clamped-row computation, so what is drawn is
+  what is pressed.
 - Every expansion of a node — a double-click on its text rows, a
   press on its fold control, or Enter on the last multi-line node —
   scrolls the view to the node's first display row, so the expanded
@@ -86,7 +97,7 @@ Tree tab theory (cmd/tai):
   to the top, so the collapsed list starts at the row below the title
   and doubles as the outline index; the next press restores the
   snapshotted expansions, and an expanded node's content renders from
-  the row below its header. A manual expand breaks the all-collapsed
+  the row below the header. A manual expand breaks the all-collapsed
   state, so the next press folds and re-snapshots again. Nodes that
   arrive after the snapshot keep the default collapsed form on
   restore. Every other focus folds the Output tab's sections.
@@ -189,6 +200,51 @@ type treeRowRange struct {
 	startRow   int
 	endRow     int
 	expandable bool
+}
+
+// treeControlRow returns the display row carrying the node's fold
+// control for a viewport whose first display row is offset and whose
+// height is paneHeight, and whether the control is on screen at all.
+// The control follows the content: it renders on the node's first
+// display row, clamped to the viewport top when that row scrolled
+// above it, so an expanded node stays collapsible while scrolled. The
+// render path and the fold-column press path share this computation,
+// so what is drawn is what is pressed. See TheoryOfTreeTab.
+func treeControlRow(r treeRowRange, offset, paneHeight int) (int, bool) {
+	if r.startRow >= offset+paneHeight {
+		// The node starts below the viewport: nothing to show.
+		return 0, false
+	}
+	if r.startRow >= offset {
+		// The header row is on screen: the glyph is in the header text.
+		return r.startRow, true
+	}
+	if r.endRow > offset {
+		// The header scrolled above the viewport top and the node has
+		// visible rows: the control floats on the first visible row.
+		return offset, true
+	}
+	// The node is entirely above the viewport: no control.
+	return 0, false
+}
+
+// treeFloatGlyph replaces a display line's fold column with the fold
+// glyph, reporting whether the replacement applied: the column must
+// hold blank cells — a body row's leading indent — so the glyph never
+// overwrites content and the display layout is preserved. A pane too
+// narrow for the content column yields no replacement. See
+// TheoryOfTreeTab.
+func treeFloatGlyph(line taiui.Line, foldX, foldWidth int, glyph string) (taiui.Line, bool) {
+	if foldX < 0 || foldX+foldWidth > len(line.Text) {
+		return line, false
+	}
+	for i := 0; i < foldX+foldWidth; i++ {
+		if line.Text[i] != ' ' {
+			return line, false
+		}
+	}
+	line.Text = line.Text[:foldX] + glyph + line.Text[foldX+foldWidth:]
+	return line, true
 }
 
 // treeAlignments carries the global column geometry of the projected
@@ -813,12 +869,51 @@ func treeFoldGlyph(expanded bool) string {
 	return sectionGlyphCollapsed
 }
 
-// toggleTreeControlAtClick toggles the node whose fold glyph the press
-// hit: the press must land on the fold column's cells on the node's
-// first display row. Expanding a collapsed node scrolls the view to
-// the node's first display row, mirroring the Output tab's control
-// behavior. It reports whether a control consumed the press. The
+// floatTreeControls rewrites the Tree tab's display lines so a node
+// whose header row scrolled above the viewport carries its fold glyph
+// on its first visible display row, at the fold column, replacing
+// blank indent cells. The glyph keeps the row's own colors, so the
+// float blends with the content. It runs after the scroll offsets are
+// updated, so the float reads the offsets the panels render with. The
 // caller holds t.mu. See TheoryOfTreeTab.
+func (t *TUI) floatTreeControls(box taiui.Box, display []taiui.Line) {
+	if !t.tabs.Expanded[1] || t.treeView == nil {
+		return
+	}
+	if box.Width() <= 0 || box.Height() <= 0 || len(display) == 0 {
+		return
+	}
+	offset := taiui.ClampOffset(t.scrolls[1].Offset, len(display), t.tuiPaneHeight(1, box))
+	paneHeight := t.tuiPaneHeight(1, box)
+	options := taiui.DisplayWidthOptions()
+	foldWidth := treeFoldSlotWidth(options)
+	foldX := t.treeTab.align.foldX
+	for _, r := range t.treeTab.rows {
+		if !r.expandable {
+			continue
+		}
+		controlRow, visible := treeControlRow(r, offset, paneHeight)
+		// The header row carries the glyph in its own text; only a
+		// node whose header scrolled above the viewport needs the
+		// floating control.
+		if !visible || controlRow == r.startRow {
+			continue
+		}
+		glyph := treeFoldGlyph(t.treeTab.expanded[r.name])
+		if line, ok := treeFloatGlyph(display[controlRow], foldX, foldWidth, glyph); ok {
+			display[controlRow] = line
+		}
+	}
+}
+
+// toggleTreeControlAtClick toggles the node whose fold glyph the press
+// hit: the press must land on the fold column's cells on the row
+// carrying the node's control — the header row, or the node's first
+// visible row when the header scrolled above the viewport. Expanding
+// a collapsed node scrolls the view to the node's first display row,
+// mirroring the Output tab's control behavior. It reports whether a
+// control consumed the press. The caller holds t.mu. See
+// TheoryOfTreeTab.
 func (t *TUI) toggleTreeControlAtClick(x, y int) bool {
 	if !t.tabs.Expanded[1] || t.treeView == nil {
 		return false
@@ -841,9 +936,18 @@ func (t *TUI) toggleTreeControlAtClick(x, y int) bool {
 		return false
 	}
 	offset := taiui.ClampOffset(t.scrolls[1].Offset, len(display), t.tuiPaneHeight(1, box))
+	paneHeight := t.tuiPaneHeight(1, box)
 	row := offset + (y - box.Top - 1)
 	for _, r := range t.treeTab.rows {
-		if r.startRow != row || !r.expandable {
+		if !r.expandable {
+			continue
+		}
+		// The press toggles the node whose fold control renders on the
+		// pressed row. The same clamped-row computation drives the
+		// render path, so what is drawn is what is pressed. See
+		// TheoryOfTreeTab.
+		controlRow, visible := treeControlRow(r, offset, paneHeight)
+		if !visible || controlRow != row {
 			continue
 		}
 		t.toggleTreeNodeByName(r.name)

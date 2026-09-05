@@ -805,6 +805,89 @@ func TestTreeFoldColumnToggles(t *testing.T) {
 	}
 }
 
+// TestTreeControlRow verifies the clamped control-row computation the
+// render and press paths share: the header row when it is on screen,
+// the viewport top when the header scrolled above it, and no control
+// for a node with no visible row. See TheoryOfTreeTab.
+func TestTreeControlRow(t *testing.T) {
+	r := treeRowRange{name: "n", startRow: 2, endRow: 6, expandable: true}
+	if row, ok := treeControlRow(r, 0, 4); !ok || row != 2 {
+		t.Fatalf("expected the header row 2, got %d ok=%v", row, ok)
+	}
+	if row, ok := treeControlRow(r, 3, 4); !ok || row != 3 {
+		t.Fatalf("expected the float at the viewport top 3, got %d ok=%v", row, ok)
+	}
+	if _, ok := treeControlRow(r, 6, 4); ok {
+		t.Fatal("a node with no visible row carries no control")
+	}
+	below := treeRowRange{name: "b", startRow: 10, endRow: 12, expandable: true}
+	if _, ok := treeControlRow(below, 0, 4); ok {
+		t.Fatal("a node below the viewport carries no control")
+	}
+}
+
+// TestTreeFoldControlFloats verifies the fold control follows the
+// content: with an expanded node's header row scrolled above the
+// viewport top, the fold glyph renders on the node's first visible
+// display row at the fold column, and a press there toggles the node.
+// See TheoryOfTreeTab.
+func TestTreeFoldControlFloats(t *testing.T) {
+	tui := newTUIForTest()
+	tr, err := tree.New().WriteAll(
+		tree.WriteOp{Parent: "root", Name: "wide-1", Type: tree.TypeHandoff, Author: tree.AuthorProgram,
+			Content: "head\n" + strings.Repeat("body line\n", 40) + "tail"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tui.treeView = tr
+	tui.mu.Lock()
+	defer tui.mu.Unlock()
+	tui.width, tui.height = 80, 25
+	tui.tabs.Expanded[1] = true
+	tui.treeTab.expanded = map[string]bool{"wide-1": true}
+	box := tui.tabs.Boxes(tui.width, tui.height)[1]
+	contentWidth := treeContentWidth(box.Width())
+	display := tui.treeDisplay(contentWidth, panelStyle.BaseBG)
+	// Scroll the header row (display row 0) above the viewport top.
+	tui.scrolls[1].Offset = 1
+	tui.scrolls[1].Follow = false
+	paneHeight := tui.tuiPaneHeight(1, box)
+	offset := taiui.ClampOffset(1, len(display), paneHeight)
+	if offset != 1 {
+		t.Fatalf("expected the viewport top at display row 1, got %d", offset)
+	}
+	align := tui.treeTab.align
+	// The float rewrites the display rows in place: the viewport top
+	// row — the node's first visible body row — carries the expand
+	// glyph at the fold column.
+	tui.floatTreeControls(box, display)
+	options := taiui.DisplayWidthOptions()
+	columnOf := func(line taiui.Line, fragment string) (int, bool) {
+		idx := strings.Index(line.Text, fragment)
+		if idx < 0 {
+			return 0, false
+		}
+		return options.String(line.Text[:idx]), true
+	}
+	glyphCol, ok := columnOf(display[offset], sectionGlyphExpanded)
+	if !ok || glyphCol != align.foldX {
+		t.Fatalf("expected the floated expand glyph at fold column %d on row %d, got %d (line %q)",
+			align.foldX, offset, glyphCol, display[offset].Text)
+	}
+	// A body row without a floated control keeps a blank fold column.
+	if strings.Contains(display[offset+1].Text, sectionGlyphExpanded) {
+		t.Fatalf("a body row without a float must keep a blank fold column, got %q", display[offset+1].Text)
+	}
+	// A press on the fold column at the viewport top toggles the node
+	// whose control floats there.
+	consumed := tui.toggleTreeControlAtClick(box.Left+align.foldX, box.Top+1)
+	if !consumed || tui.treeTab.expanded["wide-1"] {
+		t.Fatalf("a press on the floated control must collapse wide-1, got consumed=%v expanded=%v",
+			consumed, tui.treeTab.expanded["wide-1"])
+	}
+}
+
 // TestCollapseAllKeyDispatchesByFocus verifies the c key's dispatch:
 // the Tree tab's focus folds the tree nodes, every other focus folds
 // the Output tab's sections. See TheoryOfTreeTab and
