@@ -79,11 +79,6 @@ func (e menuEntry) isTopLevel() bool {
 	return e.action != ""
 }
 
-// menuBarEntries defines the menu bar, left to right: the Sections and
-// View categories group related actions into dropdowns, Help is a
-// single-item menu, and Quit is a top-level entry. Titles and labels
-// are ASCII constants, so their byte length is their cell width. See
-// TheoryOfControlBar.
 var menuBarEntries = []menuEntry{
 	{title: "Sections", items: []menuItem{
 		{label: "Prev section", action: controlPrevSections},
@@ -93,6 +88,12 @@ var menuBarEntries = []menuEntry{
 	{title: "View", items: []menuItem{
 		{label: "Toggle split", action: controlSplitToggle},
 		{label: "Toggle mouse", action: controlMouseToggle},
+		{label: "Tree view: all", action: controlTreeViewAll},
+		{label: "Tree view: events", action: controlTreeViewEvents},
+		{label: "Tree view: summary", action: controlTreeViewSummary},
+		{label: "Tree view: model", action: controlTreeViewModel},
+		{label: "Tree view: program", action: controlTreeViewProgram},
+		{label: "Tree view: user", action: controlTreeViewUser},
 	}},
 	{title: "Help", items: []menuItem{
 		{label: "Keyboard help", action: controlHelpToggle},
@@ -241,6 +242,18 @@ func menuDropdownElement(width, height, openMenu, hoverItem int) taiui.Element {
 	return taiui.Overlay(children...)
 }
 
+// The Tree tab's projection actions: one View menu item per
+// projection, so the pointer selects the Tree tab's view the way the
+// v key cycles it. See TheoryOfTreeTab.
+const (
+	controlTreeViewAll     controlBarAction = "tree-view-all"
+	controlTreeViewEvents  controlBarAction = "tree-view-events"
+	controlTreeViewSummary controlBarAction = "tree-view-summary"
+	controlTreeViewModel   controlBarAction = "tree-view-model"
+	controlTreeViewProgram controlBarAction = "tree-view-program"
+	controlTreeViewUser    controlBarAction = "tree-view-user"
+)
+
 const (
 	controlPrevSections controlBarAction = "prev-transition"
 	controlNextSections controlBarAction = "next-transition"
@@ -277,6 +290,18 @@ func (t *TUI) dispatchControlBar(action controlBarAction) bool {
 		t.toggleSplit()
 	case controlMouseToggle:
 		t.toggleMouse()
+	case controlTreeViewAll:
+		t.setTreeView(treeViewAll)
+	case controlTreeViewEvents:
+		t.setTreeView(treeViewEvents)
+	case controlTreeViewSummary:
+		t.setTreeView(treeViewSummary)
+	case controlTreeViewModel:
+		t.setTreeView(treeViewModel)
+	case controlTreeViewProgram:
+		t.setTreeView(treeViewProgram)
+	case controlTreeViewUser:
+		t.setTreeView(treeViewUser)
 	case controlHelpToggle:
 		t.toggleHelp()
 	case controlQuit:

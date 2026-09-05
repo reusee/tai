@@ -74,7 +74,14 @@ func TestTUIEventClickJumpsToOutputSection(t *testing.T) {
 
 	boxes := tu.tabs.Boxes(tu.width, tu.height)
 	box := boxes[1]
-	display := tu.treeDisplay(max(box.Width()-1, 1), panelStyle.BaseBG)
+	// The content rows are indented past the status column, so the
+	// display width and the press columns share the content origin.
+	// See TheoryOfTreeTab.
+	contentLeft := box.Left
+	if box.Width() > controlColumnWidth {
+		contentLeft += controlColumnWidth
+	}
+	display := tu.treeDisplay(treeContentWidth(tu.tabs.Expanded[1], box.Width()), panelStyle.BaseBG)
 	row := -1
 	for i, line := range display {
 		if strings.Contains(line.Text, eventJumpMarker) {
@@ -99,7 +106,7 @@ func TestTUIEventClickJumpsToOutputSection(t *testing.T) {
 
 	// A press on the jump marker jumps the Output tab to the section
 	// the attempt wrote.
-	tu.treeAtClick(box.Left+start, y)
+	tu.treeAtClick(contentLeft+start, y)
 	want := tu.outputSectionOffset(1)
 	if want <= 0 {
 		t.Fatal("section top must be below the content start")
@@ -117,7 +124,7 @@ func TestTUIEventClickJumpsToOutputSection(t *testing.T) {
 	// A press off the marker and a press on another node never jump.
 	tu.scrolls[0].Offset = 0
 	tu.scrolls[0].Follow = true
-	tu.treeAtClick(box.Left+2, y)
+	tu.treeAtClick(contentLeft+2, y)
 	if tu.scrolls[0].Offset != 0 || !tu.scrolls[0].Follow {
 		t.Fatal("a press off the marker must not jump")
 	}
@@ -131,7 +138,7 @@ func TestTUIEventClickJumpsToOutputSection(t *testing.T) {
 	if usageRow < 0 {
 		t.Fatal("usage row not found")
 	}
-	tu.treeAtClick(box.Left+2, box.Top+1+usageRow)
+	tu.treeAtClick(contentLeft+2, box.Top+1+usageRow)
 	if tu.scrolls[0].Offset != 0 || !tu.scrolls[0].Follow {
 		t.Fatal("a press on another node must not jump")
 	}
