@@ -32,10 +32,14 @@ Tree tab theory (cmd/tai):
   them and the expanded header reveals them after the fold column,
   alongside the full content below. A node is expandable when its
   content spans more than one line, or when its one-line header
-  truncates at the pane width; a press on any of its rows — or Enter
-  for the last multi-line node — reveals the full content, and a
-  press on an expanded node's header rows folds it, so clicking
-  inside a long expanded body never collapses it by accident. When
+  truncates at the pane width; a double-click — two presses at the
+  same cell within treeDoubleClickWindow — on any of its rows, or
+  Enter for the last multi-line node, reveals the full content, and a
+  double-click on an expanded node's header rows folds it, so
+  clicking inside a long expanded body never collapses it by
+  accident. A single text press records itself only and does
+  nothing: the pair resets after a toggle, and a press at a
+  different cell or after the window starts a new pair. When
   expanded, the content starts on the row below the header: the
   expanded header drops the inline preview and carries the structural
   columns plus the name and author, and the body renders the full
@@ -69,12 +73,12 @@ Tree tab theory (cmd/tai):
   the fold column's cells on a node's first display row toggles the
   node; the slot width is the glyph's display width, so the press
   maps onto the rendered glyph exactly.
-- Every expansion of a node — a press on its rows, a press on its
-  fold control, or Enter on the last multi-line node — scrolls the
-  view to the node's first display row, so the expanded content opens
-  at its beginning. The scroll lives in toggleTreeNodeByName, the one
-  method every expansion path routes through, so the invariant cannot
-  regress; collapsing never scrolls.
+- Every expansion of a node — a double-click on its text rows, a
+  press on its fold control, or Enter on the last multi-line node —
+  scrolls the view to the node's first display row, so the expanded
+  content opens at its beginning. The scroll lives in
+  toggleTreeNodeByName, the one method every expansion path routes
+  through, so the invariant cannot regress; collapsing never scrolls.
 - The c key, pressed while the Tree tab holds the focus, folds the
   nodes the way the Output tab's c key folds its sections (see
   TheoryOfOutputControls): the first press snapshots the expanded
@@ -166,6 +170,11 @@ type treeCached struct {
 	expandable bool
 	lines      []taiui.Line
 }
+
+// treeDoubleClickWindow is the maximum interval between two left
+// presses at the same Tree-pane cell that counts as one double-click.
+// See TheoryOfTreeTab.
+const treeDoubleClickWindow = 400 * time.Millisecond
 
 // treeRowRange maps one rendered node onto its display row range as
 // recorded by the last treeDisplay, so a pointer press locates the
@@ -867,10 +876,11 @@ func (t *TUI) scrollToTreeNode(name string) {
 
 // treeAtClick handles a left press in the Tree pane: a press on an
 // attempt-start node's jump marker jumps the Output tab to that
-// attempt's output section, and any other press on a node toggles its
-// expansion. Presses outside the pane's content area are no-ops.
-// Called with t.mu held. See TheoryOfTreeTab and
-// TheoryOfTUIOutputSections.
+// attempt's output section, and a double-click — two presses at the
+// same cell within treeDoubleClickWindow — on a node's text toggles
+// its expansion; a single text press records itself and does nothing.
+// Presses outside the pane's content area are no-ops. Called with
+// t.mu held. See TheoryOfTreeTab and TheoryOfTUIOutputSections.
 func (t *TUI) treeAtClick(x, y int) {
 	if !t.tabs.Expanded[1] {
 		return
@@ -899,7 +909,20 @@ func (t *TUI) treeAtClick(x, y int) {
 			}
 		}
 	}
-	t.toggleTreeNodeAtRow(row)
+	// A double-click — two presses at the same cell within
+	// treeDoubleClickWindow — toggles the node; the first press
+	// records itself only, so single-clicking text never toggles. The
+	// pair resets after a toggle, so a third press starts a new cycle.
+	now := time.Now()
+	if now.Sub(t.lastTreePress) <= treeDoubleClickWindow &&
+		x == t.lastTreePressX && y == t.lastTreePressY {
+		t.lastTreePress = time.Time{}
+		t.toggleTreeNodeAtRow(row)
+		return
+	}
+	t.lastTreePress = now
+	t.lastTreePressX = x
+	t.lastTreePressY = y
 }
 
 // sectionOfTreeNode resolves the output section an attempt-start node

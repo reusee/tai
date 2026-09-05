@@ -481,8 +481,8 @@ func TestTUIHelpLinesNonInteractive(t *testing.T) {
 	if !slices.Contains(lines, "enter\ttoggle the latest tree node's expansion") {
 		t.Fatal("non-interactive help must document Enter's tree-node binding")
 	}
-	if !slices.Contains(lines, "tree row\tclick 👉 on an attempt-start line to jump the Output tab to its output section; click a node to expand or collapse it") {
-		t.Fatal("help must document the tree-row click jump")
+	if !slices.Contains(lines, "tree row\tclick 👉 on an attempt-start line to jump the Output tab to its output section; double-click a node to expand or collapse it") {
+		t.Fatal("help must document the tree-row click jump and the double-click toggle")
 	}
 }
 

@@ -313,8 +313,9 @@ expanded tab's scroll area focuses the tab (when it was not already
 focused) and records the origin of a drag-scroll. Inside the Tree pane,
 a left press is inert unless it lands on the attempt-start node's 👉
 jump marker, which jumps the Output tab to the section that attempt
-wrote (see TheoryOfTUIOutputSections); any other press on a node
-toggles its expansion (see TheoryOfTreeTab). In the Output tab, a press
+wrote (see TheoryOfTUIOutputSections); a double-click on a node's
+text toggles its expansion, and a single text press does nothing
+(see TheoryOfTreeTab). In the Output tab, a press
 on the control column toggles the section under the control, a press on
 a collapsed section's row expands it, and both preempt the ordinary
 press handling (see TheoryOfOutputControls). In the Tree tab, a press
@@ -751,6 +752,15 @@ type TUI struct {
 	ctlHover  bool
 	ctlHoverX int
 	ctlHoverY int
+
+	// lastTreePress records the previous left press on the Tree tab's
+	// text rows, for double-click detection: a second press at the
+	// same cell within treeDoubleClickWindow toggles the node under
+	// it, and the first press records itself only. The zero time
+	// clears the record. Guarded by mu. See TheoryOfTreeTab.
+	lastTreePress  time.Time
+	lastTreePressX int
+	lastTreePressY int
 
 	// mouse is the pointer interaction state over the tab layout: wheel
 	// scrolling, press-driven tab switching, and drag-scrolling anchored
@@ -1526,15 +1536,16 @@ func (t *TUI) handleMouseKey(key string) bool {
 				if t.expandCollapsedSectionAtClick(x, y) {
 					break
 				}
-				// A press on the Tree tab's status column toggles the
+				// A press on the Tree tab's fold column toggles the
 				// node under the control. See TheoryOfTreeTab.
 				if t.toggleTreeControlAtClick(x, y) {
 					break
 				}
 				t.mouse.Press(t.tabs, t.scrolls[:], t.width, t.height, x, y)
 				// A press on the attempt-start node's jump marker jumps
-				// the Output tab to the section that attempt wrote; any
-				// other press on a node toggles its expansion. The
+				// the Output tab to the section that attempt wrote; a
+				// double-click on a node's text toggles its expansion,
+				// and a single text press records itself only. The
 				// click maps rows of the last-rendered tree. See
 				// TheoryOfTUIOutputSections and TheoryOfTreeTab.
 				t.treeAtClick(x, y)

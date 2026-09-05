@@ -984,3 +984,66 @@ func TestTreeViewMenuActions(t *testing.T) {
 		t.Fatalf("expected %d tree view menu items, got %d", treeViewModeCount, treeItems)
 	}
 }
+
+// TestTreeDoubleClickTogglesText verifies the Tree pane's press
+// contract: a single click on a node's text does nothing, two presses
+// at the same cell within treeDoubleClickWindow toggle the node, the
+// pair resets after a toggle, a press at a different cell does not
+// continue the pair, and a press after the window expires it. See
+// TheoryOfTreeTab.
+func TestTreeDoubleClickTogglesText(t *testing.T) {
+	tui := newTUIForTest()
+	tr, err := tree.New().Write("root", "wide-1", tree.TypeHandoff, tree.AuthorProgram, "head\nbody")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tui.treeView = tr
+	tui.mu.Lock()
+	tui.width, tui.height = 80, 25
+	tui.tabs.Expanded[1] = true
+	tui.scrolls[1].Offset = 0
+	box := tui.tabs.Boxes(tui.width, tui.height)[1]
+	tui.treeDisplay(treeContentWidth(box.Width()), panelStyle.BaseBG)
+	// Column 5 sits in the text area, clear of the fold column; the
+	// row below the title is the node's header row.
+	textX, textY := box.Left+5, box.Top+1
+	tui.mu.Unlock()
+
+	// A single click on the text does not toggle the node.
+	tui.mu.Lock()
+	tui.treeAtClick(textX, textY)
+	if tui.treeTab.expanded["wide-1"] {
+		t.Fatal("a single text press must not toggle the node")
+	}
+	// The second press at the same cell within the window toggles.
+	tui.treeAtClick(textX, textY)
+	if !tui.treeTab.expanded["wide-1"] {
+		t.Fatal("the double-click must toggle the node")
+	}
+	tui.mu.Unlock()
+
+	// The toggle reset the pair: two further presses toggle again.
+	tui.mu.Lock()
+	tui.treeAtClick(textX, textY)
+	tui.treeAtClick(textX, textY)
+	if tui.treeTab.expanded["wide-1"] {
+		t.Fatal("the second double-click must toggle the node again")
+	}
+	tui.mu.Unlock()
+
+	// A press at a different cell starts a new pair, not a
+	// continuation.
+	tui.mu.Lock()
+	tui.treeAtClick(textX, textY)
+	tui.treeAtClick(textX+1, textY)
+	if tui.treeTab.expanded["wide-1"] {
+		t.Fatal("a press at a different cell must not complete the pair")
+	}
+	// A press after the window expires the recorded pair.
+	tui.lastTreePress = time.Now().Add(-2 * treeDoubleClickWindow)
+	tui.treeAtClick(textX+1, textY)
+	if tui.treeTab.expanded["wide-1"] {
+		t.Fatal("a press after the window must not complete the pair")
+	}
+	tui.mu.Unlock()
+}
