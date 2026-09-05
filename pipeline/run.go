@@ -345,6 +345,10 @@ type loopState struct {
 	// attempt's start, before the attempt's first node. See
 	// TheoryOfSessionTree.
 	currentAttempt string
+	// pendingInitialUser carries the run's initial user input until the
+	// first attempt node opens, where it is written as the input's
+	// message/user node. See TheoryOfSessionTree.
+	pendingInitialUser string
 	// namingErrs holds the latest attempt's session-tree naming errors,
 	// consumed by the shared block-correction decision and cleared
 	// after it. See TheoryOfSessionTree and TheoryOfUnknownBlockKinds.
@@ -1628,9 +1632,9 @@ func (Module) Run(
 			// tree's root; a continued Run — a goal loop — receives the
 			// run's tree and the loop node the goal runner prepared, and
 			// writes every session node of the loop under that node. The
-			// session's system prompt and initial input join under the
-			// session root either way. See TheoryOfSessionTree and
-			// TheoryOfGoalMode.
+			// session's system node joins under the session root either
+			// way; the initial user input joins the first attempt node.
+			// See TheoryOfSessionTree and TheoryOfGoalMode.
 			if continuation.Tree != nil {
 				ls.sessionTree = continuation.Tree
 				ls.sessionRoot = continuation.Parent
@@ -1638,10 +1642,11 @@ func (Module) Run(
 				ls.sessionTree = tree.New()
 				ls.sessionRoot = "root"
 			}
-			ls.sessionTree = writeInitialTreeNodes(ls.sessionTree, ls.sessionRoot, opts.InitialState)
-			// The initial tree — system prompt and input under the
-			// session root — is yielded before the first generation, so
-			// a consumer renders the session from its first pull. See
+			ls.sessionTree = writeInitialSystemNode(ls.sessionTree, ls.sessionRoot, opts.InitialState)
+			ls.pendingInitialUser = initialUserText(opts.InitialState)
+			// The initial tree — the system node under the session root —
+			// is yielded before the first generation, so a consumer
+			// renders the session from its first pull. See
 			// TheoryOfLoopEvents.
 			ls.emitTree()
 

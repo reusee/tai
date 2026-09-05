@@ -121,8 +121,9 @@ const TypeLoop Type = "loop"
 // attempt under the session parent — the goal loop's loop node for a
 // continued run, the tree root for a fresh one — and the attempt's
 // response, summaries, blocks, errors, and events hang under it. The
-// session's system and initial user nodes stay the attempt nodes'
-// siblings. See pipeline.TheoryOfSessionTree.
+// session's system node stays the attempt nodes' sibling; the initial
+// user input hangs under the first attempt node. See
+// pipeline.TheoryOfSessionTree.
 const TypeAttempt Type = "attempt"
 
 // The event subtypes classify one recorded occurrence each: one type

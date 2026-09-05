@@ -14,14 +14,15 @@ import (
 	"github.com/reusee/tai/tree"
 )
 
-// TestWriteInitialTreeNodes verifies the session's initial nodes: the
-// system node and the merged initial user input, written under
-// the given session root. See TheoryOfSessionTree.
-func TestWriteInitialTreeNodes(t *testing.T) {
+// TestWriteInitialSystemNode verifies the session's initial system
+// node, written under the given session root, and the extraction of
+// the initial user input that later joins the first attempt node. See
+// TheoryOfSessionTree.
+func TestWriteInitialSystemNode(t *testing.T) {
 	state := generators.NewPrompts("sys prompt", []*generators.Content{
 		{Role: generators.RoleUser, Parts: []generators.Part{generators.Text("task input")}},
 	})
-	tr := writeInitialTreeNodes(tree.New(), "root", state)
+	tr := writeInitialSystemNode(tree.New(), "root", state)
 
 	sp, ok := tr.Node("system-1")
 	if !ok {
@@ -30,25 +31,28 @@ func TestWriteInitialTreeNodes(t *testing.T) {
 	if sp.Type != tree.TypeSystem || sp.Author != tree.AuthorProgram || sp.Content != "sys prompt" {
 		t.Fatalf("unexpected system node: %+v", sp)
 	}
-	in, ok := tr.Node("user-1")
-	if !ok {
-		t.Fatal("expected a user node")
+	if _, ok := tr.Node("user-1"); ok {
+		t.Fatal("the initial user input must not join the tree before the first attempt opens")
 	}
-	if in.Type != tree.TypeUser || in.Author != tree.AuthorUser || in.Content != "task input" {
-		t.Fatalf("unexpected user node: %+v", in)
+	if got := initialUserText(state); got != "task input" {
+		t.Fatalf("unexpected initial user text: %q", got)
 	}
 
-	empty := writeInitialTreeNodes(tree.New(), "root", generators.NewPrompts("", nil))
+	empty := writeInitialSystemNode(tree.New(), "root", generators.NewPrompts("", nil))
 	if len(empty.Subtree("root")) != 1 {
 		t.Fatal("an initial state without prompt and user text yields the root only")
+	}
+	if initialUserText(generators.NewPrompts("", nil)) != "" {
+		t.Fatal("an initial state without user text yields no initial user text")
 	}
 }
 
 // TestRunAttemptNodesUnderAttemptNode verifies the session tree's
 // attempt structure: each attempt opens an attempt node under the
 // session parent, the attempt's events, response, and summaries hang
-// under it, and the session's system and initial user nodes stay the
-// attempt nodes' siblings. See TheoryOfSessionTree.
+// under it, the initial user node hangs under the attempt node, and
+// the session's system node stays the attempt node's sibling. See
+// TheoryOfSessionTree.
 func TestRunAttemptNodesUnderAttemptNode(t *testing.T) {
 	withRun(t, func(run Run) {
 		result, err := runOnce(run, RunOptions{
@@ -77,8 +81,8 @@ func TestRunAttemptNodesUnderAttemptNode(t *testing.T) {
 		for _, child := range attempt.Children() {
 			kinds[child.Type]++
 		}
-		if kinds[tree.TypeAttemptStart] != 1 || kinds[tree.TypeCompleted] != 1 || kinds[tree.TypeModel] != 1 {
-			t.Fatalf("the attempt node must carry the attempt's events and response, got %+v", kinds)
+		if kinds[tree.TypeAttemptStart] != 1 || kinds[tree.TypeCompleted] != 1 || kinds[tree.TypeModel] != 1 || kinds[tree.TypeUser] != 1 {
+			t.Fatalf("the attempt node must carry the attempt's events, input, and response, got %+v", kinds)
 		}
 		model, ok := tr.Node("model-1")
 		if !ok || model.Parent != attempt.Name {
@@ -90,8 +94,8 @@ func TestRunAttemptNodesUnderAttemptNode(t *testing.T) {
 		if node, ok := tr.Node("system-1"); !ok || node.Parent != "root" {
 			t.Fatalf("the system node must stay the attempt node's sibling, got ok=%v node=%+v", ok, node)
 		}
-		if node, ok := tr.Node("user-1"); !ok || node.Parent != "root" {
-			t.Fatalf("the initial user node must stay the attempt node's sibling, got ok=%v node=%+v", ok, node)
+		if node, ok := tr.Node("user-1"); !ok || node.Parent != attempt.Name {
+			t.Fatalf("the initial user node must hang under the attempt node, got ok=%v node=%+v", ok, node)
 		}
 	})
 }

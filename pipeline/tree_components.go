@@ -28,17 +28,17 @@ immutable tree, and one run owns exactly one tree.
   session node of the loop under that node, so each loop is one child
   (tree.TypeLoop) of the run's single tree. The session root — the
   tree's root for a fresh run, the loop node for a continued one —
-  anchors the session's own nodes: writeInitialTreeNodes writes the
+  anchors the session's own nodes: writeInitialSystemNode writes the
   system node (program author, content = the initial state's system
-  prompt) and one user node (user author) merging the initial user
-  contents' Text parts under it.
+  prompt) under it.
 - Each attempt hangs under one attempt structure node
   (tree.TypeAttempt, program author), written under the session
   parent when the attempt opens: the attempt's events, response,
   summaries, blocks, errors, feedback, and idle input are its
-  children. The system and initial user nodes are written before any
-  attempt and stay the attempt nodes' siblings — the session has one
-  of each.
+  children. The initial user input joins the first attempt node as a
+  message/user node — every message/user hangs under the attempt
+  that consumes it. The system node alone is written before any
+  attempt and stays the attempt nodes' sibling.
 - The loop's own bookkeeping joins the same tree as event nodes
   (event-subtype types in Category event, program author) under the
   current attempt node: attempt lifecycle, request parameters, finish
@@ -180,11 +180,13 @@ body is the reply text.
   errors.
 `
 
-// writeInitialTreeNodes writes the session's initial nodes — the
-// system node and the merged initial user input as a user node —
-// under the given parent: the tree's root for a fresh run, the goal
-// loop's loop node for a continued one. See TheoryOfSessionTree.
-func writeInitialTreeNodes(tr *tree.Tree, parent string, state generators.State) *tree.Tree {
+// writeInitialSystemNode writes the session's system node — program
+// author, content = the initial state's system prompt — under the
+// given parent: the tree's root for a fresh run, the goal loop's loop
+// node for a continued one. The initial user input is not written
+// here; it joins the first attempt node (see writeInitialUserNode).
+// See TheoryOfSessionTree.
+func writeInitialSystemNode(tr *tree.Tree, parent string, state generators.State) *tree.Tree {
 	if state == nil {
 		return tr
 	}
@@ -192,6 +194,16 @@ func writeInitialTreeNodes(tr *tree.Tree, parent string, state generators.State)
 		if next, _, err := tr.WriteAuto(parent, "system", tree.TypeSystem, tree.AuthorProgram, prompt); err == nil {
 			tr = next
 		}
+	}
+	return tr
+}
+
+// initialUserText merges the initial state's user-role Text parts into
+// one string: the input the first attempt consumes, written as its
+// message/user node. See TheoryOfSessionTree.
+func initialUserText(state generators.State) string {
+	if state == nil {
+		return ""
 	}
 	var texts []string
 	for c := range state.Contents() {
@@ -204,12 +216,7 @@ func writeInitialTreeNodes(tr *tree.Tree, parent string, state generators.State)
 			}
 		}
 	}
-	if len(texts) > 0 {
-		if next, _, err := tr.WriteAuto(parent, "user", tree.TypeUser, tree.AuthorUser, strings.Join(texts, "\n")); err == nil {
-			tr = next
-		}
-	}
-	return tr
+	return strings.Join(texts, "\n")
 }
 
 // NewPlanComponent returns the new-plan block component: the model names
@@ -768,9 +775,9 @@ func (ls *loopState) attemptParent() string {
 // under the session parent and records it as the attempt parent for
 // every node written until the next attempt opens: the attempt's
 // response, summaries, blocks, errors, events, feedback, and idle
-// input hang under it. The session's system and initial user nodes
-// are written before any attempt and stay the attempt nodes'
-// siblings. See TheoryOfSessionTree.
+// input hang under it, and the initial user input joins the first
+// attempt node. The system node is written before any attempt and
+// stays the attempt nodes' sibling. See TheoryOfSessionTree.
 func (ls *loopState) writeAttemptNode() {
 	if ls.sessionTree == nil {
 		return
@@ -783,6 +790,21 @@ func (ls *loopState) writeAttemptNode() {
 	ls.sessionTree = next
 	ls.currentAttempt = name
 	ls.emitTree()
+}
+
+// writeInitialUserNode writes the run's initial user input as a
+// message/user node under the current attempt node — the attempt that
+// consumes it — and clears the pending text, so only the first
+// attempt carries it. An empty pending text writes nothing. See
+// TheoryOfSessionTree.
+func (ls *loopState) writeInitialUserNode() {
+	if ls.pendingInitialUser == "" || ls.sessionTree == nil {
+		return
+	}
+	if next, _, err := ls.sessionTree.WriteAuto(ls.attemptParent(), "user", tree.TypeUser, tree.AuthorUser, ls.pendingInitialUser); err == nil {
+		ls.sessionTree = next
+		ls.pendingInitialUser = ""
+	}
 }
 
 // recordAttemptErrorNodes writes the attempt's unprocessable output as

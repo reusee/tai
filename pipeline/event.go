@@ -104,10 +104,11 @@ observes during the run.
 // unique by AutoName, so typed event nodes keep their historical
 // names. The node hangs under the current attempt node: the
 // attempt's occurrences are its record. An attempt-start event opens
-// the attempt's structure node first, so the event is the attempt
-// node's first child. The node is written even after the consumer
-// has stopped — the tree is the run's record — while the yield is
-// dropped. See TheoryOfLoopEvents.
+// the attempt's structure node first and writes the initial user
+// input under it, so the event is the attempt node's first child and
+// the input joins the attempt that consumes it. The node is written
+// even after the consumer has stopped — the tree is the run's record
+// — while the yield is dropped. See TheoryOfLoopEvents.
 func (ls *loopState) writeEventNode(typ tree.Type, content string) {
 	if ls.sessionTree == nil {
 		return
@@ -120,6 +121,12 @@ func (ls *loopState) writeEventNode(typ tree.Type, content string) {
 		return
 	}
 	ls.sessionTree = next
+	if typ == tree.TypeAttemptStart {
+		// The initial user input joins the first attempt node, written
+		// right after the attempt opens and before its request. See
+		// TheoryOfSessionTree.
+		ls.writeInitialUserNode()
+	}
 	ls.emitTree()
 }
 
