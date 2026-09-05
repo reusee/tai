@@ -27,12 +27,17 @@ still filled incrementally, so callers that only need the outcome drain
 the iterator and read the result, while callers that want live signals
 (a TUI, an observer) consume the trees as they stream.
 
-Event nodes hang under the session parent — the tree root for a fresh
-run, the goal run's loop-N node for a continued one — so the tree
-position attributes every event to its goal loop; no loop number is
-stamped onto the node. The node type IS the event kind — one of the
-event subtypes (attempt-start, request, finish, usage, truncated,
-retry, handoff-start, handoff, completed, synthesized-summary,
+Event nodes hang under the current attempt node — one attempt
+structure node (tree.TypeAttempt) per attempt, written under the
+session parent (the tree root for a fresh run, the goal run's loop-N
+node for a continued one) when the attempt opens — so the tree
+position attributes every occurrence to its attempt and, through it,
+to its goal loop; no attempt or loop number is stamped onto the node.
+The attempt-start event node is the structure node's first child:
+writeEventNode opens the structure node when it records the attempt's
+start. The node type IS the event kind — one of the event subtypes
+(attempt-start, request, finish, usage, truncated, retry,
+handoff-start, handoff, completed, synthesized-summary,
 thought-summary, continue, idle, run-error), and the goal runner
 writes goal verdicts as tree.TypeGoal nodes — while the node name
 carries the subtype as a prefix, made unique by AutoName, so typed
@@ -44,14 +49,17 @@ excludes them by category (treeOutlinePart, handoffOutlinePart), so
 the model never sees the loop's own bookkeeping.
 
 The attempt is the loop's bookkeeping unit: one pass through the
-phase chain. Attempt numbering is session-wide within one run —
-retries and the attempts of component-triggered generations and
-idle-handler inputs continue the sequence instead of restarting at 1
-— and the attempt number appears in the event node contents. A
-generation completes when an attempt finishes with a summary block
-and a normal finish reason; the completed node carries the summary.
-Retries re-execute the phase chain as a new attempt, up to the retry
-budget.
+phase chain, and one attempt structure node in the tree — the
+attempt's events, response, summaries, blocks, errors, feedback, and
+idle input hang under it, while the session's system and initial user
+nodes stay the attempt nodes' siblings. Attempt numbering is
+session-wide within one run — retries and the attempts of
+component-triggered generations and idle-handler inputs continue the
+sequence instead of restarting at 1 — and the attempt number appears
+in the event node contents. A generation completes when an attempt
+finishes with a summary block and a normal finish reason; the
+completed node carries the summary. Retries re-execute the phase
+chain as a new attempt, up to the retry budget.
 
 The request node precedes each attempt's request: its content
 describes the actual generation parameters — the resolved spec path,
@@ -94,14 +102,20 @@ observes during the run.
 // given event subtype in the session tree and yields the full tree to
 // the consumer. The node name carries the subtype as a prefix, made
 // unique by AutoName, so typed event nodes keep their historical
-// names. The node is written even after the consumer has stopped —
-// the tree is the run's record — while the yield is dropped. See
-// TheoryOfLoopEvents.
+// names. The node hangs under the current attempt node: the
+// attempt's occurrences are its record. An attempt-start event opens
+// the attempt's structure node first, so the event is the attempt
+// node's first child. The node is written even after the consumer
+// has stopped — the tree is the run's record — while the yield is
+// dropped. See TheoryOfLoopEvents.
 func (ls *loopState) writeEventNode(typ tree.Type, content string) {
 	if ls.sessionTree == nil {
 		return
 	}
-	next, _, err := ls.sessionTree.WriteAuto(ls.sessionParent(), string(typ), typ, tree.AuthorProgram, content)
+	if typ == tree.TypeAttemptStart {
+		ls.writeAttemptNode()
+	}
+	next, _, err := ls.sessionTree.WriteAuto(ls.attemptParent(), string(typ), typ, tree.AuthorProgram, content)
 	if err != nil {
 		return
 	}

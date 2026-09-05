@@ -56,22 +56,23 @@ tree theory: writes and transforms on immutable path-copying trees.
 - A block node without children is an unprocessed block, except blocks that
   need no processing (done, summary). Block execution results are written
   as block-result child nodes by the program.
-- Node kinds form two layers. Type is the fine-grained kind: message
-  content (system, user, plan, model, summary, done, abort),
-  per-occurrence event subtypes (attempt-start, request, finish, usage,
-  truncated, retry, handoff-start, handoff, completed,
-  synthesized-summary, thought-summary, continue, idle, run-error,
-  goal), block execution (block-result, plus the block kinds — a block
-  node's type is the kind of the block it records, so unknown kinds form
-  types dynamically), and error. Category is the coarse layer derived
-  from the type (Node.Category): structure, message, event, block,
-  error. Category is never written — it is a pure function of Type — so
-  the write surface, merge identity, and chronology stay type-only, and
-  consumers select whole families with ByCategory. Every event subtype's
-  string equals the event node name prefix the pipeline has always
-  written, so typed event nodes keep their historical names. A block
-  kind sharing a string with an event subtype (continue) derives to
-  that subtype's category; every other unknown string derives to block.
+- Node kinds form two layers. Type is the fine-grained kind: structure
+  nodes (root, loop, attempt), message content (system, user, plan, model,
+  done, abort), per-occurrence event subtypes (attempt-start, request,
+  finish, usage, truncated, retry, handoff-start, handoff, completed,
+  synthesized-summary, thought-summary, continue, idle, run-error, goal),
+  block execution (block-result and summary, plus the block kinds — a
+  block node's type is the kind of the block it records, so unknown kinds
+  form types dynamically), and error. Category is the coarse layer derived
+  from the type (Node.Category): structure, message, event, block, error.
+  Category is never written — it is a pure function of Type — so the write
+  surface, merge identity, and chronology stay type-only, and consumers
+  select whole families with ByCategory. Every event subtype's string
+  equals the event node name prefix the pipeline has always written, so
+  typed event nodes keep their historical names. A block kind sharing a
+  string with an event subtype (continue) derives to that subtype's
+  category; every other unknown string derives to block. Summary is a
+  block kind: it records the response's summary block, not a message.
 - Type.Emoji and Category.Emoji supply the display glyphs of user-facing
   trees. Built-in block kinds carry predefined glyphs; any other kind,
   and any unknown type, falls back to the brick glyph. They are
@@ -115,6 +116,15 @@ const (
 // See pipeline.TheoryOfSessionTree and pipeline.TheoryOfGoalMode.
 const TypeLoop Type = "loop"
 
+// TypeAttempt marks one attempt of a generation session: one pass
+// through the phase chain. The pipeline writes one attempt node per
+// attempt under the session parent — the goal loop's loop node for a
+// continued run, the tree root for a fresh one — and the attempt's
+// response, summaries, blocks, errors, and events hang under it. The
+// session's system and initial user nodes stay the attempt nodes'
+// siblings. See pipeline.TheoryOfSessionTree.
+const TypeAttempt Type = "attempt"
+
 // The event subtypes classify one recorded occurrence each: one type
 // per occurrence kind of a run. Every constant's string equals the
 // event node name prefix the pipeline has always written, so typed
@@ -155,17 +165,17 @@ const (
 // Category returns the category the type belongs to. See TheoryOfTree.
 func (t Type) Category() Category {
 	switch t {
-	case TypeRoot, TypeLoop:
+	case TypeRoot, TypeLoop, TypeAttempt:
 		return CategoryStructure
 	case TypeSystem, TypeUser, TypeModel, TypePlan,
-		TypeSummary, TypeDone, TypeAbort:
+		TypeDone, TypeAbort:
 		return CategoryMessage
 	case TypeAttemptStart, TypeRequest, TypeFinish, TypeUsage,
 		TypeTruncated, TypeRetry, TypeHandoffStart, TypeHandoff,
 		TypeCompleted, TypeSynthesizedSummary, TypeThoughtSummary,
 		TypeContinue, TypeIdle, TypeRunError, TypeGoal:
 		return CategoryEvent
-	case TypeBlockResult:
+	case TypeBlockResult, TypeSummary:
 		return CategoryBlock
 	case TypeError:
 		return CategoryError
@@ -186,6 +196,8 @@ func (t Type) Emoji() string {
 		return "🌳"
 	case TypeLoop:
 		return "🔁"
+	case TypeAttempt:
+		return "⏱️"
 	case TypeSystem:
 		return "📜"
 	case TypeUser:

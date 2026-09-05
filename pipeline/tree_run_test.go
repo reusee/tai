@@ -44,6 +44,58 @@ func TestWriteInitialTreeNodes(t *testing.T) {
 	}
 }
 
+// TestRunAttemptNodesUnderAttemptNode verifies the session tree's
+// attempt structure: each attempt opens an attempt node under the
+// session parent, the attempt's events, response, and summaries hang
+// under it, and the session's system and initial user nodes stay the
+// attempt nodes' siblings. See TheoryOfSessionTree.
+func TestRunAttemptNodesUnderAttemptNode(t *testing.T) {
+	withRun(t, func(run Run) {
+		result, err := runOnce(run, RunOptions{
+			Generator: nil,
+			InitialState: generators.NewPrompts("sys prompt", []*generators.Content{
+				{Role: generators.RoleUser, Parts: []generators.Part{generators.Text("task input")}},
+			}),
+			Components: nil,
+			PhaseBuilder: func(g generators.Generator) generators.Phase {
+				return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
+			},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		tr := result.SessionTree
+		attempts := tr.ByType(tree.TypeAttempt)
+		if len(attempts) != 1 {
+			t.Fatalf("expected one attempt node, got %d", len(attempts))
+		}
+		attempt := attempts[0]
+		if attempt.Parent != "root" {
+			t.Fatalf("the attempt node must hang under the session parent, got parent %q", attempt.Parent)
+		}
+		kinds := map[tree.Type]int{}
+		for _, child := range attempt.Children() {
+			kinds[child.Type]++
+		}
+		if kinds[tree.TypeAttemptStart] != 1 || kinds[tree.TypeCompleted] != 1 || kinds[tree.TypeModel] != 1 {
+			t.Fatalf("the attempt node must carry the attempt's events and response, got %+v", kinds)
+		}
+		model, ok := tr.Node("model-1")
+		if !ok || model.Parent != attempt.Name {
+			t.Fatalf("the response node must hang under the attempt node, got ok=%v node=%+v", ok, model)
+		}
+		if kids := model.Children(); len(kids) == 0 || kids[0].Type != tree.TypeSummary {
+			t.Fatalf("the summary node must hang under the response node, got %+v", kids)
+		}
+		if node, ok := tr.Node("system-1"); !ok || node.Parent != "root" {
+			t.Fatalf("the system node must stay the attempt node's sibling, got ok=%v node=%+v", ok, node)
+		}
+		if node, ok := tr.Node("user-1"); !ok || node.Parent != "root" {
+			t.Fatalf("the initial user node must stay the attempt node's sibling, got ok=%v node=%+v", ok, node)
+		}
+	})
+}
+
 func TestWriteBlockNodesCollectedAndHandled(t *testing.T) {
 	base, respName, err := tree.New().WriteAuto("root", "model", tree.TypeModel, tree.AuthorModel, "resp")
 	if err != nil {

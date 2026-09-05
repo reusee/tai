@@ -339,6 +339,12 @@ type loopState struct {
 	// attempt; block nodes default to it as their parent. See
 	// TheoryOfSessionTree.
 	currentResponse string
+	// currentAttempt names the session-tree node of the attempt being
+	// executed; the attempt's response, summaries, blocks, errors,
+	// events, feedback, and idle input hang under it. Written at each
+	// attempt's start, before the attempt's first node. See
+	// TheoryOfSessionTree.
+	currentAttempt string
 	// namingErrs holds the latest attempt's session-tree naming errors,
 	// consumed by the shared block-correction decision and cleared
 	// after it. See TheoryOfSessionTree and TheoryOfUnknownBlockKinds.
@@ -1257,10 +1263,11 @@ func (ls *loopState) finishWithError(err error, finalState generators.State) {
 	ls.result.SessionTree = ls.sessionTree
 	ls.runErr = err
 	// The terminal error joins the tree as a run-error event node
-	// before the final yield, so the record carries it even when the
-	// consumer stops at the terminal yield. See TheoryOfLoopEvents.
+	// under the current attempt node before the final yield, so the
+	// record carries it even when the consumer stops at the terminal
+	// yield. See TheoryOfLoopEvents.
 	if ls.sessionTree != nil {
-		if next, _, werr := ls.sessionTree.WriteAuto(ls.sessionParent(), string(tree.TypeRunError), tree.TypeRunError, tree.AuthorProgram, "run error: "+err.Error()); werr == nil {
+		if next, _, werr := ls.sessionTree.WriteAuto(ls.attemptParent(), string(tree.TypeRunError), tree.TypeRunError, tree.AuthorProgram, "run error: "+err.Error()); werr == nil {
 			ls.sessionTree = next
 		}
 	}

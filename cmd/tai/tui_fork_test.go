@@ -195,8 +195,15 @@ func TestForkTUIDisplayKeepsSessionTreeContinuation(t *testing.T) {
 	if !ok || loopNode.Type != tree.TypeLoop {
 		t.Fatalf("expected the loop-1 node in the TUI's tree, got ok=%v", ok)
 	}
+	// The session's nodes hang under attempt structure nodes, which hang
+	// under the loop node: the response's parent is the loop's attempt
+	// node, not the loop node itself. See pipeline.TheoryOfSessionTree.
+	attempts := tui.treeView.ByType(tree.TypeAttempt)
+	if len(attempts) != 1 || attempts[0].Parent != "loop-1" {
+		t.Fatalf("expected one attempt node under loop-1, got %+v", attempts)
+	}
 	response, ok := tui.treeView.Node("model-1")
-	if !ok || response.Parent != "loop-1" {
-		t.Fatalf("expected the loop's response under loop-1, got ok=%v", ok)
+	if !ok || response.Parent != attempts[0].Name {
+		t.Fatalf("expected the loop's response under the attempt node, got ok=%v", ok)
 	}
 }
