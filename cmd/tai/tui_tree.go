@@ -18,35 +18,40 @@ Tree tab theory (cmd/tai):
   depth-first from the root, so a goal run's loops appear as loop-N
   branches and a fresh run's nodes sit directly under the root. The
   walk always starts at the tree root, so every loop's state is
-  displayed: projections filter by type and author, never by loop,
-  and no display path reduces the view to the current loop.
+  displayed: projections filter by category, type, and author, never
+  by loop, and no display path reduces the view to the current loop.
 - The tab renders a projection of the tree, cycled with the v key and
   selectable through the View menu's Tree view items: all shows every
-  node; events shows the event nodes; summary the summary nodes;
-  model, program, and user the nodes of that author. The projection
-  keeps each shown node's ancestors (tree.Extract), so the outline
-  stays readable.
-- Every node renders one line by default: "name [type/author] first
-  content line". A node is expandable when its content spans more
-  than one line, or when its one-line header truncates at the pane
-  width; a press on any of its rows — or Enter for the last multi-line
-  node — reveals the full content, and a press on an expanded node's
-  header rows folds it, so clicking inside a long expanded body never
-  collapses it by accident. When expanded, the content starts on the
-  row below the header: the expanded header drops the inline preview
-  and carries only the structural columns, and the body renders the
-  full content, first line included, wrapped at the pane width instead
-  of truncating — breaking at space runs and hard-breaking
-  unbreakable runs at cluster boundaries. The collapsed header stays
-  the one-row index form, truncating at the pane edge; its ⤷ hint
-  marks multi-line content, and a truncated single-line node signals
-  its hidden content through the status column instead. Expandability
-  always measures the collapsed form — the index row whose truncation
-  hides content — because the expanded header carries no content.
-- Headers align as columns per indent level: the node name pads to
-  the level's widest visible name and the [type/author] fragment to
-  the level's widest visible meta, so entries of one level read as
-  aligned columns; the pad widths derive from the projected entries.
+  node; events shows the event category (tree.CategoryEvent); summary
+  the summary nodes; model, program, and user the nodes of that
+  author. The projection keeps each shown node's ancestors
+  (tree.Extract), so the outline stays readable.
+- Every node renders one line by default: "{category emoji} {category}
+  {type emoji} {type} first content line". The node name and author
+  are secondary to the user, so the collapsed row hides them and the
+  expanded header reveals them after the type fragment, alongside the
+  full content below. A node is expandable when its content spans
+  more than one line, or when its one-line header truncates at the
+  pane width; a press on any of its rows — or Enter for the last
+  multi-line node — reveals the full content, and a press on an
+  expanded node's header rows folds it, so clicking inside a long
+  expanded body never collapses it by accident. When expanded, the
+  content starts on the row below the header: the expanded header
+  drops the inline preview and carries the structural columns plus
+  the name and author, and the body renders the full content, first
+  line included, wrapped at the pane width instead of truncating —
+  breaking at space runs and hard-breaking unbreakable runs at
+  cluster boundaries. The collapsed header stays the one-row index
+  form, truncating at the pane edge; its ⤷ hint marks multi-line
+  content, and a truncated single-line node signals its hidden
+  content through the status column instead. Expandability always
+  measures the collapsed form — the index row whose truncation hides
+  content — because the expanded header carries no content.
+- Headers align as columns per indent level: the category fragment
+  pads to the level's widest visible category fragment and the type
+  fragment to the level's widest visible type fragment, so entries of
+  one level read as aligned columns; the pad widths derive from the
+  projected entries.
 - The expanded tab reserves a status column at its left edge, one Han
   character wide, like the Output tab's control column: every
   expandable node carries the fold glyph ▾ while expanded and ▸ while
@@ -71,11 +76,12 @@ Tree tab theory (cmd/tai):
   state, so the next press folds and re-snapshots again. Nodes that
   arrive after the snapshot keep the default collapsed form on
   restore. Every other focus folds the Output tab's sections.
-- Node lines are colored by author and type: event and error nodes in
-  the log color, user inputs in the user color, program nodes in the
-  system color, model nodes in the default foreground. The tab
-  alternates the two background shades per node: all display lines of
-  one node share one shade, and consecutive nodes alternate.
+- Node lines are colored by author and category: event-category and
+  error nodes in the log color, user inputs in the user color,
+  program nodes in the system color, model nodes in the default
+  foreground. The tab alternates the two background shades per node:
+  all display lines of one node share one shade, and consecutive
+  nodes alternate.
 - Each node's first display line right-aligns the elapsed timer
   ("+0:07") from the session start to the node's insert time; a pane
   too narrow for the timer omits it.
@@ -118,7 +124,7 @@ func (m treeViewMode) label() string {
 func (m treeViewMode) predicate() func(*tree.Node) bool {
 	switch m {
 	case treeViewEvents:
-		return func(n *tree.Node) bool { return n.Type == tree.TypeEvent }
+		return func(n *tree.Node) bool { return n.Category() == tree.CategoryEvent }
 	case treeViewSummary:
 		return func(n *tree.Node) bool { return n.Type == tree.TypeSummary }
 	case treeViewModel:
@@ -146,8 +152,8 @@ type treeCached struct {
 	depth      int
 	shade      taiui.Color
 	expanded   bool
-	nameWidth  int
-	metaWidth  int
+	catWidth   int
+	typeWidth  int
 	expandable bool
 	lines      []taiui.Line
 }
@@ -168,12 +174,12 @@ type treeRowRange struct {
 }
 
 // treeAlignments carries the per-depth pad widths of the projected
-// tree: at each indent level, the widest visible node name and the
-// widest visible [type/author] fragment set the column widths, so
-// entries of one level read as aligned columns. See TheoryOfTreeTab.
+// tree: at each indent level, the widest visible category fragment and
+// the widest visible type fragment set the column widths, so entries
+// of one level read as aligned columns. See TheoryOfTreeTab.
 type treeAlignments struct {
-	nameWidths map[int]int
-	metaWidths map[int]int
+	catWidths  map[int]int
+	typeWidths map[int]int
 }
 
 // treeTabState is the Tree tab's interaction state: the projection
@@ -198,11 +204,11 @@ type treeTabState struct {
 // pad widths derive from the currently visible entries at each indent
 // level. See TheoryOfTreeTab.
 func treeAlignmentsOf(tr *tree.Tree, options displaywidth.Options) treeAlignments {
-	align := treeAlignments{nameWidths: map[int]int{}, metaWidths: map[int]int{}}
+	align := treeAlignments{catWidths: map[int]int{}, typeWidths: map[int]int{}}
 	var walk func(n *tree.Node, depth int)
 	walk = func(n *tree.Node, depth int) {
-		align.nameWidths[depth] = max(align.nameWidths[depth], options.String(n.Name))
-		align.metaWidths[depth] = max(align.metaWidths[depth], options.String(treeNodeMeta(n)))
+		align.catWidths[depth] = max(align.catWidths[depth], options.String(treeNodeCategoryText(n)))
+		align.typeWidths[depth] = max(align.typeWidths[depth], options.String(treeNodeTypeText(n)))
 		for _, c := range n.Children() {
 			walk(c, depth+1)
 		}
@@ -259,27 +265,37 @@ func treeNodeExpandable(n *tree.Node) bool {
 	return len(treeBodyLines(n)) > 0
 }
 
-// treeHeaderText renders the node's header text: the name padded to
-// the level's widest visible name, the [type/author] fragment padded
-// to the level's widest visible meta, and — collapsed only — the
-// first content line as the index preview with the ⤷ more-lines hint
-// on multi-line content. The expanded header drops the preview, so
-// the content starts on the row below the header; the jump marker on
-// an attempt-start node stays on the header. The pads align the
-// columns of the same indent level. See TheoryOfTreeTab.
-func treeHeaderText(n *tree.Node, expanded bool, options displaywidth.Options, nameWidth, metaWidth int) string {
-	meta := treeNodeMeta(n)
+// treeHeaderText renders the node's header text: the category fragment
+// padded to the level's widest category fragment, the type fragment
+// padded to the level's widest type fragment, and — collapsed only —
+// the first content line as the index preview with the ⤷ more-lines
+// hint on multi-line content. The node name and author are secondary
+// to the user and hidden while collapsed; the expanded header reveals
+// them after the type fragment and drops the preview, so the content
+// starts on the row below the header. The jump marker on an
+// attempt-start node stays on the header. The pads align the columns
+// of the same indent level. See TheoryOfTreeTab.
+func treeHeaderText(n *tree.Node, expanded bool, options displaywidth.Options, catWidth, typeWidth int) string {
+	cat := treeNodeCategoryText(n)
+	typ := treeNodeTypeText(n)
 	var b strings.Builder
-	b.WriteString(n.Name)
-	if pad := nameWidth - options.String(n.Name); pad > 0 {
+	b.WriteString(cat)
+	if pad := catWidth - options.String(cat); pad > 0 {
 		b.WriteString(strings.Repeat(" ", pad))
 	}
 	b.WriteString(" ")
-	b.WriteString(meta)
-	if pad := metaWidth - options.String(meta); pad > 0 {
+	b.WriteString(typ)
+	if pad := typeWidth - options.String(typ); pad > 0 {
 		b.WriteString(strings.Repeat(" ", pad))
 	}
-	if !expanded {
+	if expanded {
+		// The name and author are secondary to the user: hidden while
+		// collapsed, revealed on expansion. See TheoryOfTreeTab.
+		b.WriteString(" ")
+		b.WriteString(n.Name)
+		b.WriteString(" ")
+		b.WriteString(string(n.Author))
+	} else {
 		b.WriteString(" ")
 		if first := tree.PreviewRunes(n.Content, 0); first != "" {
 			b.WriteString(first + " ")
@@ -289,25 +305,33 @@ func treeHeaderText(n *tree.Node, expanded bool, options displaywidth.Options, n
 		}
 	}
 	text := strings.TrimRight(b.String(), " ")
-	if strings.HasPrefix(n.Name, "attempt-start") {
+	if n.Type == tree.TypeAttemptStart {
 		text += " " + eventJumpMarker
 	}
 	return text
 }
 
-// treeNodeMeta renders the node's [type/author] fragment, the column
-// the header alignment pads to. See TheoryOfTreeTab.
-func treeNodeMeta(n *tree.Node) string {
-	return fmt.Sprintf("[%s/%s]", n.Type, n.Author)
+// treeNodeCategoryText renders the node's category fragment — the
+// category emoji followed by the category name — the first column the
+// header alignment pads to. See TheoryOfTreeTab.
+func treeNodeCategoryText(n *tree.Node) string {
+	return n.Category().Emoji() + " " + string(n.Category())
 }
 
-// treeLineColor maps a node to its display color: event and error
-// nodes in the log color, user inputs in the user color, program
-// nodes in the system color, model nodes in the default foreground.
-// See TheoryOfTreeTab.
+// treeNodeTypeText renders the node's type fragment — the type emoji
+// followed by the type name — the second column the header alignment
+// pads to. See TheoryOfTreeTab.
+func treeNodeTypeText(n *tree.Node) string {
+	return n.Type.Emoji() + " " + string(n.Type)
+}
+
+// treeLineColor maps a node to its display color: event-category and
+// error nodes in the log color, user inputs in the user color,
+// program nodes in the system color, model nodes in the default
+// foreground. See TheoryOfTreeTab.
 func treeLineColor(n *tree.Node) taiui.Color {
 	switch {
-	case n.Type == tree.TypeEvent || n.Type == tree.TypeError:
+	case n.Category() == tree.CategoryEvent || n.Type == tree.TypeError:
 		return outputColorLogLine
 	case n.Author == tree.AuthorUser:
 		return outputColorUserLine
@@ -351,18 +375,18 @@ func (t *TUI) setTree(tr *tree.Tree) {
 	if t.treeTab.seen == nil {
 		t.treeTab.seen = make(map[string]bool)
 	}
-	eventNodes := tr.ByType(tree.TypeEvent)
+	eventNodes := tr.ByCategory(tree.CategoryEvent)
 	for _, n := range eventNodes {
 		if t.treeTab.seen[n.Name] {
 			continue
 		}
 		t.treeTab.seen[n.Name] = true
-		if strings.HasPrefix(n.Name, "attempt-start") {
+		if n.Type == tree.TypeAttemptStart {
 			if num, ok := attemptNumberOf(n.Content); ok {
 				t.pendingOwner = &outputSectionOwner{attempt: num}
 			}
 		}
-		if strings.HasPrefix(n.Name, "finish") {
+		if n.Type == tree.TypeFinish {
 			t.generating = false
 		}
 	}
@@ -460,11 +484,11 @@ func (t *TUI) treeDisplay(contentWidth int, base taiui.Color) []taiui.Line {
 // TheoryOfTreeTab.
 func (t *TUI) treeNodeLines(n *tree.Node, depth int, shade taiui.Color, contentWidth int, options displaywidth.Options, align treeAlignments) ([]taiui.Line, bool) {
 	expanded := t.treeTab.expanded[n.Name]
-	nameWidth := align.nameWidths[depth]
-	metaWidth := align.metaWidths[depth]
+	catWidth := align.catWidths[depth]
+	typeWidth := align.typeWidths[depth]
 	if c, ok := t.treeTab.cache[n.Name]; ok &&
 		c.width == contentWidth && c.depth == depth && c.shade == shade && c.expanded == expanded &&
-		c.nameWidth == nameWidth && c.metaWidth == metaWidth {
+		c.catWidth == catWidth && c.typeWidth == typeWidth {
 		return c.lines, c.expandable
 	}
 	elapsed := time.Since(t.startTime)
@@ -480,10 +504,10 @@ func (t *TUI) treeNodeLines(n *tree.Node, depth int, shade taiui.Color, contentW
 	timerWidth := options.String(timerText)
 	timerZone := timerWidth + 1
 
-	header := treeHeaderText(n, expanded, options, nameWidth, metaWidth)
+	header := treeHeaderText(n, expanded, options, catWidth, typeWidth)
 	collapsedHeader := header
 	if expanded {
-		collapsedHeader = treeHeaderText(n, false, options, nameWidth, metaWidth)
+		collapsedHeader = treeHeaderText(n, false, options, catWidth, typeWidth)
 	}
 	first := treeFirstLine(n)
 	bodyBase := treeBodyLines(n)
@@ -547,7 +571,7 @@ func (t *TUI) treeNodeLines(n *tree.Node, depth int, shade taiui.Color, contentW
 	}
 	t.treeTab.cache[n.Name] = treeCached{
 		width: contentWidth, depth: depth, shade: shade, expanded: expanded,
-		nameWidth: nameWidth, metaWidth: metaWidth, expandable: expandable, lines: lines,
+		catWidth: catWidth, typeWidth: typeWidth, expandable: expandable, lines: lines,
 	}
 	return lines, expandable
 }
@@ -844,7 +868,7 @@ func (t *TUI) treeAtClick(x, y int) {
 	if box.Width() > controlColumnWidth {
 		pressCol -= controlColumnWidth
 	}
-	if strings.HasPrefix(node.Name, "attempt-start") {
+	if node.Type == tree.TypeAttemptStart {
 		if line, ok := t.treeDisplayLine(row, box); ok {
 			start, end, hasMarker := markerColumnRange(line.Text, taiui.DisplayWidthOptions())
 			if hasMarker && pressCol >= start && pressCol < end {

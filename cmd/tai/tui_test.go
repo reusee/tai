@@ -222,7 +222,7 @@ func TestTuiSignalsHasNoLimit(t *testing.T) {
 		fmt.Fprintf(&body, "- line %d", i)
 	}
 	content := "attempt 1 complete:\n" + body.String()
-	tr, err := tree.New().Write("root", "completed-1", tree.TypeEvent, tree.AuthorProgram, content)
+	tr, err := tree.New().Write("root", "completed-1", tree.TypeCompleted, tree.AuthorProgram, content)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,7 +252,7 @@ func TestTuiSignalsHasNoLimit(t *testing.T) {
 	for i := 0; i < finishes; i++ {
 		ops = append(ops, tree.WriteOp{
 			Parent: "root", Name: fmt.Sprintf("finish-%d", i),
-			Type: tree.TypeEvent, Author: tree.AuthorProgram, Content: "finish: stop",
+			Type: tree.TypeFinish, Author: tree.AuthorProgram, Content: "finish: stop",
 		})
 	}
 	tr2, err := tree.New().WriteAll(ops...)
@@ -260,7 +260,7 @@ func TestTuiSignalsHasNoLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 	tui2.setTree(tr2)
-	if got := len(tui2.treeView.ByType(tree.TypeEvent)); got != finishes {
+	if got := len(tui2.treeView.ByCategory(tree.CategoryEvent)); got != finishes {
 		t.Fatalf("expected %d finish nodes, got %d", finishes, got)
 	}
 }
@@ -1778,7 +1778,7 @@ func TestTuiStateAutoExpandTabs(t *testing.T) {
 		t.Fatalf("auto-expand must not change an established focus, got %d", tui.tabs.Focus)
 	}
 
-	tr, err := tree.New().Write("root", "completed-1", tree.TypeEvent, tree.AuthorProgram,
+	tr, err := tree.New().Write("root", "completed-1", tree.TypeCompleted, tree.AuthorProgram,
 		"attempt 1 complete:\n- done")
 	if err != nil {
 		t.Fatal(err)
@@ -1799,7 +1799,7 @@ func TestTuiStateAutoExpandTabs(t *testing.T) {
 	tui2.tabs.Expanded = []bool{true, false, false}
 	tui2.tabs.HasContent = []bool{true, false, false}
 	tui2.tabs.Focus = 0
-	tr2, err := tree.New().Write("root", "attempt-start-1", tree.TypeEvent, tree.AuthorProgram,
+	tr2, err := tree.New().Write("root", "attempt-start-1", tree.TypeAttemptStart, tree.AuthorProgram,
 		"attempt 1 start (1/3)")
 	if err != nil {
 		t.Fatal(err)
@@ -1903,14 +1903,14 @@ func TestWithTUIOutputObserver(t *testing.T) {
 			// The run yields the finish node's tree and then the tree
 			// carrying the attempt completion; the wrapper's tap must
 			// forward both to the TUI.
-			finishTree, err := tree.New().Write("root", "finish-1", tree.TypeEvent, tree.AuthorProgram, "finish: stop")
+			finishTree, err := tree.New().Write("root", "finish-1", tree.TypeFinish, tree.AuthorProgram, "finish: stop")
 			if err != nil {
 				return
 			}
 			if !yield(finishTree, nil) {
 				return
 			}
-			next, err := finishTree.Write("root", "completed-1", tree.TypeEvent, tree.AuthorProgram,
+			next, err := finishTree.Write("root", "completed-1", tree.TypeCompleted, tree.AuthorProgram,
 				"attempt 1 complete:\n- done")
 			if err != nil {
 				return

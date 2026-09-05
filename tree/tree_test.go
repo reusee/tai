@@ -392,6 +392,46 @@ func TestByTypeByAuthor(t *testing.T) {
 	}
 }
 
+// TestCategoryAndEmoji verifies the category layer: every type maps to
+// its category, Node.Category derives from the type, ByCategory selects
+// the family, and every type and category carries a non-empty emoji.
+// See TheoryOfTree.
+func TestCategoryAndEmoji(t *testing.T) {
+	tr, err := New().WriteAll(
+		WriteOp{Parent: "root", Name: "a", Type: TypeAttemptStart, Author: AuthorProgram, Content: "x"},
+		WriteOp{Parent: "root", Name: "b", Type: TypeRequest, Author: AuthorProgram, Content: "y"},
+		WriteOp{Parent: "root", Name: "c", Type: TypeInput, Author: AuthorUser, Content: "z"},
+		WriteOp{Parent: "root", Name: "d", Type: TypeBlock, Author: AuthorModel, Content: "b"},
+		WriteOp{Parent: "root", Name: "e", Type: TypeError, Author: AuthorProgram, Content: "e"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := mustNode(t, tr, "a").Category(); got != CategoryEvent {
+		t.Fatalf("attempt-start category = %v, want event", got)
+	}
+	if got := mustNode(t, tr, "c").Category(); got != CategorySession {
+		t.Fatalf("input category = %v, want session", got)
+	}
+	if got := mustNode(t, tr, "d").Category(); got != CategoryBlock {
+		t.Fatalf("block category = %v, want block", got)
+	}
+	if got := mustNode(t, tr, "e").Category(); got != CategoryError {
+		t.Fatalf("error category = %v, want error", got)
+	}
+	if got := len(tr.ByCategory(CategoryEvent)); got != 2 {
+		t.Fatalf("ByCategory(event) = %d, want 2", got)
+	}
+	for _, n := range tr.Subtree("root") {
+		if n.Type.Emoji() == "" {
+			t.Fatalf("type %q carries no emoji", n.Type)
+		}
+		if n.Category().Emoji() == "" {
+			t.Fatalf("category %q carries no emoji", n.Category())
+		}
+	}
+}
+
 func TestExtract(t *testing.T) {
 	insertTime := time.Date(2024, 5, 6, 7, 8, 9, 0, time.UTC)
 	tr, err := New().WriteAll(

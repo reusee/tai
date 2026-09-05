@@ -62,7 +62,7 @@ func TestRunRecordsEventNodes(t *testing.T) {
 			t.Fatal("expected the run to yield trees")
 		}
 
-		nodes := lastTree.ByType(tree.TypeEvent)
+		nodes := lastTree.ByCategory(tree.CategoryEvent)
 		wantPrefixes := []string{
 			"attempt-start", "truncated", "handoff-start", "handoff",
 			"attempt-start", "usage", "completed",
@@ -184,7 +184,7 @@ func TestRunRequestNodeContent(t *testing.T) {
 			t.Fatalf("unexpected terminal error: %v", terminalErr)
 		}
 		var requestNode *tree.Node
-		for _, n := range lastTree.ByType(tree.TypeEvent) {
+		for _, n := range lastTree.ByCategory(tree.CategoryEvent) {
 			if strings.HasPrefix(n.Name, "request") {
 				requestNode = n
 			}
@@ -329,7 +329,7 @@ func TestRunFinishNodeContent(t *testing.T) {
 			t.Fatalf("unexpected terminal error: %v", terminalErr)
 		}
 		var finishNode *tree.Node
-		for _, n := range lastTree.ByType(tree.TypeEvent) {
+		for _, n := range lastTree.ByCategory(tree.CategoryEvent) {
 			if strings.HasPrefix(n.Name, "finish") {
 				finishNode = n
 			}
@@ -393,7 +393,7 @@ func TestRunThoughtSummaryNode(t *testing.T) {
 			t.Fatalf("unexpected terminal error: %v", terminalErr)
 		}
 		var summaryNode *tree.Node
-		for _, n := range lastTree.ByType(tree.TypeEvent) {
+		for _, n := range lastTree.ByCategory(tree.CategoryEvent) {
 			if strings.HasPrefix(n.Name, "thought-summary") {
 				summaryNode = n
 			}
@@ -414,7 +414,7 @@ func TestRunThoughtSummaryNode(t *testing.T) {
 func TestTreeOutlineExcludesEventNodes(t *testing.T) {
 	tr, err := tree.New().WriteAll(
 		tree.WriteOp{Parent: "root", Name: "input-1", Type: tree.TypeInput, Author: tree.AuthorUser, Content: "task"},
-		tree.WriteOp{Parent: "root", Name: "attempt-start-1", Type: tree.TypeEvent, Author: tree.AuthorProgram, Content: "attempt 1 start"},
+		tree.WriteOp{Parent: "root", Name: "attempt-start-1", Type: tree.TypeAttemptStart, Author: tree.AuthorProgram, Content: "attempt 1 start"},
 	)
 	if err != nil {
 		t.Fatal(err)

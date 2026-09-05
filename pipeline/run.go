@@ -1256,11 +1256,11 @@ func (ls *loopState) finishWithError(err error, finalState generators.State) {
 	// TheoryOfSessionTree.
 	ls.result.SessionTree = ls.sessionTree
 	ls.runErr = err
-	// The terminal error joins the tree as an event node before the
-	// final yield, so the record carries it even when the consumer
-	// stops at the terminal yield. See TheoryOfLoopEvents.
+	// The terminal error joins the tree as a run-error event node
+	// before the final yield, so the record carries it even when the
+	// consumer stops at the terminal yield. See TheoryOfLoopEvents.
 	if ls.sessionTree != nil {
-		if next, _, werr := ls.sessionTree.WriteAuto(ls.sessionParent(), "run-error", tree.TypeEvent, tree.AuthorProgram, "run error: "+err.Error()); werr == nil {
+		if next, _, werr := ls.sessionTree.WriteAuto(ls.sessionParent(), string(tree.TypeRunError), tree.TypeRunError, tree.AuthorProgram, "run error: "+err.Error()); werr == nil {
 			ls.sessionTree = next
 		}
 	}

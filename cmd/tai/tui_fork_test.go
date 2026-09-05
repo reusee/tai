@@ -53,7 +53,7 @@ func TestForkTUIDisplayForwardsTreesToTUI(t *testing.T) {
 	if tui.treeView == nil {
 		t.Fatal("expected the TUI to hold the run's tree")
 	}
-	if len(tui.treeView.ByType(tree.TypeEvent)) == 0 {
+	if len(tui.treeView.ByCategory(tree.CategoryEvent)) == 0 {
 		t.Fatal("expected event nodes in the TUI's tree")
 	}
 	// The tree is the pipeline's own session tree: the attempt's

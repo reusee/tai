@@ -30,13 +30,13 @@ Output tab sections and event-to-output navigation theory (cmd/tai):
   Output tab's view to the section the attempt wrote — the only
   Tree-tab press that jumps. The press maps onto a tree node through
   the Tree tab's recorded row ranges (treeNodeAtRow), and only an
-  attempt-start node — its name carries the attempt-start prefix — is
-  eligible; the marker's cell range is then located in the pane's
-  wrapped display line, measured cluster by cluster with the same
-  width options the renderer uses, so the press must land on the
-  marker's own columns. Presses on other rows, other columns, rows
-  without a node, and attempt starts whose attempt produced no visible
-  output are no-ops; any other press on a node toggles its expansion.
+  attempt-start node — a node of tree.TypeAttemptStart — is eligible;
+  the marker's cell range is then located in the pane's wrapped
+  display line, measured cluster by cluster with the same width
+  options the renderer uses, so the press must land on the marker's
+  own columns. Presses on other rows, other columns, rows without a
+  node, and attempt starts whose attempt produced no visible output
+  are no-ops; any other press on a node toggles its expansion.
   Mirroring jumpToTransition, the jump expands and focuses the Output
   tab when needed and stops following the tail; the live tail resumes
   only when the view reaches the latest row. The display geometry is

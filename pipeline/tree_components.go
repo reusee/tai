@@ -33,13 +33,14 @@ immutable tree, and one run owns exactly one tree.
   system prompt) and one input node (user author) merging the initial
   user contents' Text parts under it.
 - The loop's own bookkeeping joins the same tree as event nodes
-  (tree.TypeEvent, program author) under the session parent: attempt
-  lifecycle, request parameters, finish reasons, token usage,
-  truncations, retries, handoffs, completions, continuations, thought
-  summaries, and the terminal error. Every event write yields the
-  full tree to the run's consumer (see TheoryOfLoopEvents). Event
-  nodes are program bookkeeping: every model-facing outline excludes
-  them, so the model never sees the loop's own bookkeeping.
+  (event-subtype types in Category event, program author) under the
+  session parent: attempt lifecycle, request parameters, finish
+  reasons, token usage, truncations, retries, handoffs, completions,
+  continuations, thought summaries, and the terminal error. Every
+  event write yields the full tree to the run's consumer (see
+  TheoryOfLoopEvents). Event nodes are program bookkeeping: every
+  model-facing outline excludes them by category, so the model never
+  sees the loop's own bookkeeping.
 - A successful attempt writes a response node under the session root
   (model author, content = the attempt's model-role Text parts; thought
   parts never enter the tree) and one summary node per summary body
@@ -94,8 +95,8 @@ immutable tree, and one run owns exactly one tree.
   delta: only the delta is visible, not the handler's internal loop.
 - The handoff input prefixes the incomplete output with the handoff
   subtree: the session's tree projected onto its decision-level nodes
-  (every type except block, block-result, and event) and rendered from
-  the session root, so the summary carries the session's plans,
+  (every node outside the block and event categories) and rendered
+  from the session root, so the summary carries the session's plans,
   decisions, and earlier summaries — without execution detail and
   without other loops' content (see tree.TheoryOfSubtree).
 - The run's Result carries the final session tree, so callers outside
@@ -538,22 +539,22 @@ func joinTextParts(parts []generators.Part) string {
 // the session structure without the nodes' full content. The outline
 // is always the current loop's subtree, rendered from the session
 // root, projected onto the model-facing nodes — the loop's own event
-// nodes are program bookkeeping and are excluded — so each round's
-// feedback volume stays independent of the run's length and of other
-// loops' content. The leading newline keeps the outline on its own
-// line: parts concatenate verbatim, and the content before it may end
-// without a line break. See TheoryOfSessionTree.
+// nodes are program bookkeeping and are excluded by category — so
+// each round's feedback volume stays independent of the run's length
+// and of other loops' content. The leading newline keeps the outline
+// on its own line: parts concatenate verbatim, and the content before
+// it may end without a line break. See TheoryOfSessionTree.
 func treeOutlinePart(tr *tree.Tree, parent string) generators.Text {
 	if tr == nil {
 		return generators.Text("")
 	}
-	proj := tr.Extract(func(n *tree.Node) bool { return n.Type != tree.TypeEvent })
+	proj := tr.Extract(func(n *tree.Node) bool { return n.Category() != tree.CategoryEvent })
 	return generators.Text("\n[Session tree]\n" + sessionOutline(proj, parent) + "\n")
 }
 
 // handoffOutlinePart renders the handoff's tree outline: the projection
-// of the session's tree onto its decision-level nodes — every type
-// except block, block-result, and event — rendered from the session
+// of the session's tree onto its decision-level nodes — every node
+// outside the block and event categories — rendered from the session
 // root, so the handoff summary carries the session's plans, decisions,
 // and earlier summaries without execution detail and without other
 // loops' content. See TheoryOfSessionTree and tree.TheoryOfSubtree.
@@ -562,7 +563,7 @@ func handoffOutlinePart(tr *tree.Tree, parent string) string {
 		return ""
 	}
 	proj := tr.Extract(func(n *tree.Node) bool {
-		return n.Type != tree.TypeBlock && n.Type != tree.TypeBlockResult && n.Type != tree.TypeEvent
+		return n.Category() != tree.CategoryBlock && n.Category() != tree.CategoryEvent
 	})
 	return "[Session tree]\n" + sessionOutline(proj, parent) + "\n"
 }

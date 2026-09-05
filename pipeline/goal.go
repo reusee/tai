@@ -635,16 +635,16 @@ func (r goalReporter) failure(text string) {
 	fmt.Fprint(os.Stderr, text)
 }
 
-// record writes one goal progress message as a goal event node under
-// the tree root and forwards the updated tree to the observer. See
-// TheoryOfGoalMode and TheoryOfLoopEvents.
+// record writes one goal progress message as a tree.TypeGoal event
+// node under the tree root and forwards the updated tree to the
+// observer. See TheoryOfGoalMode and TheoryOfLoopEvents.
 func (r goalReporter) record(text string) {
 	tr := *r.tree
 	if tr == nil {
 		tr = tree.New()
 		*r.tree = tr
 	}
-	if next, _, err := tr.WriteAuto("root", "goal", tree.TypeEvent, tree.AuthorProgram, strings.TrimSpace(text)); err == nil {
+	if next, _, err := tr.WriteAuto("root", string(tree.TypeGoal), tree.TypeGoal, tree.AuthorProgram, strings.TrimSpace(text)); err == nil {
 		*r.tree = next
 	}
 	r.observer(*r.tree)

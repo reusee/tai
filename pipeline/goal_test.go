@@ -521,7 +521,7 @@ func TestRunGoalReportsTreeThroughObserver(t *testing.T) {
 	// achieves the goal directly: the achieved verdict is the only goal
 	// event node.
 	var goalTexts []string
-	for _, n := range trees[len(trees)-1].ByType(tree.TypeEvent) {
+	for _, n := range trees[len(trees)-1].ByCategory(tree.CategoryEvent) {
 		if strings.HasPrefix(n.Name, "goal") {
 			goalTexts = append(goalTexts, n.Content)
 		}

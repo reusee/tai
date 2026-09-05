@@ -538,7 +538,7 @@ func TestRunAttemptNumbersContinueAcrossGenerations(t *testing.T) {
 			t.Fatal("expected the run to yield trees")
 		}
 		var starts []string
-		for _, n := range lastTree.ByType(tree.TypeEvent) {
+		for _, n := range lastTree.ByCategory(tree.CategoryEvent) {
 			if strings.HasPrefix(n.Name, "attempt-start") {
 				starts = append(starts, n.Content)
 			}
@@ -2577,7 +2577,7 @@ func TestRunContinueReasonDescribesTrigger(t *testing.T) {
 				lastTree = tr
 			}
 			var detail string
-			for _, n := range lastTree.ByType(tree.TypeEvent) {
+			for _, n := range lastTree.ByCategory(tree.CategoryEvent) {
 				if strings.HasPrefix(n.Name, "continue") {
 					detail = n.Content
 				}
@@ -2626,7 +2626,7 @@ func TestRunContinueReasonDescribesTrigger(t *testing.T) {
 				lastTree = tr
 			}
 			var detail string
-			for _, n := range lastTree.ByType(tree.TypeEvent) {
+			for _, n := range lastTree.ByCategory(tree.CategoryEvent) {
 				if strings.HasPrefix(n.Name, "continue") {
 					detail = n.Content
 				}

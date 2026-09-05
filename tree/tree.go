@@ -56,6 +56,22 @@ tree theory: writes and transforms on immutable path-copying trees.
 - A block node without children is an unprocessed block, except blocks that
   need no processing (done, summary). Block execution results are written
   as block-result child nodes by the program.
+- Node kinds form two layers. Type is the fine-grained kind: session
+  content (system-prompt, input, plan, response, summary, done, abort),
+  per-occurrence event subtypes (attempt-start, request, finish, usage,
+  truncated, retry, handoff-start, handoff, completed,
+  synthesized-summary, thought-summary, continue, idle, run-error,
+  goal), block execution (block, block-result), and error. Category is
+  the coarse layer derived from the type (Node.Category): structure,
+  session, event, block, error. Category is never written — it is a pure
+  function of Type — so the write surface, merge identity, and chronology
+  stay type-only, and consumers select whole families with ByCategory.
+  Every event subtype's string equals the event node name prefix the
+  pipeline has always written, so typed event nodes keep their historical
+  names.
+- Type.Emoji and Category.Emoji supply the display glyphs of user-facing
+  trees. They are presentation metadata, never identity: writes and merges
+  ignore them.
 `
 
 const TheoryOfSubtree = `
@@ -96,12 +112,154 @@ const (
 // See pipeline.TheoryOfSessionTree and pipeline.TheoryOfGoalMode.
 const TypeLoop Type = "loop"
 
-// TypeEvent marks one notable occurrence the program records during a
-// run: attempt lifecycle, request parameters, retries, handoffs, token
-// usage, thought summaries, and goal verdicts. Event nodes are program
-// bookkeeping: model-facing outlines exclude them, and the display
-// front-end's Tree tab projects them. See pipeline.TheoryOfLoopEvents.
-const TypeEvent Type = "event"
+// The event subtypes classify one recorded occurrence each: one type
+// per occurrence kind of a run. Every constant's string equals the
+// event node name prefix the pipeline has always written, so typed
+// event nodes keep their historical names. All of them derive to
+// CategoryEvent. See TheoryOfTree.
+const (
+	TypeAttemptStart       Type = "attempt-start"
+	TypeRequest            Type = "request"
+	TypeFinish             Type = "finish"
+	TypeUsage              Type = "usage"
+	TypeTruncated          Type = "truncated"
+	TypeRetry              Type = "retry"
+	TypeHandoffStart       Type = "handoff-start"
+	TypeHandoff            Type = "handoff"
+	TypeCompleted          Type = "completed"
+	TypeSynthesizedSummary Type = "synthesized-summary"
+	TypeThoughtSummary     Type = "thought-summary"
+	TypeContinue           Type = "continue"
+	TypeIdle               Type = "idle"
+	TypeRunError           Type = "run-error"
+	TypeGoal               Type = "goal"
+)
+
+// Category is the coarse classification layer above Type: a pure
+// function of the type, never a written field. Consumers select whole
+// families of nodes with it; the TUI's collapsed rows show it instead
+// of the node name and author. See TheoryOfTree.
+type Category string
+
+const (
+	CategoryStructure Category = "structure"
+	CategorySession   Category = "session"
+	CategoryEvent     Category = "event"
+	CategoryBlock     Category = "block"
+	CategoryError     Category = "error"
+)
+
+// Category returns the category the type belongs to. See TheoryOfTree.
+func (t Type) Category() Category {
+	switch t {
+	case TypeRoot, TypeLoop:
+		return CategoryStructure
+	case TypeSystemPrompt, TypeInput, TypePlan, TypeResponse,
+		TypeSummary, TypeDone, TypeAbort:
+		return CategorySession
+	case TypeAttemptStart, TypeRequest, TypeFinish, TypeUsage,
+		TypeTruncated, TypeRetry, TypeHandoffStart, TypeHandoff,
+		TypeCompleted, TypeSynthesizedSummary, TypeThoughtSummary,
+		TypeContinue, TypeIdle, TypeRunError, TypeGoal:
+		return CategoryEvent
+	case TypeBlock, TypeBlockResult:
+		return CategoryBlock
+	case TypeError:
+		return CategoryError
+	default:
+		return CategoryStructure
+	}
+}
+
+// Emoji returns the display glyph decorating the type in user-facing
+// trees. Presentation metadata, never identity: writes and merges
+// ignore it. See TheoryOfTree.
+func (t Type) Emoji() string {
+	switch t {
+	case TypeRoot:
+		return "🌳"
+	case TypeLoop:
+		return "🔁"
+	case TypeSystemPrompt:
+		return "📜"
+	case TypeInput:
+		return "💬"
+	case TypePlan:
+		return "🗺️"
+	case TypeResponse:
+		return "🤖"
+	case TypeSummary:
+		return "📝"
+	case TypeDone:
+		return "✅"
+	case TypeAbort:
+		return "🚫"
+	case TypeAttemptStart:
+		return "🚀"
+	case TypeRequest:
+		return "📤"
+	case TypeFinish:
+		return "🏁"
+	case TypeUsage:
+		return "🔢"
+	case TypeTruncated:
+		return "✂️"
+	case TypeRetry:
+		return "🔄"
+	case TypeHandoffStart:
+		return "🤲"
+	case TypeHandoff:
+		return "🤝"
+	case TypeCompleted:
+		return "🎉"
+	case TypeSynthesizedSummary:
+		return "🧩"
+	case TypeThoughtSummary:
+		return "💭"
+	case TypeContinue:
+		return "➡️"
+	case TypeIdle:
+		return "⏸️"
+	case TypeRunError:
+		return "❌"
+	case TypeGoal:
+		return "🎯"
+	case TypeBlock:
+		return "🔧"
+	case TypeBlockResult:
+		return "📎"
+	case TypeError:
+		return "⚠️"
+	default:
+		return "•"
+	}
+}
+
+// Emoji returns the display glyph decorating the category in
+// user-facing trees. Presentation metadata, never identity. See
+// TheoryOfTree.
+func (c Category) Emoji() string {
+	switch c {
+	case CategoryStructure:
+		return "🗂️"
+	case CategorySession:
+		return "🧵"
+	case CategoryEvent:
+		return "📡"
+	case CategoryBlock:
+		return "🔨"
+	case CategoryError:
+		return "🚨"
+	default:
+		return "•"
+	}
+}
+
+// Category returns the node's category, derived from its type. See
+// TheoryOfTree.
+func (n *Node) Category() Category {
+	return n.Type.Category()
+}
 
 // Author identifies who wrote a node.
 type Author string
@@ -590,6 +748,12 @@ func (t *Tree) ByType(typ Type) []*Node {
 // ByAuthor returns every node written by the given author.
 func (t *Tree) ByAuthor(author Author) []*Node {
 	return t.Filter(func(n *Node) bool { return n.Author == author })
+}
+
+// ByCategory returns every node whose type belongs to the given
+// category. See TheoryOfTree.
+func (t *Tree) ByCategory(cat Category) []*Node {
+	return t.Filter(func(n *Node) bool { return n.Category() == cat })
 }
 
 // Extract returns a new tree carrying every node matching pred together

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/clipperhouse/displaywidth"
+	"github.com/reusee/tai/taiui"
 	"github.com/reusee/tai/tree"
 )
 
@@ -14,7 +15,7 @@ import (
 // generating hint. See TheoryOfTreeTab.
 func treeWithFinishNode(t *testing.T) *tree.Tree {
 	t.Helper()
-	tr, err := tree.New().Write("root", "finish-1", tree.TypeEvent, tree.AuthorProgram, "finish: stop")
+	tr, err := tree.New().Write("root", "finish-1", tree.TypeFinish, tree.AuthorProgram, "finish: stop")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -25,7 +26,7 @@ func treeWithFinishNode(t *testing.T) *tree.Tree {
 // the fixture the Tree tab's collapse tests use. See TheoryOfTreeTab.
 func treeWithMultilineNode(t *testing.T) *tree.Tree {
 	t.Helper()
-	tr, err := tree.New().Write("root", "handoff-1", tree.TypeEvent, tree.AuthorProgram,
+	tr, err := tree.New().Write("root", "handoff-1", tree.TypeHandoff, tree.AuthorProgram,
 		"handoff summary:\nline one\nline two\nline three")
 	if err != nil {
 		t.Fatal(err)
@@ -44,8 +45,8 @@ func TestSetTreeConsumesSignals(t *testing.T) {
 	tui := newTUIForTest()
 	tui.generating = true
 	tr, err := tree.New().WriteAll(
-		tree.WriteOp{Parent: "root", Name: "attempt-start-1", Type: tree.TypeEvent, Author: tree.AuthorProgram, Content: "attempt 1 start (1/3)"},
-		tree.WriteOp{Parent: "root", Name: "finish-1", Type: tree.TypeEvent, Author: tree.AuthorProgram, Content: "finish: stop"},
+		tree.WriteOp{Parent: "root", Name: "attempt-start-1", Type: tree.TypeAttemptStart, Author: tree.AuthorProgram, Content: "attempt 1 start (1/3)"},
+		tree.WriteOp{Parent: "root", Name: "finish-1", Type: tree.TypeFinish, Author: tree.AuthorProgram, Content: "finish: stop"},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -77,8 +78,10 @@ func TestSetTreeConsumesSignals(t *testing.T) {
 }
 
 // TestTreeNodeCollapsedByDefault verifies the display contract: a node
-// with multi-line content renders one collapsed header line by default,
-// and expanding moves the content — first line included — onto the rows
+// with multi-line content renders one collapsed header line by default
+// showing the category, type, and content preview while the node name
+// and author stay hidden; expanding reveals the name and author on the
+// header and moves the content — first line included — onto the rows
 // below the header, where a content row never folds it. The display
 // width is wide enough for the header and the elapsed timer to stay on
 // one line. See TheoryOfTreeTab.
@@ -91,17 +94,30 @@ func TestTreeNodeCollapsedByDefault(t *testing.T) {
 	if len(display) != 1 {
 		t.Fatalf("expected 1 collapsed row, got %d: %v", len(display), displayTexts(display))
 	}
-	if !strings.Contains(display[0].Text, "handoff-1") ||
+	if !strings.Contains(display[0].Text, "event") ||
+		!strings.Contains(display[0].Text, "handoff") ||
 		!strings.Contains(display[0].Text, "3 more lines") {
 		t.Fatalf("unexpected collapsed header: %q", display[0].Text)
 	}
-	// Expanding reveals the header and the content rows: the header
-	// carries no content, and every content line starts on the row
-	// below it.
+	// The collapsed row hides the node name and author.
+	if strings.Contains(display[0].Text, "handoff-1") ||
+		strings.Contains(display[0].Text, "program") {
+		t.Fatalf("the collapsed header must hide the name and author, got %q", display[0].Text)
+	}
+	// Expanding reveals the name and author on the header and the
+	// content rows: the header carries no content, and every content
+	// line starts on the row below it.
 	tui.toggleTreeNodeAtRow(0)
 	display = tui.treeDisplay(120, panelStyle.BaseBG)
 	if len(display) != 5 {
 		t.Fatalf("expected 5 expanded rows (header + 4 content lines), got %d", len(display))
+	}
+	if !strings.Contains(display[0].Text, "handoff-1") ||
+		!strings.Contains(display[0].Text, "program") {
+		t.Fatalf("the expanded header must reveal the name and author, got %q", display[0].Text)
+	}
+	if strings.Contains(display[0].Text, "handoff summary") {
+		t.Fatalf("the expanded header must not carry content, got %q", display[0].Text)
 	}
 	for _, want := range []string{"line one", "line two", "line three"} {
 		found := false
@@ -112,9 +128,6 @@ func TestTreeNodeCollapsedByDefault(t *testing.T) {
 		}
 		if !found {
 			t.Fatalf("expected %q in the expanded display, got %v", want, display)
-		}
-		if strings.Contains(display[0].Text, want) {
-			t.Fatalf("the expanded header must not carry content, got %q", display[0].Text)
 		}
 	}
 	// A content row of an expanded node never folds it.
@@ -128,13 +141,15 @@ func TestTreeNodeCollapsedByDefault(t *testing.T) {
 // TestTreeProjectionCycle verifies the projection cycling: the modes
 // walk all, events, summary, model, program, user; each projection
 // keeps the shown nodes' ancestors so the outline stays readable; and
-// the tab label states the current projection. See TheoryOfTreeTab.
+// the tab label states the current projection. The collapsed rows hide
+// node names, so the assertions read the content previews. See
+// TheoryOfTreeTab.
 func TestTreeProjectionCycle(t *testing.T) {
 	tui := newTUIForTest()
 	tr, err := tree.New().WriteAll(
 		tree.WriteOp{Parent: "root", Name: "input-1", Type: tree.TypeInput, Author: tree.AuthorUser, Content: "task"},
-		tree.WriteOp{Parent: "root", Name: "attempt-start-1", Type: tree.TypeEvent, Author: tree.AuthorProgram, Content: "attempt 1 start (1/3)"},
-		tree.WriteOp{Parent: "root", Name: "completed-1", Type: tree.TypeEvent, Author: tree.AuthorProgram, Content: "attempt 1 complete"},
+		tree.WriteOp{Parent: "root", Name: "attempt-start-1", Type: tree.TypeAttemptStart, Author: tree.AuthorProgram, Content: "attempt 1 start (1/3)"},
+		tree.WriteOp{Parent: "root", Name: "completed-1", Type: tree.TypeCompleted, Author: tree.AuthorProgram, Content: "attempt 1 complete"},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -157,7 +172,7 @@ func TestTreeProjectionCycle(t *testing.T) {
 	tui.mu.Lock()
 	display = tui.treeDisplay(60, panelStyle.BaseBG)
 	tui.mu.Unlock()
-	for _, want := range []string{"attempt-start-1", "completed-1"} {
+	for _, want := range []string{"attempt 1 start", "attempt 1 complete"} {
 		found := false
 		for _, line := range display {
 			if strings.Contains(line.Text, want) {
@@ -168,11 +183,9 @@ func TestTreeProjectionCycle(t *testing.T) {
 			t.Fatalf("expected %q in the events projection, got %v", want, display)
 		}
 	}
-	for _, gone := range []string{"input-1"} {
-		for _, line := range display {
-			if strings.Contains(line.Text, gone) {
-				t.Fatalf("%q must be pruned from the events projection, got %v", gone, display)
-			}
+	for _, line := range display {
+		if strings.Contains(line.Text, "task") {
+			t.Fatalf("the input node must be pruned from the events projection, got %v", display)
 		}
 	}
 	if tui.treeTabLabel() != "Tree (events)" {
@@ -192,7 +205,7 @@ func TestTreeProjectionCycle(t *testing.T) {
 	tui.mu.Unlock()
 	found := false
 	for _, line := range display {
-		if strings.Contains(line.Text, "input-1") {
+		if strings.Contains(line.Text, "task") {
 			found = true
 		}
 	}
@@ -241,8 +254,8 @@ func TestTreeToggleLastExpandable(t *testing.T) {
 func TestTreeCollapseAllToggle(t *testing.T) {
 	tui := newTUIForTest()
 	tr, err := tree.New().WriteAll(
-		tree.WriteOp{Parent: "root", Name: "wide-1", Type: tree.TypeEvent, Author: tree.AuthorProgram, Content: "head\nbody"},
-		tree.WriteOp{Parent: "root", Name: "plain-1", Type: tree.TypeEvent, Author: tree.AuthorProgram, Content: "one line"},
+		tree.WriteOp{Parent: "root", Name: "wide-1", Type: tree.TypeHandoff, Author: tree.AuthorProgram, Content: "head\nbody"},
+		tree.WriteOp{Parent: "root", Name: "plain-1", Type: tree.TypeCompleted, Author: tree.AuthorProgram, Content: "one line"},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -305,8 +318,8 @@ func TestTreeCollapseAllToggle(t *testing.T) {
 	// A node that arrives after the snapshot keeps the collapsed form
 	// on restore: the snapshot carries only the nodes it captured.
 	tr2, err := tree.New().WriteAll(
-		tree.WriteOp{Parent: "root", Name: "wide-1", Type: tree.TypeEvent, Author: tree.AuthorProgram, Content: "head\nbody"},
-		tree.WriteOp{Parent: "root", Name: "late-1", Type: tree.TypeEvent, Author: tree.AuthorProgram, Content: "late\nbody"},
+		tree.WriteOp{Parent: "root", Name: "wide-1", Type: tree.TypeHandoff, Author: tree.AuthorProgram, Content: "head\nbody"},
+		tree.WriteOp{Parent: "root", Name: "late-1", Type: tree.TypeCompleted, Author: tree.AuthorProgram, Content: "late\nbody"},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -331,8 +344,8 @@ func TestTreeCollapseAllToggle(t *testing.T) {
 func TestTreeCollapseAllTruncatedHeaderExpanded(t *testing.T) {
 	tui := newTUIForTest()
 	tr, err := tree.New().WriteAll(
-		tree.WriteOp{Parent: "root", Name: "wide-1", Type: tree.TypeEvent, Author: tree.AuthorProgram, Content: "head\nbody"},
-		tree.WriteOp{Parent: "root", Name: "long-1", Type: tree.TypeEvent, Author: tree.AuthorProgram, Content: strings.Repeat("x", 200)},
+		tree.WriteOp{Parent: "root", Name: "wide-1", Type: tree.TypeHandoff, Author: tree.AuthorProgram, Content: "head\nbody"},
+		tree.WriteOp{Parent: "root", Name: "long-1", Type: tree.TypeCompleted, Author: tree.AuthorProgram, Content: strings.Repeat("x", 200)},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -387,12 +400,12 @@ func TestTreeExpandScrollsToNodeStart(t *testing.T) {
 	tui := newTUIForTest()
 	wideContent := "wide header\n" + strings.TrimRight(strings.Repeat("wide body\n", 30), "\n")
 	tr, err := tree.New().WriteAll(
-		tree.WriteOp{Parent: "root", Name: "plain-1", Type: tree.TypeEvent, Author: tree.AuthorProgram, Content: "one"},
-		tree.WriteOp{Parent: "root", Name: "plain-2", Type: tree.TypeEvent, Author: tree.AuthorProgram, Content: "two"},
-		tree.WriteOp{Parent: "root", Name: "plain-3", Type: tree.TypeEvent, Author: tree.AuthorProgram, Content: "three"},
-		tree.WriteOp{Parent: "root", Name: "plain-4", Type: tree.TypeEvent, Author: tree.AuthorProgram, Content: "four"},
-		tree.WriteOp{Parent: "root", Name: "plain-5", Type: tree.TypeEvent, Author: tree.AuthorProgram, Content: "five"},
-		tree.WriteOp{Parent: "root", Name: "wide-1", Type: tree.TypeEvent, Author: tree.AuthorProgram, Content: wideContent},
+		tree.WriteOp{Parent: "root", Name: "plain-1", Type: tree.TypeCompleted, Author: tree.AuthorProgram, Content: "one"},
+		tree.WriteOp{Parent: "root", Name: "plain-2", Type: tree.TypeCompleted, Author: tree.AuthorProgram, Content: "two"},
+		tree.WriteOp{Parent: "root", Name: "plain-3", Type: tree.TypeCompleted, Author: tree.AuthorProgram, Content: "three"},
+		tree.WriteOp{Parent: "root", Name: "plain-4", Type: tree.TypeCompleted, Author: tree.AuthorProgram, Content: "four"},
+		tree.WriteOp{Parent: "root", Name: "plain-5", Type: tree.TypeCompleted, Author: tree.AuthorProgram, Content: "five"},
+		tree.WriteOp{Parent: "root", Name: "wide-1", Type: tree.TypeHandoff, Author: tree.AuthorProgram, Content: wideContent},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -446,9 +459,10 @@ func TestTreeExpandScrollsToNodeStart(t *testing.T) {
 	}
 }
 
-// TestTreeProjectionKeepsAncestors verifies that a projection keeps the
+// TestTreeProjectionAncestors verifies that a projection keeps the
 // shown nodes' ancestors, so a summary node stays readable in its path
-// context. See TheoryOfTreeTab.
+// context. The collapsed rows hide node names, so the assertions read
+// the content previews. See TheoryOfTreeTab.
 func TestTreeProjectionAncestors(t *testing.T) {
 	tui := newTUIForTest()
 	tr, err := tree.New().WriteAll(
@@ -468,7 +482,7 @@ func TestTreeProjectionAncestors(t *testing.T) {
 	tui.mu.Lock()
 	defer tui.mu.Unlock()
 	display := tui.treeDisplay(60, panelStyle.BaseBG)
-	for _, want := range []string{"input-1", "response-1", "summary-1"} {
+	for _, want := range []string{"task", "resp", "sum"} {
 		found := false
 		for _, line := range display {
 			if strings.Contains(line.Text, want) {
@@ -485,7 +499,7 @@ func TestTreeProjectionAncestors(t *testing.T) {
 // header carries the jump marker and parses the attempt number its
 // content carries. See TheoryOfTreeTab and TheoryOfTUIOutputSections.
 func TestTreeAttemptStartJumpMarker(t *testing.T) {
-	tr, err := tree.New().Write("root", "attempt-start-1", tree.TypeEvent, tree.AuthorProgram,
+	tr, err := tree.New().Write("root", "attempt-start-1", tree.TypeAttemptStart, tree.AuthorProgram,
 		"attempt 3 start (1/3)")
 	if err != nil {
 		t.Fatal(err)
@@ -506,7 +520,7 @@ func TestTreeAttemptStartJumpMarker(t *testing.T) {
 func TestTreeElapsedTimer(t *testing.T) {
 	tui := newTUIForTest()
 	tui.startTime = time.Now().Add(-70 * time.Second)
-	tr, err := tree.New().Write("root", "attempt-start-1", tree.TypeEvent, tree.AuthorProgram,
+	tr, err := tree.New().Write("root", "attempt-start-1", tree.TypeAttemptStart, tree.AuthorProgram,
 		"attempt 1 start (1/3)")
 	if err != nil {
 		t.Fatal(err)
@@ -524,15 +538,17 @@ func TestTreeElapsedTimer(t *testing.T) {
 }
 
 // TestTreeHeaderAlignment verifies the per-level column alignment: at
-// one indent level, every header pads its name to the level's widest
-// visible name and its [type/author] to the level's widest meta, so
-// the meta fragments and the content previews start at the same
-// column. See TheoryOfTreeTab.
+// one indent level, every header pads its category fragment to the
+// level's widest category fragment and its type fragment to the
+// level's widest type fragment, so the type fragments and the content
+// previews start at the same display column. Emoji fragments differ in
+// byte length, so the columns are measured in display width, the same
+// measurement the renderer pads with. See TheoryOfTreeTab.
 func TestTreeHeaderAlignment(t *testing.T) {
 	tui := newTUIForTest()
 	tr, err := tree.New().WriteAll(
 		tree.WriteOp{Parent: "root", Name: "a", Type: tree.TypeInput, Author: tree.AuthorUser, Content: "x"},
-		tree.WriteOp{Parent: "root", Name: "longer-name", Type: tree.TypeEvent, Author: tree.AuthorProgram, Content: "y"},
+		tree.WriteOp{Parent: "root", Name: "longer-name", Type: tree.TypeLoop, Author: tree.AuthorProgram, Content: "y"},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -544,15 +560,30 @@ func TestTreeHeaderAlignment(t *testing.T) {
 	if len(display) != 2 {
 		t.Fatalf("expected 2 rows, got %d: %v", len(display), displayTexts(display))
 	}
-	// The meta fragments start at the level's widest name column.
-	metaCol := strings.Index(display[0].Text, "[")
-	if metaCol < 0 || strings.Index(display[1].Text, "[") != metaCol {
-		t.Fatalf("expected aligned meta columns, got %q and %q", display[0].Text, display[1].Text)
+	options := taiui.DisplayWidthOptions()
+	// columnOf returns the display column of the fragment's first byte:
+	// the renderer pads in display columns, so the alignment contract
+	// is a display-width contract, not a byte-offset one.
+	columnOf := func(line taiui.Line, fragment string) (int, bool) {
+		idx := strings.Index(line.Text, fragment)
+		if idx < 0 {
+			return 0, false
+		}
+		return options.String(line.Text[:idx]), true
 	}
-	// The content previews start at the same column: the meta start
-	// plus the level's widest meta plus one separator.
-	contentCol := strings.Index(display[0].Text, "x")
-	if contentCol < 0 || strings.Index(display[1].Text, "y") != contentCol {
+	catCol0, ok0 := columnOf(display[0], "💬")
+	catCol1, ok1 := columnOf(display[1], "🔁")
+	if !ok0 || !ok1 || catCol0 != catCol1 {
+		t.Fatalf("expected aligned category columns, got %q and %q", display[0].Text, display[1].Text)
+	}
+	typeCol0, ok0 := columnOf(display[0], "input")
+	typeCol1, ok1 := columnOf(display[1], "loop")
+	if !ok0 || !ok1 || typeCol0 != typeCol1 {
+		t.Fatalf("expected aligned type columns, got %q and %q", display[0].Text, display[1].Text)
+	}
+	contentCol0, ok0 := columnOf(display[0], "x")
+	contentCol1, ok1 := columnOf(display[1], "y")
+	if !ok0 || !ok1 || contentCol0 != contentCol1 {
 		t.Fatalf("expected aligned content columns, got %q and %q", display[0].Text, display[1].Text)
 	}
 }
@@ -565,7 +596,7 @@ func TestTreeHeaderAlignment(t *testing.T) {
 // TheoryOfTreeTab.
 func TestTreeExpansionWrapsBody(t *testing.T) {
 	tui := newTUIForTest()
-	tr, err := tree.New().Write("root", "wide-1", tree.TypeEvent, tree.AuthorProgram,
+	tr, err := tree.New().Write("root", "wide-1", tree.TypeHandoff, tree.AuthorProgram,
 		"first\n"+strings.Repeat("x", 200)+"\n"+strings.Repeat("y", 200))
 	if err != nil {
 		t.Fatal(err)
@@ -612,12 +643,12 @@ func TestTreeExpansionWrapsBody(t *testing.T) {
 }
 
 // TestTreeExpandedContentStartsOnNextLine verifies the expanded form's
-// layout contract: the header row carries only the structural columns
-// — name, type/author, timer — and the content, first line included,
-// starts on the row below the header. See TheoryOfTreeTab.
+// layout contract: the header row carries the structural columns plus
+// the name and author, and the content, first line included, starts on
+// the row below the header. See TheoryOfTreeTab.
 func TestTreeExpandedContentStartsOnNextLine(t *testing.T) {
 	tui := newTUIForTest()
-	tr, err := tree.New().Write("root", "node-1", tree.TypeEvent, tree.AuthorProgram,
+	tr, err := tree.New().Write("root", "node-1", tree.TypeHandoff, tree.AuthorProgram,
 		"first line\nsecond line")
 	if err != nil {
 		t.Fatal(err)
@@ -633,6 +664,11 @@ func TestTreeExpandedContentStartsOnNextLine(t *testing.T) {
 	display = tui.treeDisplay(120, panelStyle.BaseBG)
 	if len(display) != 3 {
 		t.Fatalf("expected 3 rows (header + 2 content lines), got %d: %v", len(display), displayTexts(display))
+	}
+	// The expanded header reveals the name and author and carries no
+	// content. See TheoryOfTreeTab.
+	if !strings.Contains(display[0].Text, "node-1") || !strings.Contains(display[0].Text, "program") {
+		t.Fatalf("the expanded header must reveal the name and author, got %q", display[0].Text)
 	}
 	if strings.Contains(display[0].Text, "first line") || strings.Contains(display[0].Text, "second line") {
 		t.Fatalf("the expanded header must not carry content, got %q", display[0].Text)
@@ -654,8 +690,8 @@ func TestTreeExpandedContentStartsOnNextLine(t *testing.T) {
 func TestTreeStatusColumnToggles(t *testing.T) {
 	tui := newTUIForTest()
 	tr, err := tree.New().WriteAll(
-		tree.WriteOp{Parent: "root", Name: "wide-1", Type: tree.TypeEvent, Author: tree.AuthorProgram, Content: "head\nbody"},
-		tree.WriteOp{Parent: "root", Name: "plain-1", Type: tree.TypeEvent, Author: tree.AuthorProgram, Content: "one line"},
+		tree.WriteOp{Parent: "root", Name: "wide-1", Type: tree.TypeHandoff, Author: tree.AuthorProgram, Content: "head\nbody"},
+		tree.WriteOp{Parent: "root", Name: "plain-1", Type: tree.TypeCompleted, Author: tree.AuthorProgram, Content: "one line"},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -696,7 +732,7 @@ func TestTreeStatusColumnToggles(t *testing.T) {
 	collapsed := !tui.treeTab.expanded["wide-1"]
 	tui.mu.Unlock()
 	if !consumed || !collapsed {
-		t.Fatalf("the second press must collapse wide-1, got consumed=%v collapsed=%v", consumed, collapsed)
+		t.Fatalf("the second press must collapse wide-1, got consumed=%v collapsed=%v", collapsed, collapsed)
 	}
 }
 
@@ -707,7 +743,7 @@ func TestTreeStatusColumnToggles(t *testing.T) {
 func TestCollapseAllKeyDispatchesByFocus(t *testing.T) {
 	tui := newTUIForTest()
 	tr, err := tree.New().WriteAll(
-		tree.WriteOp{Parent: "root", Name: "wide-1", Type: tree.TypeEvent, Author: tree.AuthorProgram, Content: "head\nbody"},
+		tree.WriteOp{Parent: "root", Name: "wide-1", Type: tree.TypeHandoff, Author: tree.AuthorProgram, Content: "head\nbody"},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -753,7 +789,7 @@ func TestTreeSingleLineTruncatedExpands(t *testing.T) {
 	tr, err := tree.New().WriteAll(
 		tree.WriteOp{Parent: "root", Name: "long-1", Type: tree.TypeInput, Author: tree.AuthorUser,
 			Content: strings.Repeat("z", 120)},
-		tree.WriteOp{Parent: "root", Name: "short-1", Type: tree.TypeEvent, Author: tree.AuthorProgram,
+		tree.WriteOp{Parent: "root", Name: "short-1", Type: tree.TypeCompleted, Author: tree.AuthorProgram,
 			Content: "brief"},
 	)
 	if err != nil {
@@ -793,7 +829,8 @@ func TestTreeSingleLineTruncatedExpands(t *testing.T) {
 // TestTreeShowsAllLoops verifies that the display covers every goal
 // loop: the walk starts at the tree root, so both loops' nodes render
 // in the all projection, and the user projection keeps the matched
-// nodes of every loop. See TheoryOfTreeTab.
+// nodes of every loop. The collapsed rows hide node names, so the
+// assertions read the content previews. See TheoryOfTreeTab.
 func TestTreeShowsAllLoops(t *testing.T) {
 	tui := newTUIForTest()
 	tr, err := tree.New().WriteAll(
@@ -809,7 +846,7 @@ func TestTreeShowsAllLoops(t *testing.T) {
 	tui.mu.Lock()
 	display := tui.treeDisplay(120, panelStyle.BaseBG)
 	tui.mu.Unlock()
-	for _, want := range []string{"loop-1", "input-1", "loop-2", "input-2"} {
+	for _, want := range []string{"loop one", "task one", "loop two", "task two"} {
 		found := false
 		for _, line := range display {
 			if strings.Contains(line.Text, want) {
@@ -824,7 +861,7 @@ func TestTreeShowsAllLoops(t *testing.T) {
 	tui.mu.Lock()
 	display = tui.treeDisplay(120, panelStyle.BaseBG)
 	tui.mu.Unlock()
-	for _, want := range []string{"input-1", "input-2"} {
+	for _, want := range []string{"task one", "task two"} {
 		found := false
 		for _, line := range display {
 			if strings.Contains(line.Text, want) {
