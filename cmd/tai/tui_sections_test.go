@@ -74,14 +74,11 @@ func TestTUIEventClickJumpsToOutputSection(t *testing.T) {
 
 	boxes := tu.tabs.Boxes(tu.width, tu.height)
 	box := boxes[1]
-	// The content rows are indented past the status column, so the
-	// display width and the press columns share the content origin.
-	// See TheoryOfTreeTab.
+	// The display lines render at the box's left edge, so the press
+	// columns map directly onto the line's display columns. See
+	// TheoryOfTreeTab.
 	contentLeft := box.Left
-	if box.Width() > controlColumnWidth {
-		contentLeft += controlColumnWidth
-	}
-	display := tu.treeDisplay(treeContentWidth(tu.tabs.Expanded[1], box.Width()), panelStyle.BaseBG)
+	display := tu.treeDisplay(treeContentWidth(box.Width()), panelStyle.BaseBG)
 	row := -1
 	for i, line := range display {
 		if strings.Contains(line.Text, eventJumpMarker) {

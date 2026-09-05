@@ -27,15 +27,11 @@ func outputTabLabel(finished bool, generating bool, handoff bool) (label string,
 }
 
 // treeContentWidth returns the Tree tab's content width: the
-// scrollbar column is reserved at the right edge, and the status
-// column at the left when the expanded tab is wide enough to carry
-// it. See TheoryOfTreeTab.
-func treeContentWidth(expanded bool, boxWidth int) int {
-	contentWidth := max(boxWidth-1, 1)
-	if expanded && boxWidth > controlColumnWidth {
-		contentWidth = max(boxWidth-controlColumnWidth-1, 1)
-	}
-	return contentWidth
+// scrollbar column is reserved at the right edge. The fold column
+// lives inside the header text, so no left strip is reserved. See
+// TheoryOfTreeTab.
+func treeContentWidth(boxWidth int) int {
+	return max(boxWidth-1, 1)
 }
 
 // wrappedDisplay computes the wrapped, colored lines of one expanded tab
@@ -59,7 +55,7 @@ func wrappedDisplay(t *TUI, idx int, box taiui.Box) []taiui.Line {
 		if t.tabs.Focus == 1 {
 			base = panelStyle.FocusBG
 		}
-		return t.treeDisplay(treeContentWidth(t.tabs.Expanded[1], box.Width()), base)
+		return t.treeDisplay(treeContentWidth(box.Width()), base)
 	case 2:
 		base := panelStyle.BaseBG
 		if t.tabs.Focus == 2 {
@@ -179,10 +175,6 @@ func buildRoot(t *TUI, width, height int, displays [3][]taiui.Line) taiui.Elemen
 			// The expanded Output tab reserves its leftmost column for
 			// the section controls. See TheoryOfOutputControls.
 			panel = t.outputPanelView(box, displays[0], label, highlight)
-		} else if i == 1 && t.tabs.Expanded[1] && box.Width() > controlColumnWidth && box.Height() > 0 {
-			// The expanded Tree tab reserves its leftmost column for
-			// the node fold controls. See TheoryOfTreeTab.
-			panel = t.treePanelView(box, displays[1], label, highlight)
 		} else {
 			panel = taiui.TabPanel(
 				box, tabNames[i], label, highlight,
@@ -274,34 +266,6 @@ func (t *TUI) outputPanelView(box taiui.Box, display []taiui.Line, label string,
 		}
 		children = append(children, taiui.Text(text, taiui.Box{
 			Top: row.row, Left: box.Left, Bottom: row.row + 1, Right: right,
-		}))
-	}
-	return taiui.Overlay(children...)
-}
-
-// treePanelView builds the expanded Tree tab: the full-width content
-// panel whose content rows are indented past the status column, the
-// column's background over the content rows, and one fold glyph per
-// visible expandable node. The title row spans the full box width and
-// is not part of the column. The caller holds t.mu. See
-// TheoryOfTreeTab.
-func (t *TUI) treePanelView(box taiui.Box, display []taiui.Line, label string, highlight bool) taiui.Element {
-	panel := taiui.TabPanel(box, tabNames[1], label, highlight,
-		t.tabs.Expanded[1], t.tabs.Focus == 1, t.tabs.Unseen[1], display, t.scrolls[1], panelStyle,
-		taiui.ContentIndent(controlColumnWidth))
-	base := panelStyle.BaseBG
-	if t.tabs.Focus == 1 {
-		base = panelStyle.FocusBG
-	}
-	children := []any{panel, taiui.Rect(
-		taiui.Box{Top: box.Top + 1, Left: box.Left, Bottom: box.Bottom, Right: box.Left + controlColumnWidth},
-		taiui.Fill(true),
-		taiui.BGColor(base),
-	)}
-	offset := taiui.ClampOffset(t.scrolls[1].Offset, len(display), t.tuiPaneHeight(1, box))
-	for _, row := range t.treeControlRows(box, display, offset) {
-		children = append(children, taiui.Text(treeFoldGlyph(t.treeTab.expanded[row.name]), taiui.Box{
-			Top: row.row, Left: box.Left, Bottom: row.row + 1, Right: box.Left + controlColumnWidth,
 		}))
 	}
 	return taiui.Overlay(children...)

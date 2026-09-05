@@ -318,9 +318,10 @@ toggles its expansion (see TheoryOfTreeTab). In the Output tab, a press
 on the control column toggles the section under the control, a press on
 a collapsed section's row expands it, and both preempt the ordinary
 press handling (see TheoryOfOutputControls). In the Tree tab, a press
-on the status column toggles the node under the control, preempting
-the ordinary press handling like the Output tab's control column (see
-TheoryOfTreeTab). Presses outside every
+on the fold column — the fold slot right of the category/type columns —
+toggles the node under the control, preempting the ordinary press
+handling like the Output tab's control column (see TheoryOfTreeTab).
+Presses outside every
 panel, middle and right presses are ignored; no-button motion
 (mode 1003) drives the control column's hover strip and the menu bar's
 pointer hover: the hovered category title and the open dropdown's item
