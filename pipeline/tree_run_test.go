@@ -15,7 +15,7 @@ import (
 )
 
 // TestWriteInitialTreeNodes verifies the session's initial nodes: the
-// system-prompt node and the merged initial user input, written under
+// system node and the merged initial user input, written under
 // the given session root. See TheoryOfSessionTree.
 func TestWriteInitialTreeNodes(t *testing.T) {
 	state := generators.NewPrompts("sys prompt", []*generators.Content{
@@ -23,19 +23,19 @@ func TestWriteInitialTreeNodes(t *testing.T) {
 	})
 	tr := writeInitialTreeNodes(tree.New(), "root", state)
 
-	sp, ok := tr.Node("system-prompt-1")
+	sp, ok := tr.Node("system-1")
 	if !ok {
-		t.Fatal("expected a system-prompt node")
+		t.Fatal("expected a system node")
 	}
-	if sp.Type != tree.TypeSystemPrompt || sp.Author != tree.AuthorProgram || sp.Content != "sys prompt" {
-		t.Fatalf("unexpected system-prompt node: %+v", sp)
+	if sp.Type != tree.TypeSystem || sp.Author != tree.AuthorProgram || sp.Content != "sys prompt" {
+		t.Fatalf("unexpected system node: %+v", sp)
 	}
-	in, ok := tr.Node("input-1")
+	in, ok := tr.Node("user-1")
 	if !ok {
-		t.Fatal("expected an input node")
+		t.Fatal("expected a user node")
 	}
-	if in.Type != tree.TypeInput || in.Author != tree.AuthorUser || in.Content != "task input" {
-		t.Fatalf("unexpected input node: %+v", in)
+	if in.Type != tree.TypeUser || in.Author != tree.AuthorUser || in.Content != "task input" {
+		t.Fatalf("unexpected user node: %+v", in)
 	}
 
 	empty := writeInitialTreeNodes(tree.New(), "root", generators.NewPrompts("", nil))
@@ -45,14 +45,15 @@ func TestWriteInitialTreeNodes(t *testing.T) {
 }
 
 func TestWriteBlockNodesCollectedAndHandled(t *testing.T) {
-	base, respName, err := tree.New().WriteAuto("root", "response", tree.TypeResponse, tree.AuthorModel, "resp")
+	base, respName, err := tree.New().WriteAuto("root", "model", tree.TypeModel, tree.AuthorModel, "resp")
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// Handled blocks (consumed by the BlockHandler during streaming) get
 	// auto-named nodes with an applied result child; collected blocks
-	// default to the current response as parent. See TheoryOfSessionTree.
+	// default to the current response as parent. A block node's type is
+	// the block kind it records. See TheoryOfSessionTree.
 	handled := []blocks.Block{{Kind: "change", Body: "func Foo() {}"}}
 	collected := []blocks.Block{{Kind: "shell", Body: "echo hi"}}
 	names, _, namingErrs, tr := writeBlockNodes(base, respName, handled, collected)
@@ -62,10 +63,10 @@ func TestWriteBlockNodesCollectedAndHandled(t *testing.T) {
 	if len(names) != 1 || names[0] == "" {
 		t.Fatalf("expected one collected block name, got %v", names)
 	}
-	if block, ok := tr.Node(names[0]); !ok || block.Parent != respName || block.Type != tree.TypeBlock {
+	if block, ok := tr.Node(names[0]); !ok || block.Parent != respName || block.Type != tree.Type("shell") {
 		t.Fatalf("collected block must hang under the current response: %+v", block)
 	}
-	handledNode, ok := tr.Node("block-1")
+	handledNode, ok := tr.Node("change-1")
 	if !ok || handledNode.Parent != respName {
 		t.Fatalf("handled block node missing under %s: %+v", respName, handledNode)
 	}
@@ -110,7 +111,7 @@ func TestWriteBlockNodesCollectedAndHandled(t *testing.T) {
 }
 
 func TestWriteBlockResultNodesZip(t *testing.T) {
-	base, respName, err := tree.New().WriteAuto("root", "response", tree.TypeResponse, tree.AuthorModel, "resp")
+	base, respName, err := tree.New().WriteAuto("root", "model", tree.TypeModel, tree.AuthorModel, "resp")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +159,7 @@ func TestWriteBlockResultNodesZip(t *testing.T) {
 // name and a forward reference are naming faults. See
 // TheoryOfSessionTree.
 func TestWriteBlockNodesInBatchReferences(t *testing.T) {
-	base, respName, err := tree.New().WriteAuto("root", "response", tree.TypeResponse, tree.AuthorModel, "resp")
+	base, respName, err := tree.New().WriteAuto("root", "model", tree.TypeModel, tree.AuthorModel, "resp")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,7 +228,7 @@ func TestRunGoalCarriesOneSessionTree(t *testing.T) {
 			}
 			// The loop writes its response node under the continuation
 			// parent and returns the evolved tree.
-			next, _, err := continuation.Tree.WriteAuto(continuation.Parent, "response", tree.TypeResponse, tree.AuthorModel, responses[calls-1])
+			next, _, err := continuation.Tree.WriteAuto(continuation.Parent, "model", tree.TypeModel, tree.AuthorModel, responses[calls-1])
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -259,11 +260,11 @@ func TestRunGoalCarriesOneSessionTree(t *testing.T) {
 	if loop1.Content != "goal loop 1" {
 		t.Fatalf("expected the loop node to carry its label, got %q", loop1.Content)
 	}
-	resp1, ok := res.Tree.Node("response-1")
+	resp1, ok := res.Tree.Node("model-1")
 	if !ok || resp1.Parent != "loop-1" || resp1.Content != "loop one" {
 		t.Fatalf("expected loop one's response node under loop-1, got ok=%v node=%+v", ok, resp1)
 	}
-	resp2, ok := res.Tree.Node("response-2")
+	resp2, ok := res.Tree.Node("model-2")
 	if !ok || resp2.Parent != "loop-2" || resp2.Content != "loop two" {
 		t.Fatalf("expected loop two's response node under loop-2, got ok=%v node=%+v", ok, resp2)
 	}
@@ -409,7 +410,7 @@ func TestResultCarriesSessionTree(t *testing.T) {
 		if result.SessionTree == nil {
 			t.Fatal("expected the result to carry the session tree")
 		}
-		if _, ok := result.SessionTree.Node("response-1"); !ok {
+		if _, ok := result.SessionTree.Node("model-1"); !ok {
 			t.Fatal("expected the attempt's response node in the result's tree")
 		}
 	})
@@ -446,7 +447,7 @@ func TestRunRetryFeedbackCarriesTreeOutline(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			assertUserTextContains(t, result, "[Session tree]", "input-1 [input/user]")
+			assertUserTextContains(t, result, "[Session tree]", "user-1 [user/user]")
 		})
 		t.Run("error retry", func(t *testing.T) {
 			callCount := 0
@@ -470,7 +471,7 @@ func TestRunRetryFeedbackCarriesTreeOutline(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			assertUserTextContains(t, result, "[Session tree]", "input-1 [input/user]")
+			assertUserTextContains(t, result, "[Session tree]", "user-1 [user/user]")
 		})
 	})
 }
@@ -513,16 +514,16 @@ func TestRunHandoffInputCarriesTreeOutline(t *testing.T) {
 
 // TestHandoffInputPrunesExecutionNodes verifies that the handoff input's
 // tree outline is the decision-level projection: block and block-result
-// nodes are pruned, while the input, response, and summary nodes stay.
+// nodes are pruned, while the user, model, and summary nodes stay.
 // A continued session renders from its loop node, so other loops'
 // content stays out of the handoff outline. See TheoryOfSessionTree and
 // tree.TheoryOfSubtree.
 func TestHandoffInputPrunesExecutionNodes(t *testing.T) {
 	tr, err := tree.New().WriteAll(
-		tree.WriteOp{Parent: "root", Name: "input-1", Type: tree.TypeInput, Author: tree.AuthorUser, Content: "task"},
-		tree.WriteOp{Parent: "root", Name: "response-1", Type: tree.TypeResponse, Author: tree.AuthorModel, Content: "resp"},
-		tree.WriteOp{Parent: "response-1", Name: "summary-1", Type: tree.TypeSummary, Author: tree.AuthorModel, Content: "sum"},
-		tree.WriteOp{Parent: "response-1", Name: "block-1", Type: tree.TypeBlock, Author: tree.AuthorModel, Content: "change"},
+		tree.WriteOp{Parent: "root", Name: "user-1", Type: tree.TypeUser, Author: tree.AuthorUser, Content: "task"},
+		tree.WriteOp{Parent: "root", Name: "model-1", Type: tree.TypeModel, Author: tree.AuthorModel, Content: "resp"},
+		tree.WriteOp{Parent: "model-1", Name: "summary-1", Type: tree.TypeSummary, Author: tree.AuthorModel, Content: "sum"},
+		tree.WriteOp{Parent: "model-1", Name: "block-1", Type: tree.Type("change"), Author: tree.AuthorModel, Content: "change"},
 		tree.WriteOp{Parent: "block-1", Name: "result-1", Type: tree.TypeBlockResult, Author: tree.AuthorProgram, Content: "applied"},
 	)
 	if err != nil {
@@ -530,8 +531,8 @@ func TestHandoffInputPrunesExecutionNodes(t *testing.T) {
 	}
 	out := handoffInput("incomplete output", tr, "root")
 	for _, want := range []string{
-		"input-1 [input/user]",
-		"response-1 [response/model]",
+		"user-1 [user/user]",
+		"model-1 [model/model]",
 		"summary-1 [summary/model]",
 	} {
 		if !strings.Contains(out, want) {
@@ -552,17 +553,17 @@ func TestHandoffInputPrunesExecutionNodes(t *testing.T) {
 	oneRun, err := tr.WriteAll(
 		tree.WriteOp{Parent: "root", Name: "loop-1", Type: tree.TypeLoop, Author: tree.AuthorProgram},
 		tree.WriteOp{Parent: "root", Name: "loop-2", Type: tree.TypeLoop, Author: tree.AuthorProgram},
-		tree.WriteOp{Parent: "loop-1", Name: "response-2", Type: tree.TypeResponse, Author: tree.AuthorModel, Content: "loop one"},
-		tree.WriteOp{Parent: "loop-2", Name: "response-3", Type: tree.TypeResponse, Author: tree.AuthorModel, Content: "loop two"},
+		tree.WriteOp{Parent: "loop-1", Name: "model-2", Type: tree.TypeModel, Author: tree.AuthorModel, Content: "loop one"},
+		tree.WriteOp{Parent: "loop-2", Name: "model-3", Type: tree.TypeModel, Author: tree.AuthorModel, Content: "loop two"},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	out = handoffInput("incomplete output", oneRun, "loop-2")
-	if !strings.Contains(out, "response-3 [response/model] loop two") {
+	if !strings.Contains(out, "model-3 [model/model] loop two") {
 		t.Fatalf("expected the session's own response node in the handoff outline, got: %s", out)
 	}
-	if strings.Contains(out, "loop one") || strings.Contains(out, "response-2") {
+	if strings.Contains(out, "loop one") || strings.Contains(out, "model-2") {
 		t.Fatalf("another loop's content must stay out of the handoff outline, got: %s", out)
 	}
 	if got := handoffInput("", tr, "root"); got != "" {
@@ -579,18 +580,18 @@ func TestRecordIdleUserInput(t *testing.T) {
 		{Role: generators.RoleUser, Parts: []generators.Part{generators.Text("typed line")}},
 	})
 	ls.recordIdleUserInput(state, 0)
-	node, ok := ls.sessionTree.Node("input-1")
+	node, ok := ls.sessionTree.Node("user-1")
 	if !ok {
-		t.Fatal("expected an input node recorded from the idle handler's delta")
+		t.Fatal("expected a user node recorded from the idle handler's delta")
 	}
 	if node.Author != tree.AuthorUser || node.Content != "typed line" {
-		t.Fatalf("unexpected input node: %+v", node)
+		t.Fatalf("unexpected user node: %+v", node)
 	}
 
 	// An empty delta records nothing.
 	ls.recordIdleUserInput(state, 1)
-	if _, ok := ls.sessionTree.Node("input-2"); ok {
-		t.Fatal("an empty delta must not record an input node")
+	if _, ok := ls.sessionTree.Node("user-2"); ok {
+		t.Fatal("an empty delta must not record a user node")
 	}
 }
 
@@ -638,15 +639,15 @@ func TestRunFeedbackCarriesTreeOutline(t *testing.T) {
 			}
 		}
 		// The round-triggering feedback closes with the session tree
-		// outline: the successful attempt's response, summary, block,
+		// outline: the successful attempt's model, summary, block,
 		// and result nodes are all visible in it. Substring matching,
 		// because the outline part merges into the same user content
 		// as the component's parts. See TheoryOfSessionTree.
 		for _, want := range []string{
 			"[Session tree]",
-			"response-1 [response/model]",
+			"model-1 [model/model]",
 			"summary-1 [summary/model]",
-			"block-1 [block/model]",
+			"shell-1 [shell/model]",
 			"result-1 [block-result/program]",
 		} {
 			if !strings.Contains(userText, want) {
@@ -697,7 +698,7 @@ func TestRunInertProcessAttachesBlockResult(t *testing.T) {
 			t.Fatal("expected the result to carry the session tree")
 		}
 		var memNode *tree.Node
-		for _, n := range result.SessionTree.ByType(tree.TypeBlock) {
+		for _, n := range result.SessionTree.ByType(tree.Type("memory")) {
 			if strings.Contains(n.Content, "memory-item") {
 				memNode = n
 			}

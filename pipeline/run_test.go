@@ -693,8 +693,11 @@ func TestRunAppliedChangeBlocksInOutline(t *testing.T) {
 		if callCount != 2 {
 			t.Fatalf("expected 2 generations, got %d", callCount)
 		}
+		// A block node's type and auto name follow the block kind: the
+		// change block is a change node, the shell block a shell node.
+		// See TheoryOfSessionTree.
 		assertUserTextContains(t, result,
-			"block-1 [block/model] MODIFY Foo in /x/a.go",
+			"change-1 [change/model] MODIFY Foo in /x/a.go",
 			"result-1 [block-result/program] applied",
 		)
 		var userText string

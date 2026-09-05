@@ -413,15 +413,15 @@ func TestRunThoughtSummaryNode(t *testing.T) {
 // TheoryOfLoopEvents.
 func TestTreeOutlineExcludesEventNodes(t *testing.T) {
 	tr, err := tree.New().WriteAll(
-		tree.WriteOp{Parent: "root", Name: "input-1", Type: tree.TypeInput, Author: tree.AuthorUser, Content: "task"},
+		tree.WriteOp{Parent: "root", Name: "user-1", Type: tree.TypeUser, Author: tree.AuthorUser, Content: "task"},
 		tree.WriteOp{Parent: "root", Name: "attempt-start-1", Type: tree.TypeAttemptStart, Author: tree.AuthorProgram, Content: "attempt 1 start"},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	out := string(treeOutlinePart(tr, "root"))
-	if !strings.Contains(out, "input-1 [input/user]") {
-		t.Fatalf("expected the input node in the outline, got: %s", out)
+	if !strings.Contains(out, "user-1 [user/user]") {
+		t.Fatalf("expected the user node in the outline, got: %s", out)
 	}
 	if strings.Contains(out, "attempt-start-1") {
 		t.Fatalf("event nodes must be pruned from the model-facing outline, got: %s", out)

@@ -147,7 +147,7 @@ func TestTreeNodeCollapsedByDefault(t *testing.T) {
 func TestTreeProjectionCycle(t *testing.T) {
 	tui := newTUIForTest()
 	tr, err := tree.New().WriteAll(
-		tree.WriteOp{Parent: "root", Name: "input-1", Type: tree.TypeInput, Author: tree.AuthorUser, Content: "task"},
+		tree.WriteOp{Parent: "root", Name: "user-1", Type: tree.TypeUser, Author: tree.AuthorUser, Content: "task"},
 		tree.WriteOp{Parent: "root", Name: "attempt-start-1", Type: tree.TypeAttemptStart, Author: tree.AuthorProgram, Content: "attempt 1 start (1/3)"},
 		tree.WriteOp{Parent: "root", Name: "completed-1", Type: tree.TypeCompleted, Author: tree.AuthorProgram, Content: "attempt 1 complete"},
 	)
@@ -185,14 +185,14 @@ func TestTreeProjectionCycle(t *testing.T) {
 	}
 	for _, line := range display {
 		if strings.Contains(line.Text, "task") {
-			t.Fatalf("the input node must be pruned from the events projection, got %v", display)
+			t.Fatalf("the user node must be pruned from the events projection, got %v", display)
 		}
 	}
 	if tui.treeTabLabel() != "Tree (events)" {
 		t.Fatalf("unexpected projection label: %q", tui.treeTabLabel())
 	}
 
-	// User projection: the input node plus its ancestors.
+	// User projection: the user node plus its ancestors.
 	tui.cycleTreeView()
 	tui.cycleTreeView()
 	tui.cycleTreeView()
@@ -466,9 +466,9 @@ func TestTreeExpandScrollsToNodeStart(t *testing.T) {
 func TestTreeProjectionAncestors(t *testing.T) {
 	tui := newTUIForTest()
 	tr, err := tree.New().WriteAll(
-		tree.WriteOp{Parent: "root", Name: "input-1", Type: tree.TypeInput, Author: tree.AuthorUser, Content: "task"},
-		tree.WriteOp{Parent: "input-1", Name: "response-1", Type: tree.TypeResponse, Author: tree.AuthorModel, Content: "resp"},
-		tree.WriteOp{Parent: "response-1", Name: "summary-1", Type: tree.TypeSummary, Author: tree.AuthorModel, Content: "sum"},
+		tree.WriteOp{Parent: "root", Name: "user-1", Type: tree.TypeUser, Author: tree.AuthorUser, Content: "task"},
+		tree.WriteOp{Parent: "user-1", Name: "model-1", Type: tree.TypeModel, Author: tree.AuthorModel, Content: "resp"},
+		tree.WriteOp{Parent: "model-1", Name: "summary-1", Type: tree.TypeSummary, Author: tree.AuthorModel, Content: "sum"},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -547,7 +547,7 @@ func TestTreeElapsedTimer(t *testing.T) {
 func TestTreeHeaderAlignment(t *testing.T) {
 	tui := newTUIForTest()
 	tr, err := tree.New().WriteAll(
-		tree.WriteOp{Parent: "root", Name: "a", Type: tree.TypeInput, Author: tree.AuthorUser, Content: "x"},
+		tree.WriteOp{Parent: "root", Name: "a", Type: tree.TypeUser, Author: tree.AuthorUser, Content: "x"},
 		tree.WriteOp{Parent: "root", Name: "longer-name", Type: tree.TypeLoop, Author: tree.AuthorProgram, Content: "y"},
 	)
 	if err != nil {
@@ -576,7 +576,7 @@ func TestTreeHeaderAlignment(t *testing.T) {
 	if !ok0 || !ok1 || catCol0 != catCol1 {
 		t.Fatalf("expected aligned category columns, got %q and %q", display[0].Text, display[1].Text)
 	}
-	typeCol0, ok0 := columnOf(display[0], "input")
+	typeCol0, ok0 := columnOf(display[0], "user")
 	typeCol1, ok1 := columnOf(display[1], "loop")
 	if !ok0 || !ok1 || typeCol0 != typeCol1 {
 		t.Fatalf("expected aligned type columns, got %q and %q", display[0].Text, display[1].Text)
@@ -787,7 +787,7 @@ func TestCollapseAllKeyDispatchesByFocus(t *testing.T) {
 func TestTreeSingleLineTruncatedExpands(t *testing.T) {
 	tui := newTUIForTest()
 	tr, err := tree.New().WriteAll(
-		tree.WriteOp{Parent: "root", Name: "long-1", Type: tree.TypeInput, Author: tree.AuthorUser,
+		tree.WriteOp{Parent: "root", Name: "long-1", Type: tree.TypeUser, Author: tree.AuthorUser,
 			Content: strings.Repeat("z", 120)},
 		tree.WriteOp{Parent: "root", Name: "short-1", Type: tree.TypeCompleted, Author: tree.AuthorProgram,
 			Content: "brief"},
@@ -835,9 +835,9 @@ func TestTreeShowsAllLoops(t *testing.T) {
 	tui := newTUIForTest()
 	tr, err := tree.New().WriteAll(
 		tree.WriteOp{Parent: "root", Name: "loop-1", Type: tree.TypeLoop, Author: tree.AuthorProgram, Content: "loop one"},
-		tree.WriteOp{Parent: "loop-1", Name: "input-1", Type: tree.TypeInput, Author: tree.AuthorUser, Content: "task one"},
+		tree.WriteOp{Parent: "loop-1", Name: "user-1", Type: tree.TypeUser, Author: tree.AuthorUser, Content: "task one"},
 		tree.WriteOp{Parent: "root", Name: "loop-2", Type: tree.TypeLoop, Author: tree.AuthorProgram, Content: "loop two"},
-		tree.WriteOp{Parent: "loop-2", Name: "input-2", Type: tree.TypeInput, Author: tree.AuthorUser, Content: "task two"},
+		tree.WriteOp{Parent: "loop-2", Name: "user-2", Type: tree.TypeUser, Author: tree.AuthorUser, Content: "task two"},
 	)
 	if err != nil {
 		t.Fatal(err)

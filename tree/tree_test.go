@@ -19,7 +19,7 @@ func TestNewTreeRootOnly(t *testing.T) {
 }
 
 func TestWriteBasic(t *testing.T) {
-	tr, err := New().Write("root", "input-1", TypeInput, AuthorUser, "hello")
+	tr, err := New().Write("root", "input-1", TypeUser, AuthorUser, "hello")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -27,7 +27,7 @@ func TestWriteBasic(t *testing.T) {
 	if !ok {
 		t.Fatal("node missing")
 	}
-	if n.Parent != "root" || n.Type != TypeInput || n.Author != AuthorUser || n.Content != "hello" {
+	if n.Parent != "root" || n.Type != TypeUser || n.Author != AuthorUser || n.Content != "hello" {
 		t.Fatalf("unexpected node: %+v", n)
 	}
 	if n.InsertTime.IsZero() {
@@ -37,33 +37,33 @@ func TestWriteBasic(t *testing.T) {
 
 func TestWriteValidation(t *testing.T) {
 	base := New()
-	if _, err := base.Write("root", "", TypeInput, AuthorUser, "x"); !errors.Is(err, ErrBadName) {
+	if _, err := base.Write("root", "", TypeUser, AuthorUser, "x"); !errors.Is(err, ErrBadName) {
 		t.Fatalf("want ErrBadName, got %v", err)
 	}
-	tr, err := base.Write("root", "a", TypeInput, AuthorUser, "x")
+	tr, err := base.Write("root", "a", TypeUser, AuthorUser, "x")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tr.Write("root", "a", TypeInput, AuthorUser, "y"); !errors.Is(err, ErrDuplicateName) {
+	if _, err := tr.Write("root", "a", TypeUser, AuthorUser, "y"); !errors.Is(err, ErrDuplicateName) {
 		t.Fatalf("want ErrDuplicateName, got %v", err)
 	}
-	if _, err := tr.Write("missing", "b", TypeInput, AuthorUser, "x"); !errors.Is(err, ErrUnknownParent) {
+	if _, err := tr.Write("missing", "b", TypeUser, AuthorUser, "x"); !errors.Is(err, ErrUnknownParent) {
 		t.Fatalf("want ErrUnknownParent, got %v", err)
 	}
-	if _, err := tr.Write("root", "b", TypeInput, "robot", "x"); !errors.Is(err, ErrBadAuthor) {
+	if _, err := tr.Write("root", "b", TypeUser, "robot", "x"); !errors.Is(err, ErrBadAuthor) {
 		t.Fatalf("want ErrBadAuthor, got %v", err)
 	}
 }
 
 func TestPathCopyingSharesUntouchedNodes(t *testing.T) {
-	tr1, err := New().Write("root", "a", TypeInput, AuthorUser, "1")
+	tr1, err := New().Write("root", "a", TypeUser, AuthorUser, "1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	a1 := mustNode(t, tr1, "a")
 	r1 := mustNode(t, tr1, "root")
 
-	tr2, err := tr1.Write("root", "b", TypeInput, AuthorUser, "2")
+	tr2, err := tr1.Write("root", "b", TypeUser, AuthorUser, "2")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +94,7 @@ func TestPathCopyingDeepPath(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tr2, err := tr.Write("c", "d", TypeBlock, AuthorProgram, "d")
+	tr2, err := tr.Write("c", "d", Type("shell"), AuthorProgram, "d")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func TestPathCopyingDeepPath(t *testing.T) {
 	}
 
 	// A sibling write off the c subtree shares the c node.
-	tr3, err := tr2.Write("b", "e", TypeBlock, AuthorProgram, "e")
+	tr3, err := tr2.Write("b", "e", Type("shell"), AuthorProgram, "e")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,20 +116,20 @@ func TestPathCopyingDeepPath(t *testing.T) {
 }
 
 func TestMerge(t *testing.T) {
-	base, err := New().Write("root", "shared", TypeInput, AuthorUser, "s")
+	base, err := New().Write("root", "shared", TypeUser, AuthorUser, "s")
 	if err != nil {
 		t.Fatal(err)
 	}
 	branch1, err := base.WriteAll(
-		WriteOp{Parent: "shared", Name: "a", Type: TypeResponse, Author: AuthorModel, Content: "a"},
-		WriteOp{Parent: "root", Name: "z", Type: TypeInput, Author: AuthorUser, Content: "z"},
+		WriteOp{Parent: "shared", Name: "a", Type: TypeModel, Author: AuthorModel, Content: "a"},
+		WriteOp{Parent: "root", Name: "z", Type: TypeUser, Author: AuthorUser, Content: "z"},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	branch2, err := base.WriteAll(
-		WriteOp{Parent: "shared", Name: "b", Type: TypeResponse, Author: AuthorModel, Content: "b"},
-		WriteOp{Parent: "b", Name: "c", Type: TypeBlock, Author: AuthorModel, Content: "c"},
+		WriteOp{Parent: "shared", Name: "b", Type: TypeModel, Author: AuthorModel, Content: "b"},
+		WriteOp{Parent: "b", Name: "c", Type: Type("shell"), Author: AuthorModel, Content: "c"},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -141,7 +141,7 @@ func TestMerge(t *testing.T) {
 		t.Fatal(err)
 	}
 	b := mustNode(t, merged, "b")
-	if b.Parent != "shared" || b.Type != TypeResponse || b.Author != AuthorModel || b.Content != "b" {
+	if b.Parent != "shared" || b.Type != TypeModel || b.Author != AuthorModel || b.Content != "b" {
 		t.Fatalf("grafted node unexpected: %+v", b)
 	}
 	if !b.InsertTime.Equal(bOriginal.InsertTime) {
@@ -169,11 +169,11 @@ func TestMerge(t *testing.T) {
 
 func TestMergeConflict(t *testing.T) {
 	base := New()
-	tr1, err := base.Write("root", "n", TypeInput, AuthorUser, "one")
+	tr1, err := base.Write("root", "n", TypeUser, AuthorUser, "one")
 	if err != nil {
 		t.Fatal(err)
 	}
-	tr2, err := base.Write("root", "n", TypeInput, AuthorUser, "two")
+	tr2, err := base.Write("root", "n", TypeUser, AuthorUser, "two")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,8 +198,8 @@ func mustNode(t *testing.T, tr *Tree, name string) *Node {
 func TestWriteAllAtomicSuccess(t *testing.T) {
 	base := New()
 	tr, err := base.WriteAll(
-		WriteOp{Parent: "root", Name: "response-1", Type: TypeResponse, Author: AuthorModel, Content: "r"},
-		WriteOp{Parent: "response-1", Name: "block-1", Type: TypeBlock, Author: AuthorModel, Content: "b"},
+		WriteOp{Parent: "root", Name: "response-1", Type: TypeModel, Author: AuthorModel, Content: "r"},
+		WriteOp{Parent: "response-1", Name: "block-1", Type: Type("shell"), Author: AuthorModel, Content: "b"},
 		WriteOp{Parent: "block-1", Name: "block-result-1", Type: TypeBlockResult, Author: AuthorProgram, Content: "ok"},
 	)
 	if err != nil {
@@ -215,14 +215,14 @@ func TestWriteAllAtomicSuccess(t *testing.T) {
 }
 
 func TestWriteAllAtomicFailure(t *testing.T) {
-	base, err := New().Write("root", "dup", TypeInput, AuthorUser, "x")
+	base, err := New().Write("root", "dup", TypeUser, AuthorUser, "x")
 	if err != nil {
 		t.Fatal(err)
 	}
 	tr, err := base.WriteAll(
-		WriteOp{Parent: "root", Name: "new", Type: TypeInput, Author: AuthorUser, Content: "n"},
-		WriteOp{Parent: "root", Name: "dup", Type: TypeInput, Author: AuthorUser, Content: "d"},
-		WriteOp{Parent: "dup", Name: "child", Type: TypeInput, Author: AuthorUser, Content: "c"},
+		WriteOp{Parent: "root", Name: "new", Type: TypeUser, Author: AuthorUser, Content: "n"},
+		WriteOp{Parent: "root", Name: "dup", Type: TypeUser, Author: AuthorUser, Content: "d"},
+		WriteOp{Parent: "dup", Name: "child", Type: TypeUser, Author: AuthorUser, Content: "c"},
 	)
 	if err == nil {
 		t.Fatal("expected duplicate-name error")
@@ -238,8 +238,8 @@ func TestWriteAllAtomicFailure(t *testing.T) {
 func TestWriteOpInsertTime(t *testing.T) {
 	at := time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC)
 	tr, err := New().WriteAll(
-		WriteOp{Parent: "root", Name: "a", Type: TypeInput, Author: AuthorUser, Content: "x", InsertTime: at},
-		WriteOp{Parent: "root", Name: "b", Type: TypeInput, Author: AuthorUser, Content: "y"},
+		WriteOp{Parent: "root", Name: "a", Type: TypeUser, Author: AuthorUser, Content: "x", InsertTime: at},
+		WriteOp{Parent: "root", Name: "b", Type: TypeUser, Author: AuthorUser, Content: "y"},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -290,7 +290,7 @@ func TestAutoName(t *testing.T) {
 	if got := tr.AutoName("response"); got != "response-1" {
 		t.Fatalf("first auto name = %q", got)
 	}
-	tr2, err := tr.Write("root", "response-1", TypeResponse, AuthorModel, "1")
+	tr2, err := tr.Write("root", "response-1", TypeModel, AuthorModel, "1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -301,7 +301,7 @@ func TestAutoName(t *testing.T) {
 
 func TestWriteAuto(t *testing.T) {
 	tr := New()
-	tr2, name, err := tr.WriteAuto("root", "response", TypeResponse, AuthorModel, "r")
+	tr2, name, err := tr.WriteAuto("root", "response", TypeModel, AuthorModel, "r")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -315,10 +315,10 @@ func TestWriteAuto(t *testing.T) {
 
 func TestSubtreeAndDepth(t *testing.T) {
 	tr, err := New().WriteAll(
-		WriteOp{Parent: "root", Name: "a", Type: TypeResponse, Author: AuthorModel, Content: "a"},
-		WriteOp{Parent: "a", Name: "b", Type: TypeBlock, Author: AuthorModel, Content: "b"},
+		WriteOp{Parent: "root", Name: "a", Type: TypeModel, Author: AuthorModel, Content: "a"},
+		WriteOp{Parent: "a", Name: "b", Type: Type("shell"), Author: AuthorModel, Content: "b"},
 		WriteOp{Parent: "b", Name: "c", Type: TypeBlockResult, Author: AuthorProgram, Content: "c"},
-		WriteOp{Parent: "root", Name: "d", Type: TypeInput, Author: AuthorUser, Content: "d"},
+		WriteOp{Parent: "root", Name: "d", Type: TypeUser, Author: AuthorUser, Content: "d"},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -343,8 +343,8 @@ func TestSubtreeAndDepth(t *testing.T) {
 
 func TestSubtreeToDepth(t *testing.T) {
 	tr, err := New().WriteAll(
-		WriteOp{Parent: "root", Name: "a", Type: TypeResponse, Author: AuthorModel, Content: "a"},
-		WriteOp{Parent: "a", Name: "b", Type: TypeBlock, Author: AuthorModel, Content: "b"},
+		WriteOp{Parent: "root", Name: "a", Type: TypeModel, Author: AuthorModel, Content: "a"},
+		WriteOp{Parent: "a", Name: "b", Type: Type("shell"), Author: AuthorModel, Content: "b"},
 		WriteOp{Parent: "b", Name: "c", Type: TypeBlockResult, Author: AuthorProgram, Content: "c"},
 	)
 	if err != nil {
@@ -368,8 +368,8 @@ func TestSubtreeToDepth(t *testing.T) {
 
 func TestByTypeByAuthor(t *testing.T) {
 	tr, err := New().WriteAll(
-		WriteOp{Parent: "root", Name: "i", Type: TypeInput, Author: AuthorUser, Content: ""},
-		WriteOp{Parent: "root", Name: "r", Type: TypeResponse, Author: AuthorModel, Content: ""},
+		WriteOp{Parent: "root", Name: "i", Type: TypeUser, Author: AuthorUser, Content: ""},
+		WriteOp{Parent: "root", Name: "r", Type: TypeModel, Author: AuthorModel, Content: ""},
 		WriteOp{Parent: "r", Name: "s", Type: TypeSummary, Author: AuthorModel, Content: ""},
 		WriteOp{Parent: "s", Name: "res", Type: TypeBlockResult, Author: AuthorProgram, Content: ""},
 	)
@@ -395,13 +395,15 @@ func TestByTypeByAuthor(t *testing.T) {
 // TestCategoryAndEmoji verifies the category layer: every type maps to
 // its category, Node.Category derives from the type, ByCategory selects
 // the family, and every type and category carries a non-empty emoji.
-// See TheoryOfTree.
+// A block node's type is its block kind: an unknown kind derives to
+// the block category and the fallback emoji, and a built-in kind
+// carries its predefined emoji. See TheoryOfTree.
 func TestCategoryAndEmoji(t *testing.T) {
 	tr, err := New().WriteAll(
 		WriteOp{Parent: "root", Name: "a", Type: TypeAttemptStart, Author: AuthorProgram, Content: "x"},
 		WriteOp{Parent: "root", Name: "b", Type: TypeRequest, Author: AuthorProgram, Content: "y"},
-		WriteOp{Parent: "root", Name: "c", Type: TypeInput, Author: AuthorUser, Content: "z"},
-		WriteOp{Parent: "root", Name: "d", Type: TypeBlock, Author: AuthorModel, Content: "b"},
+		WriteOp{Parent: "root", Name: "c", Type: TypeUser, Author: AuthorUser, Content: "z"},
+		WriteOp{Parent: "root", Name: "d", Type: Type("shell"), Author: AuthorModel, Content: "b"},
 		WriteOp{Parent: "root", Name: "e", Type: TypeError, Author: AuthorProgram, Content: "e"},
 	)
 	if err != nil {
@@ -410,17 +412,29 @@ func TestCategoryAndEmoji(t *testing.T) {
 	if got := mustNode(t, tr, "a").Category(); got != CategoryEvent {
 		t.Fatalf("attempt-start category = %v, want event", got)
 	}
-	if got := mustNode(t, tr, "c").Category(); got != CategorySession {
-		t.Fatalf("input category = %v, want session", got)
+	if got := mustNode(t, tr, "c").Category(); got != CategoryMessage {
+		t.Fatalf("user category = %v, want message", got)
 	}
 	if got := mustNode(t, tr, "d").Category(); got != CategoryBlock {
-		t.Fatalf("block category = %v, want block", got)
+		t.Fatalf("shell block category = %v, want block", got)
 	}
 	if got := mustNode(t, tr, "e").Category(); got != CategoryError {
 		t.Fatalf("error category = %v, want error", got)
 	}
 	if got := len(tr.ByCategory(CategoryEvent)); got != 2 {
 		t.Fatalf("ByCategory(event) = %d, want 2", got)
+	}
+	// A block node's type is its block kind: an unknown kind derives
+	// to the block category with the fallback emoji, and a built-in
+	// kind carries its predefined emoji.
+	if got := Type("custom-kind").Category(); got != CategoryBlock {
+		t.Fatalf("unknown kind category = %v, want block", got)
+	}
+	if got := Type("custom-kind").Emoji(); got != "🧱" {
+		t.Fatalf("unknown kind emoji = %q, want the fallback glyph", got)
+	}
+	if got := Type("shell").Emoji(); got != "🐚" {
+		t.Fatalf("shell kind emoji = %q, want the predefined glyph", got)
 	}
 	for _, n := range tr.Subtree("root") {
 		if n.Type.Emoji() == "" {
@@ -435,16 +449,16 @@ func TestCategoryAndEmoji(t *testing.T) {
 func TestExtract(t *testing.T) {
 	insertTime := time.Date(2024, 5, 6, 7, 8, 9, 0, time.UTC)
 	tr, err := New().WriteAll(
-		WriteOp{Parent: "root", Name: "a", Type: TypeResponse, Author: AuthorModel, Content: "a", InsertTime: insertTime},
-		WriteOp{Parent: "a", Name: "b", Type: TypeBlock, Author: AuthorModel, Content: "b"},
+		WriteOp{Parent: "root", Name: "a", Type: TypeModel, Author: AuthorModel, Content: "a", InsertTime: insertTime},
+		WriteOp{Parent: "a", Name: "b", Type: Type("shell"), Author: AuthorModel, Content: "b"},
 		WriteOp{Parent: "b", Name: "c", Type: TypeBlockResult, Author: AuthorProgram, Content: "c"},
-		WriteOp{Parent: "root", Name: "d", Type: TypeInput, Author: AuthorUser, Content: "d"},
+		WriteOp{Parent: "root", Name: "d", Type: TypeUser, Author: AuthorUser, Content: "d"},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	proj := tr.Extract(func(n *Node) bool {
-		return n.Type != TypeBlock && n.Type != TypeBlockResult
+		return n.Type != Type("shell") && n.Type != TypeBlockResult
 	})
 	if _, ok := proj.Node("b"); ok {
 		t.Fatal("a pruned node must be absent from the projection")
@@ -491,8 +505,8 @@ func TestExtract(t *testing.T) {
 
 func TestRenderOutline(t *testing.T) {
 	tr, err := New().WriteAll(
-		WriteOp{Parent: "root", Name: "a", Type: TypeResponse, Author: AuthorModel, Content: "first line\nsecond line"},
-		WriteOp{Parent: "a", Name: "b", Type: TypeBlock, Author: AuthorModel, Content: strings.Repeat("x", 50)},
+		WriteOp{Parent: "root", Name: "a", Type: TypeModel, Author: AuthorModel, Content: "first line\nsecond line"},
+		WriteOp{Parent: "a", Name: "b", Type: Type("shell"), Author: AuthorModel, Content: strings.Repeat("x", 50)},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -509,13 +523,13 @@ func TestRenderOutline(t *testing.T) {
 	if !strings.HasPrefix(lines[0], "root [root/]") {
 		t.Fatalf("root line: %q", lines[0])
 	}
-	if !strings.Contains(lines[1], "a [response/model] first line") {
+	if !strings.Contains(lines[1], "a [model/model] first line") {
 		t.Fatalf("a line: %q", lines[1])
 	}
 	if strings.Contains(lines[1], "second") {
 		t.Fatal("preview must take the first line only")
 	}
-	if !strings.HasPrefix(lines[2], "    b [block/model] ") {
+	if !strings.HasPrefix(lines[2], "    b [shell/model] ") {
 		t.Fatalf("b line: %q", lines[2])
 	}
 	if !strings.Contains(lines[2], strings.Repeat("x", 10)+"…") {
@@ -548,7 +562,7 @@ func TestModify(t *testing.T) {
 	tr, err := New().WriteAll(
 		WriteOp{Parent: "root", Name: "plan-1", Type: TypePlan, Author: AuthorModel, Content: "do x", InsertTime: insertTime},
 		WriteOp{Parent: "plan-1", Name: "step", Type: TypePlan, Author: AuthorModel, Content: "step"},
-		WriteOp{Parent: "root", Name: "other", Type: TypeInput, Author: AuthorUser, Content: "other"},
+		WriteOp{Parent: "root", Name: "other", Type: TypeUser, Author: AuthorUser, Content: "other"},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -593,7 +607,7 @@ func TestModify(t *testing.T) {
 }
 
 func TestChildrenDefensiveCopy(t *testing.T) {
-	tr, err := New().Write("root", "a", TypeInput, AuthorUser, "x")
+	tr, err := New().Write("root", "a", TypeUser, AuthorUser, "x")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -607,10 +621,10 @@ func TestChildrenDefensiveCopy(t *testing.T) {
 
 func TestDelete(t *testing.T) {
 	tr, err := New().WriteAll(
-		WriteOp{Parent: "root", Name: "response-1", Type: TypeResponse, Author: AuthorModel, Content: "r"},
-		WriteOp{Parent: "response-1", Name: "block-1", Type: TypeBlock, Author: AuthorModel, Content: "b"},
+		WriteOp{Parent: "root", Name: "response-1", Type: TypeModel, Author: AuthorModel, Content: "r"},
+		WriteOp{Parent: "response-1", Name: "block-1", Type: Type("shell"), Author: AuthorModel, Content: "b"},
 		WriteOp{Parent: "block-1", Name: "block-result-1", Type: TypeBlockResult, Author: AuthorProgram, Content: "ok"},
-		WriteOp{Parent: "root", Name: "input-1", Type: TypeInput, Author: AuthorUser, Content: "i"},
+		WriteOp{Parent: "root", Name: "input-1", Type: TypeUser, Author: AuthorUser, Content: "i"},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -639,7 +653,7 @@ func TestDelete(t *testing.T) {
 	}
 
 	// A deleted name can be written again; the old tree keeps its own node.
-	rewritten, err := deleted.Write("response-1", "block-1", TypeBlock, AuthorModel, "b2")
+	rewritten, err := deleted.Write("response-1", "block-1", Type("shell"), AuthorModel, "b2")
 	if err != nil {
 		t.Fatal(err)
 	}

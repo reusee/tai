@@ -58,7 +58,7 @@ func TestForkTUIDisplayForwardsTreesToTUI(t *testing.T) {
 	}
 	// The tree is the pipeline's own session tree: the attempt's
 	// response node is present.
-	if _, ok := tui.treeView.Node("response-1"); !ok {
+	if _, ok := tui.treeView.Node("model-1"); !ok {
 		t.Fatal("expected the response node in the TUI's tree")
 	}
 }
@@ -195,7 +195,7 @@ func TestForkTUIDisplayKeepsSessionTreeContinuation(t *testing.T) {
 	if !ok || loopNode.Type != tree.TypeLoop {
 		t.Fatalf("expected the loop-1 node in the TUI's tree, got ok=%v", ok)
 	}
-	response, ok := tui.treeView.Node("response-1")
+	response, ok := tui.treeView.Node("model-1")
 	if !ok || response.Parent != "loop-1" {
 		t.Fatalf("expected the loop's response under loop-1, got ok=%v", ok)
 	}

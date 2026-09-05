@@ -29,9 +29,9 @@ immutable tree, and one run owns exactly one tree.
   (tree.TypeLoop) of the run's single tree. The session root — the
   tree's root for a fresh run, the loop node for a continued one —
   anchors the session's own nodes: writeInitialTreeNodes writes the
-  system-prompt node (program author, content = the initial state's
-  system prompt) and one input node (user author) merging the initial
-  user contents' Text parts under it.
+  system node (program author, content = the initial state's system
+  prompt) and one user node (user author) merging the initial user
+  contents' Text parts under it.
 - The loop's own bookkeeping joins the same tree as event nodes
   (event-subtype types in Category event, program author) under the
   session parent: attempt lifecycle, request parameters, finish
@@ -41,19 +41,21 @@ immutable tree, and one run owns exactly one tree.
   TheoryOfLoopEvents). Event nodes are program bookkeeping: every
   model-facing outline excludes them by category, so the model never
   sees the loop's own bookkeeping.
-- A successful attempt writes a response node under the session root
+- A successful attempt writes a model node under the session root
   (model author, content = the attempt's model-role Text parts; thought
   parts never enter the tree) and one summary node per summary body
   under it.
 - Block nodes are written in one validated batch before the components
   process the blocks: a block's header may carry a parent parameter
   (default: the current response node); new-plan and response blocks
-  must carry parent and name — their named plan or response node is
-  written by the component, while the block node itself is auto-named;
-  a done block becomes a done node. One naming fault discards the
-  whole batch, writes an error node, and joins the shared
-  block-correction budget (see TheoryOfUnknownBlockKinds), so the
-  model re-emits the batch with corrected parameters.
+  must carry parent and name — their named plan or model node is
+  written by the component, while the block node itself is auto-named
+  after its kind: a block node's type is the block kind it records, so
+  a shell block is a shell node, and a done block becomes a done node.
+  One naming fault discards the whole batch, writes an error node, and
+  joins the shared block-correction budget (see
+  TheoryOfUnknownBlockKinds), so the model re-emits the batch with
+  corrected parameters.
 - In-batch references: a collected block may name as its parent a node
   that an earlier new-plan or response block of the same batch
   declares. The reference passes validation, the block node's write is
@@ -85,13 +87,13 @@ immutable tree, and one run owns exactly one tree.
   back.
 - Every round-triggering feedback — the component feedback and the
   retry feedback of a truncated or errored attempt — ends with the
-  session-tree outline part, and the feedback content is written as an
-  input node (program author) under the session root. The outline is
+  session-tree outline part, and the feedback content is written as a
+  user node (program author) under the session root. The outline is
   always the current loop's subtree, rendered from the session root —
   the loop node for a continued run, the tree root for a fresh one —
   so each round's feedback volume stays independent of the run's
   length and of other loops' content. The idle handler's user input is
-  recorded as an input node (user author), extracted by content-count
+  recorded as a user node (user author), extracted by content-count
   delta: only the delta is visible, not the handler's internal loop.
 - The handoff input prefixes the incomplete output with the handoff
   subtree: the session's tree projected onto its decision-level nodes
@@ -170,15 +172,15 @@ body is the reply text.
 `
 
 // writeInitialTreeNodes writes the session's initial nodes — the
-// system prompt and the merged initial user input — under the given
-// parent: the tree's root for a fresh run, the goal loop's loop node
-// for a continued one. See TheoryOfSessionTree.
+// system node and the merged initial user input as a user node —
+// under the given parent: the tree's root for a fresh run, the goal
+// loop's loop node for a continued one. See TheoryOfSessionTree.
 func writeInitialTreeNodes(tr *tree.Tree, parent string, state generators.State) *tree.Tree {
 	if state == nil {
 		return tr
 	}
 	if prompt := state.SystemPrompt(); prompt != "" {
-		if next, _, err := tr.WriteAuto(parent, "system-prompt", tree.TypeSystemPrompt, tree.AuthorProgram, prompt); err == nil {
+		if next, _, err := tr.WriteAuto(parent, "system", tree.TypeSystem, tree.AuthorProgram, prompt); err == nil {
 			tr = next
 		}
 	}
@@ -194,7 +196,7 @@ func writeInitialTreeNodes(tr *tree.Tree, parent string, state generators.State)
 		}
 	}
 	if len(texts) > 0 {
-		if next, _, err := tr.WriteAuto(parent, "input", tree.TypeInput, tree.AuthorUser, strings.Join(texts, "\n")); err == nil {
+		if next, _, err := tr.WriteAuto(parent, "user", tree.TypeUser, tree.AuthorUser, strings.Join(texts, "\n")); err == nil {
 			tr = next
 		}
 	}
@@ -224,7 +226,7 @@ func ResponseComponent() components.Component {
 		Kind:          "response",
 		PromptSection: ResponseBlockSystemPrompt,
 		Process: func(ctx context.Context, pctx *components.ProcessContext) components.ProcessResult {
-			return writeNamedTreeNodes(pctx, tree.TypeResponse, "response")
+			return writeNamedTreeNodes(pctx, tree.TypeModel, "response")
 		},
 	}
 }
@@ -285,13 +287,14 @@ func writeNamedTreeNodes(pctx *components.ProcessContext, typ tree.Type, prefix 
 // batch: handled blocks (consumed by the BlockHandler during streaming)
 // get auto-named nodes with an applied result child; collected blocks
 // are pre-validated — one naming fault discards the whole batch, writes
-// an error node, and returns the naming errors. The batch's new-plan
-// and response blocks declare named nodes the components will create:
-// a collected block may reference such a name as its parent, so its
-// node write is deferred — deferredIndexes lists those blocks' indexes
-// into collected, their names stay empty, and writeDeferredBlockNodes
-// fills both after the components have run. The returned names align
-// with collected by index. See TheoryOfSessionTree.
+// an error node, and returns the naming errors. A block node's type and
+// auto name follow the block kind. The batch's new-plan and response
+// blocks declare named nodes the components will create: a collected
+// block may reference such a name as its parent, so its node write is
+// deferred — deferredIndexes lists those blocks' indexes into
+// collected, their names stay empty, and writeDeferredBlockNodes fills
+// both after the components have run. The returned names align with
+// collected by index. See TheoryOfSessionTree.
 func writeBlockNodes(
 	tr *tree.Tree,
 	currentResponse string,
@@ -337,7 +340,7 @@ func writeBlockNodes(
 	cur := tr
 	for _, block := range handled {
 		var name string
-		cur, name = writeBlockNode(cur, parentAttribute(block, currentResponse), tree.TypeBlock, block)
+		cur, name = writeBlockNode(cur, parentAttribute(block, currentResponse), block)
 		if name == "" {
 			continue
 		}
@@ -347,10 +350,6 @@ func writeBlockNodes(
 	}
 	names := make([]string, len(collected))
 	for i, block := range collected {
-		typ := tree.TypeBlock
-		if block.Kind == "done" {
-			typ = tree.TypeDone
-		}
 		parent := parentAttribute(block, currentResponse)
 		if _, ok := cur.Node(parent); !ok {
 			// The parent names a node an earlier block of the batch will
@@ -359,7 +358,7 @@ func writeBlockNodes(
 			continue
 		}
 		var name string
-		cur, name = writeBlockNode(cur, parent, typ, block)
+		cur, name = writeBlockNode(cur, parent, block)
 		names[i] = name
 	}
 	return names, deferredIndexes, nil, cur
@@ -388,15 +387,17 @@ func blockNodeContent(block blocks.Block) string {
 
 // writeBlockNode writes one auto-named block node; a failed write keeps
 // the tree and yields no name, so the caller skips dependent nodes.
-// The node content comes from blockNodeContent, so a change block's
-// outline preview identifies its op, target, and file. See
-// TheoryOfSessionTree.
-func writeBlockNode(tr *tree.Tree, parent string, typ tree.Type, block blocks.Block) (*tree.Tree, string) {
-	prefix := "block"
-	if typ == tree.TypeDone {
-		prefix = "done"
+// The node's type and auto-name prefix are the block kind — a shell
+// block is a shell node — and the content comes from
+// blockNodeContent, so a change block's outline preview identifies its
+// op, target, and file. A kindless block falls back to the "block"
+// prefix. See TheoryOfSessionTree.
+func writeBlockNode(tr *tree.Tree, parent string, block blocks.Block) (*tree.Tree, string) {
+	prefix := block.Kind
+	if prefix == "" {
+		prefix = "block"
 	}
-	next, name, err := tr.WriteAuto(parent, prefix, typ, tree.AuthorModel, blockNodeContent(block))
+	next, name, err := tr.WriteAuto(parent, prefix, tree.Type(block.Kind), tree.AuthorModel, blockNodeContent(block))
 	if err != nil || name == "" {
 		return tr, ""
 	}
@@ -507,12 +508,8 @@ func writeDeferredBlockNodes(
 			continue
 		}
 		block := collected[i]
-		typ := tree.TypeBlock
-		if block.Kind == "done" {
-			typ = tree.TypeDone
-		}
 		var name string
-		cur, name = writeBlockNode(cur, parentAttribute(block, currentResponse), typ, block)
+		cur, name = writeBlockNode(cur, parentAttribute(block, currentResponse), block)
 		if name == "" {
 			continue
 		}
@@ -658,9 +655,9 @@ func extractUserTextsSince(state generators.State, sinceCount int) string {
 	return strings.Join(texts, "")
 }
 
-// recordAttemptTree writes the successful attempt's nodes: the response
-// node under the session root (the attempt's model-role Text parts), one
-// summary node per summary body, and the block batch (handled plus
+// recordAttemptTree writes the successful attempt's nodes: the model
+// node under the session root (the attempt's model-role Text parts),
+// one summary node per summary body, and the block batch (handled plus
 // collected). Blocks whose parent names a node an earlier block of the
 // batch creates are deferred: their collected indexes return to the
 // caller, and writeDeferredBlockNodes writes their nodes after the
@@ -678,7 +675,7 @@ func (ls *loopState) recordAttemptTree(
 	if ls.sessionTree == nil {
 		return nil, nil
 	}
-	next, responseName, err := ls.sessionTree.WriteAuto(ls.sessionParent(), "response", tree.TypeResponse, tree.AuthorModel, extractModelTexts(phaseState, attemptBase))
+	next, responseName, err := ls.sessionTree.WriteAuto(ls.sessionParent(), "model", tree.TypeModel, tree.AuthorModel, extractModelTexts(phaseState, attemptBase))
 	if err != nil {
 		if ls.rec != nil && ls.rec.Enabled() {
 			ls.rec.Event("decision", fmt.Sprintf("session tree: response node not written: %v", err))
@@ -704,19 +701,18 @@ func (ls *loopState) recordAttemptTree(
 	return names, deferred
 }
 
-// writeFeedbackInputNode records round feedback as an input node
-// written by the program under the session root. See
-// TheoryOfSessionTree.
+// writeFeedbackInputNode records round feedback as a user node written
+// by the program under the session root. See TheoryOfSessionTree.
 func (ls *loopState) writeFeedbackInputNode(parts []generators.Part) {
 	if ls.sessionTree == nil || len(parts) == 0 {
 		return
 	}
-	if next, _, err := ls.sessionTree.WriteAuto(ls.sessionParent(), "input", tree.TypeInput, tree.AuthorProgram, joinTextParts(parts)); err == nil {
+	if next, _, err := ls.sessionTree.WriteAuto(ls.sessionParent(), "user", tree.TypeUser, tree.AuthorProgram, joinTextParts(parts)); err == nil {
 		ls.sessionTree = next
 	}
 }
 
-// recordIdleUserInput records the idle handler's user input as an input
+// recordIdleUserInput records the idle handler's user input as a user
 // node written under the session root, extracted from the contents
 // appended since sinceCount. See TheoryOfSessionTree.
 func (ls *loopState) recordIdleUserInput(state generators.State, sinceCount int) {
@@ -724,7 +720,7 @@ func (ls *loopState) recordIdleUserInput(state generators.State, sinceCount int)
 	if text == "" || ls.sessionTree == nil {
 		return
 	}
-	if next, _, err := ls.sessionTree.WriteAuto(ls.sessionParent(), "input", tree.TypeInput, tree.AuthorUser, text); err == nil {
+	if next, _, err := ls.sessionTree.WriteAuto(ls.sessionParent(), "user", tree.TypeUser, tree.AuthorUser, text); err == nil {
 		ls.sessionTree = next
 	}
 }

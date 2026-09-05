@@ -366,7 +366,7 @@ func TestProcessComponents(t *testing.T) {
 			{
 				Kind: "writer",
 				Process: func(ctx context.Context, pctx *ProcessContext) ProcessResult {
-					next, err := pctx.SessionTree.Write("root", "n1", tree.TypeBlock, tree.AuthorModel, "x")
+					next, err := pctx.SessionTree.Write("root", "n1", tree.Type("writer"), tree.AuthorModel, "x")
 					if err != nil {
 						return ProcessResult{Err: err}
 					}

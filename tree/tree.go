@@ -56,22 +56,26 @@ tree theory: writes and transforms on immutable path-copying trees.
 - A block node without children is an unprocessed block, except blocks that
   need no processing (done, summary). Block execution results are written
   as block-result child nodes by the program.
-- Node kinds form two layers. Type is the fine-grained kind: session
-  content (system-prompt, input, plan, response, summary, done, abort),
+- Node kinds form two layers. Type is the fine-grained kind: message
+  content (system, user, plan, model, summary, done, abort),
   per-occurrence event subtypes (attempt-start, request, finish, usage,
   truncated, retry, handoff-start, handoff, completed,
   synthesized-summary, thought-summary, continue, idle, run-error,
-  goal), block execution (block, block-result), and error. Category is
-  the coarse layer derived from the type (Node.Category): structure,
-  session, event, block, error. Category is never written — it is a pure
-  function of Type — so the write surface, merge identity, and chronology
-  stay type-only, and consumers select whole families with ByCategory.
-  Every event subtype's string equals the event node name prefix the
-  pipeline has always written, so typed event nodes keep their historical
-  names.
+  goal), block execution (block-result, plus the block kinds — a block
+  node's type is the kind of the block it records, so unknown kinds form
+  types dynamically), and error. Category is the coarse layer derived
+  from the type (Node.Category): structure, message, event, block,
+  error. Category is never written — it is a pure function of Type — so
+  the write surface, merge identity, and chronology stay type-only, and
+  consumers select whole families with ByCategory. Every event subtype's
+  string equals the event node name prefix the pipeline has always
+  written, so typed event nodes keep their historical names. A block
+  kind sharing a string with an event subtype (continue) derives to
+  that subtype's category; every other unknown string derives to block.
 - Type.Emoji and Category.Emoji supply the display glyphs of user-facing
-  trees. They are presentation metadata, never identity: writes and merges
-  ignore them.
+  trees. Built-in block kinds carry predefined glyphs; any other kind,
+  and any unknown type, falls back to the brick glyph. They are
+  presentation metadata, never identity: writes and merges ignore them.
 `
 
 const TheoryOfSubtree = `
@@ -94,17 +98,16 @@ Subtree extraction theory:
 type Type string
 
 const (
-	TypeRoot         Type = "root"
-	TypeSystemPrompt Type = "system-prompt"
-	TypeInput        Type = "input"
-	TypePlan         Type = "plan"
-	TypeResponse     Type = "response"
-	TypeBlock        Type = "block"
-	TypeBlockResult  Type = "block-result"
-	TypeError        Type = "error"
-	TypeSummary      Type = "summary"
-	TypeDone         Type = "done"
-	TypeAbort        Type = "abort"
+	TypeRoot        Type = "root"
+	TypeSystem      Type = "system"
+	TypeUser        Type = "user"
+	TypeModel       Type = "model"
+	TypePlan        Type = "plan"
+	TypeBlockResult Type = "block-result"
+	TypeError       Type = "error"
+	TypeSummary     Type = "summary"
+	TypeDone        Type = "done"
+	TypeAbort       Type = "abort"
 )
 
 // TypeLoop marks one loop of a goal run: the run's tree carries one
@@ -143,7 +146,7 @@ type Category string
 
 const (
 	CategoryStructure Category = "structure"
-	CategorySession   Category = "session"
+	CategoryMessage   Category = "message"
 	CategoryEvent     Category = "event"
 	CategoryBlock     Category = "block"
 	CategoryError     Category = "error"
@@ -154,40 +157,43 @@ func (t Type) Category() Category {
 	switch t {
 	case TypeRoot, TypeLoop:
 		return CategoryStructure
-	case TypeSystemPrompt, TypeInput, TypePlan, TypeResponse,
+	case TypeSystem, TypeUser, TypeModel, TypePlan,
 		TypeSummary, TypeDone, TypeAbort:
-		return CategorySession
+		return CategoryMessage
 	case TypeAttemptStart, TypeRequest, TypeFinish, TypeUsage,
 		TypeTruncated, TypeRetry, TypeHandoffStart, TypeHandoff,
 		TypeCompleted, TypeSynthesizedSummary, TypeThoughtSummary,
 		TypeContinue, TypeIdle, TypeRunError, TypeGoal:
 		return CategoryEvent
-	case TypeBlock, TypeBlockResult:
+	case TypeBlockResult:
 		return CategoryBlock
 	case TypeError:
 		return CategoryError
 	default:
-		return CategoryStructure
+		// Any other type string is a block kind: a block node's type
+		// is the kind of the block it records. See TheoryOfTree.
+		return CategoryBlock
 	}
 }
 
 // Emoji returns the display glyph decorating the type in user-facing
 // trees. Presentation metadata, never identity: writes and merges
-// ignore it. See TheoryOfTree.
+// ignore it. Built-in block kinds carry predefined glyphs; any other
+// kind falls back to the brick. See TheoryOfTree.
 func (t Type) Emoji() string {
 	switch t {
 	case TypeRoot:
 		return "🌳"
 	case TypeLoop:
 		return "🔁"
-	case TypeSystemPrompt:
+	case TypeSystem:
 		return "📜"
-	case TypeInput:
+	case TypeUser:
 		return "💬"
+	case TypeModel:
+		return "🤖"
 	case TypePlan:
 		return "🗺️"
-	case TypeResponse:
-		return "🤖"
 	case TypeSummary:
 		return "📝"
 	case TypeDone:
@@ -224,14 +230,30 @@ func (t Type) Emoji() string {
 		return "❌"
 	case TypeGoal:
 		return "🎯"
-	case TypeBlock:
+	// Built-in block kinds: a block node's type is its block kind.
+	case Type("change"):
 		return "🔧"
+	case Type("shell"):
+		return "🐚"
+	case Type("go-test"):
+		return "🧪"
+	case Type("go-src"):
+		return "🔍"
+	case Type("ingest"):
+		return "📥"
+	case Type("new-plan"):
+		return "📋"
+	case Type("response"):
+		return "📨"
+	case Type("memory"):
+		return "🧠"
 	case TypeBlockResult:
 		return "📎"
 	case TypeError:
 		return "⚠️"
 	default:
-		return "•"
+		// Fallback glyph for block kinds without a predefined one.
+		return "🧱"
 	}
 }
 
@@ -242,8 +264,8 @@ func (c Category) Emoji() string {
 	switch c {
 	case CategoryStructure:
 		return "🗂️"
-	case CategorySession:
-		return "🧵"
+	case CategoryMessage:
+		return "✉️"
 	case CategoryEvent:
 		return "📡"
 	case CategoryBlock:
