@@ -372,7 +372,10 @@ func TestRunParseErrorCorrectionCumulativeBound(t *testing.T) {
 
 		// Parse error feedback appears only in the first
 		// maxParseErrorCorrections generations. Generations 4+ receive
-		// only shell output.
+		// only shell output. The feedback closes with the session tree
+		// outline; the outline's node previews echo earlier feedback
+		// text, so only the direct feedback parts count. See
+		// TheoryOfSessionTree.
 		feedbackCount := 0
 		for c := range result.FinalState.Contents() {
 			if c.Role != generators.RoleUser {
@@ -380,6 +383,9 @@ func TestRunParseErrorCorrectionCumulativeBound(t *testing.T) {
 			}
 			for _, p := range c.Parts {
 				if text, ok := p.(generators.Text); ok {
+					if strings.Contains(string(text), "[Session tree]") {
+						continue
+					}
 					if strings.Contains(string(text), "could not be parsed") {
 						feedbackCount++
 					}
@@ -584,102 +590,6 @@ func TestRunBlockHandlerConsumed(t *testing.T) {
 	})
 }
 
-func TestRunAppliedChangeBlocksFeedback(t *testing.T) {
-	withRun(t, func(run Run) {
-		callCount := 0
-		phaseBuilder := func(g generators.Generator) generators.Phase {
-			callCount++
-			if callCount == 1 {
-				return appendPhase("<<龘靐 change:?op=MODIFY&target=Foo&file-path=%2Fx%2Fa.go\nfunc Foo() {}\n龘靐\n<<贞观 summary\nChanges applied.\n贞观\n")
-			}
-			return appendPhase("<<贞观 summary\nVerified.\n贞观\n")
-		}
-		comps := components.ComponentSet{
-			{
-				Kind: "change",
-				Process: func(ctx context.Context, pctx *components.ProcessContext) components.ProcessResult {
-					t.Fatal("consumed change blocks must not reach components")
-					return components.ProcessResult{}
-				},
-			},
-		}
-		var feedbackDetail string
-		var result Result
-		for ev, err := range run(context.Background(), RunOptions{
-			Generator:    nil,
-			InitialState: generators.NewPrompts("", nil),
-			Components:   comps,
-			BlockHandler: func(block blocks.Block) (bool, error) {
-				return block.Kind == "change", nil
-			},
-			PhaseBuilder:                phaseBuilder,
-			FeedbackAppliedChangeBlocks: true,
-		}, &result) {
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if ev.Kind == EventComponentsTriggered && strings.Contains(ev.Detail, "applied change block feedback") {
-				feedbackDetail = ev.Detail
-			}
-		}
-		if callCount != 2 {
-			t.Fatalf("expected 2 generations, got %d", callCount)
-		}
-		if feedbackDetail == "" {
-			t.Fatal("expected components-triggered event naming the applied change block feedback")
-		}
-		var hasFeedback bool
-		for c := range result.FinalState.Contents() {
-			for _, p := range c.Parts {
-				if text, ok := p.(generators.Text); ok {
-					if strings.Contains(string(text), "applied to the working tree") &&
-						strings.Contains(string(text), "MODIFY Foo in /x/a.go") {
-						hasFeedback = true
-					}
-				}
-			}
-		}
-		if !hasFeedback {
-			t.Fatal("expected applied-change feedback listing the applied block in state")
-		}
-	})
-}
-
-func TestRunAppliedChangeBlocksFeedbackDisabled(t *testing.T) {
-	withRun(t, func(run Run) {
-		callCount := 0
-		phaseBuilder := func(g generators.Generator) generators.Phase {
-			callCount++
-			if callCount == 1 {
-				return appendPhase("<<龘靐 change:?op=MODIFY&target=Foo&file-path=%2Fx%2Fa.go\nfunc Foo() {}\n龘靐\n<<贞观 summary\nChanges applied.\n贞观\n")
-			}
-			return appendPhase("<<贞观 summary\nVerified.\n贞观\n")
-		}
-		_, err := runOnce(run, RunOptions{
-			Generator:    nil,
-			InitialState: generators.NewPrompts("", nil),
-			Components: components.ComponentSet{
-				{
-					Kind: "shell",
-					Process: func(ctx context.Context, pctx *components.ProcessContext) components.ProcessResult {
-						return components.ProcessResult{}
-					},
-				},
-			},
-			BlockHandler: func(block blocks.Block) (bool, error) {
-				return block.Kind == "change", nil
-			},
-			PhaseBuilder: phaseBuilder,
-		})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if callCount != 1 {
-			t.Fatalf("expected 1 generation without the feedback flag, got %d", callCount)
-		}
-	})
-}
-
 func TestRunAppliedChangeBlocksResetOnRetry(t *testing.T) {
 	withRun(t, func(run Run) {
 		callCount := 0
@@ -706,10 +616,9 @@ func TestRunAppliedChangeBlocksResetOnRetry(t *testing.T) {
 			BlockHandler: func(block blocks.Block) (bool, error) {
 				return block.Kind == "change", nil
 			},
-			PhaseBuilder:                phaseBuilder,
-			RetryOnMissingCompletion:    true,
-			MaxRetries:                  3,
-			FeedbackAppliedChangeBlocks: true,
+			PhaseBuilder:             phaseBuilder,
+			RetryOnMissingCompletion: true,
+			MaxRetries:               3,
 		})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -717,14 +626,85 @@ func TestRunAppliedChangeBlocksResetOnRetry(t *testing.T) {
 		if callCount != 2 {
 			t.Fatalf("expected 2 attempts within one generation, got %d", callCount)
 		}
+		// The truncated attempt's consumed blocks never join the
+		// session tree: the per-attempt record resets with the
+		// attempt, mirroring the MemoryStore reset. See
+		// TheoryOfStreamingApply.
+		if strings.Contains(result.SessionTree.RenderOutline(120), "func Foo()") {
+			t.Fatal("the truncated attempt's consumed blocks must not reach the session tree")
+		}
+	})
+}
+
+// TestRunAppliedChangeBlocksInOutline verifies that applied change
+// blocks are recorded in the session tree — the block node's preview
+// carries op, target, and file, and the node carries an applied result
+// child — so the round-triggering feedback's outline is the
+// applied-changes record and no separate note is fed back. See
+// TheoryOfSessionTree and TheoryOfStreamingApply.
+func TestRunAppliedChangeBlocksInOutline(t *testing.T) {
+	withRun(t, func(run Run) {
+		callCount := 0
+		phaseBuilder := func(g generators.Generator) generators.Phase {
+			callCount++
+			if callCount == 1 {
+				return appendPhase("<<龘靐 change:?op=MODIFY&target=Foo&file-path=%2Fx%2Fa.go\nfunc Foo() {}\n龘靐\n" +
+					"<<龘靐 shell\necho hi\n龘靐\n" +
+					"<<贞观 summary\nChanges applied.\n贞观\n")
+			}
+			return appendPhase("<<贞观 summary\nVerified.\n贞观\n")
+		}
+		comps := components.ComponentSet{
+			{
+				Kind: "change",
+				Process: func(ctx context.Context, pctx *components.ProcessContext) components.ProcessResult {
+					t.Fatal("consumed change blocks must not reach components")
+					return components.ProcessResult{}
+				},
+			},
+			{
+				Kind: "shell",
+				Process: func(ctx context.Context, pctx *components.ProcessContext) components.ProcessResult {
+					return components.ProcessResult{
+						Parts: []generators.Part{generators.Text("shell output")},
+					}
+				},
+			},
+		}
+		var result Result
+		for _, err := range run(context.Background(), RunOptions{
+			Generator:    nil,
+			InitialState: generators.NewPrompts("", nil),
+			Components:   comps,
+			BlockHandler: func(block blocks.Block) (bool, error) {
+				return block.Kind == "change", nil
+			},
+			PhaseBuilder: phaseBuilder,
+		}, &result) {
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		}
+		if callCount != 2 {
+			t.Fatalf("expected 2 generations, got %d", callCount)
+		}
+		assertUserTextContains(t, result,
+			"block-1 [block/model] MODIFY Foo in /x/a.go",
+			"result-1 [block-result/program] applied",
+		)
+		var userText string
 		for c := range result.FinalState.Contents() {
+			if c.Role != generators.RoleUser {
+				continue
+			}
 			for _, p := range c.Parts {
 				if text, ok := p.(generators.Text); ok {
-					if strings.Contains(string(text), "applied to the working tree") {
-						t.Fatal("the truncated attempt's consumed blocks must not reach the applied-change feedback")
-					}
+					userText += string(text)
 				}
 			}
+		}
+		if strings.Contains(userText, "applied to the working tree") {
+			t.Fatal("the separate applied-change note must be gone: the outline is the record")
 		}
 	})
 }

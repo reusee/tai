@@ -363,7 +363,10 @@ func TestRunErrorNodesRecorded(t *testing.T) {
 
 func TestTreeOutlinePart(t *testing.T) {
 	got := string(treeOutlinePart(tree.New(), "root"))
-	if !strings.Contains(got, "[Session tree]") || !strings.Contains(got, "root [root/]") {
+	if !strings.HasPrefix(got, "\n[Session tree]") {
+		t.Fatalf("the outline part must start on its own line, got %q", got)
+	}
+	if !strings.Contains(got, "root [root/]") {
 		t.Fatalf("unexpected outline part: %q", got)
 	}
 }

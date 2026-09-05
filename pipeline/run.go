@@ -155,16 +155,11 @@ replacement behavior, and to resume the original task. The two
 categories share one correction decision and one budget; see
 TheoryOfUnknownBlockKinds.
 
-Applied-change verification: when RunOptions.FeedbackAppliedChangeBlocks
-is set, a successful attempt whose BlockHandler consumed change blocks
-feeds back user content listing every applied change block (op, target,
-file), so the model verifies its emitted output against what took
-effect — re-emitting only a block it emitted but does not see listed,
-never re-emitting a listed (already applied) block, and correcting a
-mismatched entry. The report counters deferred-execution hallucinations
-and turns a mismatch between output and application into a correction
-round. The consumed-block record resets with each attempt, so a failed
-attempt's blocks never reach the report. See TheoryOfStreamingApply.
+Applied change blocks are recorded in the session tree: each applied
+block's node content leads with its op, target, and file, and the node
+carries an applied result child, so the round-triggering feedback's
+outline is the applied-changes record and no separate note is fed back.
+See TheoryOfSessionTree and TheoryOfStreamingApply.
 `
 
 const TheoryOfUsageLogging = `
@@ -356,16 +351,13 @@ type loopState struct {
 
 // buildContinueReason describes why the generation loop continues to
 // the next generation: the kinds of blocks processed by components, the
-// applied-change feedback, the parse-error feedback, the
-// unknown-block-kind feedback, or a component's state modification.
-// See TheoryOfLoops and TheoryOfUnknownBlockKinds.
-func buildContinueReason(triggeredKinds []string, appliedChangeFeedback bool, parseErrorFeedback bool, unknownKindFeedback bool) string {
+// parse-error feedback, the unknown-block-kind feedback, or a
+// component's state modification. See TheoryOfLoops and
+// TheoryOfUnknownBlockKinds.
+func buildContinueReason(triggeredKinds []string, parseErrorFeedback bool, unknownKindFeedback bool) string {
 	var reasons []string
 	if len(triggeredKinds) > 0 {
 		reasons = append(reasons, strings.Join(triggeredKinds, ", ")+" blocks")
-	}
-	if appliedChangeFeedback {
-		reasons = append(reasons, "applied change block feedback")
 	}
 	if parseErrorFeedback {
 		reasons = append(reasons, "parse error feedback")
@@ -394,9 +386,9 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 	// handledBlocks records the blocks the BlockHandler consumed
 	// without error during the current attempt: for the change
 	// handler, consumption follows a successful application, so this
-	// is the applied record feeding the applied-change feedback. It
-	// resets with every attempt, so a failed attempt's consumed
-	// blocks never reach the report. See TheoryOfStreamingApply.
+	// is the applied record driving the session tree's applied result
+	// children. It resets with every attempt, so a failed attempt's
+	// consumed blocks never reach the tree. See TheoryOfStreamingApply.
 	var handledBlocks []blocks.Block
 	var generationSummaries []string
 	var generationParseErrors []*blocks.BlockParseError
@@ -1002,29 +994,12 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 		}
 	}
 
-	// Applied-change feedback: when enabled, the blocks the handler
-	// applied without error during the successful attempt are fed back
-	// as user content listing each applied op, target, and file. The
-	// model verifies the list against its intent — a block it emitted
-	// but does not see listed was not applied and must be re-emitted,
-	// listed blocks must not be re-emitted — so a mismatch between
-	// emitted output and applied result is corrected in the next
-	// round. See TheoryOfStreamingApply.
-	var appliedParts []generators.Part
-	if ls.opts.FeedbackAppliedChangeBlocks && len(handledBlocks) > 0 {
-		appliedParts = append(appliedParts, generators.Text(
-			formatAppliedChangeBlocksFeedback(handledBlocks)))
-		if ls.rec != nil && ls.rec.Enabled() {
-			ls.rec.Event("decision", fmt.Sprintf("%d applied change block(s) fed back for verification", len(handledBlocks)))
-		}
-	}
-
 	// Single-shot mode: no component processing.
 	if len(ls.opts.Components) == 0 {
-		if len(correctionParts) > 0 || len(appliedParts) > 0 {
-			feedbackParts := append(correctionParts, appliedParts...)
+		if len(correctionParts) > 0 {
+			feedbackParts := correctionParts
 			// The feedback closes with the session tree outline, so
-			// the model sees the whole session's structure. See
+			// the model sees the session's structure. See
 			// TheoryOfSessionTree.
 			feedbackParts = append(feedbackParts, treeOutlinePart(ls.sessionTree, ls.sessionParent()))
 			var aerr error
@@ -1041,7 +1016,6 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 				Kind:    EventComponentsTriggered,
 				Attempt: ls.attempt,
 				Detail: buildContinueReason(nil,
-					len(appliedParts) > 0,
 					len(generationParseErrors) > 0,
 					len(unknownKinds) > 0),
 			})
@@ -1093,9 +1067,8 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 	// otherwise. See TheoryOfSessionTree.
 	ls.sessionTree = writeBlockResultNodes(treeOut, outputs, blockNodeNames)
 
-	if len(correctionParts) > 0 || len(appliedParts) > 0 {
+	if len(correctionParts) > 0 {
 		combinedParts = append(correctionParts, combinedParts...)
-		combinedParts = append(combinedParts, appliedParts...)
 		triggered = true
 	}
 
@@ -1122,12 +1095,10 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 			}
 		}
 		continueReason := buildContinueReason(triggeredKinds,
-			len(appliedParts) > 0,
 			len(generationParseErrors) > 0,
 			len(unknownKinds) > 0)
 		// The feedback closes with the session tree outline, so the
-		// model sees the whole session's structure. See
-		// TheoryOfSessionTree.
+		// model sees the session's structure. See TheoryOfSessionTree.
 		combinedParts = append(combinedParts, treeOutlinePart(ls.sessionTree, ls.sessionParent()))
 		if len(combinedParts) > 0 {
 			var aerr error
@@ -1426,17 +1397,6 @@ type RunOptions struct {
 	// BlockHandler processes blocks during streaming. May be nil.
 	// If consumed is true, the block is not passed to ProcessComponents.
 	BlockHandler BlockHandler
-	// FeedbackAppliedChangeBlocks enables the applied-change
-	// verification round: after a successful attempt in which the
-	// BlockHandler consumed change blocks, the loop feeds back user
-	// content listing every applied change block and instructing the
-	// model to verify the list against its intent — re-emitting only
-	// what was not applied and correcting mismatches — before
-	// continuing the task. The report gives the model ground truth
-	// about what took effect. Blocks consumed by a failed attempt are
-	// excluded: the per-attempt record resets with the attempt,
-	// mirroring the MemoryStore reset. See TheoryOfStreamingApply.
-	FeedbackAppliedChangeBlocks bool
 	// KnownBlockKinds reports whether a block kind is processable in
 	// this session. When non-nil, the loop checks every collected block
 	// — after summary extraction, so the summary kind never reaches the
@@ -1868,36 +1828,6 @@ func formatParseErrors(errors []*blocks.BlockParseError, attempt, maxAttempts in
 		sb.WriteString(parseErr.Error())
 		sb.WriteString("\n\n")
 	}
-	return sb.String()
-}
-
-// formatAppliedChangeBlocksFeedback formats the change blocks applied
-// during a successful attempt as user content fed back to the model.
-// The list is the ground truth of what took effect: the model verifies
-// it against its own intent, re-emitting only a block it emitted but
-// does not see listed, never re-emitting a listed (already applied)
-// block, and correcting a mismatched entry by reading the affected
-// file and emitting corrective change blocks. See TheoryOfLoops and
-// TheoryOfStreamingApply.
-func formatAppliedChangeBlocksFeedback(applied []blocks.Block) string {
-	var sb strings.Builder
-	sb.WriteString("[System note: The change blocks listed below were parsed from your previous response and applied to the working tree:\n\n")
-	for _, block := range applied {
-		h, ok := changes.ParseChangeBlock(block)
-		if !ok {
-			continue
-		}
-		if h.Target != "" {
-			fmt.Fprintf(&sb, "- %s %s in %s\n", h.Op, h.Target, h.FilePath)
-		} else {
-			fmt.Fprintf(&sb, "- %s in %s\n", h.Op, h.FilePath)
-		}
-	}
-	sb.WriteString("\nVerify this list against what you intended to emit:\n")
-	sb.WriteString("- A change block you emitted but do not see listed was NOT applied. Re-emit it.\n")
-	sb.WriteString("- Do NOT re-emit the listed blocks: they are already applied, and re-emitting would duplicate the changes.\n")
-	sb.WriteString("- If a listed entry does not match your intent (wrong op, target, or file), read the affected file and emit corrective change blocks.\n\n")
-	sb.WriteString("After verification, CONTINUE the original task exactly where it stopped: the verification is not the completion of the task. Then end your response with a summary block.]")
 	return sb.String()
 }
 

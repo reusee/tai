@@ -69,17 +69,21 @@ immutable tree, and one run owns exactly one tree.
   BlockHandler during streaming (change) receive an applied result
   child for the same reason. Change blocks carry no parent/name header
   — the changes package stays untouched — and are recorded post hoc
-  with auto names; they are the one exception.
+  with auto names; they are the one exception. A change block's node
+  content leads with its op, target, and file header, so the outline's
+  preview identifies the modification: the outline is the
+  applied-changes record, and no separate applied-change note is fed
+  back.
 - Every round-triggering feedback — the component feedback and the
   retry feedback of a truncated or errored attempt — ends with the
   session-tree outline part, and the feedback content is written as an
   input node (program author) under the session root. The outline is
-  rendered from the session root — the whole tree for a fresh run, the
-  loop node's subtree for a continued one — so each round's feedback
-  volume stays independent of the run's length and of other loops'
-  content. The idle handler's user input is recorded as an input node
-  (user author), extracted by content-count delta: only the delta is
-  visible, not the handler's internal loop.
+  always the current loop's subtree, rendered from the session root —
+  the loop node for a continued run, the tree root for a fresh one —
+  so each round's feedback volume stays independent of the run's
+  length and of other loops' content. The idle handler's user input is
+  recorded as an input node (user author), extracted by content-count
+  delta: only the delta is visible, not the handler's internal loop.
 - The handoff input prefixes the incomplete output with the handoff
   subtree: the session's tree projected onto its decision-level nodes
   (every type except block and block-result) and rendered from the
@@ -352,15 +356,38 @@ func writeBlockNodes(
 	return names, deferredIndexes, nil, cur
 }
 
+// blockNodeContent renders a block node's tree content. A change block
+// leads with its op, target, and file header — the same line a
+// per-block list would show — so the outline's one-line preview
+// carries the modification detail; the body follows on the next line.
+// Other blocks carry the body only.
+func blockNodeContent(block blocks.Block) string {
+	if block.Kind != "change" {
+		return block.Body
+	}
+	op := block.Attributes["op"]
+	if op == "" {
+		return block.Body
+	}
+	target := block.Attributes["target"]
+	filePath := block.Attributes["file-path"]
+	if target != "" {
+		return fmt.Sprintf("%s %s in %s\n%s", op, target, filePath, block.Body)
+	}
+	return fmt.Sprintf("%s in %s\n%s", op, filePath, block.Body)
+}
+
 // writeBlockNode writes one auto-named block node; a failed write keeps
 // the tree and yields no name, so the caller skips dependent nodes.
-// See TheoryOfSessionTree.
+// The node content comes from blockNodeContent, so a change block's
+// outline preview identifies its op, target, and file. See
+// TheoryOfSessionTree.
 func writeBlockNode(tr *tree.Tree, parent string, typ tree.Type, block blocks.Block) (*tree.Tree, string) {
 	prefix := "block"
 	if typ == tree.TypeDone {
 		prefix = "done"
 	}
-	next, name, err := tr.WriteAuto(parent, prefix, typ, tree.AuthorModel, block.Body)
+	next, name, err := tr.WriteAuto(parent, prefix, typ, tree.AuthorModel, blockNodeContent(block))
 	if err != nil || name == "" {
 		return tr, ""
 	}
@@ -501,15 +528,17 @@ func joinTextParts(parts []generators.Part) string {
 // treeOutlinePart renders the session tree outline as a compact user
 // part appended to every round-triggering feedback, so the model sees
 // the session structure without the nodes' full content. The outline
-// is rendered from the session root — the whole tree for a fresh run,
-// the loop node's subtree for a continued one — so each round's
-// feedback volume stays independent of the run's length. See
+// is always the current loop's subtree, rendered from the session
+// root, so each round's feedback volume stays independent of the
+// run's length and of other loops' content. The leading newline keeps
+// the outline on its own line: parts concatenate verbatim, and the
+// content before it may end without a line break. See
 // TheoryOfSessionTree.
 func treeOutlinePart(tr *tree.Tree, parent string) generators.Text {
 	if tr == nil {
 		return generators.Text("")
 	}
-	return generators.Text("[Session tree]\n" + sessionOutline(tr, parent) + "\n")
+	return generators.Text("\n[Session tree]\n" + sessionOutline(tr, parent) + "\n")
 }
 
 // handoffOutlinePart renders the handoff's tree outline: the projection
@@ -545,15 +574,19 @@ func handoffInput(incompleteText string, tr *tree.Tree, parent string) string {
 	return outline + "\n" + incompleteText
 }
 
-// sessionOutline renders the session's outline: the whole tree for a
-// fresh run, the parent node's subtree for a continued one, so each
-// round's feedback volume stays independent of the run's length. See
+// sessionOutline renders the session's outline: always the current
+// loop's subtree, from the session root — the loop node for a
+// continued run, the tree root for a fresh one — so each round's
+// feedback volume stays independent of the run's length and of other
+// loops' content. The preview cap of 120 runes lets a change block's
+// op, target, and file header line show in full, so the outline
+// carries the applied-changes detail of a per-block list. See
 // TheoryOfSessionTree.
 func sessionOutline(tr *tree.Tree, parent string) string {
-	if parent == "" || parent == "root" {
-		return tr.RenderOutline(40)
+	if parent == "" {
+		parent = "root"
 	}
-	return tr.RenderSubtree(parent, 40)
+	return tr.RenderSubtree(parent, 120)
 }
 
 // SessionTreeContinuation continues one run's session tree: Tree is the
