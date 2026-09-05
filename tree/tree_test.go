@@ -503,6 +503,55 @@ func TestPreviewRunes(t *testing.T) {
 	}
 }
 
+func TestModify(t *testing.T) {
+	insertTime := time.Date(2024, 2, 3, 4, 5, 6, 0, time.UTC)
+	tr, err := New().WriteAll(
+		WriteOp{Parent: "root", Name: "plan-1", Type: TypePlan, Author: AuthorModel, Content: "do x", InsertTime: insertTime},
+		WriteOp{Parent: "plan-1", Name: "step", Type: TypePlan, Author: AuthorModel, Content: "step"},
+		WriteOp{Parent: "root", Name: "other", Type: TypeInput, Author: AuthorUser, Content: "other"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	modified, err := tr.Modify("plan-1", "do y")
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := mustNode(t, modified, "plan-1")
+	if n.Content != "do y" {
+		t.Fatalf("content = %q, want %q", n.Content, "do y")
+	}
+	if n.Parent != "root" || n.Type != TypePlan || n.Author != AuthorModel {
+		t.Fatalf("identity fields must be preserved: %+v", n)
+	}
+	if !n.InsertTime.Equal(insertTime) {
+		t.Fatal("a rewrite must keep the node's chronology")
+	}
+	if kids := n.Children(); len(kids) != 1 || kids[0].Name != "step" {
+		t.Fatal("children must be preserved")
+	}
+	if mustNode(t, modified, "step") != mustNode(t, tr, "step") {
+		t.Fatal("the untouched subtree must be shared by pointer")
+	}
+	if mustNode(t, modified, "root") == mustNode(t, tr, "root") {
+		t.Fatal("the path to the root must be copied")
+	}
+	if mustNode(t, modified, "other") != mustNode(t, tr, "other") {
+		t.Fatal("an off-path node must be shared by pointer")
+	}
+	if mustNode(t, tr, "plan-1").Content != "do x" {
+		t.Fatal("the original tree must be unchanged")
+	}
+
+	if _, err := tr.Modify("missing", "x"); !errors.Is(err, ErrUnknownNode) {
+		t.Fatalf("want ErrUnknownNode, got %v", err)
+	}
+	if _, err := tr.Modify("root", "x"); !errors.Is(err, ErrBadName) {
+		t.Fatalf("want ErrBadName for the root, got %v", err)
+	}
+}
+
 func TestChildrenDefensiveCopy(t *testing.T) {
 	tr, err := New().Write("root", "a", TypeInput, AuthorUser, "x")
 	if err != nil {
@@ -513,5 +562,58 @@ func TestChildrenDefensiveCopy(t *testing.T) {
 	kids[0] = nil
 	if root.Children()[0] == nil {
 		t.Fatal("Children must return a defensive copy")
+	}
+}
+
+func TestDelete(t *testing.T) {
+	tr, err := New().WriteAll(
+		WriteOp{Parent: "root", Name: "response-1", Type: TypeResponse, Author: AuthorModel, Content: "r"},
+		WriteOp{Parent: "response-1", Name: "block-1", Type: TypeBlock, Author: AuthorModel, Content: "b"},
+		WriteOp{Parent: "block-1", Name: "block-result-1", Type: TypeBlockResult, Author: AuthorProgram, Content: "ok"},
+		WriteOp{Parent: "root", Name: "input-1", Type: TypeInput, Author: AuthorUser, Content: "i"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	deleted, err := tr.Delete("block-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"block-1", "block-result-1"} {
+		if _, ok := deleted.Node(name); ok {
+			t.Fatalf("deleted node %q must be absent", name)
+		}
+		if _, ok := tr.Node(name); !ok {
+			t.Fatalf("the receiver must be unchanged: %q missing", name)
+		}
+	}
+	if mustNode(t, deleted, "input-1") != mustNode(t, tr, "input-1") {
+		t.Fatal("an off-path node must be shared by pointer")
+	}
+	if mustNode(t, deleted, "response-1") == mustNode(t, tr, "response-1") {
+		t.Fatal("the path to the root must be copied")
+	}
+	if mustNode(t, deleted, "root") == mustNode(t, tr, "root") {
+		t.Fatal("the path to the root must be copied")
+	}
+
+	// A deleted name can be written again; the old tree keeps its own node.
+	rewritten, err := deleted.Write("response-1", "block-1", TypeBlock, AuthorModel, "b2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := mustNode(t, rewritten, "block-1"); n.Content != "b2" {
+		t.Fatalf("the reused name must carry the new write: %q", n.Content)
+	}
+	if mustNode(t, tr, "block-1").Content != "b" {
+		t.Fatal("the old tree must keep its own node")
+	}
+
+	if _, err := tr.Delete("missing"); !errors.Is(err, ErrUnknownNode) {
+		t.Fatalf("want ErrUnknownNode, got %v", err)
+	}
+	if _, err := tr.Delete("root"); !errors.Is(err, ErrBadName) {
+		t.Fatalf("want ErrBadName for the root, got %v", err)
 	}
 }

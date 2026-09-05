@@ -13,20 +13,28 @@ import (
 )
 
 const TheoryOfTree = `
-tree theory: one write operation, immutable path-copying trees.
+tree theory: writes and transforms on immutable path-copying trees.
 - Every operation of every participant — user, model, program — is expressed
   as a write: Write(parent, name, type, author, content). Names are globally
   unique; the program validates them (empty name, duplicate name, unknown
   parent, invalid author) and feeds errors back so the model can correct its
   naming in the next round.
-- Immutability is implemented by path copying: Write copies every node on
-  the path from the parent up to the root, swaps the copied child pointer
+- Immutability is implemented by path copying: every operation copies the
+  path from the target up to the root, swapping the copied child pointer
   into each copied ancestor's children slice, and returns a new Tree.
-  Untouched subtrees share node pointers with the old tree, so a write
+  Untouched subtrees share node pointers with the old tree, so an operation
   costs O(depth) node copies. The byName index is rebuilt by whole-map copy
-  per write, an O(n) cost accepted for a pure-value tree. Write and Merge
-  share one path-copying core, so their immutability semantics stay
-  identical.
+  per operation, an O(n) cost accepted for a pure-value tree. Write, Merge,
+  Modify, and Delete share one path-copying core, so their immutability
+  semantics stay identical.
+- Modify and Delete transform the tree beyond appends: Modify rewrites a
+  node's content in place — name, parent, type, author, children, and
+  InsertTime are preserved, so a rewrite changes what the node says, never
+  where or when it was written. Delete removes a node and its descendants;
+  their names leave the index, so they can be written again. The root is
+  structural: it can be neither modified nor deleted. Every transformation
+  returns a new tree, so earlier versions remain valid snapshots —
+  immutability is untouched.
 - Batch writes are atomic: WriteAll stages the writes in order on an
   intermediate tree; a failing op returns an error and leaves the receiver
   untouched, and a successful batch returns one tree carrying every write.
@@ -39,9 +47,12 @@ tree theory: one write operation, immutable path-copying trees.
   InsertTime values; a node present in both trees must be logically
   identical (same parent, type, author, and content) or the merge fails
   and the receiver is unchanged.
-- Plan revision is Abort plus a new node: Abort writes an abort child under
-  the abandoned node, recording who aborted and why; the revised plan is a
-  new node, never a mutation.
+- Plan revision: a plan whose content changes is rewritten with Modify —
+  the node keeps its identity, position, and chronology, and a direct
+  rewrite avoids the drift of re-emitting the whole plan as a new node. A
+  plan abandoned in direction is aborted: Abort writes an abort child under
+  it, recording who aborted and why, and the replacement plan is a new
+  node.
 - A block node without children is an unprocessed block, except blocks that
   need no processing (done, summary). Block execution results are written
   as block-result child nodes by the program.
@@ -107,6 +118,9 @@ var (
 	ErrUnknownParent = errors.New("unknown parent")
 	ErrBadAuthor     = errors.New("invalid author")
 )
+
+// ErrUnknownNode reports that no node carries the given name.
+var ErrUnknownNode = errors.New("unknown node")
 
 // Node is one tree node. Nodes are never mutated after creation: a write
 // copies the path to the root and shares untouched subtrees by pointer.
@@ -219,9 +233,9 @@ func (t *Tree) writeOp(op WriteOp) (*Tree, error) {
 }
 
 // writeChild attaches a fully built child node — unique name, existing
-// parent — by path copying. It is the shared core of Write and Merge, so
-// both carry identical path-copying and re-indexing semantics. See
-// TheoryOfTree.
+// parent — by path copying. It is the shared core of Write and Merge. The
+// ancestor walk delegates to copyPathToRoot, shared with Modify and Delete,
+// so all carry identical path-copying semantics. See TheoryOfTree.
 func (t *Tree) writeChild(child *Node) (*Tree, error) {
 	parentNode, ok := t.byName[child.Parent]
 	if !ok {
@@ -232,29 +246,7 @@ func (t *Tree) writeChild(child *Node) (*Tree, error) {
 	// ancestor up to the root, swapping in the copied child pointer.
 	newParent := shallowCopy(parentNode)
 	newParent.children = append(slices.Clone(parentNode.children), child)
-
-	copied := []*Node{newParent}
-	cur := newParent
-	curName := child.Parent
-	for {
-		ancestorName := cur.Parent
-		if ancestorName == "" {
-			break
-		}
-		ancestor := t.byName[ancestorName]
-		newAncestor := shallowCopy(ancestor)
-		newAncestor.children = slices.Clone(ancestor.children)
-		for i, c := range newAncestor.children {
-			if c.Name == curName {
-				newAncestor.children[i] = cur
-				break
-			}
-		}
-		copied = append(copied, newAncestor)
-		cur = newAncestor
-		curName = ancestorName
-	}
-	newRoot := cur
+	newRoot, copied := t.copyPathToRoot(newParent)
 
 	// Re-index the copied path and the new child. Copied nodes carry their
 	// originals' names, so assignment overwrites the old-version entries;
@@ -266,6 +258,36 @@ func (t *Tree) writeChild(child *Node) (*Tree, error) {
 	byName[child.Name] = child
 
 	return &Tree{root: newRoot, byName: byName}, nil
+}
+
+// copyPathToRoot copies every ancestor of newNode up to the root, swapping
+// the copied node into each copied ancestor's children slice, and returns
+// the new root together with every copied node for re-indexing. newNode
+// must already sit at its position in its parent's children slice, appended
+// or swapped in by the caller. It is the shared core of Write, Merge,
+// Modify, and Delete, so all carry identical path-copying semantics. See
+// TheoryOfTree.
+func (t *Tree) copyPathToRoot(newNode *Node) (newRoot *Node, copied []*Node) {
+	copied = []*Node{newNode}
+	cur := newNode
+	for {
+		ancestorName := cur.Parent
+		if ancestorName == "" {
+			break
+		}
+		ancestor := t.byName[ancestorName]
+		newAncestor := shallowCopy(ancestor)
+		newAncestor.children = slices.Clone(ancestor.children)
+		for i, c := range newAncestor.children {
+			if c.Name == cur.Name {
+				newAncestor.children[i] = cur
+				break
+			}
+		}
+		copied = append(copied, newAncestor)
+		cur = newAncestor
+	}
+	return cur, copied
 }
 
 // Merge returns a new tree carrying every node of other that the
@@ -357,6 +379,93 @@ func (t *Tree) WriteAll(ops ...WriteOp) (*Tree, error) {
 		cur = next
 	}
 	return cur, nil
+}
+
+// Modify returns a new tree with the named node's content replaced. The
+// node keeps its name, parent, type, author, children, and InsertTime, so
+// a rewrite changes what the node says, never where or when it was
+// written. The root is structural and cannot be modified. See TheoryOfTree.
+func (t *Tree) Modify(name, content string) (*Tree, error) {
+	node, ok := t.byName[name]
+	if !ok {
+		return nil, fmt.Errorf("%w: %q", ErrUnknownNode, name)
+	}
+	if node.Name == t.root.Name {
+		return nil, fmt.Errorf("%w: cannot modify the root node", ErrBadName)
+	}
+	parentNode, ok := t.byName[node.Parent]
+	if !ok {
+		return nil, fmt.Errorf("%w: %q", ErrUnknownParent, node.Parent)
+	}
+	// Swap the rewritten copy into its parent's children, then copy the
+	// ancestors up to the root. The children slice is shared, never
+	// mutated: every operation builds its own slice, so the untouched
+	// subtree is shared by pointer.
+	modified := shallowCopy(node)
+	modified.Content = content
+	modified.children = node.children
+	newParent := shallowCopy(parentNode)
+	newParent.children = slices.Clone(parentNode.children)
+	for i, c := range newParent.children {
+		if c.Name == modified.Name {
+			newParent.children[i] = modified
+			break
+		}
+	}
+	newRoot, copied := t.copyPathToRoot(newParent)
+
+	byName := maps.Clone(t.byName)
+	for _, n := range copied {
+		byName[n.Name] = n
+	}
+	byName[modified.Name] = modified
+
+	return &Tree{root: newRoot, byName: byName}, nil
+}
+
+// Delete returns a new tree with the named node and its descendants
+// removed. Their names leave the index, so they can be written again. The
+// root is structural and cannot be deleted. See TheoryOfTree.
+func (t *Tree) Delete(name string) (*Tree, error) {
+	node, ok := t.byName[name]
+	if !ok {
+		return nil, fmt.Errorf("%w: %q", ErrUnknownNode, name)
+	}
+	if node.Name == t.root.Name {
+		return nil, fmt.Errorf("%w: cannot delete the root node", ErrBadName)
+	}
+	parentNode, ok := t.byName[node.Parent]
+	if !ok {
+		return nil, fmt.Errorf("%w: %q", ErrUnknownParent, node.Parent)
+	}
+	// Drop the node from its parent's children, then copy the ancestors
+	// up to the root.
+	newParent := shallowCopy(parentNode)
+	kept := make([]*Node, 0, len(parentNode.children)-1)
+	for _, c := range parentNode.children {
+		if c.Name != name {
+			kept = append(kept, c)
+		}
+	}
+	newParent.children = kept
+	newRoot, copied := t.copyPathToRoot(newParent)
+
+	byName := maps.Clone(t.byName)
+	for _, n := range copied {
+		byName[n.Name] = n
+	}
+	// The removed subtree's names leave the index; its nodes stay shared
+	// by pointer in earlier tree versions.
+	var drop func(n *Node)
+	drop = func(n *Node) {
+		delete(byName, n.Name)
+		for _, c := range n.children {
+			drop(c)
+		}
+	}
+	drop(node)
+
+	return &Tree{root: newRoot, byName: byName}, nil
 }
 
 // Abort marks the node as abandoned by writing an abort child under it,
