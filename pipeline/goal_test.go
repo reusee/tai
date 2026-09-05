@@ -46,7 +46,7 @@ func TestRunGoalConfirmsDoneAfterVerificationLoop(t *testing.T) {
 	result := RunGoal(context.Background(), GoalOptions{
 		Output:       output,
 		ReviewModels: []string{"review-model"},
-		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries, reviewModel string) (Result, []AttemptStat, error) {
+		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries, reviewModel string, _ SessionTreeContinuation) (Result, []AttemptStat, error) {
 			calls++
 			feedbacks = append(feedbacks, feedback)
 			reviewModels = append(reviewModels, reviewModel)
@@ -94,7 +94,7 @@ func TestRunGoalCarriesErrorFeedback(t *testing.T) {
 	var feedbacks []GoalFeedback
 	RunGoal(context.Background(), GoalOptions{
 		Output: &bytes.Buffer{},
-		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries, _ string) (Result, []AttemptStat, error) {
+		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries, _ string, _ SessionTreeContinuation) (Result, []AttemptStat, error) {
 			calls++
 			feedbacks = append(feedbacks, feedback)
 			if calls == 1 {
@@ -114,7 +114,7 @@ func TestRunGoalCarriesPreviousLoopSummaries(t *testing.T) {
 	var summaries []GoalLoopSummaries
 	RunGoal(context.Background(), GoalOptions{
 		Output: &bytes.Buffer{},
-		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, s GoalLoopSummaries, _ string) (Result, []AttemptStat, error) {
+		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, s GoalLoopSummaries, _ string, _ SessionTreeContinuation) (Result, []AttemptStat, error) {
 			calls++
 			summaries = append(summaries, s)
 			if calls == 1 {
@@ -156,7 +156,7 @@ func TestRunGoalStopsAfterConsecutiveSameErrors(t *testing.T) {
 	calls := 0
 	result := RunGoal(context.Background(), GoalOptions{
 		Output: &bytes.Buffer{},
-		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries, _ string) (Result, []AttemptStat, error) {
+		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries, _ string, _ SessionTreeContinuation) (Result, []AttemptStat, error) {
 			calls++
 			return Result{}, nil, errors.New("persistent failure")
 		},
@@ -178,7 +178,7 @@ func TestRunGoalDiskChangeHandoffFeedsNextLoop(t *testing.T) {
 	var feedbacks []GoalFeedback
 	result := RunGoal(context.Background(), GoalOptions{
 		Output: &bytes.Buffer{},
-		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries, _ string) (Result, []AttemptStat, error) {
+		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries, _ string, _ SessionTreeContinuation) (Result, []AttemptStat, error) {
 			calls++
 			feedbacks = append(feedbacks, feedback)
 			switch calls {
@@ -221,7 +221,7 @@ func TestRunGoalParseErrorsOverturnDoneDeclaration(t *testing.T) {
 	var feedbacks []GoalFeedback
 	RunGoal(context.Background(), GoalOptions{
 		Output: &bytes.Buffer{},
-		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries, _ string) (Result, []AttemptStat, error) {
+		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries, _ string, _ SessionTreeContinuation) (Result, []AttemptStat, error) {
 			calls++
 			feedbacks = append(feedbacks, feedback)
 			if calls == 2 {
@@ -264,7 +264,7 @@ func TestRunGoalChangeFreeLoopWithoutDoneContinues(t *testing.T) {
 	var feedbacks []GoalFeedback
 	result := RunGoal(context.Background(), GoalOptions{
 		Output: &bytes.Buffer{},
-		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries, _ string) (Result, []AttemptStat, error) {
+		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries, _ string, _ SessionTreeContinuation) (Result, []AttemptStat, error) {
 			calls++
 			feedbacks = append(feedbacks, feedback)
 			if calls == 1 {
@@ -298,7 +298,7 @@ func TestRunGoalVerifiesCorrectionsUntilChangeFreeDone(t *testing.T) {
 	var feedbacks []GoalFeedback
 	result := RunGoal(context.Background(), GoalOptions{
 		Output: &bytes.Buffer{},
-		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries, _ string) (Result, []AttemptStat, error) {
+		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries, _ string, _ SessionTreeContinuation) (Result, []AttemptStat, error) {
 			calls++
 			feedbacks = append(feedbacks, feedback)
 			switch calls {
@@ -338,7 +338,7 @@ func TestRunGoalDoneWithoutChangesEndsRun(t *testing.T) {
 	calls := 0
 	result := RunGoal(context.Background(), GoalOptions{
 		Output: output,
-		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries, _ string) (Result, []AttemptStat, error) {
+		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries, _ string, _ SessionTreeContinuation) (Result, []AttemptStat, error) {
 			calls++
 			return doneResult(), nil, nil
 		},
@@ -369,7 +369,7 @@ func TestRunGoalDoneWithChangesDoesNotEndRun(t *testing.T) {
 	var feedbacks []GoalFeedback
 	result := RunGoal(context.Background(), GoalOptions{
 		Output: &bytes.Buffer{},
-		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries, _ string) (Result, []AttemptStat, error) {
+		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries, _ string, _ SessionTreeContinuation) (Result, []AttemptStat, error) {
 			calls++
 			feedbacks = append(feedbacks, feedback)
 			if calls < 3 {
@@ -398,7 +398,7 @@ func TestRunGoalContinuesWhenLoopAppliesChanges(t *testing.T) {
 	calls := 0
 	RunGoal(context.Background(), GoalOptions{
 		Output: &bytes.Buffer{},
-		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries, _ string) (Result, []AttemptStat, error) {
+		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries, _ string, _ SessionTreeContinuation) (Result, []AttemptStat, error) {
 			calls++
 			if calls == 1 {
 				return Result{
@@ -432,7 +432,7 @@ func TestRunGoalSilentVerificationLoopContinues(t *testing.T) {
 	var feedbacks []GoalFeedback
 	result := RunGoal(context.Background(), GoalOptions{
 		Output: &bytes.Buffer{},
-		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries, _ string) (Result, []AttemptStat, error) {
+		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries, _ string, _ SessionTreeContinuation) (Result, []AttemptStat, error) {
 			calls++
 			feedbacks = append(feedbacks, feedback)
 			switch calls {
@@ -468,7 +468,7 @@ func TestRunGoalAggregatesStatsWithLoopNumbers(t *testing.T) {
 	calls := 0
 	result := RunGoal(context.Background(), GoalOptions{
 		Output: &bytes.Buffer{},
-		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries, _ string) (Result, []AttemptStat, error) {
+		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries, _ string, _ SessionTreeContinuation) (Result, []AttemptStat, error) {
 			calls++
 			stats := []AttemptStat{{Attempt: 1, PromptTokens: 10}}
 			if calls == 1 {
@@ -497,7 +497,7 @@ func TestRunGoalReportsEventsThroughObserver(t *testing.T) {
 	var events []Event
 	result := RunGoal(context.Background(), GoalOptions{
 		Output: output,
-		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries, _ string) (Result, []AttemptStat, error) {
+		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries, _ string, _ SessionTreeContinuation) (Result, []AttemptStat, error) {
 			return doneResult(), []AttemptStat{{Attempt: 1, PromptTokens: 10}}, nil
 		},
 		Review: noopReview,
@@ -538,7 +538,7 @@ func TestRunGoalReviewModelStickyAfterOverturnedDeclaration(t *testing.T) {
 	RunGoal(context.Background(), GoalOptions{
 		Output:       &bytes.Buffer{},
 		ReviewModels: []string{"review-model"},
-		Generate: func(ctx context.Context, _ int, _ GoalFeedback, _ GoalLoopSummaries, reviewModel string) (Result, []AttemptStat, error) {
+		Generate: func(ctx context.Context, _ int, _ GoalFeedback, _ GoalLoopSummaries, reviewModel string, _ SessionTreeContinuation) (Result, []AttemptStat, error) {
 			calls++
 			reviewModels = append(reviewModels, reviewModel)
 			if calls == 2 {
@@ -586,7 +586,7 @@ func TestRunGoalRotatesReviewModelsOnEachDoneBlock(t *testing.T) {
 	result := RunGoal(context.Background(), GoalOptions{
 		Output:       &bytes.Buffer{},
 		ReviewModels: []string{"review-a", "review-b"},
-		Generate: func(ctx context.Context, _ int, _ GoalFeedback, _ GoalLoopSummaries, reviewModel string) (Result, []AttemptStat, error) {
+		Generate: func(ctx context.Context, _ int, _ GoalFeedback, _ GoalLoopSummaries, reviewModel string, _ SessionTreeContinuation) (Result, []AttemptStat, error) {
 			calls++
 			reviewModels = append(reviewModels, reviewModel)
 			switch calls {
@@ -630,7 +630,7 @@ func TestRunGoalPostDoneLoopsKeepDefaultModelWithoutReviewModel(t *testing.T) {
 	var reviewModels []string
 	result := RunGoal(context.Background(), GoalOptions{
 		Output: &bytes.Buffer{},
-		Generate: func(ctx context.Context, _ int, _ GoalFeedback, _ GoalLoopSummaries, reviewModel string) (Result, []AttemptStat, error) {
+		Generate: func(ctx context.Context, _ int, _ GoalFeedback, _ GoalLoopSummaries, reviewModel string, _ SessionTreeContinuation) (Result, []AttemptStat, error) {
 			reviewModels = append(reviewModels, reviewModel)
 			calls++
 			if calls == 1 {

@@ -113,11 +113,14 @@ attempt statistics of every loop — with AttemptStat.Loop set to the loop
 number — into GoalResult.Stats, so a caller can review the entire
 process in a single view: token usage, durations, and attempt summaries
 across all loops, with the Loop field identifying which goal loop
-produced each attempt. The runner also accumulates every executed loop's
-final session tree into GoalResult.Trees, in loop order, so callers
-extract subtree projections across the whole run; each loop's tree is an
-independent session tree, and callers project it with Extract (see
-tree.TheoryOfSubtree).
+produced each attempt. One run owns one session tree: before each loop
+the runner writes a loop-N node (tree.TypeLoop) under the tree's root
+and passes the run tree with the node into the loop's scope as
+SessionTreeContinuation; the loop writes every session node under its
+loop node and returns the evolved tree in Result.SessionTree, which the
+runner adopts as the run tree. GoalResult.Tree carries the whole run's
+tree, and callers extract per-loop subtree projections from it (see
+TheoryOfSessionTree and tree.TheoryOfSubtree).
 
 RunGoal is the plain implementation so tests exercise the loop logic with
 fake per-loop generators; Module.GoalRun is the dscope provider that injects
@@ -354,13 +357,18 @@ type GoalLoop int
 // and the summaries of previous loops reach the loop's scope through
 // the forks of the goal runner. A non-empty reviewModel forks
 // flags.ModelName to the review model, so the loop runs on it; see
-// TheoryOfGoalReviewModel.
+// TheoryOfGoalReviewModel. The continuation carries the run's session
+// tree and the loop node the runner prepared; the loop writes its
+// session nodes under the node and returns the evolved tree in
+// Result.SessionTree, so one run owns one tree. See TheoryOfGoalMode
+// and TheoryOfSessionTree.
 type GoalLoopGenerator func(
 	ctx context.Context,
 	loop int,
 	feedback GoalFeedback,
 	summaries GoalLoopSummaries,
 	reviewModel string,
+	continuation SessionTreeContinuation,
 ) (
 	result Result,
 	stats []AttemptStat,
@@ -378,12 +386,12 @@ type GoalResult struct {
 	// Stats carries the attempt statistics of every loop, with the Loop
 	// field identifying the goal loop that produced each attempt.
 	Stats []AttemptStat
-	// Trees carries every executed loop's final session tree, in loop
-	// order. Each loop is an independent session with its own tree, so
-	// callers extract per-loop subtree projections from these entries
-	// and compose them across loops. See TheoryOfGoalMode and
+	// Tree carries the run's one session tree: each loop is a loop-N
+	// child (tree.TypeLoop) and each loop's session nodes hang under
+	// it, so callers extract per-loop subtree projections from the
+	// single tree. See TheoryOfGoalMode, TheoryOfSessionTree and
 	// tree.TheoryOfSubtree.
-	Trees []*tree.Tree
+	Tree *tree.Tree
 }
 
 // GoalRun runs the goal loop mechanism: repeated fresh generation loops
@@ -646,7 +654,10 @@ func RunGoal(ctx context.Context, opts GoalOptions) GoalResult {
 	state := &goalLoopState{}
 	var allStats []AttemptStat
 	var allDiffs []changes.FileDiff
-	var trees []*tree.Tree
+	// One run, one tree: the run's session tree grows across loops, each
+	// loop writing its session nodes under its loop-N node. See
+	// TheoryOfGoalMode and TheoryOfSessionTree.
+	var runTree *tree.Tree
 	loopsRun := 0
 
 	// runOneLoop executes one generation loop and folds its outcome into
@@ -665,11 +676,24 @@ func RunGoal(ctx context.Context, opts GoalOptions) GoalResult {
 			}
 			reviewModel = opts.ReviewModels[index]
 		}
-		result, stats, err := opts.Generate(ctx, loopsRun, state.feedback, state.summaries, reviewModel)
-		// Every executed loop's final session tree joins the run's
-		// accumulated trees, in loop order. See TheoryOfGoalMode.
+		// The loop node is written before the loop runs, so every session
+		// node of the loop hangs under it. See TheoryOfGoalMode and
+		// TheoryOfSessionTree.
+		if runTree == nil {
+			runTree = tree.New()
+		}
+		loopNode := fmt.Sprintf("loop-%d", loopsRun)
+		if next, werr := runTree.Write("root", loopNode, tree.TypeLoop, tree.AuthorProgram, ""); werr == nil {
+			runTree = next
+		}
+		result, stats, err := opts.Generate(ctx, loopsRun, state.feedback, state.summaries, reviewModel, SessionTreeContinuation{
+			Tree:   runTree,
+			Parent: loopNode,
+		})
+		// The loop returns the evolved run tree; the runner adopts it so
+		// the next loop continues from it. See TheoryOfGoalMode.
 		if result.SessionTree != nil {
-			trees = append(trees, result.SessionTree)
+			runTree = result.SessionTree
 		}
 		// A loop without a task is terminal: the generation pipeline has
 		// no chat input to generate against, so retrying loops cannot
@@ -713,11 +737,14 @@ func RunGoal(ctx context.Context, opts GoalOptions) GoalResult {
 		reporter.failure(fmt.Sprintf("Review failed: %v\n", err))
 	}
 
+	if runTree == nil {
+		runTree = tree.New()
+	}
 	return GoalResult{
 		Achieved: state.achieved,
 		LoopsRun: loopsRun,
 		Stats:    allStats,
-		Trees:    trees,
+		Tree:     runTree,
 	}
 }
 
@@ -742,15 +769,18 @@ func appendLoopSummaries(summaries GoalLoopSummaries, loop int, stats []AttemptS
 // GenerateWithResultWithStats from the forked scope, so the loop reads the
 // latest filesystem state, sees the previous loops' feedback and
 // summaries in its system prompt, stamps its events with its loop
-// number, and runs on the requested model. Generation streams to
-// os.Stdout: in TUI mode the terminal's stdout is the null device and
-// the display captures output through state decorators, so a per-loop
-// writer would duplicate output. When no chat input is configured, the
-// loop returns ErrNoTask before any session runs, so the goal runner
-// stops instead of looping on empty outcomes. See TheoryOfGoalNoTask,
-// TheoryOfGoalMode and TheoryOfGoalReviewModel.
+// number, and runs on the requested model. The continuation carries the
+// run's session tree and the loop node into the loop's scope, so the
+// loop writes its session nodes under the node and returns the evolved
+// tree; one run owns one tree. Generation streams to os.Stdout: in TUI
+// mode the terminal's stdout is the null device and the display captures
+// output through state decorators, so a per-loop writer would duplicate
+// output. When no chat input is configured, the loop returns ErrNoTask
+// before any session runs, so the goal runner stops instead of looping
+// on empty outcomes. See TheoryOfGoalNoTask, TheoryOfGoalMode,
+// TheoryOfGoalReviewModel and TheoryOfSessionTree.
 func makeGoalLoopGenerator(reset dscope.Reset) GoalLoopGenerator {
-	return func(ctx context.Context, loop int, feedback GoalFeedback, summaries GoalLoopSummaries, reviewModel string) (Result, []AttemptStat, error) {
+	return func(ctx context.Context, loop int, feedback GoalFeedback, summaries GoalLoopSummaries, reviewModel string, continuation SessionTreeContinuation) (Result, []AttemptStat, error) {
 		scope := reset()
 		scope = scope.Fork(func() GoalLoop { return GoalLoop(loop) })
 		if feedback != "" {
@@ -761,6 +791,9 @@ func makeGoalLoopGenerator(reset dscope.Reset) GoalLoopGenerator {
 		}
 		if reviewModel != "" {
 			scope = scope.Fork(func() flags.ModelName { return flags.ModelName(reviewModel) })
+		}
+		if continuation.Tree != nil && continuation.Parent != "" {
+			scope = scope.Fork(func() SessionTreeContinuation { return continuation })
 		}
 		var result Result
 		var stats []AttemptStat

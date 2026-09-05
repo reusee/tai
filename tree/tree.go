@@ -80,6 +80,11 @@ const (
 	TypeAbort        Type = "abort"
 )
 
+// TypeLoop marks one loop of a goal run: the run's tree carries one
+// loop node per loop, and the loop's session nodes hang under it.
+// See pipeline.TheoryOfSessionTree and pipeline.TheoryOfGoalMode.
+const TypeLoop Type = "loop"
+
 // Author identifies who wrote a node.
 type Author string
 

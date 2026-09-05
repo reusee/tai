@@ -13,21 +13,29 @@ import (
 
 const TheoryOfSessionTree = `
 Session tree theory: every operation of the run is a write to one
-immutable tree.
+immutable tree, and one run owns exactly one tree.
 - The tree is owned by the generation loop and never joins the
   generators.State chain: the state already carries its own snapshot
   semantics, and threading the tree through every state layer would
-  couple each layer to it. The loop holds sessionTree and
-  currentResponse on loopState; tree-writing components receive the
+  couple each layer to it. The loop holds sessionTree, sessionRoot,
+  and currentResponse on loopState; tree-writing components receive the
   tree through ProcessContext.SessionTree and return the updated tree
   through ProcessResult.Tree.
-- The initial tree carries the root, a system-prompt node (program
-  author, content = the initial state's system prompt), and one input
-  node (user author) merging the initial user contents' Text parts.
-- A successful attempt writes a response node under the root (model
-  author, content = the attempt's model-role Text parts; thought parts
-  never enter the tree) and one summary node per summary body under
-  it.
+- One run, one tree. A fresh Run builds the tree under the tree's
+  root; a continued Run — a goal loop — receives SessionTreeContinuation
+  (dscope-provided; the zero default opens a fresh tree) carrying the
+  run's tree and the loop node the runner prepared, and writes every
+  session node of the loop under that node, so each loop is one child
+  (tree.TypeLoop) of the run's single tree. The session root — the
+  tree's root for a fresh run, the loop node for a continued one —
+  anchors the session's own nodes: writeInitialTreeNodes writes the
+  system-prompt node (program author, content = the initial state's
+  system prompt) and one input node (user author) merging the initial
+  user contents' Text parts under it.
+- A successful attempt writes a response node under the session root
+  (model author, content = the attempt's model-role Text parts; thought
+  parts never enter the tree) and one summary node per summary body
+  under it.
 - Block nodes are written in one validated batch before the components
   process the blocks: a block's header may carry a parent parameter
   (default: the current response node); new-plan and response blocks
@@ -64,20 +72,26 @@ immutable tree.
   with auto names; they are the one exception.
 - Every round-triggering feedback — the component feedback and the
   retry feedback of a truncated or errored attempt — ends with the
-  tree outline part, and the feedback content is written as an input
-  node (program author). The idle handler's user input is recorded as
-  an input node (user author), extracted by content-count delta: only
-  the delta is visible, not the handler's internal loop.
+  session-tree outline part, and the feedback content is written as an
+  input node (program author) under the session root. The outline is
+  rendered from the session root — the whole tree for a fresh run, the
+  loop node's subtree for a continued one — so each round's feedback
+  volume stays independent of the run's length and of other loops'
+  content. The idle handler's user input is recorded as an input node
+  (user author), extracted by content-count delta: only the delta is
+  visible, not the handler's internal loop.
 - The handoff input prefixes the incomplete output with the handoff
-  subtree: the tree projected onto its decision-level nodes (every
-  type except block and block-result), so the summary carries the
-  session's plans, decisions, and earlier summaries without execution
-  detail (see tree.TheoryOfSubtree).
+  subtree: the session's tree projected onto its decision-level nodes
+  (every type except block and block-result) and rendered from the
+  session root, so the summary carries the session's plans, decisions,
+  and earlier summaries — without execution detail and without other
+  loops' content (see tree.TheoryOfSubtree).
 - The run's Result carries the final session tree, so callers outside
   the loop — a review pass, a display front-end — extract subtree
-  projections from it (see tree.TheoryOfSubtree). In goal mode the
-  runner accumulates every loop's final tree into GoalResult.Trees, in
-  loop order.
+  projections from it (see tree.TheoryOfSubtree). In goal mode every
+  loop writes into the run's one tree under its loop node and returns
+  the evolved tree; the runner adopts it, and GoalResult.Tree carries
+  the whole run's tree.
 `
 
 const SessionTreeSystemPrompt = `
@@ -142,17 +156,16 @@ body is the reply text.
   errors.
 `
 
-// buildInitialTree builds the session tree from the run's initial state:
-// the root, a system-prompt node carrying the state's system prompt, and
-// one input node merging the initial user contents' Text parts. See
-// TheoryOfSessionTree.
-func buildInitialTree(state generators.State) *tree.Tree {
-	tr := tree.New()
+// writeInitialTreeNodes writes the session's initial nodes — the
+// system prompt and the merged initial user input — under the given
+// parent: the tree's root for a fresh run, the goal loop's loop node
+// for a continued one. See TheoryOfSessionTree.
+func writeInitialTreeNodes(tr *tree.Tree, parent string, state generators.State) *tree.Tree {
 	if state == nil {
 		return tr
 	}
 	if prompt := state.SystemPrompt(); prompt != "" {
-		if next, _, err := tr.WriteAuto("root", "system-prompt", tree.TypeSystemPrompt, tree.AuthorProgram, prompt); err == nil {
+		if next, _, err := tr.WriteAuto(parent, "system-prompt", tree.TypeSystemPrompt, tree.AuthorProgram, prompt); err == nil {
 			tr = next
 		}
 	}
@@ -168,7 +181,7 @@ func buildInitialTree(state generators.State) *tree.Tree {
 		}
 	}
 	if len(texts) > 0 {
-		if next, _, err := tr.WriteAuto("root", "input", tree.TypeInput, tree.AuthorUser, strings.Join(texts, "\n")); err == nil {
+		if next, _, err := tr.WriteAuto(parent, "input", tree.TypeInput, tree.AuthorUser, strings.Join(texts, "\n")); err == nil {
 			tr = next
 		}
 	}
@@ -487,28 +500,32 @@ func joinTextParts(parts []generators.Part) string {
 
 // treeOutlinePart renders the session tree outline as a compact user
 // part appended to every round-triggering feedback, so the model sees
-// the session structure without the nodes' full content. See
+// the session structure without the nodes' full content. The outline
+// is rendered from the session root — the whole tree for a fresh run,
+// the loop node's subtree for a continued one — so each round's
+// feedback volume stays independent of the run's length. See
 // TheoryOfSessionTree.
-func treeOutlinePart(tr *tree.Tree) generators.Text {
+func treeOutlinePart(tr *tree.Tree, parent string) generators.Text {
 	if tr == nil {
 		return generators.Text("")
 	}
-	return generators.Text("[Session tree]\n" + tr.RenderOutline(40) + "\n")
+	return generators.Text("[Session tree]\n" + sessionOutline(tr, parent) + "\n")
 }
 
 // handoffOutlinePart renders the handoff's tree outline: the projection
-// of the tree onto its decision-level nodes — every type except block
-// and block-result — so the handoff summary carries the session's
-// plans, decisions, and earlier summaries without execution detail.
-// See TheoryOfSessionTree and tree.TheoryOfSubtree.
-func handoffOutlinePart(tr *tree.Tree) string {
+// of the session's tree onto its decision-level nodes — every type
+// except block and block-result — rendered from the session root, so
+// the handoff summary carries the session's plans, decisions, and
+// earlier summaries without execution detail and without other loops'
+// content. See TheoryOfSessionTree and tree.TheoryOfSubtree.
+func handoffOutlinePart(tr *tree.Tree, parent string) string {
 	if tr == nil {
 		return ""
 	}
 	proj := tr.Extract(func(n *tree.Node) bool {
 		return n.Type != tree.TypeBlock && n.Type != tree.TypeBlockResult
 	})
-	return "[Session tree]\n" + proj.RenderOutline(40) + "\n"
+	return "[Session tree]\n" + sessionOutline(proj, parent) + "\n"
 }
 
 // handoffInput prefixes the incomplete output with the handoff subtree
@@ -517,15 +534,46 @@ func handoffOutlinePart(tr *tree.Tree) string {
 // detail — into the retry attempt. An empty output yields an empty input,
 // keeping the caller's threshold gate. See TheoryOfSessionTree and
 // tree.TheoryOfSubtree.
-func handoffInput(incompleteText string, tr *tree.Tree) string {
+func handoffInput(incompleteText string, tr *tree.Tree, parent string) string {
 	if incompleteText == "" {
 		return ""
 	}
-	outline := handoffOutlinePart(tr)
+	outline := handoffOutlinePart(tr, parent)
 	if outline == "" {
 		return incompleteText
 	}
 	return outline + "\n" + incompleteText
+}
+
+// sessionOutline renders the session's outline: the whole tree for a
+// fresh run, the parent node's subtree for a continued one, so each
+// round's feedback volume stays independent of the run's length. See
+// TheoryOfSessionTree.
+func sessionOutline(tr *tree.Tree, parent string) string {
+	if parent == "" || parent == "root" {
+		return tr.RenderOutline(40)
+	}
+	return tr.RenderSubtree(parent, 40)
+}
+
+// SessionTreeContinuation continues one run's session tree: Tree is the
+// tree to write into and Parent is the node under which this session's
+// nodes are written — in goal mode the run's loop-N node. The zero
+// value opens a fresh tree under the root. The type is dscope-provided
+// so a goal loop's scope carries the continuation the runner prepared,
+// and Module.Run binds it at provider resolution. See
+// TheoryOfSessionTree and TheoryOfGoalMode.
+type SessionTreeContinuation struct {
+	Tree   *tree.Tree
+	Parent string
+}
+
+// SessionTreeContinuation provides the default continuation: zero, so a
+// run that is not a goal loop opens a fresh tree. The goal runner forks
+// the run tree and the loop node into each loop's scope. See
+// TheoryOfSessionTree.
+func (Module) SessionTreeContinuation() SessionTreeContinuation {
+	return SessionTreeContinuation{}
 }
 
 // extractModelTexts joins the Text parts of the model-role contents
@@ -567,14 +615,14 @@ func extractUserTextsSince(state generators.State, sinceCount int) string {
 }
 
 // recordAttemptTree writes the successful attempt's nodes: the response
-// node (the attempt's model-role Text parts), one summary node per
-// summary body, and the block batch (handled plus collected). Blocks
-// whose parent names a node an earlier block of the batch creates are
-// deferred: their collected indexes return to the caller, and
-// writeDeferredBlockNodes writes their nodes after the components have
-// run. On a naming fault the batch is discarded, the error node
-// recorded, the errors stored for the shared correction decision, and
-// the returned names are nil. See TheoryOfSessionTree.
+// node under the session root (the attempt's model-role Text parts), one
+// summary node per summary body, and the block batch (handled plus
+// collected). Blocks whose parent names a node an earlier block of the
+// batch creates are deferred: their collected indexes return to the
+// caller, and writeDeferredBlockNodes writes their nodes after the
+// components have run. On a naming fault the batch is discarded, the
+// error node recorded, the errors stored for the shared correction
+// decision, and the returned names are nil. See TheoryOfSessionTree.
 func (ls *loopState) recordAttemptTree(
 	phaseState generators.State,
 	attemptBase int,
@@ -584,7 +632,7 @@ func (ls *loopState) recordAttemptTree(
 	if ls.sessionTree == nil {
 		return nil, nil
 	}
-	next, responseName, err := ls.sessionTree.WriteAuto("root", "response", tree.TypeResponse, tree.AuthorModel, extractModelTexts(phaseState, attemptBase))
+	next, responseName, err := ls.sessionTree.WriteAuto(ls.sessionParent(), "response", tree.TypeResponse, tree.AuthorModel, extractModelTexts(phaseState, attemptBase))
 	if err != nil {
 		if ls.rec != nil && ls.rec.Enabled() {
 			ls.rec.Event("decision", fmt.Sprintf("session tree: response node not written: %v", err))
@@ -609,27 +657,39 @@ func (ls *loopState) recordAttemptTree(
 }
 
 // writeFeedbackInputNode records round feedback as an input node
-// written by the program under the root. See TheoryOfSessionTree.
+// written by the program under the session root. See
+// TheoryOfSessionTree.
 func (ls *loopState) writeFeedbackInputNode(parts []generators.Part) {
 	if ls.sessionTree == nil || len(parts) == 0 {
 		return
 	}
-	if next, _, err := ls.sessionTree.WriteAuto("root", "input", tree.TypeInput, tree.AuthorProgram, joinTextParts(parts)); err == nil {
+	if next, _, err := ls.sessionTree.WriteAuto(ls.sessionParent(), "input", tree.TypeInput, tree.AuthorProgram, joinTextParts(parts)); err == nil {
 		ls.sessionTree = next
 	}
 }
 
 // recordIdleUserInput records the idle handler's user input as an input
-// node, extracted from the contents appended since sinceCount. See
-// TheoryOfSessionTree.
+// node written under the session root, extracted from the contents
+// appended since sinceCount. See TheoryOfSessionTree.
 func (ls *loopState) recordIdleUserInput(state generators.State, sinceCount int) {
 	text := extractUserTextsSince(state, sinceCount)
 	if text == "" || ls.sessionTree == nil {
 		return
 	}
-	if next, _, err := ls.sessionTree.WriteAuto("root", "input", tree.TypeInput, tree.AuthorUser, text); err == nil {
+	if next, _, err := ls.sessionTree.WriteAuto(ls.sessionParent(), "input", tree.TypeInput, tree.AuthorUser, text); err == nil {
 		ls.sessionTree = next
 	}
+}
+
+// sessionParent names the node under which this session writes its own
+// nodes: the goal loop's loop node for a continued run, the tree's root
+// for a fresh one. The fallback keeps a loopState built outside Run —
+// in tests — writing under the root. See TheoryOfSessionTree.
+func (ls *loopState) sessionParent() string {
+	if ls.sessionRoot == "" {
+		return "root"
+	}
+	return ls.sessionRoot
 }
 
 // recordAttemptErrorNodes writes the attempt's unprocessable output as

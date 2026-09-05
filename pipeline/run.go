@@ -339,6 +339,11 @@ type loopState struct {
 	// blocks, results, feedback — is written as a node. It never joins
 	// the generators.State chain. See TheoryOfSessionTree.
 	sessionTree *tree.Tree
+	// sessionRoot names the node under which this session writes its
+	// nodes: the tree's root for a fresh run, the goal run's loop-N node
+	// for a continued one. Run sets it from the continuation before the
+	// first write. See TheoryOfSessionTree.
+	sessionRoot string
 	// currentResponse names the response node of the latest successful
 	// attempt; block nodes default to it as their parent. See
 	// TheoryOfSessionTree.
@@ -637,7 +642,7 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 								Kind:    EventHandoffStart,
 								Attempt: ls.attempt,
 							})
-							handoff, handoffErr := ls.opts.Handoff(handoffInput(incompleteText, ls.sessionTree))
+							handoff, handoffErr := ls.opts.Handoff(handoffInput(incompleteText, ls.sessionTree, ls.sessionParent()))
 							if handoffErr == nil && handoff != nil {
 								summary = handoff.Summary
 								retryPrompt = handoff.Prompt
@@ -683,7 +688,7 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 					// The retry feedback is a round-triggering
 					// feedback: it ends with the session tree
 					// outline. See TheoryOfSessionTree.
-					retryParts = append(retryParts, treeOutlinePart(ls.sessionTree))
+					retryParts = append(retryParts, treeOutlinePart(ls.sessionTree, ls.sessionParent()))
 
 					var appendErr error
 					ls.state, appendErr = ls.state.AppendContent(&generators.Content{
@@ -790,7 +795,7 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 					Kind:    EventHandoffStart,
 					Attempt: ls.attempt,
 				})
-				handoff, rerr := ls.opts.Handoff(handoffInput(incompleteText, ls.sessionTree))
+				handoff, rerr := ls.opts.Handoff(handoffInput(incompleteText, ls.sessionTree, ls.sessionParent()))
 				if rerr == nil && handoff != nil {
 					summary = handoff.Summary
 					retryPrompt = handoff.Prompt
@@ -842,7 +847,7 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 		}
 		// The retry feedback is a round-triggering feedback: it ends
 		// with the session tree outline. See TheoryOfSessionTree.
-		retryParts = append(retryParts, treeOutlinePart(ls.sessionTree))
+		retryParts = append(retryParts, treeOutlinePart(ls.sessionTree, ls.sessionParent()))
 		var appendErr error
 		ls.state, appendErr = ls.state.AppendContent(&generators.Content{
 			Role:  generators.RoleUser,
@@ -887,7 +892,7 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 				Kind:    EventHandoffStart,
 				Attempt: ls.attempt,
 			})
-			if handoff, serr := ls.opts.Handoff(handoffInput(incompleteText, ls.sessionTree)); serr == nil && handoff != nil {
+			if handoff, serr := ls.opts.Handoff(handoffInput(incompleteText, ls.sessionTree, ls.sessionParent())); serr == nil && handoff != nil {
 				// Report the synthesized completion summary to the
 				// event stream. See TheoryOfLoopEvents.
 				ls.emitEvent(Event{
@@ -1021,7 +1026,7 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 			// The feedback closes with the session tree outline, so
 			// the model sees the whole session's structure. See
 			// TheoryOfSessionTree.
-			feedbackParts = append(feedbackParts, treeOutlinePart(ls.sessionTree))
+			feedbackParts = append(feedbackParts, treeOutlinePart(ls.sessionTree, ls.sessionParent()))
 			var aerr error
 			ls.state, aerr = ls.state.AppendContent(&generators.Content{
 				Role:  generators.RoleUser,
@@ -1123,7 +1128,7 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 		// The feedback closes with the session tree outline, so the
 		// model sees the whole session's structure. See
 		// TheoryOfSessionTree.
-		combinedParts = append(combinedParts, treeOutlinePart(ls.sessionTree))
+		combinedParts = append(combinedParts, treeOutlinePart(ls.sessionTree, ls.sessionParent()))
 		if len(combinedParts) > 0 {
 			var aerr error
 			ls.state, aerr = ls.state.AppendContent(&generators.Content{
@@ -1304,7 +1309,7 @@ func (ls *loopState) endOnDiskChange(err error, phaseState generators.State, att
 				AttemptInGeneration: ls.attemptInGeneration,
 				MaxAttempts:         ls.maxRetries,
 			})
-			if h, herr := ls.opts.Handoff(handoffInput(incompleteText, ls.sessionTree)); herr == nil && h != nil {
+			if h, herr := ls.opts.Handoff(handoffInput(incompleteText, ls.sessionTree, ls.sessionParent())); herr == nil && h != nil {
 				handoff = h
 				ls.emitEvent(Event{
 					Kind:                EventHandoff,
@@ -1634,6 +1639,7 @@ func (Module) Run(
 	logger logs.Logger,
 	temperatureFlag generators.TemperatureFlag,
 	effortFlag generators.EffortFlag,
+	continuation SessionTreeContinuation,
 ) Run {
 	return func(ctx context.Context, opts RunOptions, result *Result) iter.Seq2[Event, error] {
 		if result == nil {
@@ -1672,11 +1678,21 @@ func (Module) Run(
 				ls.maxRetries = defaultMaxRetries
 			}
 
-			// The session tree opens with the run: root, system prompt,
-			// and the merged initial user input. Every later operation of
-			// the run — responses, summaries, blocks, results, feedback —
-			// writes into it. See TheoryOfSessionTree.
-			ls.sessionTree = buildInitialTree(opts.InitialState)
+			// One run, one tree: a fresh Run builds the tree under the
+			// tree's root; a continued Run — a goal loop — receives the
+			// run's tree and the loop node the goal runner prepared, and
+			// writes every session node of the loop under that node. The
+			// session's system prompt and initial input join under the
+			// session root either way. See TheoryOfSessionTree and
+			// TheoryOfGoalMode.
+			if continuation.Tree != nil {
+				ls.sessionTree = continuation.Tree
+				ls.sessionRoot = continuation.Parent
+			} else {
+				ls.sessionTree = tree.New()
+				ls.sessionRoot = "root"
+			}
+			ls.sessionTree = writeInitialTreeNodes(ls.sessionTree, ls.sessionRoot, opts.InitialState)
 
 			recording := rec != nil && rec.Enabled()
 			if recording {

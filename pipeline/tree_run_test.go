@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -13,11 +14,14 @@ import (
 	"github.com/reusee/tai/tree"
 )
 
-func TestBuildInitialTreeStructure(t *testing.T) {
+// TestWriteInitialTreeNodes verifies the session's initial nodes: the
+// system-prompt node and the merged initial user input, written under
+// the given session root. See TheoryOfSessionTree.
+func TestWriteInitialTreeNodes(t *testing.T) {
 	state := generators.NewPrompts("sys prompt", []*generators.Content{
 		{Role: generators.RoleUser, Parts: []generators.Part{generators.Text("task input")}},
 	})
-	tr := buildInitialTree(state)
+	tr := writeInitialTreeNodes(tree.New(), "root", state)
 
 	sp, ok := tr.Node("system-prompt-1")
 	if !ok {
@@ -34,7 +38,7 @@ func TestBuildInitialTreeStructure(t *testing.T) {
 		t.Fatalf("unexpected input node: %+v", in)
 	}
 
-	empty := buildInitialTree(generators.NewPrompts("", nil))
+	empty := writeInitialTreeNodes(tree.New(), "root", generators.NewPrompts("", nil))
 	if len(empty.Subtree("root")) != 1 {
 		t.Fatal("an initial state without prompt and user text yields the root only")
 	}
@@ -208,31 +212,40 @@ func TestWriteBlockNodesInBatchReferences(t *testing.T) {
 	}
 }
 
-// TestRunGoalCarriesLoopTrees verifies that the goal runner accumulates
-// every executed loop's final session tree into GoalResult.Trees, in
-// loop order, so callers extract subtree projections across the whole
-// run. See TheoryOfGoalMode and tree.TheoryOfSubtree.
-func TestRunGoalCarriesLoopTrees(t *testing.T) {
-	tr1, name1, err := tree.New().WriteAuto("root", "response", tree.TypeResponse, tree.AuthorModel, "loop one")
-	if err != nil {
-		t.Fatal(err)
-	}
-	tr2, name2, err := tree.New().WriteAuto("root", "response", tree.TypeResponse, tree.AuthorModel, "loop two")
-	if err != nil {
-		t.Fatal(err)
-	}
+// TestRunGoalCarriesOneSessionTree verifies that the goal run owns one
+// session tree: the runner writes a loop-N node per loop under the
+// tree's root and passes the tree and the node into the loop as
+// SessionTreeContinuation; the loop writes its session nodes under the
+// node and returns the evolved tree, which the runner adopts. Each
+// loop's session nodes therefore hang under its loop node, and
+// GoalResult.Tree carries the whole run's tree. See TheoryOfGoalMode
+// and TheoryOfSessionTree.
+func TestRunGoalCarriesOneSessionTree(t *testing.T) {
+	responses := []string{"loop one", "loop two"}
 	calls := 0
 	res := RunGoal(context.Background(), GoalOptions{
 		Output: &strings.Builder{},
-		Generate: func(ctx context.Context, _ int, _ GoalFeedback, _ GoalLoopSummaries, _ string) (Result, []AttemptStat, error) {
+		Generate: func(ctx context.Context, _ int, _ GoalFeedback, _ GoalLoopSummaries, _ string, continuation SessionTreeContinuation) (Result, []AttemptStat, error) {
 			calls++
+			if continuation.Tree == nil || continuation.Parent == "" {
+				t.Fatalf("expected a continuation, got %+v", continuation)
+			}
+			if want := fmt.Sprintf("loop-%d", calls); continuation.Parent != want {
+				t.Fatalf("expected %q as the continuation parent, got %q", want, continuation.Parent)
+			}
+			// The loop writes its response node under the continuation
+			// parent and returns the evolved tree.
+			next, _, err := continuation.Tree.WriteAuto(continuation.Parent, "response", tree.TypeResponse, tree.AuthorModel, responses[calls-1])
+			if err != nil {
+				t.Fatal(err)
+			}
 			if calls == 1 {
-				return Result{SessionTree: tr1}, nil, nil
+				return Result{SessionTree: next}, nil, nil
 			}
 			// The second loop emits the done block without changes: the
 			// run's only exit. See TheoryOfGoalMode.
 			result := doneResult()
-			result.SessionTree = tr2
+			result.SessionTree = next
 			return result, nil, nil
 		},
 		Review: noopReview,
@@ -240,14 +253,22 @@ func TestRunGoalCarriesLoopTrees(t *testing.T) {
 	if calls != 2 {
 		t.Fatalf("ran %d loops, want 2", calls)
 	}
-	if len(res.Trees) != 2 {
-		t.Fatalf("expected 2 accumulated trees, got %d", len(res.Trees))
+	if res.Tree == nil {
+		t.Fatal("expected the goal result to carry the run's one tree")
 	}
-	if node, ok := res.Trees[0].Node(name1); !ok || node.Content != "loop one" {
-		t.Fatalf("expected loop one's response node, got ok=%v node=%+v", ok, node)
+	// Each loop is a loop-N child of the root, and each loop's session
+	// nodes hang under its loop node.
+	loop1, ok := res.Tree.Node("loop-1")
+	if !ok || loop1.Type != tree.TypeLoop {
+		t.Fatalf("expected a loop-1 node, got ok=%v node=%+v", ok, loop1)
 	}
-	if node, ok := res.Trees[1].Node(name2); !ok || node.Content != "loop two" {
-		t.Fatalf("expected loop two's response node, got ok=%v node=%+v", ok, node)
+	resp1, ok := res.Tree.Node("response-1")
+	if !ok || resp1.Parent != "loop-1" || resp1.Content != "loop one" {
+		t.Fatalf("expected loop one's response node under loop-1, got ok=%v node=%+v", ok, resp1)
+	}
+	resp2, ok := res.Tree.Node("response-2")
+	if !ok || resp2.Parent != "loop-2" || resp2.Content != "loop two" {
+		t.Fatalf("expected loop two's response node under loop-2, got ok=%v node=%+v", ok, resp2)
 	}
 }
 
@@ -341,7 +362,7 @@ func TestRunErrorNodesRecorded(t *testing.T) {
 }
 
 func TestTreeOutlinePart(t *testing.T) {
-	got := string(treeOutlinePart(tree.New()))
+	got := string(treeOutlinePart(tree.New(), "root"))
 	if !strings.Contains(got, "[Session tree]") || !strings.Contains(got, "root [root/]") {
 		t.Fatalf("unexpected outline part: %q", got)
 	}
@@ -493,7 +514,9 @@ func TestRunHandoffInputCarriesTreeOutline(t *testing.T) {
 // TestHandoffInputPrunesExecutionNodes verifies that the handoff input's
 // tree outline is the decision-level projection: block and block-result
 // nodes are pruned, while the input, response, and summary nodes stay.
-// See TheoryOfSessionTree and tree.TheoryOfSubtree.
+// A continued session renders from its loop node, so other loops'
+// content stays out of the handoff outline. See TheoryOfSessionTree and
+// tree.TheoryOfSubtree.
 func TestHandoffInputPrunesExecutionNodes(t *testing.T) {
 	tr, err := tree.New().WriteAll(
 		tree.WriteOp{Parent: "root", Name: "input-1", Type: tree.TypeInput, Author: tree.AuthorUser, Content: "task"},
@@ -505,7 +528,7 @@ func TestHandoffInputPrunesExecutionNodes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out := handoffInput("incomplete output", tr)
+	out := handoffInput("incomplete output", tr, "root")
 	for _, want := range []string{
 		"input-1 [input/user]",
 		"response-1 [response/model]",
@@ -523,10 +546,29 @@ func TestHandoffInputPrunesExecutionNodes(t *testing.T) {
 	if !strings.Contains(out, "incomplete output") {
 		t.Fatal("the incomplete output must follow the outline")
 	}
-	if got := handoffInput("", tr); got != "" {
+
+	// A continued session renders from its loop node: the loop's own
+	// nodes are visible and the other loops' content stays out.
+	oneRun, err := tr.WriteAll(
+		tree.WriteOp{Parent: "root", Name: "loop-1", Type: tree.TypeLoop, Author: tree.AuthorProgram},
+		tree.WriteOp{Parent: "root", Name: "loop-2", Type: tree.TypeLoop, Author: tree.AuthorProgram},
+		tree.WriteOp{Parent: "loop-1", Name: "response-2", Type: tree.TypeResponse, Author: tree.AuthorModel, Content: "loop one"},
+		tree.WriteOp{Parent: "loop-2", Name: "response-3", Type: tree.TypeResponse, Author: tree.AuthorModel, Content: "loop two"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out = handoffInput("incomplete output", oneRun, "loop-2")
+	if !strings.Contains(out, "response-3 [response/model] loop two") {
+		t.Fatalf("expected the session's own response node in the handoff outline, got: %s", out)
+	}
+	if strings.Contains(out, "loop one") || strings.Contains(out, "response-2") {
+		t.Fatalf("another loop's content must stay out of the handoff outline, got: %s", out)
+	}
+	if got := handoffInput("", tr, "root"); got != "" {
 		t.Fatalf("an empty output must yield an empty input, got %q", got)
 	}
-	if got := handoffInput("text", nil); got != "text" {
+	if got := handoffInput("text", nil, "root"); got != "text" {
 		t.Fatalf("a nil tree must yield the bare output, got %q", got)
 	}
 }

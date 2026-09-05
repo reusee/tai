@@ -30,7 +30,7 @@ func TestMakeGoalLoopGeneratorNoTask(t *testing.T) {
 		},
 	)
 	generate := makeGoalLoopGenerator(scope.Reset)
-	_, _, err := generate(context.Background(), 1, "", nil, "")
+	_, _, err := generate(context.Background(), 1, "", nil, "", SessionTreeContinuation{})
 	if !errors.Is(err, ErrNoTask) {
 		t.Fatalf("expected ErrNoTask, got %v", err)
 	}
@@ -46,7 +46,7 @@ func TestRunGoalNoTaskStopsRun(t *testing.T) {
 	var calls int
 	result := RunGoal(context.Background(), GoalOptions{
 		Output: &buf,
-		Generate: func(ctx context.Context, loop int, feedback GoalFeedback, summaries GoalLoopSummaries, reviewModel string) (Result, []AttemptStat, error) {
+		Generate: func(ctx context.Context, loop int, feedback GoalFeedback, summaries GoalLoopSummaries, reviewModel string, _ SessionTreeContinuation) (Result, []AttemptStat, error) {
 			calls++
 			return Result{}, nil, ErrNoTask
 		},
