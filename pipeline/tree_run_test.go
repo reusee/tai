@@ -212,14 +212,6 @@ func TestWriteBlockNodesInBatchReferences(t *testing.T) {
 	}
 }
 
-// TestRunGoalCarriesOneSessionTree verifies that the goal run owns one
-// session tree: the runner writes a loop-N node per loop under the
-// tree's root and passes the tree and the node into the loop as
-// SessionTreeContinuation; the loop writes its session nodes under the
-// node and returns the evolved tree, which the runner adopts. Each
-// loop's session nodes therefore hang under its loop node, and
-// GoalResult.Tree carries the whole run's tree. See TheoryOfGoalMode
-// and TheoryOfSessionTree.
 func TestRunGoalCarriesOneSessionTree(t *testing.T) {
 	responses := []string{"loop one", "loop two"}
 	calls := 0
@@ -261,6 +253,11 @@ func TestRunGoalCarriesOneSessionTree(t *testing.T) {
 	loop1, ok := res.Tree.Node("loop-1")
 	if !ok || loop1.Type != tree.TypeLoop {
 		t.Fatalf("expected a loop-1 node, got ok=%v node=%+v", ok, loop1)
+	}
+	// The loop node carries its label so the display front-end's Tree
+	// tab distinguishes the loops' collapsed rows.
+	if loop1.Content != "goal loop 1" {
+		t.Fatalf("expected the loop node to carry its label, got %q", loop1.Content)
 	}
 	resp1, ok := res.Tree.Node("response-1")
 	if !ok || resp1.Parent != "loop-1" || resp1.Content != "loop one" {

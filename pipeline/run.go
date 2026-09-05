@@ -1539,14 +1539,48 @@ func (s recordedState) AppendContent(content *generators.Content) (generators.St
 	return recordedState{upstream: newUpstream, recorder: s.recorder}, nil
 }
 
+const TheoryOfRunDecorators = `
+Run decorator theory:
+- A RunDecorator wraps one Run value: it observes the run's tree
+  iterator or transforms its options, never replacing the loop.
+  RunDecorators is one dscope-provided list; the default is empty, so a
+  scope without a display front-end runs undecorated.
+- Module.Run applies the decorators inside its provider, in list order,
+  after the run binds its SessionTreeContinuation. The application
+  point is load-bearing: a display front-end that shadows the Run
+  definition with a static wrapper resolved before the goal loop forks
+  its continuation freezes the continuation at the zero value — every
+  loop opens a fresh tree and the display shows only the current loop.
+  A decorator travels with the scope instead: each loop scope
+  re-evaluates Module.Run, re-binds that loop's continuation, and
+  applies the decorator, so one run owns one tree and the display sees
+  every loop's nodes.
+`
+
+// RunDecorator wraps one Run value, observing the run or transforming
+// its options. See TheoryOfRunDecorators.
+type RunDecorator func(Run) Run
+
+// RunDecorators is the dscope-provided list of Run decorators applied
+// by Module.Run inside its provider. See TheoryOfRunDecorators.
+type RunDecorators []RunDecorator
+
+// RunDecorators provides the default: no decorators. A display
+// front-end forks this provider with its decorator. See
+// TheoryOfRunDecorators.
+func (Module) RunDecorators() RunDecorators {
+	return nil
+}
+
 func (Module) Run(
 	recorder InteractionRecorder,
 	logger logs.Logger,
 	temperatureFlag generators.TemperatureFlag,
 	effortFlag generators.EffortFlag,
 	continuation SessionTreeContinuation,
+	decorators RunDecorators,
 ) Run {
-	return func(ctx context.Context, opts RunOptions, result *Result) iter.Seq2[*tree.Tree, error] {
+	run := Run(func(ctx context.Context, opts RunOptions, result *Result) iter.Seq2[*tree.Tree, error] {
 		if result == nil {
 			result = &Result{}
 		}
@@ -1686,7 +1720,18 @@ func (Module) Run(
 			}
 			ls.finish(ls.state, ls.remainingBlocks)
 		}
+	})
+	// Decorators wrap the loop after it binds the per-run continuation:
+	// each loop scope's re-evaluation of this provider re-binds that
+	// loop's SessionTreeContinuation and re-applies the decorators, so a
+	// display front-end's decorator observes every continued run. See
+	// TheoryOfRunDecorators.
+	for _, decorator := range decorators {
+		if decorator != nil {
+			run = decorator(run)
+		}
 	}
+	return run
 }
 
 // ExtractIncompleteOutput collects Text and Thought parts from contents

@@ -698,13 +698,15 @@ func RunGoal(ctx context.Context, opts GoalOptions) GoalResult {
 			reviewModel = opts.ReviewModels[index]
 		}
 		// The loop node is written before the loop runs, so every session
-		// node of the loop hangs under it. See TheoryOfGoalMode and
+		// node of the loop hangs under it. The node carries a "goal loop
+		// N" label so the display front-end's Tree tab distinguishes the
+		// loops' collapsed rows. See TheoryOfGoalMode and
 		// TheoryOfSessionTree.
 		if runTree == nil {
 			runTree = tree.New()
 		}
 		loopNode := fmt.Sprintf("loop-%d", loopsRun)
-		if next, werr := runTree.Write("root", loopNode, tree.TypeLoop, tree.AuthorProgram, ""); werr == nil {
+		if next, werr := runTree.Write("root", loopNode, tree.TypeLoop, tree.AuthorProgram, fmt.Sprintf("goal loop %d", loopsRun)); werr == nil {
 			runTree = next
 		}
 		result, stats, err := opts.Generate(ctx, loopsRun, state.feedback, state.summaries, reviewModel, SessionTreeContinuation{

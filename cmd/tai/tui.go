@@ -262,17 +262,24 @@ const TheoryOfTUIDisplayFork = `
 The TUI display writers (the Logs pane and the Output tab) are forked
 into the scope before the generation loop is resolved from it.
 pipeline.Run — Module.Run — binds logs.Logger from the scope at
-provider-resolution time, so the loop must be resolved AFTER the forks
-take effect: a loop resolved before them binds the pre-fork Logger built
-during startup on the real stderr, painting the raw terminal where the
-next repaint erases it. The Tree tab needs no writer fork:
-withTUIOutputObserver, layered in the second fork's Run wrapper, taps
-the run's tree iterator and forwards every yielded tree to setTree (see
-pipeline.TheoryOfLoopEvents), and the goal tree observer is forked to
-the same setTree path, so the goal runner's verdict nodes reach the
-Tree tab through the tap path. The state-decorator and tree-tap Run
-wrapper is layered in a second fork so its pipeline.Run def does not
-resolve itself recursively.
+provider-resolution time, so the writer forks must take effect before
+anything resolves the loop: a loop resolved before them binds the
+pre-fork Logger built during startup on the real stderr, painting the
+raw terminal where the next repaint erases it.
+
+The display's state decorator and tree tap are not a Run shadow. A
+static Run wrapper resolved once shadows Module.Run's provider, and a
+goal loop's later SessionTreeContinuation fork can never re-evaluate
+it: every loop binds the zero continuation, opens its own fresh tree,
+and the Tree tab shows only the current loop. Instead forkTUIDisplay
+forks pipeline.RunDecorators with the withTUIOutputObserver decorator;
+Module.Run applies the decorators inside its provider (see
+pipeline.TheoryOfRunDecorators), so each loop scope re-evaluates
+Module.Run, re-binds that loop's continuation, and applies the
+decorator — one run owns one tree, and the Tree tab renders every
+loop's session nodes. The goal tree observer is forked to the same
+setTree path, so the goal runner's verdict nodes reach the Tree tab
+through the observer.
 `
 
 const TheoryOfTUINoTruncation = `
@@ -1789,12 +1796,19 @@ func forkTUIDisplay(scope dscope.Scope, tui *TUI) dscope.Scope {
 		// pipeline.TheoryOfGoalMode.
 		func() pipeline.GoalTreeObserver { return tui.setTree },
 	)
-	// Resolve the loop from the display scope so Module.Run binds the
-	// Logs-pane Logger at provider-resolution time. See
-	// TheoryOfTUIDisplayFork.
-	loopRun := scope.Get[pipeline.Run]()
-	return scope.Fork(func() pipeline.Run {
-		return withTUIOutputObserver(loopRun, tui)
+	// The display's state decorator and tree tap travel as
+	// RunDecorators, applied by Module.Run inside its provider: a goal
+	// loop's later SessionTreeContinuation fork re-evaluates Module.Run,
+	// so the per-loop continuation reaches the loop and one run owns one
+	// tree. A static Run wrapper would shadow the provider and freeze
+	// the continuation at zero. See TheoryOfTUIDisplayFork and
+	// pipeline.TheoryOfRunDecorators.
+	return scope.Fork(func() pipeline.RunDecorators {
+		return pipeline.RunDecorators{
+			func(run pipeline.Run) pipeline.Run {
+				return withTUIOutputObserver(run, tui)
+			},
+		}
 	})
 }
 

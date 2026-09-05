@@ -135,3 +135,68 @@ func TestForkTUIDisplayForwardsGoalTreeToTUI(t *testing.T) {
 		t.Fatal("expected the goal tree stored in the TUI")
 	}
 }
+
+// TestForkTUIDisplayKeepsSessionTreeContinuation pins the decorator
+// mechanism: a SessionTreeContinuation forked AFTER the display fork
+// must reach Module.Run, so the loop writes its session nodes under
+// the continuation's loop node and the TUI's tree carries the loop
+// node. The static Run wrapper this replaces shadowed Module.Run,
+// freezing the continuation at zero — every loop opened a fresh tree
+// and the Tree tab showed only the current loop. See
+// TheoryOfTUIDisplayFork and pipeline.TheoryOfRunDecorators.
+func TestForkTUIDisplayKeepsSessionTreeContinuation(t *testing.T) {
+	tui := newTUIForTest()
+	scope := forkTUIDisplay(
+		dscope.New(modes.ForTest(t), new(pipeline.Module)),
+		tui,
+	)
+	// Simulate the goal runner: the loop node exists in the run tree
+	// and the continuation is forked into the loop's scope after the
+	// display fork.
+	runTree, err := tree.New().Write("root", "loop-1", tree.TypeLoop, tree.AuthorProgram, "goal loop 1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope = scope.Fork(func() pipeline.SessionTreeContinuation {
+		return pipeline.SessionTreeContinuation{Tree: runTree, Parent: "loop-1"}
+	})
+
+	scope.Call(func(run pipeline.Run) {
+		var result pipeline.Result
+		for _, err := range run(context.Background(), pipeline.RunOptions{
+			InitialState: generators.NewPrompts("", nil),
+			PhaseBuilder: func(_ generators.Generator) generators.Phase {
+				return func(_ context.Context, state generators.State) (generators.Phase, generators.State, error) {
+					state, err := state.AppendContent(&generators.Content{
+						Role: generators.RoleModel,
+						Parts: []generators.Part{
+							generators.Text("ok\n"),
+						},
+					})
+					if err != nil {
+						return nil, nil, err
+					}
+					return nil, state, nil
+				}
+			},
+		}, &result) {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		if result.SessionTree == nil {
+			t.Fatal("expected the result to carry the continued tree")
+		}
+	})
+
+	tui.mu.Lock()
+	defer tui.mu.Unlock()
+	loopNode, ok := tui.treeView.Node("loop-1")
+	if !ok || loopNode.Type != tree.TypeLoop {
+		t.Fatalf("expected the loop-1 node in the TUI's tree, got ok=%v", ok)
+	}
+	response, ok := tui.treeView.Node("response-1")
+	if !ok || response.Parent != "loop-1" {
+		t.Fatalf("expected the loop's response under loop-1, got ok=%v", ok)
+	}
+}
