@@ -74,7 +74,9 @@ Output tab control column theory (cmd/tai):
   expands it, so the collapsed structure doubles as the table of
   contents. Expanded sections are inert to body presses — only the
   control column collapses them — so reading inside an expanded
-  section never folds it.
+  section never folds it. The key dispatches by focus: the Tree tab's
+  focus folds the tree nodes instead (see TheoryOfTreeTab); every
+  other focus folds the sections.
 - The control follows the content: it renders at the section's first
   display row, clamped into the viewport when that row has scrolled
   above it, so every section with a visible row stays addressable while

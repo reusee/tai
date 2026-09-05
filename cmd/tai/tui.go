@@ -1268,7 +1268,14 @@ func (t *TUI) handleKey(key string) bool {
 	case key == "next-transition":
 		t.jumpToTransition(1)
 	case key == "collapse-all":
-		t.collapseAllSections()
+		// The c key folds the focused tab's structure: the Tree tab's
+		// nodes, or — every other focus — the Output tab's sections.
+		// See TheoryOfTreeTab and TheoryOfOutputControls.
+		if t.tabs.Focus == 1 {
+			t.collapseAllTreeNodes()
+		} else {
+			t.collapseAllSections()
+		}
 	case key == "up":
 		t.scroll(-1)
 	case key == "down":

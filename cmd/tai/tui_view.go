@@ -120,7 +120,7 @@ var tuiHelpLines = []string{
 	"page up / down\tscroll focused pane by page",
 	"home / end\tjump to start / end of focused pane",
 	"[ / ]\tjump to previous / next section start or end",
-	"c\tcollapse all sections; press again to restore; click a collapsed section to expand it",
+	"c\tfold every section (Output tab) or node (Tree tab) of the focused tab; press again to restore; click a collapsed row to expand it",
 	"v\tcycle the Tree tab's projection (all / events / summary / model / program / user)",
 	"view menu\tpick the Tree tab's projection from the View menu",
 	"enter\tsend the input line when focused; toggle the latest tree node's expansion otherwise",
@@ -300,15 +300,7 @@ func (t *TUI) treePanelView(box taiui.Box, display []taiui.Line, label string, h
 	)}
 	offset := taiui.ClampOffset(t.scrolls[1].Offset, len(display), t.tuiPaneHeight(1, box))
 	for _, row := range t.treeControlRows(box, display, offset) {
-		n, ok := t.treeView.Node(row.name)
-		if !ok {
-			continue
-		}
-		controls := t.treeNodeControls(n)
-		if len(controls) == 0 {
-			continue
-		}
-		children = append(children, taiui.Text(controls[0].Glyph, taiui.Box{
+		children = append(children, taiui.Text(treeFoldGlyph(t.treeTab.expanded[row.name]), taiui.Box{
 			Top: row.row, Left: box.Left, Bottom: row.row + 1, Right: box.Left + controlColumnWidth,
 		}))
 	}

@@ -78,9 +78,10 @@ func TestSetTreeConsumesSignals(t *testing.T) {
 
 // TestTreeNodeCollapsedByDefault verifies the display contract: a node
 // with multi-line content renders one collapsed header line by default,
-// expanding reveals the body lines, and a body row of an expanded node
-// never folds it. The display width is wide enough for the header and
-// the elapsed timer to stay on one line. See TheoryOfTreeTab.
+// and expanding moves the content — first line included — onto the rows
+// below the header, where a content row never folds it. The display
+// width is wide enough for the header and the elapsed timer to stay on
+// one line. See TheoryOfTreeTab.
 func TestTreeNodeCollapsedByDefault(t *testing.T) {
 	tui := newTUIForTest()
 	tui.treeView = treeWithMultilineNode(t)
@@ -94,11 +95,13 @@ func TestTreeNodeCollapsedByDefault(t *testing.T) {
 		!strings.Contains(display[0].Text, "3 more lines") {
 		t.Fatalf("unexpected collapsed header: %q", display[0].Text)
 	}
-	// Expanding reveals the header and the body lines.
+	// Expanding reveals the header and the content rows: the header
+	// carries no content, and every content line starts on the row
+	// below it.
 	tui.toggleTreeNodeAtRow(0)
 	display = tui.treeDisplay(120, panelStyle.BaseBG)
-	if len(display) != 4 {
-		t.Fatalf("expected 4 expanded rows (header + 3 body), got %d", len(display))
+	if len(display) != 5 {
+		t.Fatalf("expected 5 expanded rows (header + 4 content lines), got %d", len(display))
 	}
 	for _, want := range []string{"line one", "line two", "line three"} {
 		found := false
@@ -110,11 +113,14 @@ func TestTreeNodeCollapsedByDefault(t *testing.T) {
 		if !found {
 			t.Fatalf("expected %q in the expanded display, got %v", want, display)
 		}
+		if strings.Contains(display[0].Text, want) {
+			t.Fatalf("the expanded header must not carry content, got %q", display[0].Text)
+		}
 	}
-	// A body row of an expanded node never folds it.
+	// A content row of an expanded node never folds it.
 	tui.toggleTreeNodeAtRow(2)
 	display2 := tui.treeDisplay(120, panelStyle.BaseBG)
-	if len(display2) != 4 {
+	if len(display2) != 5 {
 		t.Fatalf("a body press must not fold the expanded node, got %d rows", len(display2))
 	}
 }
@@ -212,7 +218,7 @@ func TestTreeToggleLastExpandable(t *testing.T) {
 	tui.mu.Lock()
 	display := tui.treeDisplay(120, panelStyle.BaseBG)
 	tui.mu.Unlock()
-	if len(display) != 4 {
+	if len(display) != 5 {
 		t.Fatalf("expected the last expandable node expanded, got %d rows", len(display))
 	}
 	tui.toggleLastTreeExpandable()
@@ -221,6 +227,222 @@ func TestTreeToggleLastExpandable(t *testing.T) {
 	tui.mu.Unlock()
 	if len(display) != 1 {
 		t.Fatalf("expected the node collapsed again, got %d rows", len(display))
+	}
+}
+
+// TestTreeCollapseAllToggle verifies the c key's fold of the tree
+// nodes: the first press snapshots the expanded nodes, folds every
+// node to its one-line header, and scrolls the view to the top so the
+// collapsed list starts below the title; the next press restores the
+// expansions; a manual expand breaks the all-collapsed state, so the
+// next press folds and re-snapshots again; and a node that arrives
+// after the snapshot keeps the collapsed form on restore. See
+// TheoryOfTreeTab.
+func TestTreeCollapseAllToggle(t *testing.T) {
+	tui := newTUIForTest()
+	tr, err := tree.New().WriteAll(
+		tree.WriteOp{Parent: "root", Name: "wide-1", Type: tree.TypeEvent, Author: tree.AuthorProgram, Content: "head\nbody"},
+		tree.WriteOp{Parent: "root", Name: "plain-1", Type: tree.TypeEvent, Author: tree.AuthorProgram, Content: "one line"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tui.treeView = tr
+
+	// Expand wide-1, then fold: every node shows one header row, and
+	// the view lands on the top so the list starts below the title.
+	tui.mu.Lock()
+	tui.toggleTreeNodeByName("wide-1")
+	tui.width, tui.height = 80, 25
+	tui.tabs.Expanded[1] = true
+	tui.scrolls[1].Offset = 5
+	tui.mu.Unlock()
+	tui.collapseAllTreeNodes()
+	tui.mu.Lock()
+	display := tui.treeDisplay(120, panelStyle.BaseBG)
+	offset := tui.scrolls[1].Offset
+	tui.mu.Unlock()
+	if len(display) != 2 {
+		t.Fatalf("expected every node folded to one row, got %d rows", len(display))
+	}
+	if offset != 0 {
+		t.Fatalf("expected the fold to scroll the view to the top, got offset %d", offset)
+	}
+
+	// Press again: wide-1 expands again with its content — first line
+	// included — below the header.
+	tui.collapseAllTreeNodes()
+	tui.mu.Lock()
+	display = tui.treeDisplay(120, panelStyle.BaseBG)
+	tui.mu.Unlock()
+	if len(display) != 4 {
+		t.Fatalf("expected wide-1 expanded again, got %d rows", len(display))
+	}
+
+	// A manual expand after the fold breaks the all-collapsed state:
+	// the next press folds and re-snapshots instead of restoring.
+	tui.collapseAllTreeNodes()
+	tui.mu.Lock()
+	tui.toggleTreeNodeByName("wide-1")
+	tui.mu.Unlock()
+	tui.collapseAllTreeNodes()
+	tui.mu.Lock()
+	display = tui.treeDisplay(120, panelStyle.BaseBG)
+	tui.mu.Unlock()
+	if len(display) != 2 {
+		t.Fatalf("expected the manual expand to be folded, got %d rows", len(display))
+	}
+
+	// The next press restores the manual expand.
+	tui.collapseAllTreeNodes()
+	tui.mu.Lock()
+	display = tui.treeDisplay(120, panelStyle.BaseBG)
+	tui.mu.Unlock()
+	if len(display) != 4 {
+		t.Fatalf("expected the manual expand restored, got %d rows", len(display))
+	}
+
+	// A node that arrives after the snapshot keeps the collapsed form
+	// on restore: the snapshot carries only the nodes it captured.
+	tr2, err := tree.New().WriteAll(
+		tree.WriteOp{Parent: "root", Name: "wide-1", Type: tree.TypeEvent, Author: tree.AuthorProgram, Content: "head\nbody"},
+		tree.WriteOp{Parent: "root", Name: "late-1", Type: tree.TypeEvent, Author: tree.AuthorProgram, Content: "late\nbody"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tui.treeView = tr2
+	tui.collapseAllTreeNodes()
+	tui.collapseAllTreeNodes()
+	tui.mu.Lock()
+	display = tui.treeDisplay(120, panelStyle.BaseBG)
+	tui.mu.Unlock()
+	if len(display) != 4 {
+		t.Fatalf("expected wide-1 expanded and late-1 collapsed, got %d rows", len(display))
+	}
+}
+
+// TestTreeCollapseAllTruncatedHeaderExpanded verifies that the c key's
+// fold counts every expanded node — including one whose single-line
+// header truncates at the pane width, expandable in the display but not
+// per the multi-line predicate — so a manual expand of it breaks the
+// all-collapsed state and the next press folds and re-snapshots instead
+// of restoring a stale snapshot. See TheoryOfTreeTab.
+func TestTreeCollapseAllTruncatedHeaderExpanded(t *testing.T) {
+	tui := newTUIForTest()
+	tr, err := tree.New().WriteAll(
+		tree.WriteOp{Parent: "root", Name: "wide-1", Type: tree.TypeEvent, Author: tree.AuthorProgram, Content: "head\nbody"},
+		tree.WriteOp{Parent: "root", Name: "long-1", Type: tree.TypeEvent, Author: tree.AuthorProgram, Content: strings.Repeat("x", 200)},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tui.treeView = tr
+	tui.mu.Lock()
+	tui.width, tui.height = 80, 25
+	tui.tabs.Expanded[1] = true
+	tui.toggleTreeNodeByName("wide-1")
+	tui.toggleTreeNodeByName("long-1")
+	tui.mu.Unlock()
+
+	// First press folds everything.
+	tui.collapseAllTreeNodes()
+
+	// Manually expand the truncated-header node, then press again:
+	// the manual expand breaks the all-collapsed state, so the press
+	// folds and re-snapshots instead of restoring the stale snapshot.
+	tui.mu.Lock()
+	tui.toggleTreeNodeByName("long-1")
+	tui.mu.Unlock()
+	tui.collapseAllTreeNodes()
+	tui.mu.Lock()
+	display := tui.treeDisplay(120, panelStyle.BaseBG)
+	expandedLong := tui.treeTab.expanded["long-1"]
+	tui.mu.Unlock()
+	if len(display) != 2 {
+		t.Fatalf("expected every node folded to one row after the manual-expand press, got %d rows", len(display))
+	}
+	if expandedLong {
+		t.Fatal("expected long-1 folded after the manual-expand press")
+	}
+
+	// The next press restores the manual expand.
+	tui.collapseAllTreeNodes()
+	tui.mu.Lock()
+	expandedLong = tui.treeTab.expanded["long-1"]
+	tui.mu.Unlock()
+	if !expandedLong {
+		t.Fatal("expected the manual expand restored")
+	}
+}
+
+// TestTreeExpandScrollsToNodeStart verifies the expansion invariant:
+// every expansion path — a press on the node's rows, and Enter on the
+// last expandable node — scrolls the view to the node's first display
+// row and stops following the tail; collapsing never scrolls. The
+// fixture puts the multi-line node far enough down that its first row
+// sits inside the scrollable range, so the expected offset is exact.
+// See TheoryOfTreeTab.
+func TestTreeExpandScrollsToNodeStart(t *testing.T) {
+	tui := newTUIForTest()
+	wideContent := "wide header\n" + strings.TrimRight(strings.Repeat("wide body\n", 30), "\n")
+	tr, err := tree.New().WriteAll(
+		tree.WriteOp{Parent: "root", Name: "plain-1", Type: tree.TypeEvent, Author: tree.AuthorProgram, Content: "one"},
+		tree.WriteOp{Parent: "root", Name: "plain-2", Type: tree.TypeEvent, Author: tree.AuthorProgram, Content: "two"},
+		tree.WriteOp{Parent: "root", Name: "plain-3", Type: tree.TypeEvent, Author: tree.AuthorProgram, Content: "three"},
+		tree.WriteOp{Parent: "root", Name: "plain-4", Type: tree.TypeEvent, Author: tree.AuthorProgram, Content: "four"},
+		tree.WriteOp{Parent: "root", Name: "plain-5", Type: tree.TypeEvent, Author: tree.AuthorProgram, Content: "five"},
+		tree.WriteOp{Parent: "root", Name: "wide-1", Type: tree.TypeEvent, Author: tree.AuthorProgram, Content: wideContent},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tui.treeView = tr
+	tui.mu.Lock()
+	tui.width, tui.height = 80, 25
+	tui.tabs.Expanded[1] = true
+	tui.scrolls[1].Offset = 0
+	tui.scrolls[1].Follow = true
+	box := tui.tabs.Boxes(tui.width, tui.height)[1]
+	display := tui.treeDisplay(treeContentWidth(true, box.Width()), panelStyle.BaseBG)
+	if len(display) != 6 {
+		t.Fatalf("expected 6 collapsed rows, got %d", len(display))
+	}
+	tui.mu.Unlock()
+
+	// A press on the wide node's row expands it and scrolls the view
+	// to its first display row.
+	tui.mu.Lock()
+	tui.toggleTreeNodeAtRow(5)
+	offset := tui.scrolls[1].Offset
+	follow := tui.scrolls[1].Follow
+	expanded := tui.treeTab.expanded["wide-1"]
+	tui.mu.Unlock()
+	if !expanded {
+		t.Fatal("the row press must expand wide-1")
+	}
+	if offset != 5 || follow {
+		t.Fatalf("expanding must scroll to the node's first row and stop following, got offset %d follow %v", offset, follow)
+	}
+
+	// Enter collapses the last expandable node without scrolling.
+	tui.toggleLastTreeExpandable()
+	tui.mu.Lock()
+	collapsed := !tui.treeTab.expanded["wide-1"]
+	collapseOffset := tui.scrolls[1].Offset
+	tui.mu.Unlock()
+	if !collapsed || collapseOffset != 5 {
+		t.Fatalf("collapsing must not scroll, got collapsed=%v offset=%d", collapsed, collapseOffset)
+	}
+
+	// Enter expands it again, scrolling to its first row once more.
+	tui.toggleLastTreeExpandable()
+	tui.mu.Lock()
+	reexpanded := tui.treeTab.expanded["wide-1"]
+	reoffset := tui.scrolls[1].Offset
+	tui.mu.Unlock()
+	if !reexpanded || reoffset != 5 {
+		t.Fatalf("re-expanding must scroll to the node's first row, got expanded=%v offset=%d", reexpanded, reoffset)
 	}
 }
 
@@ -335,11 +557,13 @@ func TestTreeHeaderAlignment(t *testing.T) {
 	}
 }
 
-// TestTreeLinesDoNotWrap verifies the no-wrap contract: a node whose
-// header or body lines exceed the pane width renders one truncated
-// display row per line, never wrapped rows, and expansion reveals one
-// row per content line. See TheoryOfTreeTab.
-func TestTreeLinesDoNotWrap(t *testing.T) {
+// TestTreeExpansionWrapsBody verifies the expansion contract: a node
+// collapsed renders one truncated header row, and expanding moves the
+// content — first line included — onto the body rows below the header,
+// wrapped at the pane width instead of truncated, so the full content
+// becomes visible and no body row carries the truncation mark. See
+// TheoryOfTreeTab.
+func TestTreeExpansionWrapsBody(t *testing.T) {
 	tui := newTUIForTest()
 	tr, err := tree.New().Write("root", "wide-1", tree.TypeEvent, tree.AuthorProgram,
 		"first\n"+strings.Repeat("x", 200)+"\n"+strings.Repeat("y", 200))
@@ -357,16 +581,67 @@ func TestTreeLinesDoNotWrap(t *testing.T) {
 	if !strings.Contains(display[0].Text, "…") {
 		t.Fatalf("expected a truncated header, got %q", display[0].Text)
 	}
-	// Expanded: one truncated row per content line, never wrapped.
+	// Expanded: body lines wrap, never truncate; every row fits the
+	// content width.
 	tui.toggleTreeNodeAtRow(0)
 	display = tui.treeDisplay(40, panelStyle.BaseBG)
-	if len(display) != 3 {
-		t.Fatalf("expected 3 expanded rows (header + 2 body), got %d", len(display))
-	}
-	for _, line := range display {
+	body := ""
+	for i, line := range display {
 		if w := displaywidth.String(line.Text); w > 40 {
 			t.Fatalf("a display row must not exceed the content width, got %d: %q", w, line.Text)
 		}
+		if i == 0 {
+			continue
+		}
+		if strings.Contains(line.Text, "…") {
+			t.Fatalf("a body row must wrap, not truncate: %q", line.Text)
+		}
+		body += line.Text
+	}
+	// The expanded header carries no content; the body starts from the
+	// first line and carries both 200-character runs in full.
+	if strings.Contains(display[0].Text, "first") {
+		t.Fatalf("the expanded header must not carry content, got %q", display[0].Text)
+	}
+	if !strings.Contains(body, "first") {
+		t.Fatalf("the body must start from the first line, got %q", body)
+	}
+	if strings.Count(body, "x") != 200 || strings.Count(body, "y") != 200 {
+		t.Fatalf("expansion must reveal the full content, got %q", body)
+	}
+}
+
+// TestTreeExpandedContentStartsOnNextLine verifies the expanded form's
+// layout contract: the header row carries only the structural columns
+// — name, type/author, timer — and the content, first line included,
+// starts on the row below the header. See TheoryOfTreeTab.
+func TestTreeExpandedContentStartsOnNextLine(t *testing.T) {
+	tui := newTUIForTest()
+	tr, err := tree.New().Write("root", "node-1", tree.TypeEvent, tree.AuthorProgram,
+		"first line\nsecond line")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tui.treeView = tr
+	tui.mu.Lock()
+	defer tui.mu.Unlock()
+	display := tui.treeDisplay(120, panelStyle.BaseBG)
+	if len(display) != 1 {
+		t.Fatalf("expected 1 collapsed row, got %d", len(display))
+	}
+	tui.toggleTreeNodeAtRow(0)
+	display = tui.treeDisplay(120, panelStyle.BaseBG)
+	if len(display) != 3 {
+		t.Fatalf("expected 3 rows (header + 2 content lines), got %d: %v", len(display), displayTexts(display))
+	}
+	if strings.Contains(display[0].Text, "first line") || strings.Contains(display[0].Text, "second line") {
+		t.Fatalf("the expanded header must not carry content, got %q", display[0].Text)
+	}
+	if !strings.Contains(display[1].Text, "first line") {
+		t.Fatalf("the content must start on the row below the header, got %q", display[1].Text)
+	}
+	if !strings.Contains(display[2].Text, "second line") {
+		t.Fatalf("expected the second content line on its own row, got %q", display[2].Text)
 	}
 }
 
@@ -396,8 +671,7 @@ func TestTreeStatusColumnToggles(t *testing.T) {
 	if len(rows) != 1 || rows[0].name != "wide-1" {
 		t.Fatalf("expected one control row on wide-1, got %+v", rows)
 	}
-	wide, _ := tui.treeView.Node("wide-1")
-	if glyph := tui.treeNodeControls(wide)[0].Glyph; glyph != sectionGlyphCollapsed {
+	if glyph := treeFoldGlyph(tui.treeTab.expanded["wide-1"]); glyph != sectionGlyphCollapsed {
 		t.Fatalf("expected the collapsed glyph, got %q", glyph)
 	}
 	tui.mu.Unlock()
@@ -423,6 +697,96 @@ func TestTreeStatusColumnToggles(t *testing.T) {
 	tui.mu.Unlock()
 	if !consumed || !collapsed {
 		t.Fatalf("the second press must collapse wide-1, got consumed=%v collapsed=%v", consumed, collapsed)
+	}
+}
+
+// TestCollapseAllKeyDispatchesByFocus verifies the c key's dispatch:
+// the Tree tab's focus folds the tree nodes, every other focus folds
+// the Output tab's sections. See TheoryOfTreeTab and
+// TheoryOfOutputControls.
+func TestCollapseAllKeyDispatchesByFocus(t *testing.T) {
+	tui := newTUIForTest()
+	tr, err := tree.New().WriteAll(
+		tree.WriteOp{Parent: "root", Name: "wide-1", Type: tree.TypeEvent, Author: tree.AuthorProgram, Content: "head\nbody"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tui.treeView = tr
+	tui.mu.Lock()
+	tui.toggleTreeNodeByName("wide-1")
+	tui.mu.Unlock()
+
+	// The Output tab's focus folds the output sections; the tree node
+	// stays expanded.
+	tui.mu.Lock()
+	tui.tabs.Focus = 0
+	tui.mu.Unlock()
+	tui.handleKey("c")
+	tui.mu.Lock()
+	rows := len(tui.treeDisplay(120, panelStyle.BaseBG))
+	tui.mu.Unlock()
+	if rows != 3 {
+		t.Fatalf("expected the tree node to stay expanded under the Output tab's focus, got %d rows", rows)
+	}
+
+	// The Tree tab's focus folds the tree nodes.
+	tui.mu.Lock()
+	tui.tabs.Focus = 1
+	tui.mu.Unlock()
+	tui.handleKey("c")
+	tui.mu.Lock()
+	rows = len(tui.treeDisplay(120, panelStyle.BaseBG))
+	tui.mu.Unlock()
+	if rows != 1 {
+		t.Fatalf("expected the tree node folded under the Tree tab's focus, got %d rows", rows)
+	}
+}
+
+// TestTreeSingleLineTruncatedExpands verifies the width-dependent
+// expandability: a single-line node whose header truncates at the
+// pane width carries the status column's fold control, and pressing
+// it expands the node to reveal the full line wrapped; a single-line
+// node whose header fits carries no control. See TheoryOfTreeTab.
+func TestTreeSingleLineTruncatedExpands(t *testing.T) {
+	tui := newTUIForTest()
+	tr, err := tree.New().WriteAll(
+		tree.WriteOp{Parent: "root", Name: "long-1", Type: tree.TypeInput, Author: tree.AuthorUser,
+			Content: strings.Repeat("z", 120)},
+		tree.WriteOp{Parent: "root", Name: "short-1", Type: tree.TypeEvent, Author: tree.AuthorProgram,
+			Content: "brief"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tui.treeView = tr
+	tui.mu.Lock()
+	defer tui.mu.Unlock()
+	tui.width, tui.height = 80, 25
+	tui.tabs.Expanded[1] = true
+	tui.scrolls[1].Offset = 0
+	box := tui.tabs.Boxes(tui.width, tui.height)[1]
+	contentWidth := treeContentWidth(true, box.Width())
+	display := tui.treeDisplay(contentWidth, panelStyle.BaseBG)
+	rows := tui.treeControlRows(box, display, 0)
+	if len(rows) != 1 || rows[0].name != "long-1" {
+		t.Fatalf("expected one control row on the truncated long-1, got %+v", rows)
+	}
+	// Pressing the control expands the node; the full line renders
+	// wrapped in the body rows.
+	if !tui.toggleTreeControlAtClick(box.Left, rows[0].row) {
+		t.Fatal("the control press must toggle long-1")
+	}
+	display = tui.treeDisplay(contentWidth, panelStyle.BaseBG)
+	body := ""
+	for _, line := range display[1:] {
+		if w := displaywidth.String(line.Text); w > contentWidth {
+			t.Fatalf("a display row must not exceed the content width, got %d: %q", w, line.Text)
+		}
+		body += line.Text
+	}
+	if strings.Count(body, "z") != 120 {
+		t.Fatalf("expansion must reveal the full single-line content, got %q", body)
 	}
 }
 

@@ -27,13 +27,22 @@ Tree tab theory (cmd/tai):
   keeps each shown node's ancestors (tree.Extract), so the outline
   stays readable.
 - Every node renders one line by default: "name [type/author] first
-  content line". A node whose content spans more than one line is
-  expandable and collapsed by default; a press on any of its rows — or
-  Enter for the last expandable node — reveals the remaining lines,
-  and a press on an expanded node's header rows folds it, so clicking
-  inside a long expanded body never collapses it by accident. Lines
-  never wrap: each line renders as one display row truncated at the
-  pane edge, so the full content stays behind expansion.
+  content line". A node is expandable when its content spans more
+  than one line, or when its one-line header truncates at the pane
+  width; a press on any of its rows — or Enter for the last multi-line
+  node — reveals the full content, and a press on an expanded node's
+  header rows folds it, so clicking inside a long expanded body never
+  collapses it by accident. When expanded, the content starts on the
+  row below the header: the expanded header drops the inline preview
+  and carries only the structural columns, and the body renders the
+  full content, first line included, wrapped at the pane width instead
+  of truncating — breaking at space runs and hard-breaking
+  unbreakable runs at cluster boundaries. The collapsed header stays
+  the one-row index form, truncating at the pane edge; its ⤷ hint
+  marks multi-line content, and a truncated single-line node signals
+  its hidden content through the status column instead. Expandability
+  always measures the collapsed form — the index row whose truncation
+  hides content — because the expanded header carries no content.
 - Headers align as columns per indent level: the node name pads to
   the level's widest visible name and the [type/author] fragment to
   the level's widest visible meta, so entries of one level read as
@@ -42,9 +51,26 @@ Tree tab theory (cmd/tai):
   character wide, like the Output tab's control column: every
   expandable node carries the fold glyph ▾ while expanded and ▸ while
   collapsed, rendered beside the node's first display row and clamped
-  into the viewport. A press on the control's cells toggles the node,
-  and expanding a collapsed node scrolls the view to the node's first
-  row; single-line nodes carry no control.
+  into the viewport. A press on the control's cells toggles the node;
+  a node that is neither multi-line nor truncated — single-line
+  content fitting the pane — carries no control.
+- Every expansion of a node — a press on its rows, a press on its
+  fold control, or Enter on the last multi-line node — scrolls the
+  view to the node's first display row, so the expanded content opens
+  at its beginning. The scroll lives in toggleTreeNodeByName, the one
+  method every expansion path routes through, so the invariant cannot
+  regress; collapsing never scrolls.
+- The c key, pressed while the Tree tab holds the focus, folds the
+  nodes the way the Output tab's c key folds its sections (see
+  TheoryOfOutputControls): the first press snapshots the expanded
+  nodes, folds every node to its one-line header, and scrolls the view
+  to the top, so the collapsed list starts at the row below the title
+  and doubles as the outline index; the next press restores the
+  snapshotted expansions, and an expanded node's content renders from
+  the row below its header. A manual expand breaks the all-collapsed
+  state, so the next press folds and re-snapshots again. Nodes that
+  arrive after the snapshot keep the default collapsed form on
+  restore. Every other focus folds the Output tab's sections.
 - Node lines are colored by author and type: event and error nodes in
   the log color, user inputs in the user color, program nodes in the
   system color, model nodes in the default foreground. The tab
@@ -112,28 +138,33 @@ const treeIndentWidth = 2
 
 // treeCached caches one node's display lines keyed by the render
 // parameters, so a frame re-renders only nodes that are new or
-// repositioned; the alignment widths join the key, because a wider
-// entry at the same indent level re-pads every cached sibling. See
-// TheoryOfTreeTab.
+// repositioned; the alignment widths and the expandability derived
+// from them join the cached state, because a wider entry at the same
+// indent level re-pads every cached sibling. See TheoryOfTreeTab.
 type treeCached struct {
-	width     int
-	depth     int
-	shade     taiui.Color
-	expanded  bool
-	nameWidth int
-	metaWidth int
-	lines     []taiui.Line
+	width      int
+	depth      int
+	shade      taiui.Color
+	expanded   bool
+	nameWidth  int
+	metaWidth  int
+	expandable bool
+	lines      []taiui.Line
 }
 
 // treeRowRange maps one rendered node onto its display row range as
 // recorded by the last treeDisplay, so a pointer press locates the
 // node under the cursor. endRow is exclusive; the header is the
-// first row, the row a press folds an expanded node through. See
+// first row, the row a press folds an expanded node through.
+// Expandable records the node's expandability at the rendering width:
+// multi-line content, or a header truncated at that width, so the
+// status column and the press paths share one fact. See
 // TheoryOfTreeTab.
 type treeRowRange struct {
-	name     string
-	startRow int
-	endRow   int
+	name       string
+	startRow   int
+	endRow     int
+	expandable bool
 }
 
 // treeAlignments carries the per-depth pad widths of the projected
@@ -147,15 +178,20 @@ type treeAlignments struct {
 
 // treeTabState is the Tree tab's interaction state: the projection
 // mode, the per-node expansion toggles, the event nodes already
-// consumed for the display signals, the wrapped-line cache, and the
-// row ranges of the last display. Guarded by t.mu. See
-// TheoryOfTreeTab.
+// consumed for the display signals, the wrapped-line cache, the row
+// ranges of the last display, and the c-key fold snapshot. Guarded by
+// t.mu. See TheoryOfTreeTab.
 type treeTabState struct {
 	mode     treeViewMode
 	expanded map[string]bool
 	seen     map[string]bool
 	cache    map[string]treeCached
 	rows     []treeRowRange
+	// collapseAllSaved carries the nodes the last c-key fold had
+	// expanded, so pressing the key again while every node is
+	// collapsed restores them. Nil until the first fold. See
+	// TheoryOfTreeTab.
+	collapseAllSaved map[string]bool
 }
 
 // treeAlignmentsOf computes the alignments of the projected tree: the
@@ -202,6 +238,21 @@ func treeBodyLines(n *tree.Node) []string {
 	return lines[1:]
 }
 
+// treeFirstLine returns the node's first content line, with trailing
+// newlines stripped; empty content yields "". The expanded body starts
+// from this line, so the content begins on the row below the header.
+// See TheoryOfTreeTab.
+func treeFirstLine(n *tree.Node) string {
+	content := strings.TrimRight(n.Content, "\n")
+	if content == "" {
+		return ""
+	}
+	if i := strings.IndexByte(content, '\n'); i >= 0 {
+		return content[:i]
+	}
+	return content
+}
+
 // treeNodeExpandable reports whether the node hides a multi-line body
 // behind its one-line header. See TheoryOfTreeTab.
 func treeNodeExpandable(n *tree.Node) bool {
@@ -210,10 +261,12 @@ func treeNodeExpandable(n *tree.Node) bool {
 
 // treeHeaderText renders the node's header text: the name padded to
 // the level's widest visible name, the [type/author] fragment padded
-// to the level's widest visible meta, the first content line, the
-// expand hint on a collapsed multi-line node, and the jump marker on
-// an attempt-start node. The pads align the columns of the same
-// indent level. See TheoryOfTreeTab.
+// to the level's widest visible meta, and — collapsed only — the
+// first content line as the index preview with the ⤷ more-lines hint
+// on multi-line content. The expanded header drops the preview, so
+// the content starts on the row below the header; the jump marker on
+// an attempt-start node stays on the header. The pads align the
+// columns of the same indent level. See TheoryOfTreeTab.
 func treeHeaderText(n *tree.Node, expanded bool, options displaywidth.Options, nameWidth, metaWidth int) string {
 	meta := treeNodeMeta(n)
 	var b strings.Builder
@@ -226,12 +279,14 @@ func treeHeaderText(n *tree.Node, expanded bool, options displaywidth.Options, n
 	if pad := metaWidth - options.String(meta); pad > 0 {
 		b.WriteString(strings.Repeat(" ", pad))
 	}
-	b.WriteString(" ")
-	if first := tree.PreviewRunes(n.Content, 0); first != "" {
-		b.WriteString(first + " ")
-	}
-	if body := treeBodyLines(n); len(body) > 0 && !expanded {
-		b.WriteString(fmt.Sprintf("⤷ %d more lines", len(body)))
+	if !expanded {
+		b.WriteString(" ")
+		if first := tree.PreviewRunes(n.Content, 0); first != "" {
+			b.WriteString(first + " ")
+		}
+		if body := treeBodyLines(n); len(body) > 0 {
+			b.WriteString(fmt.Sprintf("⤷ %d more lines", len(body)))
+		}
 	}
 	text := strings.TrimRight(b.String(), " ")
 	if strings.HasPrefix(n.Name, "attempt-start") {
@@ -348,10 +403,12 @@ func (t *TUI) treeTabLabel() string {
 
 // treeDisplay renders the Tree tab's display: the depth-first walk of
 // the current projection, each node contributing its header row plus
-// its body lines when expanded. The walk starts at the tree root, so
-// every goal loop's nodes render. The walk records every node's row
-// range, so a pointer press maps onto the node the way the rows
-// render. The caller holds t.mu. See TheoryOfTreeTab.
+// its wrapped body lines when expanded. The walk starts at the tree
+// root, so every goal loop's nodes render. The walk records every
+// node's row range together with the node's expandability at the
+// rendering width, so a pointer press maps onto the node the way the
+// rows render and the status column reads one fact. The caller holds
+// t.mu. See TheoryOfTreeTab.
 func (t *TUI) treeDisplay(contentWidth int, base taiui.Color) []taiui.Line {
 	tr := t.treeView
 	if tr == nil {
@@ -373,11 +430,11 @@ func (t *TUI) treeDisplay(contentWidth int, base taiui.Color) []taiui.Line {
 			shade = alt
 		}
 		index++
-		lines := t.treeNodeLines(n, depth, shade, contentWidth, options, align)
+		lines, expandable := t.treeNodeLines(n, depth, shade, contentWidth, options, align)
 		start := len(out)
 		out = append(out, lines...)
 		t.treeTab.rows = append(t.treeTab.rows, treeRowRange{
-			name: n.Name, startRow: start, endRow: len(out),
+			name: n.Name, startRow: start, endRow: len(out), expandable: expandable,
 		})
 		for _, c := range n.Children() {
 			walk(c, depth+1)
@@ -389,21 +446,26 @@ func (t *TUI) treeDisplay(contentWidth int, base taiui.Color) []taiui.Line {
 	return out
 }
 
-// treeNodeLines renders one node's display lines: the header row and,
-// when expanded, one truncated row per body line. Lines never wrap: a
-// line longer than the pane truncates at the pane edge, and the full
-// content stays behind expansion. Lines are cached per width, depth,
-// shade, expansion, and alignment, so a frame re-renders only nodes
-// that are new or repositioned. The caller holds t.mu. See
+// treeNodeLines renders one node's display lines: the one-row header
+// and, when expanded, the full content starting on the row below the
+// header. The collapsed header carries the first content line as its
+// preview; the expanded header drops the preview, so the content —
+// first line included — always begins on the next row. Body lines wrap
+// at the pane width instead of truncating. Wrapped rows keep the
+// node's depth indent. The second result reports the node's
+// expandability at this width: multi-line content, or a collapsed
+// header truncated on non-empty content. Lines are cached per width,
+// depth, shade, expansion, and alignment, so a frame re-renders only
+// nodes that are new or repositioned. The caller holds t.mu. See
 // TheoryOfTreeTab.
-func (t *TUI) treeNodeLines(n *tree.Node, depth int, shade taiui.Color, contentWidth int, options displaywidth.Options, align treeAlignments) []taiui.Line {
+func (t *TUI) treeNodeLines(n *tree.Node, depth int, shade taiui.Color, contentWidth int, options displaywidth.Options, align treeAlignments) ([]taiui.Line, bool) {
 	expanded := t.treeTab.expanded[n.Name]
 	nameWidth := align.nameWidths[depth]
 	metaWidth := align.metaWidths[depth]
 	if c, ok := t.treeTab.cache[n.Name]; ok &&
 		c.width == contentWidth && c.depth == depth && c.shade == shade && c.expanded == expanded &&
 		c.nameWidth == nameWidth && c.metaWidth == metaWidth {
-		return c.lines
+		return c.lines, c.expandable
 	}
 	elapsed := time.Since(t.startTime)
 	if !n.InsertTime.After(t.startTime) {
@@ -419,9 +481,29 @@ func (t *TUI) treeNodeLines(n *tree.Node, depth int, shade taiui.Color, contentW
 	timerZone := timerWidth + 1
 
 	header := treeHeaderText(n, expanded, options, nameWidth, metaWidth)
-	body := treeBodyLines(n)
-	if !expanded {
-		body = nil
+	collapsedHeader := header
+	if expanded {
+		collapsedHeader = treeHeaderText(n, false, options, nameWidth, metaWidth)
+	}
+	first := treeFirstLine(n)
+	bodyBase := treeBodyLines(n)
+	// Expandability measures the collapsed one-line form at the width
+	// the collapsed row renders into: the expanded header carries no
+	// content, so its own truncation says nothing about hidden
+	// content. See TheoryOfTreeTab.
+	measureWidth := wrapWidth
+	if wrapWidth > timerZone {
+		measureWidth = wrapWidth - timerZone
+	}
+	expandable := treeNodeExpandable(n) ||
+		(options.String(collapsedHeader) > measureWidth && first != "")
+	var body []string
+	if expanded && first != "" {
+		// The content starts on the row below the header: the body
+		// carries the full content, first line included. See
+		// TheoryOfTreeTab.
+		body = append(body, first)
+		body = append(body, bodyBase...)
 	}
 	lines := make([]taiui.Line, 0, 1+len(body))
 	if wrapWidth > timerZone {
@@ -449,20 +531,25 @@ func (t *TUI) treeNodeLines(n *tree.Node, depth int, shade taiui.Color, contentW
 		})
 	}
 	for _, line := range body {
-		lines = append(lines, taiui.Line{
-			Text:    indent + displaywidth.TruncateString(line, wrapWidth, "…"),
-			Color:   color,
-			BGColor: shade,
-		})
+		// Body lines wrap at the pane width instead of truncating, so
+		// the expanded display carries the full content.
+		wrapped := taiui.WrapLinesColored([]taiui.Line{{Text: line, Color: color, BGColor: shade}}, wrapWidth)
+		for _, w := range wrapped {
+			lines = append(lines, taiui.Line{
+				Text:    indent + w.Text,
+				Color:   w.Color,
+				BGColor: w.BGColor,
+			})
+		}
 	}
 	if t.treeTab.cache == nil {
 		t.treeTab.cache = make(map[string]treeCached)
 	}
 	t.treeTab.cache[n.Name] = treeCached{
 		width: contentWidth, depth: depth, shade: shade, expanded: expanded,
-		nameWidth: nameWidth, metaWidth: metaWidth, lines: lines,
+		nameWidth: nameWidth, metaWidth: metaWidth, expandable: expandable, lines: lines,
 	}
-	return lines
+	return lines, expandable
 }
 
 // treeNodeAtRow returns the node whose recorded row range contains
@@ -504,26 +591,33 @@ func (t *TUI) toggleTreeNodeAtRow(row int) {
 
 // toggleTreeNodeByName flips one node's expansion, lazily creating
 // the expansion map, because a click can arrive before any setTree
-// call initialized it. See TheoryOfTreeTab.
+// call initialized it. Expanding the node scrolls the view to its
+// first display row, so the expanded content opens at its beginning;
+// every expansion path routes through this method, so the invariant
+// cannot regress. Collapsing never scrolls. The caller holds t.mu.
+// See TheoryOfTreeTab.
 func (t *TUI) toggleTreeNodeByName(name string) {
 	if t.treeTab.expanded == nil {
 		t.treeTab.expanded = make(map[string]bool)
 	}
-	t.treeTab.expanded[name] = !t.treeTab.expanded[name]
+	wasExpanded := t.treeTab.expanded[name]
+	t.treeTab.expanded[name] = !wasExpanded
+	if !wasExpanded {
+		t.scrollToTreeNode(name)
+	}
 }
 
 // toggleLastTreeExpandable expands or collapses the last expandable
 // node of the session tree in depth-first order — typically the latest
 // handoff or completion summary — so Enter works on the most recent
-// collapsed body without a cursor. See TheoryOfTreeTab.
+// collapsed body without a cursor. The flip routes through
+// toggleTreeNodeByName, so expanding scrolls the view to the node's
+// first display row. See TheoryOfTreeTab.
 func (t *TUI) toggleLastTreeExpandable() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.treeView == nil {
 		return
-	}
-	if t.treeTab.expanded == nil {
-		t.treeTab.expanded = make(map[string]bool)
 	}
 	var last string
 	var walk func(n *tree.Node)
@@ -539,7 +633,67 @@ func (t *TUI) toggleLastTreeExpandable() {
 		walk(c)
 	}
 	if last != "" {
-		t.treeTab.expanded[last] = !t.treeTab.expanded[last]
+		t.toggleTreeNodeByName(last)
+	}
+}
+
+// collapseAllTreeNodes toggles the c key's fold of the tree nodes,
+// mirroring collapseAllSections's two states: when not every node is
+// collapsed, it snapshots the expanded nodes, folds every node to its
+// one-line header, and scrolls the view to the top, so the collapsed
+// header list starts at the row below the title; when every node is
+// collapsed, it restores the nodes the last fold had expanded. Nodes
+// that arrive after the snapshot keep the default collapsed form on
+// restore. A manual expand breaks the all-collapsed state, so the next
+// press folds and re-snapshots rather than restoring. See
+// TheoryOfTreeTab and TheoryOfOutputControls.
+func (t *TUI) collapseAllTreeNodes() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.treeView == nil {
+		return
+	}
+	expanded := make(map[string]bool)
+	allCollapsed := true
+	var walk func(n *tree.Node)
+	walk = func(n *tree.Node) {
+		// The expansion map is the authority, not the multi-line
+		// predicate: a node whose one-line header truncates at the
+		// pane width is expandable in the display too, and a manual
+		// expand of it must break the all-collapsed state like any
+		// other expand.
+		if t.treeTab.expanded[n.Name] {
+			expanded[n.Name] = true
+			allCollapsed = false
+		}
+		for _, c := range n.Children() {
+			walk(c)
+		}
+	}
+	for _, c := range t.treeView.Root().Children() {
+		walk(c)
+	}
+	if allCollapsed && t.treeTab.collapseAllSaved != nil {
+		// Restore the nodes the last fold had expanded. The snapshot
+		// carries only expanded entries, so nodes that arrived after
+		// it keep the default collapsed form.
+		t.treeTab.expanded = make(map[string]bool)
+		for name := range t.treeTab.collapseAllSaved {
+			t.treeTab.expanded[name] = true
+		}
+		return
+	}
+	// Fold branch: snapshot the currently expanded nodes, fold
+	// everything, and scroll the view to the top, so the collapsed
+	// header list starts at the row below the title.
+	t.treeTab.collapseAllSaved = expanded
+	if len(expanded) > 0 {
+		t.treeTab.expanded = make(map[string]bool)
+		box := t.tabs.Boxes(t.width, t.height)[1]
+		if box.Width() > 0 && box.Height() > 0 {
+			t.scrolls[1].Offset = 0
+			t.scrolls[1].Follow = false
+		}
 	}
 }
 
@@ -567,26 +721,22 @@ type treeControlRow struct {
 	row  int
 }
 
-// treeNodeControls returns the controls of a tree node. An expandable
-// node (multi-line content) carries the fold toggle, its glyph
-// following the node's expansion; a single-line node carries no
-// control. See TheoryOfTreeTab.
-func (t *TUI) treeNodeControls(n *tree.Node) []outputControl {
-	if !treeNodeExpandable(n) {
-		return nil
+// treeFoldGlyph returns the status column's fold glyph of a node: ▾
+// while expanded, ▸ while collapsed. See TheoryOfTreeTab.
+func treeFoldGlyph(expanded bool) string {
+	if expanded {
+		return sectionGlyphExpanded
 	}
-	glyph := sectionGlyphExpanded
-	if !t.treeTab.expanded[n.Name] {
-		glyph = sectionGlyphCollapsed
-	}
-	return []outputControl{{Glyph: glyph}}
+	return sectionGlyphCollapsed
 }
 
 // treeControlRows computes the status column's rows for the current
 // view: one row per expandable node with a visible display row,
 // pinned to the node's first display row or the viewport top when
-// that row scrolled above it. Nodes occupy disjoint row ranges, so
-// two controls never pin to the same row. The caller holds t.mu. See
+// that row scrolled above it. Expandability is the node's recorded
+// row-range fact: multi-line content, or a header truncated at the
+// rendering width. Nodes occupy disjoint row ranges, so two controls
+// never pin to the same row. The caller holds t.mu. See
 // TheoryOfTreeTab.
 func (t *TUI) treeControlRows(box taiui.Box, display []taiui.Line, offset int) []treeControlRow {
 	if t.treeView == nil {
@@ -595,8 +745,7 @@ func (t *TUI) treeControlRows(box taiui.Box, display []taiui.Line, offset int) [
 	paneHeight := t.tuiPaneHeight(1, box)
 	var rows []treeControlRow
 	for _, r := range t.treeTab.rows {
-		n, ok := t.treeView.Node(r.name)
-		if !ok || !treeNodeExpandable(n) {
+		if !r.expandable {
 			continue
 		}
 		if r.endRow <= offset || r.startRow >= offset+paneHeight {
@@ -639,11 +788,7 @@ func (t *TUI) toggleTreeControlAtClick(x, y int) bool {
 		if row.row != y {
 			continue
 		}
-		wasCollapsed := !t.treeTab.expanded[row.name]
 		t.toggleTreeNodeByName(row.name)
-		if wasCollapsed {
-			t.scrollToTreeNode(row.name)
-		}
 		return true
 	}
 	return false
