@@ -8,24 +8,24 @@ require (
 	github.com/clipperhouse/displaywidth v0.11.0
 	github.com/clipperhouse/uax29/v2 v2.7.0
 	github.com/gabriel-vasile/mimetype v1.4.15
-	github.com/gdamore/tcell/v3 v3.4.1
-	github.com/odvcencio/gotreesitter v0.51.0
+	github.com/gdamore/tcell/v3 v3.4.2
+	github.com/odvcencio/gotreesitter v0.52.0
 	github.com/peterh/liner v1.2.2
-	github.com/reusee/dscope v0.0.0-20260814165321-0a2c0c68a1b3
+	github.com/reusee/dscope v0.0.0-20260831074023-db3d000fd165
 	github.com/reusee/e5 v0.0.0-20240926110821-c066ba825104
 	github.com/reusee/prompts v0.0.0-20260902140510-802ff9b6c4fd
 	github.com/reusee/starlarkutil v0.0.0-20250731094927-719b21b7d2d5
 	github.com/samber/slog-multi v1.8.0
 	github.com/systemd/slog-journal v0.1.2
 	github.com/tiktoken-go/tokenizer v0.8.1
-	go.starlark.net v0.0.0-20260708150628-5395d018f003
-	golang.org/x/net v0.57.0
+	go.starlark.net v0.0.0-20260904161901-6ecada49e42f
+	golang.org/x/net v0.58.0
 	golang.org/x/sys v0.47.0
 	golang.org/x/term v0.45.0
-	golang.org/x/tools v0.47.0
-	google.golang.org/genai v1.66.0
-	modernc.org/sqlite v1.34.5
-	mvdan.cc/sh/v3 v3.13.1
+	golang.org/x/tools v0.48.0
+	google.golang.org/genai v1.71.0
+	modernc.org/sqlite v1.58.0
+	mvdan.cc/sh/v3 v3.14.0
 )
 
 require (
@@ -48,11 +48,11 @@ require (
 	github.com/googleapis/enterprise-certificate-proxy v0.3.15 // indirect
 	github.com/googleapis/gax-go/v2 v2.22.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
-	github.com/lucasb-eyer/go-colorful v1.4.0 // indirect
-	github.com/mattn/go-isatty v0.0.20 // indirect
+	github.com/lucasb-eyer/go-colorful v1.4.1 // indirect
+	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/mattn/go-runewidth v0.0.19 // indirect
 	github.com/mitchellh/go-wordwrap v1.0.1 // indirect
-	github.com/ncruces/go-strftime v0.1.9 // indirect
+	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/pelletier/go-toml/v2 v2.3.1 // indirect
 	github.com/protocolbuffers/txtpbfmt v0.0.0-20260420112717-c39628bde8b5 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
@@ -66,15 +66,15 @@ require (
 	go.opentelemetry.io/otel/metric v1.43.0 // indirect
 	go.opentelemetry.io/otel/trace v1.43.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
-	golang.org/x/crypto v0.54.0 // indirect
+	golang.org/x/crypto v0.55.0 // indirect
 	golang.org/x/mod v0.38.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
-	golang.org/x/text v0.40.0 // indirect
+	golang.org/x/text v0.41.0 // indirect
 	google.golang.org/api v0.278.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260427160629-7cedc36a6bc4 // indirect
 	google.golang.org/grpc v1.82.1 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
-	modernc.org/libc v1.55.3 // indirect
-	modernc.org/mathutil v1.6.0 // indirect
-	modernc.org/memory v1.8.0 // indirect
+	modernc.org/libc v1.75.6 // indirect
+	modernc.org/mathutil v1.7.1 // indirect
+	modernc.org/memory v1.12.1 // indirect
 )
