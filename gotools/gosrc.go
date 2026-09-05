@@ -37,10 +37,9 @@ The block body is opaque to the mechanism. GoSrcBlockSystemPrompt is
 itself the theory text for the body's symbol grammar (the go doc name
 form, package qualifiers, receiver prefixes, generic parameter lists, and
 the case rule), for package-reference resolution, and for the
-resolution-result contract (prefer the full import path as the qualifier,
-use the defining file path in change blocks, and the in-memory snapshot
-that never re-reads the disk); none of it is repeated here. The resolution
-mechanism is documented in TheoryOfGoSrcResolution.
+resolution-result contract (prefer the full import path as the qualifier
+and use the defining file path in change blocks); none of it is repeated
+here. The resolution mechanism is documented in TheoryOfGoSrcResolution.
 
 The go-test and go-src mechanisms are Go-specific, so they live in this
 package together with the resolver (ResolveGoSymbols, which needs the
@@ -78,7 +77,6 @@ Use the "go-src" kind to request the source code of Go symbols that were not ful
 - Each resolved source part is followed by a references report: a "begin of references" block listing which top-level declarations reference the symbol, one per line as "package path: enclosing top-level declaration (file)", deduplicated per top-level declaration, and never truncated. Use it to judge the complete blast radius and find every caller before changing the symbol.
 - Each resolved source part is followed by a selector packages report: a "begin of selector packages" block listing the full import paths of packages used in selector expressions within the declaration, deduplicated and sorted. Use these paths as package qualifiers in follow-up go-src blocks without scanning the import block.
 - Fetching a named type or interface adds an interface relations report: a "begin of interface relations" block listing "satisfies pkg.I" lines (interfaces a concrete type fulfills via its value or pointer method set) or "implemented by pkg.N" / "implemented by *pkg.N" lines (loaded concrete types implementing a fetched interface; the leading * marks a pointer-only method set). Polymorphism is invisible in plain source text: use the report to jump between an interface and its implementations in one step.
-- go-src resolves against an in-memory snapshot of the files loaded when the context was assembled; it does not re-read the disk. A file modified by change blocks during this session still yields its pre-modification content when the same symbol is fetched again. Verify applied changes with go-test blocks or by reading the file from disk (e.g., cat), not by re-fetching with go-src.
 - Do not emit change blocks whose content depends on the requested source: request the source first, then emit changes in a subsequent response after the source is provided.
 - After the last go-src block's closing line, emit the summary block IMMEDIATELY, then end the response and wait: the source arrives as user content in the next round.
 - Close the go-src block with its closing line before emitting any other block (e.g., the summary block).

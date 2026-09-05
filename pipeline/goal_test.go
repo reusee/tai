@@ -700,6 +700,9 @@ func TestGoalSystemPromptContent(t *testing.T) {
 	if strings.Contains(GoalSystemPrompt, "<<DELIMITER") {
 		t.Fatal("GoalSystemPrompt must not display the literal template marker")
 	}
+	if strings.Contains(GoalSystemPrompt, "Re-read files to verify") {
+		t.Fatal("GoalSystemPrompt must not instruct the model to verify disk state: an accepted change block is treated as written, and the next loop reads the current filesystem state")
+	}
 }
 
 func TestGoalSystemPromptEconomizesRounds(t *testing.T) {

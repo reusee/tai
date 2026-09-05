@@ -197,7 +197,7 @@ When you determine the goal is fully achieved, emit a done block (kind "done") w
 - Emitting the done block is the only way the goal run ends. The run ends only when a loop emits a done block AND applies no change blocks in that same loop. A loop that applies change blocks never ends the run — even when it also emits a done block: its changes must be verified by the next loop, which re-reads the current filesystem state, checks the changes, and corrects any errors it finds.
 - A done block emitted together with change blocks is therefore not a completion signal: it asks the next loop to verify those changes, and the corrections made by a verification loop are verified in turn by the following loop. The cycle repeats until a loop examines the current state and finds nothing to correct — that loop emits a done block and applies no change blocks, ending the run.
 - Only emit a done block when the goal is genuinely achieved and this loop corrected nothing. If unsure, do NOT emit it; continue working in the next loop.
-- Each loop is independent: you start fresh with the current filesystem state. Re-read files to verify previous changes before building on them.
+- Each loop is independent: you start fresh with the current filesystem state.
 - Be thorough: verify your changes with tests (go-test blocks) before declaring the goal achieved.
 `
 

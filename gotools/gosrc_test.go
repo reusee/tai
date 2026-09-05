@@ -62,12 +62,14 @@ func TestGoSrcPromptsEncourageBatchFetch(t *testing.T) {
 	}
 }
 
-func TestGoSrcPromptsDescribeSnapshotAndFilePath(t *testing.T) {
-	// The go-src prompt must teach three facts about resolution results:
-	// prefer the import-path qualifier, the resolved source names the
-	// defining file (usable as a change block file-path), and resolution
-	// reads an in-memory snapshot that does not reflect change blocks
-	// applied during the session. See TheoryOfGoSrcBlocks.
+func TestGoSrcPromptsDescribeResultsAndFilePath(t *testing.T) {
+	// The go-src prompt teaches two facts about resolution results:
+	// prefer the import-path qualifier, and the resolved source names the
+	// defining file (usable as a change block file-path). The prompt must
+	// not teach the in-memory snapshot or any disk-verification action:
+	// an accepted change block is treated as written to disk, and the
+	// next loop reads the current filesystem state. See
+	// TheoryOfGoSrcBlocks and TheoryOfGoSrcResolution.
 	prompt := GoSrcBlockSystemPrompt
 	if !strings.Contains(prompt, "full import path") {
 		t.Fatal("GoSrcBlockSystemPrompt does not recommend the import-path qualifier")
@@ -75,8 +77,11 @@ func TestGoSrcPromptsDescribeSnapshotAndFilePath(t *testing.T) {
 	if !strings.Contains(prompt, "file-path") {
 		t.Fatal("GoSrcBlockSystemPrompt does not describe the defining file usage")
 	}
-	if !strings.Contains(prompt, "does not re-read") {
-		t.Fatal("GoSrcBlockSystemPrompt does not describe the snapshot semantics")
+	if strings.Contains(prompt, "in-memory snapshot") {
+		t.Fatal("GoSrcBlockSystemPrompt must not expose the snapshot semantics")
+	}
+	if strings.Contains(prompt, "Verify applied changes") {
+		t.Fatal("GoSrcBlockSystemPrompt must not instruct disk verification")
 	}
 }
 
