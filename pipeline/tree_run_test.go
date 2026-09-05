@@ -100,6 +100,190 @@ func TestRunAttemptNodesUnderAttemptNode(t *testing.T) {
 	})
 }
 
+// TestRunFeedbackUserNodeJoinsNextAttempt verifies the user-prompt
+// placement rule: a round-triggering feedback (program author) is the
+// user input the NEXT attempt consumes, so its node joins that
+// attempt's node, not the attempt that produced it. See
+// TheoryOfSessionTree.
+func TestRunFeedbackUserNodeJoinsNextAttempt(t *testing.T) {
+	withRun(t, func(run Run) {
+		callCount := 0
+		phaseBuilder := func(g generators.Generator) generators.Phase {
+			callCount++
+			if callCount == 1 {
+				return appendPhase("<<龘靐 shell\necho hello\n龘靐\n<<贞观 summary\nRound 1 done.\n贞观\n")
+			}
+			return appendPhase("<<贞观 summary\nDone.\n贞观\n")
+		}
+		comps := components.ComponentSet{
+			{
+				Kind: "shell",
+				Process: func(ctx context.Context, pctx *components.ProcessContext) components.ProcessResult {
+					return components.ProcessResult{
+						Parts: []generators.Part{generators.Text("shell output")},
+					}
+				},
+			},
+		}
+		result, err := runOnce(run, RunOptions{
+			Generator:    nil,
+			InitialState: generators.NewPrompts("", nil),
+			Components:   comps,
+			PhaseBuilder: phaseBuilder,
+			HTTPClient:   nets.HTTPClient{},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if callCount != 2 {
+			t.Fatalf("expected 2 generations, got %d", callCount)
+		}
+		tr := result.SessionTree
+		attempts := tr.ByType(tree.TypeAttempt)
+		if len(attempts) != 2 {
+			t.Fatalf("expected two attempt nodes, got %d", len(attempts))
+		}
+		feedback, ok := tr.Node("user-1")
+		if !ok {
+			t.Fatal("expected the feedback user node in the tree")
+		}
+		if feedback.Author != tree.AuthorProgram {
+			t.Fatalf("the feedback node must carry the program author, got %q", feedback.Author)
+		}
+		if feedback.Parent != attempts[1].Name {
+			t.Fatalf("the feedback user node must hang under the attempt that consumes it, got parent %q", feedback.Parent)
+		}
+		// The run carries no initial input, so the first attempt — the
+		// one that produced the feedback — carries no user node.
+		for _, child := range attempts[0].Children() {
+			if child.Type == tree.TypeUser {
+				t.Fatalf("the first attempt must carry no user node, got %+v", child)
+			}
+		}
+	})
+}
+
+// TestRunRetryFeedbackUserNodeJoinsRetryAttempt verifies the user-prompt
+// placement rule for the retry path: the retry feedback carrying the
+// handoff-extracted prompt (program author) is the user input the RETRY
+// attempt consumes, so its node joins the retry attempt's node, not the
+// truncated attempt that produced it. See TheoryOfSessionTree.
+func TestRunRetryFeedbackUserNodeJoinsRetryAttempt(t *testing.T) {
+	withRun(t, func(run Run) {
+		callCount := 0
+		phaseBuilder := func(g generators.Generator) generators.Phase {
+			callCount++
+			if callCount == 1 {
+				// No summary block: the attempt is truncated and retried,
+				// and the fake Handoff supplies the retry prompt.
+				return appendPhase("partial output")
+			}
+			return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
+		}
+		result, err := runOnce(run, RunOptions{
+			Generator:                nil,
+			InitialState:             generators.NewPrompts("", nil),
+			PhaseBuilder:             phaseBuilder,
+			RetryOnMissingCompletion: true,
+			Handoff: func(string) (*Handoff, error) {
+				return &Handoff{Summary: "handoff summary", Prompt: "handoff prompt"}, nil
+			},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if callCount != 2 {
+			t.Fatalf("expected 2 attempts, got %d", callCount)
+		}
+		tr := result.SessionTree
+		attempts := tr.ByType(tree.TypeAttempt)
+		if len(attempts) != 2 {
+			t.Fatalf("expected two attempt nodes, got %d", len(attempts))
+		}
+		node, ok := tr.Node("user-1")
+		if !ok {
+			t.Fatal("expected the retry feedback user node in the tree")
+		}
+		if node.Author != tree.AuthorProgram {
+			t.Fatalf("the retry feedback node must carry the program author, got %q", node.Author)
+		}
+		if node.Parent != attempts[1].Name {
+			t.Fatalf("the retry feedback user node must hang under the retry attempt that consumes it, got parent %q", node.Parent)
+		}
+		// The truncated attempt — the one that produced the feedback —
+		// carries no user node.
+		for _, child := range attempts[0].Children() {
+			if child.Type == tree.TypeUser {
+				t.Fatalf("the truncated attempt must carry no user node, got %+v", child)
+			}
+		}
+	})
+}
+
+// TestRunChatPhaseUserNodeJoinsAttempt verifies the user-prompt
+// placement rule for the chat phase: the chat phase reads the user's
+// input inside the phase chain and returns the generate phase, so the
+// input is consumed inside the SAME attempt — its node joins the
+// current attempt node, not a later one. See TheoryOfSessionTree.
+func TestRunChatPhaseUserNodeJoinsAttempt(t *testing.T) {
+	withRun(t, func(run Run) {
+		generateCount := 0
+		var generatePhase, chatPhase generators.Phase
+		chatPhase = func(ctx context.Context, state generators.State) (generators.Phase, generators.State, error) {
+			newState, err := state.AppendContent(&generators.Content{
+				Role:  generators.RoleUser,
+				Parts: []generators.Part{generators.Text("typed line\n\n")},
+			})
+			if err != nil {
+				return nil, state, err
+			}
+			return generatePhase, newState, nil
+		}
+		generatePhase = func(ctx context.Context, state generators.State) (generators.Phase, generators.State, error) {
+			generateCount++
+			newState, err := state.AppendContent(&generators.Content{
+				Role:  generators.RoleAssistant,
+				Parts: []generators.Part{generators.Text("<<贞观 summary\nDone.\n贞观\n")},
+			})
+			if err != nil {
+				return nil, state, err
+			}
+			if generateCount == 1 {
+				return chatPhase, newState, nil
+			}
+			return nil, newState, nil
+		}
+		result, err := runOnce(run, RunOptions{
+			Generator:    nil,
+			InitialState: generators.NewPrompts("", nil),
+			PhaseBuilder: func(g generators.Generator) generators.Phase {
+				return generatePhase
+			},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if generateCount != 2 {
+			t.Fatalf("expected 2 generate passes inside one attempt, got %d", generateCount)
+		}
+		tr := result.SessionTree
+		attempts := tr.ByType(tree.TypeAttempt)
+		if len(attempts) != 1 {
+			t.Fatalf("expected one attempt node, got %d", len(attempts))
+		}
+		node, ok := tr.Node("user-1")
+		if !ok {
+			t.Fatal("expected a user node recorded from the chat phase input")
+		}
+		if node.Author != tree.AuthorUser {
+			t.Fatalf("the chat input node must carry the user author, got %q", node.Author)
+		}
+		if node.Parent != attempts[0].Name {
+			t.Fatalf("the chat input must hang under the attempt that consumes it, got parent %q", node.Parent)
+		}
+	})
+}
+
 func TestWriteBlockNodesCollectedAndHandled(t *testing.T) {
 	base, respName, err := tree.New().WriteAuto("root", "model", tree.TypeModel, tree.AuthorModel, "resp")
 	if err != nil {
@@ -636,6 +820,12 @@ func TestRecordIdleUserInput(t *testing.T) {
 		{Role: generators.RoleUser, Parts: []generators.Part{generators.Text("typed line")}},
 	})
 	ls.recordIdleUserInput(state, 0)
+	// The input is queued: it joins the attempt node that consumes it,
+	// written when the attempt opens. See TheoryOfSessionTree.
+	if _, ok := ls.sessionTree.Node("user-1"); ok {
+		t.Fatal("the queued input must not join the tree before an attempt opens")
+	}
+	ls.writeEventNode(tree.TypeAttemptStart, "attempt 1 start")
 	node, ok := ls.sessionTree.Node("user-1")
 	if !ok {
 		t.Fatal("expected a user node recorded from the idle handler's delta")
@@ -643,9 +833,14 @@ func TestRecordIdleUserInput(t *testing.T) {
 	if node.Author != tree.AuthorUser || node.Content != "typed line" {
 		t.Fatalf("unexpected user node: %+v", node)
 	}
+	attempt, ok := ls.sessionTree.Node("attempt-1")
+	if !ok || node.Parent != attempt.Name {
+		t.Fatalf("the idle input must hang under the attempt node that consumes it, got parent %q", node.Parent)
+	}
 
 	// An empty delta records nothing.
 	ls.recordIdleUserInput(state, 1)
+	ls.writeEventNode(tree.TypeAttemptStart, "attempt 2 start")
 	if _, ok := ls.sessionTree.Node("user-2"); ok {
 		t.Fatal("an empty delta must not record a user node")
 	}

@@ -340,15 +340,19 @@ type loopState struct {
 	// TheoryOfSessionTree.
 	currentResponse string
 	// currentAttempt names the session-tree node of the attempt being
-	// executed; the attempt's response, summaries, blocks, errors,
-	// events, feedback, and idle input hang under it. Written at each
-	// attempt's start, before the attempt's first node. See
+	// executed; the attempt's response, summaries, blocks, errors, and
+	// events hang under it, together with the user prompts the attempt
+	// consumes (the queued inputs flushed when it opens). Written at
+	// each attempt's start, before the attempt's first node. See
 	// TheoryOfSessionTree.
 	currentAttempt string
-	// pendingInitialUser carries the run's initial user input until the
-	// first attempt node opens, where it is written as the input's
-	// message/user node. See TheoryOfSessionTree.
-	pendingInitialUser string
+	// pendingUserInputs queues the user-prompt nodes of requests not
+	// yet made: the run's initial input, plus every round feedback and
+	// idle input produced after an attempt. Each entry joins the
+	// attempt node that consumes it, written when the attempt opens;
+	// inputs still queued when the run ends join the session parent.
+	// See TheoryOfSessionTree.
+	pendingUserInputs []pendingUserInput
 	// namingErrs holds the latest attempt's session-tree naming errors,
 	// consumed by the shared block-correction decision and cleared
 	// after it. See TheoryOfSessionTree and TheoryOfUnknownBlockKinds.
@@ -539,6 +543,17 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 			}
 		} else {
 			phaseState = wrappedState
+		}
+
+		// The chat phase reads the user's input inside the phase chain
+		// and the same attempt's next generate pass consumes it, so the
+		// input's node joins the CURRENT attempt — the one that consumes
+		// it — not a later one. The delta cannot double-record a queued
+		// input: the initial input and every round feedback precede the
+		// attempt's base, and the idle handler appends after the phase
+		// chain ends. See TheoryOfSessionTree.
+		if text := extractUserTextsSince(phaseState, attemptBase); text != "" {
+			ls.writeAttemptUserInput(text)
 		}
 
 		// The attempt's finish reason feeds both the session tree —
@@ -1256,8 +1271,10 @@ func (ls *loopState) endOnDiskChange(err error, phaseState generators.State, att
 
 // finishWithError fills the result with the final state and yields the
 // terminal error, ending the run. The caller must return immediately
-// after the call.
+// after the call. User-prompt inputs still queued join the session
+// parent, keeping the record complete. See TheoryOfSessionTree.
 func (ls *loopState) finishWithError(err error, finalState generators.State) {
+	ls.writePendingUserInputs(ls.sessionParent())
 	ls.result.FinalState = finalState
 	ls.result.RemainingBlocks = ls.remainingBlocks
 	ls.result.ParseErrors = ls.uncorrectedParseErrors
@@ -1279,8 +1296,11 @@ func (ls *loopState) finishWithError(err error, finalState generators.State) {
 }
 
 // finish fills the result with the final state and ends the run without
-// an error.
+// an error. User-prompt inputs still queued — a feedback or idle input
+// no attempt consumed because the run ended — join the session parent,
+// keeping the record complete. See TheoryOfSessionTree.
 func (ls *loopState) finish(finalState generators.State, finalBlocks []blocks.Block) {
+	ls.writePendingUserInputs(ls.sessionParent())
 	ls.result.FinalState = finalState
 	ls.result.RemainingBlocks = finalBlocks
 	ls.result.ParseErrors = ls.uncorrectedParseErrors
@@ -1643,7 +1663,12 @@ func (Module) Run(
 				ls.sessionRoot = "root"
 			}
 			ls.sessionTree = writeInitialSystemNode(ls.sessionTree, ls.sessionRoot, opts.InitialState)
-			ls.pendingInitialUser = initialUserText(opts.InitialState)
+			// The initial user input is the first queued user prompt: it
+			// joins the first attempt node when the attempt opens. See
+			// TheoryOfSessionTree.
+			if text := initialUserText(opts.InitialState); text != "" {
+				ls.pendingUserInputs = append(ls.pendingUserInputs, pendingUserInput{author: tree.AuthorUser, content: text})
+			}
 			// The initial tree — the system node under the session root —
 			// is yielded before the first generation, so a consumer
 			// renders the session from its first pull. See

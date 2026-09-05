@@ -50,9 +50,12 @@ the model never sees the loop's own bookkeeping.
 
 The attempt is the loop's bookkeeping unit: one pass through the
 phase chain, and one attempt structure node in the tree — the
-attempt's events, response, summaries, blocks, errors, feedback, and
-idle input hang under it, while the session's system and initial user
-nodes stay the attempt nodes' siblings. Attempt numbering is
+attempt's events, response, summaries, blocks, and errors hang under
+it, together with the user prompts the attempt consumes: the initial
+input on the first attempt, the previous round's feedback and idle
+input queued since the previous attempt opened, and the chat phase's
+input consumed inside the attempt's own phase chain. The session's
+system node stays the attempt nodes' sibling. Attempt numbering is
 session-wide within one run — retries and the attempts of
 component-triggered generations and idle-handler inputs continue the
 sequence instead of restarting at 1 — and the attempt number appears
@@ -104,11 +107,12 @@ observes during the run.
 // unique by AutoName, so typed event nodes keep their historical
 // names. The node hangs under the current attempt node: the
 // attempt's occurrences are its record. An attempt-start event opens
-// the attempt's structure node first and writes the initial user
-// input under it, so the event is the attempt node's first child and
-// the input joins the attempt that consumes it. The node is written
-// even after the consumer has stopped — the tree is the run's record
-// — while the yield is dropped. See TheoryOfLoopEvents.
+// the attempt's structure node first and writes the user prompts the
+// attempt consumes under it, so the event is the attempt node's
+// first child and the inputs join the attempt that consumes them.
+// The node is written even after the consumer has stopped — the tree
+// is the run's record — while the yield is dropped. See
+// TheoryOfLoopEvents.
 func (ls *loopState) writeEventNode(typ tree.Type, content string) {
 	if ls.sessionTree == nil {
 		return
@@ -122,10 +126,12 @@ func (ls *loopState) writeEventNode(typ tree.Type, content string) {
 	}
 	ls.sessionTree = next
 	if typ == tree.TypeAttemptStart {
-		// The initial user input joins the first attempt node, written
-		// right after the attempt opens and before its request. See
+		// The user prompts the attempt consumes — the initial input on
+		// the first attempt, and the feedback and idle input queued
+		// since the previous attempt — join the attempt node, written
+		// right after it opens and before its request. See
 		// TheoryOfSessionTree.
-		ls.writeInitialUserNode()
+		ls.writePendingUserInputs(ls.attemptParent())
 	}
 	ls.emitTree()
 }
@@ -134,10 +140,16 @@ func (ls *loopState) writeEventNode(typ tree.Type, content string) {
 // stops, the iterator contract forbids calling yield again, but the
 // loop's bookkeeping — result filling, recorder calls, EndSession —
 // must still complete, so further yields are dropped instead of sent.
+// A nil yield — a loop state with no consumer, as built directly in
+// tests — is treated as a stopped consumer: the yields are dropped.
 // Returns false once the consumer has stopped. See TheoryOfLoopEvents.
 func (ls *loopState) emitTree() bool {
 	if ls.stopped || ls.sessionTree == nil {
 		return !ls.stopped
+	}
+	if ls.yield == nil {
+		ls.stopped = true
+		return false
 	}
 	if !ls.yield(ls.sessionTree, nil) {
 		ls.stopped = true
@@ -148,11 +160,14 @@ func (ls *loopState) emitTree() bool {
 // emitTerminalTree yields the final (tree, error) pair that ends the
 // run and marks the consumer as stopped, so no further yield is
 // attempted. Like emitTree it is a no-op after the consumer has
-// already stopped. See TheoryOfLoopEvents.
+// already stopped, and a nil yield — no consumer — drops the yield.
+// See TheoryOfLoopEvents.
 func (ls *loopState) emitTerminalTree(err error) {
 	if ls.stopped {
 		return
 	}
 	ls.stopped = true
-	ls.yield(ls.sessionTree, err)
+	if ls.yield != nil {
+		ls.yield(ls.sessionTree, err)
+	}
 }

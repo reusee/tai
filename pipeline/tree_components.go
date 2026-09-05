@@ -34,11 +34,19 @@ immutable tree, and one run owns exactly one tree.
 - Each attempt hangs under one attempt structure node
   (tree.TypeAttempt, program author), written under the session
   parent when the attempt opens: the attempt's events, response,
-  summaries, blocks, errors, feedback, and idle input are its
-  children. The initial user input joins the first attempt node as a
-  message/user node — every message/user hangs under the attempt
-  that consumes it. The system node alone is written before any
-  attempt and stays the attempt nodes' sibling.
+  summaries, blocks, and errors are its children, together with the
+  user prompts the attempt consumes. Every message/user node hangs
+  under the attempt that consumes it: the initial input joins the
+  first attempt node; the round feedback (component, retry, or
+  correction feedback, program author) and the idle handler's input
+  are queued when produced and join the next attempt's node when it
+  opens; and the chat phase's input — consumed inside the same
+  attempt by the phase chain's next generate pass — joins the
+  current attempt node, recorded from the attempt's user-content
+  delta when the phase chain ends. Inputs still queued when the run
+  ends — a feedback no attempt consumed — join the session parent,
+  keeping the record complete. The system node alone is written
+  before any attempt and stays the attempt nodes' sibling.
 - The loop's own bookkeeping joins the same tree as event nodes
   (event-subtype types in Category event, program author) under the
   current attempt node: attempt lifecycle, request parameters, finish
@@ -94,15 +102,16 @@ immutable tree, and one run owns exactly one tree.
   back.
 - Every round-triggering feedback — the component feedback and the
   retry feedback of a truncated or errored attempt — ends with the
-  session-tree outline part, and the feedback content is written as a
-  user node (program author) under the current attempt node. The
-  outline is always the current loop's subtree, rendered from the
-  session root — the loop node for a continued run, the tree root for
-  a fresh one — so each round's feedback volume stays independent of
-  the run's length and of other loops' content. The idle handler's
-  user input is recorded as a user node (user author) under the
-  current attempt node, extracted by content-count delta: only the
-  delta is visible, not the handler's internal loop.
+  session-tree outline part, and the feedback content is queued as a
+  user node (program author) under the next attempt node — the
+  attempt that consumes it. The outline is always the current loop's
+  subtree, rendered from the session root — the loop node for a
+  continued run, the tree root for a fresh one — so each round's
+  feedback volume stays independent of the run's length and of other
+  loops' content. The idle handler's user input is queued as a user
+  node (user author) under the next attempt node, extracted by
+  content-count delta: only the delta is visible, not the handler's
+  internal loop.
 - The handoff input prefixes the incomplete output with the handoff
   subtree: the session's tree projected onto its decision-level nodes
   (every node outside the block and event categories, summary nodes
@@ -724,29 +733,60 @@ func (ls *loopState) recordAttemptTree(
 	return names, deferred
 }
 
-// writeFeedbackInputNode records round feedback as a user node written
-// by the program under the current attempt node. See
-// TheoryOfSessionTree.
-func (ls *loopState) writeFeedbackInputNode(parts []generators.Part) {
-	if ls.sessionTree == nil || len(parts) == 0 {
-		return
-	}
-	if next, _, err := ls.sessionTree.WriteAuto(ls.attemptParent(), "user", tree.TypeUser, tree.AuthorProgram, joinTextParts(parts)); err == nil {
-		ls.sessionTree = next
-	}
+// pendingUserInput is one queued user-prompt node: an input a future
+// attempt consumes, written under that attempt's node when the
+// attempt opens. See TheoryOfSessionTree.
+type pendingUserInput struct {
+	author  tree.Author
+	content string
 }
 
-// recordIdleUserInput records the idle handler's user input as a user
-// node written under the current attempt node, extracted from the
-// contents appended since sinceCount. See TheoryOfSessionTree.
-func (ls *loopState) recordIdleUserInput(state generators.State, sinceCount int) {
-	text := extractUserTextsSince(state, sinceCount)
-	if text == "" || ls.sessionTree == nil {
+// writeFeedbackInputNode queues the round feedback as a pending
+// user-prompt node (program author): the feedback is the user input
+// the NEXT attempt consumes, so its node joins that attempt's node
+// when the attempt opens, not the attempt that produced it. See
+// TheoryOfSessionTree.
+func (ls *loopState) writeFeedbackInputNode(parts []generators.Part) {
+	if len(parts) == 0 {
 		return
 	}
-	if next, _, err := ls.sessionTree.WriteAuto(ls.attemptParent(), "user", tree.TypeUser, tree.AuthorUser, text); err == nil {
-		ls.sessionTree = next
+	ls.pendingUserInputs = append(ls.pendingUserInputs, pendingUserInput{
+		author:  tree.AuthorProgram,
+		content: joinTextParts(parts),
+	})
+}
+
+// recordIdleUserInput queues the idle handler's user input as a
+// pending user-prompt node (user author), extracted from the contents
+// appended since sinceCount: the input is the user prompt the NEXT
+// attempt consumes, so its node joins that attempt's node when the
+// attempt opens. See TheoryOfSessionTree.
+func (ls *loopState) recordIdleUserInput(state generators.State, sinceCount int) {
+	text := extractUserTextsSince(state, sinceCount)
+	if text == "" {
+		return
 	}
+	ls.pendingUserInputs = append(ls.pendingUserInputs, pendingUserInput{
+		author:  tree.AuthorUser,
+		content: text,
+	})
+}
+
+// writeAttemptUserInput writes one user-prompt node (user author)
+// under the current attempt node: the chat phase reads the user's
+// input inside the phase chain and the same attempt's next generate
+// pass consumes it, so the input joins the attempt that consumes it —
+// the current one, not a later attempt. See TheoryOfSessionTree.
+func (ls *loopState) writeAttemptUserInput(content string) {
+	if ls.sessionTree == nil || content == "" {
+		return
+	}
+	next, _, err := ls.sessionTree.WriteAuto(ls.attemptParent(), "user", tree.TypeUser, tree.AuthorUser, content)
+	if err != nil {
+		return
+	}
+	ls.sessionTree = next
+	ls.emitTree()
 }
 
 // sessionParent names the node under which this session writes its own
@@ -792,19 +832,24 @@ func (ls *loopState) writeAttemptNode() {
 	ls.emitTree()
 }
 
-// writeInitialUserNode writes the run's initial user input as a
-// message/user node under the current attempt node — the attempt that
-// consumes it — and clears the pending text, so only the first
-// attempt carries it. An empty pending text writes nothing. See
-// TheoryOfSessionTree.
-func (ls *loopState) writeInitialUserNode() {
-	if ls.pendingInitialUser == "" || ls.sessionTree == nil {
+// writePendingUserInputs writes the queued user-prompt nodes under
+// parent — the attempt node that consumes them when called at attempt
+// open, the session parent when the run ends — and clears the queue.
+// A failed write keeps the remaining inputs queued for the next
+// attempt. See TheoryOfSessionTree.
+func (ls *loopState) writePendingUserInputs(parent string) {
+	if ls.sessionTree == nil {
 		return
 	}
-	if next, _, err := ls.sessionTree.WriteAuto(ls.attemptParent(), "user", tree.TypeUser, tree.AuthorUser, ls.pendingInitialUser); err == nil {
+	for i, input := range ls.pendingUserInputs {
+		next, _, err := ls.sessionTree.WriteAuto(parent, "user", tree.TypeUser, input.author, input.content)
+		if err != nil {
+			ls.pendingUserInputs = ls.pendingUserInputs[i:]
+			return
+		}
 		ls.sessionTree = next
-		ls.pendingInitialUser = ""
 	}
+	ls.pendingUserInputs = nil
 }
 
 // recordAttemptErrorNodes writes the attempt's unprocessable output as
