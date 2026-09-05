@@ -47,7 +47,11 @@ Tree tab theory (cmd/tai):
   single-line node is expandable through the fold column instead.
   Expandability always measures the collapsed form — the index row
   whose truncation hides content — because the expanded header
-  carries no content.
+  carries no content. Content is normalized before every view:
+  leading blank lines are dropped, because prompt constants
+  conventionally begin with a newline after the Go raw-string
+  backtick, so the preview, the ⤷ hint count, and the expanded body
+  all derive from the first non-blank line and stay consistent.
 - The tab is a four-column layout: the category/type column (the
   depth indent plus the category and type fragments), the fold
   column, the content column, and the right-aligned time column. The
@@ -256,34 +260,41 @@ func attemptNumberOf(content string) (int, bool) {
 	return 0, false
 }
 
-// treeBodyLines returns the node's content lines after the first: the
-// body a collapsed node hides. A single-line content yields no body.
-// See TheoryOfTreeTab.
-func treeBodyLines(n *tree.Node) []string {
-	content := strings.TrimRight(n.Content, "\n")
-	if content == "" {
-		return nil
+// treeContentLines returns the node's content as lines with leading
+// blank lines dropped: prompt constants often begin with a newline
+// after the Go raw-string backtick, and a blank first line must not
+// hide the content from the preview, the fold hint, or the expanded
+// body. See TheoryOfTreeTab.
+func treeContentLines(n *tree.Node) []string {
+	lines := strings.Split(strings.TrimRight(n.Content, "\n"), "\n")
+	i := 0
+	for i < len(lines) && strings.TrimSpace(lines[i]) == "" {
+		i++
 	}
-	lines := strings.Split(content, "\n")
+	return lines[i:]
+}
+
+// treeBodyLines returns the node's content lines after the first
+// non-blank one: the body a collapsed node hides. Content with no
+// line beyond the first yields no body. See TheoryOfTreeTab.
+func treeBodyLines(n *tree.Node) []string {
+	lines := treeContentLines(n)
 	if len(lines) <= 1 {
 		return nil
 	}
 	return lines[1:]
 }
 
-// treeFirstLine returns the node's first content line, with trailing
-// newlines stripped; empty content yields "". The expanded body starts
+// treeFirstLine returns the node's first non-blank content line;
+// empty or blank-leading content yields "". The expanded body starts
 // from this line, so the content begins on the row below the header.
 // See TheoryOfTreeTab.
 func treeFirstLine(n *tree.Node) string {
-	content := strings.TrimRight(n.Content, "\n")
-	if content == "" {
+	lines := treeContentLines(n)
+	if len(lines) == 0 {
 		return ""
 	}
-	if i := strings.IndexByte(content, '\n'); i >= 0 {
-		return content[:i]
-	}
-	return content
+	return lines[0]
 }
 
 // treeNodeExpandable reports whether the node hides a multi-line body
@@ -295,15 +306,16 @@ func treeNodeExpandable(n *tree.Node) bool {
 // treeHeaderText renders the node's header text: the depth indent, the
 // category fragment padded to the widest category fragment, the type
 // fragment padded to the widest type fragment, the fold slot at the
-// global fold column, and — collapsed only — the first content line
-// as the index preview with the ⤷ more-lines hint on multi-line
-// content. The node name and author are secondary to the user and
-// hidden while collapsed; the expanded header reveals them after the
-// fold column and drops the preview, so the content starts on the row
-// below the header. The jump marker on an attempt-start node stays on
-// the header. The category/type fragments and the fold column align
-// globally across every indent level, so the content column starts at
-// one fixed display column on every row. See TheoryOfTreeTab.
+// global fold column, and — collapsed only — the first non-blank
+// content line as the index preview with the ⤷ more-lines hint on
+// multi-line content. The node name and author are secondary to the
+// user and hidden while collapsed; the expanded header reveals them
+// after the fold column and drops the preview, so the content starts
+// on the row below the header. The jump marker on an attempt-start
+// node stays on the header. The category/type fragments and the fold
+// column align globally across every indent level, so the content
+// column starts at one fixed display column on every row. See
+// TheoryOfTreeTab.
 func treeHeaderText(n *tree.Node, depth int, expanded bool, slot string, options displaywidth.Options, align treeAlignments) string {
 	cat := treeNodeCategoryText(n)
 	typ := treeNodeTypeText(n)
@@ -333,7 +345,7 @@ func treeHeaderText(n *tree.Node, depth int, expanded bool, slot string, options
 		b.WriteString(" ")
 		b.WriteString(string(n.Author))
 	} else {
-		if first := tree.PreviewRunes(n.Content, 0); first != "" {
+		if first := treeFirstLine(n); first != "" {
 			b.WriteString(first + " ")
 		}
 		if body := treeBodyLines(n); len(body) > 0 {

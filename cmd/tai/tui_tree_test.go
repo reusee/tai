@@ -690,6 +690,42 @@ func TestTreeExpandedContentStartsOnNextLine(t *testing.T) {
 	}
 }
 
+// TestTreeExpandedContentSkipsLeadingBlankLines verifies that content
+// beginning with blank lines — prompt constants conventionally begin
+// with a newline after the Go raw-string backtick — previews from and
+// expands to the first non-blank line: the collapsed header carries
+// that line, and the expanded body renders the full content. See
+// TheoryOfTreeTab.
+func TestTreeExpandedContentSkipsLeadingBlankLines(t *testing.T) {
+	tui := newTUIForTest()
+	tr, err := tree.New().Write("root", "node-1", tree.TypeSystem, tree.AuthorProgram,
+		"\nfirst line\nsecond line")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tui.treeView = tr
+	tui.mu.Lock()
+	defer tui.mu.Unlock()
+	display := tui.treeDisplay(120, panelStyle.BaseBG)
+	if len(display) != 1 {
+		t.Fatalf("expected 1 collapsed row, got %d", len(display))
+	}
+	if !strings.Contains(display[0].Text, "first line") {
+		t.Fatalf("the collapsed preview must carry the first non-blank line, got %q", display[0].Text)
+	}
+	tui.toggleTreeNodeAtRow(0)
+	display = tui.treeDisplay(120, panelStyle.BaseBG)
+	if len(display) != 3 {
+		t.Fatalf("expected 3 rows (header + 2 content lines), got %d: %v", len(display), displayTexts(display))
+	}
+	if !strings.Contains(display[1].Text, "first line") {
+		t.Fatalf("the expanded body must start with the first non-blank line, got %q", display[1].Text)
+	}
+	if !strings.Contains(display[2].Text, "second line") {
+		t.Fatalf("expected the second content line on its own row, got %q", display[2].Text)
+	}
+}
+
 // TestTreeFoldColumnToggles verifies the fold column's contract: an
 // expandable node carries the fold glyph in its fold slot on the
 // header row, right of the category/type columns; a press on the fold
