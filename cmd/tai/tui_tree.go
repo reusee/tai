@@ -316,7 +316,7 @@ func treeFoldSlotWidth(options displaywidth.Options) int {
 }
 
 // attemptNumberOf parses the attempt number from an attempt node's
-// content ("attempt 3 (1/3)"). See TheoryOfTreeTab.
+// content ("attempt 3"). See TheoryOfTreeTab.
 func attemptNumberOf(content string) (int, bool) {
 	var num int
 	if _, err := fmt.Sscanf(content, "attempt %d", &num); err == nil {

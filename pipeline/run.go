@@ -132,6 +132,15 @@ that includes the partial output, appending the error context and the
 handoff summary as user content. Errors before any content output do not
 retry.
 
+Context-exceeded termination: an attempt whose error reports that the
+request exceeded the model's context window (generators.IsContextExceeded)
+is not retried — the same messages exceed the window again, and the
+retry feedback grows the input further. The loop condenses the
+interrupted output into a handoff when one is available and ends the run
+with a ContextExceededError; the goal runner hands it to the next loop,
+whose fresh scope rebuilds a smaller context. See
+TheoryOfContextExceededHandoff.
+
 Retry feedback states the current attempt number (e.g., "retry attempt
 1 of 3") so the model knows how much budget remains and can prioritize
 correcting the error.
@@ -588,6 +597,16 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 			var diskChanged *changes.DiskChangedError
 			if errors.As(generationErr, &diskChanged) {
 				return generationResult{state: phaseState}, ls.endOnDiskChange(generationErr, phaseState, attemptBase)
+			}
+			// A context-exceeded failure cannot be repaired by
+			// retrying the attempt: the same messages exceed the
+			// window again, and a retried generation appends handoff
+			// feedback that grows the input further. End the run with
+			// a handoff error; the goal runner carries it into the
+			// next loop, whose fresh scope rebuilds a smaller context.
+			// See TheoryOfContextExceededHandoff.
+			if generators.IsContextExceeded(generationErr) {
+				return generationResult{state: phaseState}, ls.endOnContextExceeded(generationErr, phaseState, attemptBase)
 			}
 			// Retry on any error when content was output during
 			// the attempt. The loop summarizes the incomplete
@@ -1122,8 +1141,9 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 		continueReason := buildContinueReason(triggeredKinds,
 			len(generationParseErrors) > 0,
 			len(unknownKinds) > 0)
-		// The feedback closes with the session tree outline, so the
-		// model sees the session's structure. See TheoryOfSessionTree.
+		// The feedback closes with the session tree outline, so
+		// the model sees the session's structure. See
+		// TheoryOfSessionTree.
 		combinedParts = append(combinedParts, treeOutlinePart(ls.sessionTree, ls.sessionParent()))
 		if len(combinedParts) > 0 {
 			var aerr error
@@ -1295,11 +1315,13 @@ func (ls *loopState) recordAttemptError(err error) {
 	}
 }
 
-// endOnDiskChange terminates the run on a disk-change failure: it
-// condenses the interrupted output into a handoff when one is available,
-// records the failed attempt, and returns the terminal error the goal
-// runner forwards to the next loop. See TheoryOfDiskChangeHandoff.
-func (ls *loopState) endOnDiskChange(err error, phaseState generators.State, attemptBase int) *DiskChangeHandoffError {
+// endWithHandoff condenses the interrupted output of a failed attempt
+// into a handoff when one is available, records the failed attempt, and
+// returns the handoff for the caller's terminal error. It is the shared
+// core of the loop's handoff terminations (disk change, context
+// exceeded), so both carry identical bookkeeping. See
+// TheoryOfDiskChangeHandoff and TheoryOfContextExceededHandoff.
+func (ls *loopState) endWithHandoff(err error, phaseState generators.State, attemptBase int) *Handoff {
 	var handoff *Handoff
 	if ls.opts.Handoff != nil {
 		incompleteText := ExtractIncompleteOutput(phaseState, attemptBase)
@@ -1314,7 +1336,15 @@ func (ls *loopState) endOnDiskChange(err error, phaseState generators.State, att
 	}
 	ls.recordAttemptError(err)
 	ls.recordAttemptUsage(phaseState, attemptBase, "error")
-	return &DiskChangeHandoffError{Err: err, Handoff: handoff}
+	return handoff
+}
+
+// endOnDiskChange terminates the run on a disk-change failure: it
+// condenses the interrupted output into a handoff when one is available,
+// records the failed attempt, and returns the terminal error the goal
+// runner forwards to the next loop. See TheoryOfDiskChangeHandoff.
+func (ls *loopState) endOnDiskChange(err error, phaseState generators.State, attemptBase int) *DiskChangeHandoffError {
+	return &DiskChangeHandoffError{Err: err, Handoff: ls.endWithHandoff(err, phaseState, attemptBase)}
 }
 
 // finishWithError fills the result with the final state and yields the

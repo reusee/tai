@@ -62,7 +62,7 @@ func TestTUIEventClickJumpsToOutputSection(t *testing.T) {
 	// and a finish node. See TheoryOfTreeTab.
 	tr, err := tree.New().WriteAll(
 		tree.WriteOp{Parent: "root", Name: "loop-1", Type: tree.TypeLoop, Author: tree.AuthorProgram},
-		tree.WriteOp{Parent: "loop-1", Name: "attempt-1", Type: tree.TypeAttempt, Author: tree.AuthorProgram, Content: "attempt 1 (1/3)"},
+		tree.WriteOp{Parent: "loop-1", Name: "attempt-1", Type: tree.TypeAttempt, Author: tree.AuthorProgram, Content: "attempt 1"},
 		tree.WriteOp{Parent: "loop-1", Name: "usage-1", Type: tree.TypeUsage, Author: tree.AuthorProgram, Content: "usage-unique"},
 		tree.WriteOp{Parent: "loop-1", Name: "finish-1", Type: tree.TypeFinish, Author: tree.AuthorProgram, Content: "finish: stop"},
 	)

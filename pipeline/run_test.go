@@ -501,9 +501,8 @@ func TestRunMultiGenerationTriggered(t *testing.T) {
 // TestRunAttemptNumbersContinueAcrossGenerations verifies the
 // session-wide attempt counter: component-triggered generations
 // continue the attempt sequence instead of restarting at 1. Each
-// attempt node's content carries the session-wide attempt number and
-// its position within the generation's retry budget. See
-// TheoryOfLoopEvents.
+// attempt node's content carries the session-wide attempt number.
+// See TheoryOfLoopEvents.
 func TestRunAttemptNumbersContinueAcrossGenerations(t *testing.T) {
 	withRun(t, func(run Run) {
 		comps := components.ComponentSet{
@@ -544,11 +543,11 @@ func TestRunAttemptNumbersContinueAcrossGenerations(t *testing.T) {
 		if len(attempts) != 2 {
 			t.Fatalf("expected 2 attempt nodes, got %d", len(attempts))
 		}
-		if !strings.Contains(attempts[0], "attempt 1 (1/") {
-			t.Fatalf("first attempt content: got %q, want attempt 1 position 1", attempts[0])
+		if attempts[0] != "attempt 1" {
+			t.Fatalf("first attempt content: got %q, want %q", attempts[0], "attempt 1")
 		}
-		if !strings.Contains(attempts[1], "attempt 2 (1/") {
-			t.Fatalf("second generation's attempt number must continue the session-wide sequence: got %q, want attempt 2 position 1", attempts[1])
+		if attempts[1] != "attempt 2" {
+			t.Fatalf("second generation's attempt number must continue the session-wide sequence: got %q, want %q", attempts[1], "attempt 2")
 		}
 	})
 }

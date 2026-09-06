@@ -825,15 +825,15 @@ func (ls *loopState) attemptParent() string {
 // initial input on the first attempt, and the feedback and idle input
 // queued since the previous attempt — join the attempt node, written
 // right after it opens and before its generator node. The node
-// content carries the session-wide attempt number and the retry
-// budget figures. The system node is written before any attempt and
-// stays the attempt nodes' sibling. See TheoryOfSessionTree.
+// content carries the session-wide attempt number. The system node is
+// written before any attempt and stays the attempt nodes' sibling.
+// See TheoryOfSessionTree.
 func (ls *loopState) writeAttemptNode() {
 	if ls.sessionTree == nil {
 		return
 	}
 	next, name, err := ls.sessionTree.WriteAuto(ls.sessionParent(), "attempt", tree.TypeAttempt, tree.AuthorProgram,
-		fmt.Sprintf("attempt %d (%d/%d)", ls.attempt, ls.attemptInGeneration, ls.maxRetries))
+		fmt.Sprintf("attempt %d", ls.attempt))
 	if err != nil {
 		return
 	}

@@ -480,6 +480,12 @@ func (s *goalLoopState) applyLoopResult(
 	if handoff, ok := asDiskChangeHandoff(err); ok {
 		return s.applyDiskChangeHandoff(loopsRun, handoff, reporter)
 	}
+	// A context-exceeded handoff ends the loop and hands its content
+	// to the next loop, whose fresh scope rebuilds a smaller context.
+	// See TheoryOfContextExceededHandoff.
+	if exceeded, ok := asContextExceeded(err); ok {
+		return s.applyContextExceededHandoff(loopsRun, exceeded, reporter)
+	}
 	if err != nil {
 		return s.applyLoopError(loopsRun, err, reporter)
 	}
