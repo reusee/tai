@@ -37,7 +37,7 @@ func TestTUIOutputSectionsRecordAndMap(t *testing.T) {
 }
 
 // TestTUIEventClickJumpsToOutputSection verifies that a press on the
-// attempt-start node's jump marker jumps the Output tab to the section
+// attempt node's jump marker jumps the Output tab to the section
 // the attempt wrote, while presses off the marker and on other nodes
 // never jump. See TheoryOfTUIOutputSections and TheoryOfTreeTab.
 func TestTUIEventClickJumpsToOutputSection(t *testing.T) {
@@ -58,11 +58,11 @@ func TestTUIEventClickJumpsToOutputSection(t *testing.T) {
 		tu.writeOutputPart(generators.RoleModel, taiui.NoColor, false, "filler line\n")
 	}
 	// Build the tree the Tree tab renders: a loop branch carrying an
-	// attempt-start node whose content names attempt 1, a usage node,
+	// attempt node whose content names attempt 1, a usage node,
 	// and a finish node. See TheoryOfTreeTab.
 	tr, err := tree.New().WriteAll(
 		tree.WriteOp{Parent: "root", Name: "loop-1", Type: tree.TypeLoop, Author: tree.AuthorProgram},
-		tree.WriteOp{Parent: "loop-1", Name: "attempt-start-1", Type: tree.TypeAttemptStart, Author: tree.AuthorProgram, Content: "attempt 1 start (1/3)"},
+		tree.WriteOp{Parent: "loop-1", Name: "attempt-1", Type: tree.TypeAttempt, Author: tree.AuthorProgram, Content: "attempt 1 (1/3)"},
 		tree.WriteOp{Parent: "loop-1", Name: "usage-1", Type: tree.TypeUsage, Author: tree.AuthorProgram, Content: "usage-unique"},
 		tree.WriteOp{Parent: "loop-1", Name: "finish-1", Type: tree.TypeFinish, Author: tree.AuthorProgram, Content: "finish: stop"},
 	)
@@ -87,7 +87,7 @@ func TestTUIEventClickJumpsToOutputSection(t *testing.T) {
 		}
 	}
 	if row < 0 {
-		t.Fatal("attempt-start row with the jump marker not found")
+		t.Fatal("attempt row with the jump marker not found")
 	}
 	start, end, ok := markerColumnRange(display[row].Text, taiui.DisplayWidthOptions())
 	if !ok || end <= start {
@@ -95,7 +95,7 @@ func TestTUIEventClickJumpsToOutputSection(t *testing.T) {
 	}
 	y := box.Top + 1 + row
 	if y >= box.Bottom {
-		t.Fatalf("attempt-start row %d beyond the pane", y)
+		t.Fatalf("attempt row %d beyond the pane", y)
 	}
 
 	tu.mu.Lock()

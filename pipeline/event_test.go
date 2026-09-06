@@ -15,9 +15,9 @@ import (
 // attempt misses the summary block (truncation retry with a handoff)
 // and its second attempt completes with a summary and a usage part; the
 // test asserts the ordered event nodes under the session root, the
-// attempt attribution carried in the node contents, and that the
-// handoff node carries the handoff summary as its multi-line body. See
-// TheoryOfLoopEvents.
+// attempt structure nodes carrying the session-wide numbers, and that
+// the handoff node carries the handoff summary as its multi-line body.
+// See TheoryOfLoopEvents.
 func TestRunRecordsEventNodes(t *testing.T) {
 	withRun(t, func(run Run) {
 		usage := generators.Usage{}
@@ -64,8 +64,8 @@ func TestRunRecordsEventNodes(t *testing.T) {
 
 		nodes := lastTree.ByCategory(tree.CategoryEvent)
 		wantPrefixes := []string{
-			"attempt-start", "truncated", "handoff-start", "handoff",
-			"attempt-start", "usage", "completed",
+			"truncated", "handoff-start", "handoff",
+			"usage", "completed",
 		}
 		if len(nodes) != len(wantPrefixes) {
 			t.Fatalf("expected %d event nodes, got %v", len(wantPrefixes), nodeNames(nodes))
@@ -78,26 +78,31 @@ func TestRunRecordsEventNodes(t *testing.T) {
 
 		// The truncated node precedes the handoff nodes and does not
 		// repeat the handoff summary.
-		if strings.Contains(nodes[1].Content, "truncated summary") {
+		if strings.Contains(nodes[0].Content, "truncated summary") {
 			t.Fatal("the truncated node must not repeat the handoff summary")
 		}
-		if !strings.Contains(nodes[3].Content, "truncated summary") {
-			t.Fatalf("expected the handoff summary on the handoff node, got %q", nodes[3].Content)
+		if !strings.Contains(nodes[2].Content, "truncated summary") {
+			t.Fatalf("expected the handoff summary on the handoff node, got %q", nodes[2].Content)
 		}
 		// The second attempt's usage node carries the counters.
-		if got := nodes[5].Content; !strings.Contains(got, "prompt 42") || !strings.Contains(got, "completion 7") {
+		if got := nodes[3].Content; !strings.Contains(got, "prompt 42") || !strings.Contains(got, "completion 7") {
 			t.Fatalf("unexpected usage node: %q", got)
 		}
 		// The completed node carries the attempt's summary body.
-		if !strings.Contains(nodes[6].Content, "Done.") {
-			t.Fatalf("unexpected completed node: %q", nodes[6].Content)
+		if !strings.Contains(nodes[4].Content, "Done.") {
+			t.Fatalf("unexpected completed node: %q", nodes[4].Content)
 		}
-		// The attempt-start nodes carry the session-wide attempt numbers.
-		if got := nodes[0].Content; !strings.Contains(got, "attempt 1") {
-			t.Fatalf("unexpected first attempt-start: %q", got)
+		// The attempt structure nodes carry the session-wide attempt
+		// numbers.
+		attempts := lastTree.ByType(tree.TypeAttempt)
+		if len(attempts) != 2 {
+			t.Fatalf("expected 2 attempt nodes, got %d", len(attempts))
 		}
-		if got := nodes[4].Content; !strings.Contains(got, "attempt 2") {
-			t.Fatalf("unexpected second attempt-start: %q", got)
+		if got := attempts[0].Content; !strings.Contains(got, "attempt 1") {
+			t.Fatalf("unexpected first attempt node: %q", got)
+		}
+		if got := attempts[1].Content; !strings.Contains(got, "attempt 2") {
+			t.Fatalf("unexpected second attempt node: %q", got)
 		}
 	})
 }
@@ -130,12 +135,11 @@ func (g requestEventGenerator) Generate(ctx context.Context, state generators.St
 	return state, nil
 }
 
-// TestRunRequestNodeContent verifies that each attempt records a
-// request node whose content describes the actual generation parameters
-// resolved from the generator spec — the flag overrides stay unset in
-// this scope, so the spec values are the effective ones. See
-// TheoryOfLoopEvents.
-func TestRunRequestNodeContent(t *testing.T) {
+// TestRunGeneratorNodeContent verifies that each attempt records a
+// generator node whose content describes the generator spec the attempt
+// runs on — the flag overrides stay unset in this scope, so the spec
+// values are the effective ones. See TheoryOfLoopEvents.
+func TestRunGeneratorNodeContent(t *testing.T) {
 	withRun(t, func(run Run) {
 		temperature := float32(0.5)
 		maxTokens := 4096
@@ -183,14 +187,14 @@ func TestRunRequestNodeContent(t *testing.T) {
 		if terminalErr != nil {
 			t.Fatalf("unexpected terminal error: %v", terminalErr)
 		}
-		var requestNode *tree.Node
+		var generatorNode *tree.Node
 		for _, n := range lastTree.ByCategory(tree.CategoryEvent) {
-			if strings.HasPrefix(n.Name, "request") {
-				requestNode = n
+			if strings.HasPrefix(n.Name, "generator") {
+				generatorNode = n
 			}
 		}
-		if requestNode == nil {
-			t.Fatal("expected a request event node")
+		if generatorNode == nil {
+			t.Fatal("expected a generator event node")
 		}
 		for _, want := range []string{
 			"model model-a",
@@ -200,22 +204,22 @@ func TestRunRequestNodeContent(t *testing.T) {
 			"max tokens 4096",
 			"context 100000",
 		} {
-			if !strings.Contains(requestNode.Content, want) {
-				t.Fatalf("request node content %q missing %q", requestNode.Content, want)
+			if !strings.Contains(generatorNode.Content, want) {
+				t.Fatalf("generator node content %q missing %q", generatorNode.Content, want)
 			}
 		}
-		if strings.Contains(requestNode.Content, "thinking tokens") {
-			t.Fatalf("request node content %q must omit unset thinking tokens", requestNode.Content)
+		if strings.Contains(generatorNode.Content, "thinking tokens") {
+			t.Fatalf("generator node content %q must omit unset thinking tokens", generatorNode.Content)
 		}
 	})
 }
 
-// TestDescribeRequest verifies the effective-value resolution of the
-// request description: the resolved spec path leads the detail, the
+// TestDescribeGenerator verifies the effective-value resolution of the
+// generator description: the resolved spec path leads the detail, the
 // temperature and effort flags override the spec fields, unset values
 // are omitted, and the model identity and token limits come from the
 // spec. See TheoryOfLoopEvents.
-func TestDescribeRequest(t *testing.T) {
+func TestDescribeGenerator(t *testing.T) {
 	specTemperature := float32(0.2)
 	maxTokens := 8192
 	spec := generators.Spec{
@@ -225,7 +229,7 @@ func TestDescribeRequest(t *testing.T) {
 		ReasoningEffort:   "low",
 		MaxGenerateTokens: &maxTokens,
 	}
-	detail := describeRequest(spec, generators.TemperatureFlag{}, generators.EffortFlag(""))
+	detail := describeGenerator(spec, generators.TemperatureFlag{}, generators.EffortFlag(""))
 	for _, want := range []string{
 		"spec provider/model-b",
 		"model model-b",
@@ -242,7 +246,7 @@ func TestDescribeRequest(t *testing.T) {
 	}
 
 	flagTemperature := float32(0.9)
-	detail = describeRequest(spec,
+	detail = describeGenerator(spec,
 		generators.TemperatureFlag{Value: &flagTemperature},
 		generators.EffortFlag("high"),
 	)
@@ -261,7 +265,7 @@ func TestDescribeRequest(t *testing.T) {
 	// A spec with no optional fields set renders the model identity
 	// alone: every default value is omitted, including the spec path
 	// when the spec was constructed without one.
-	bare := describeRequest(generators.Spec{Model: "model-bare"},
+	bare := describeGenerator(generators.Spec{Model: "model-bare"},
 		generators.TemperatureFlag{}, generators.EffortFlag(""))
 	if want := "model model-bare"; bare != want {
 		t.Fatalf("bare spec detail: want %q, got %q", want, bare)
@@ -414,7 +418,7 @@ func TestRunThoughtSummaryNode(t *testing.T) {
 func TestTreeOutlineExcludesEventNodes(t *testing.T) {
 	tr, err := tree.New().WriteAll(
 		tree.WriteOp{Parent: "root", Name: "user-1", Type: tree.TypeUser, Author: tree.AuthorUser, Content: "task"},
-		tree.WriteOp{Parent: "root", Name: "attempt-start-1", Type: tree.TypeAttemptStart, Author: tree.AuthorProgram, Content: "attempt 1 start"},
+		tree.WriteOp{Parent: "root", Name: "truncated-1", Type: tree.TypeTruncated, Author: tree.AuthorProgram, Content: "attempt 1 truncated"},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -423,7 +427,7 @@ func TestTreeOutlineExcludesEventNodes(t *testing.T) {
 	if !strings.Contains(out, "user-1 [user/user]") {
 		t.Fatalf("expected the user node in the outline, got: %s", out)
 	}
-	if strings.Contains(out, "attempt-start-1") {
+	if strings.Contains(out, "truncated-1") {
 		t.Fatalf("event nodes must be pruned from the model-facing outline, got: %s", out)
 	}
 }

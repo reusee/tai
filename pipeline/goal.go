@@ -128,10 +128,10 @@ fake per-loop generators; Module.GoalRun is the dscope provider that injects
 the scope-backed per-loop generator and the review pass. Generation and
 review stream to os.Stdout so a TUI's state decorators capture the output
 without duplication. Verdicts and failure notes are routed through
-goalReporter: recorded as goal event nodes in the run's session tree and
-forwarded through GoalTreeObserver when one is set (a display front-end's
-Tree tab), or written to the output writer (failure notes to stderr)
-otherwise.
+goalReporter: recorded as goal structure nodes (tree.TypeGoal) in the
+run's session tree and forwarded through GoalTreeObserver when one is set
+(a display front-end's Tree tab), or written to the output writer
+(failure notes to stderr) otherwise.
 `
 
 const TheoryOfGoalNoTask = `
@@ -268,7 +268,7 @@ type GoalLoopSummary struct {
 type GoalLoopSummaries []GoalLoopSummary
 
 // GoalTreeObserver receives the goal run's session tree after each
-// progress message is recorded as a goal event node, so a display
+// progress message is recorded as a goal structure node, so a display
 // front-end renders — and projects — the same tree the pipeline
 // writes. When nil (the default), the runner writes verdicts to the
 // output writer and failure notes to stderr. See TheoryOfGoalMode.
@@ -326,7 +326,7 @@ type GoalOptions struct {
 	// them without duplication.
 	Output io.Writer
 	// GoalTree, when non-nil, receives the run's session tree after
-	// each progress message is recorded as a goal event node, so a
+	// each progress message is recorded as a goal structure node, so a
 	// display front-end renders the same tree the pipeline writes.
 	// When nil (the default), verdicts go to Output and failure notes
 	// to stderr. See GoalTreeObserver and TheoryOfGoalMode.
@@ -398,8 +398,8 @@ type GoalResult struct {
 // until a change-free loop emits a done block — the run's only exit — the
 // iteration budget is exhausted, or the same error repeats, followed by a
 // review of the accumulated diffs. Verdicts and failure notes are recorded
-// as goal event nodes in the run's session tree and forwarded to the goal
-// tree observer; with no observer they go to output. See TheoryOfGoalMode.
+// as goal structure nodes in the run's session tree and forwarded to the
+// goal tree observer; with no observer they go to output. See TheoryOfGoalMode.
 type GoalRun func(ctx context.Context, output io.Writer) GoalResult
 
 // GoalSystemPromptText assembles the goal-mode system prompt: the base
@@ -602,10 +602,11 @@ func (s *goalLoopState) applyLoopSuccess(loopsRun int, result Result, reporter g
 }
 
 // goalReporter routes one goal-run progress message to its destination:
-// recorded as a goal event node in the run's session tree and forwarded
-// through the goal tree observer when one is set — a display front-end's
-// Tree tab — or written to the output writer (failure notes to stderr)
-// otherwise, preserving the command-line formatting. See TheoryOfGoalMode.
+// recorded as a goal structure node in the run's session tree and
+// forwarded through the goal tree observer when one is set — a display
+// front-end's Tree tab — or written to the output writer (failure notes
+// to stderr) otherwise, preserving the command-line formatting. See
+// TheoryOfGoalMode.
 type goalReporter struct {
 	output   io.Writer
 	observer GoalTreeObserver
@@ -615,8 +616,8 @@ type goalReporter struct {
 	tree **tree.Tree
 }
 
-// message delivers one progress message: a goal event node plus the
-// observer callback, or the text verbatim to the output writer.
+// message delivers one progress message: a goal structure node plus
+// the observer callback, or the text verbatim to the output writer.
 func (r goalReporter) message(text string) {
 	if r.observer != nil {
 		r.record(text)
@@ -625,7 +626,7 @@ func (r goalReporter) message(text string) {
 	fmt.Fprint(r.output, text)
 }
 
-// failure delivers one failure note: a goal event node plus the
+// failure delivers one failure note: a goal structure node plus the
 // observer callback, or the text to stderr as before.
 func (r goalReporter) failure(text string) {
 	if r.observer != nil {
@@ -635,7 +636,7 @@ func (r goalReporter) failure(text string) {
 	fmt.Fprint(os.Stderr, text)
 }
 
-// record writes one goal progress message as a tree.TypeGoal event
+// record writes one goal progress message as a tree.TypeGoal structure
 // node under the tree root and forwards the updated tree to the
 // observer. See TheoryOfGoalMode and TheoryOfLoopEvents.
 func (r goalReporter) record(text string) {

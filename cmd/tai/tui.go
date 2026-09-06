@@ -49,27 +49,27 @@ isGeneratingLog and outputTabLabel.
 The TUI interface replaces stdout with a three-tab terminal UI: the
 Output tab streams the model output, the Tree tab renders the session
 tree the pipeline writes — every node the run records: user inputs,
-responses and their summaries, blocks and their results, the loop's own
-event nodes (attempt starts, request parameters, finish reasons,
-per-attempt usage, truncations, retries, handoffs, completions,
-component and idle continuations, thought summaries, and the terminal
-error), and the goal runner's verdict nodes in goal mode — and the Logs
-tab collects log records. The Tree tab renders the SAME tree the
-pipeline writes: withTUIOutputObserver taps the run's tree iterator and
-forwards every yielded tree to setTree, so the tab never maintains a
-separate display state; the v key cycles projections over the tree
-(all nodes, only the event nodes, only the summaries, or only one
-author's nodes), so the tree's internal representation is inspectable
-(see TheoryOfTreeTab and pipeline.TheoryOfLoopEvents). A finish event
-node clears the Output tab's "generating..." hint. The Logs tab renders
-consecutive lines with alternating background shades so entries are
-visually distinct when a background is configured; the panels paint no
-background by default, the alternation is inert without one, and the
-two shades derive from whatever backgrounds the tui config section
-sets. The Tree tab walks the tree depth-first, one line per node by
-default, with per-node expand toggles, per-node alternating shades, and
-the attempt-start node's 👉 jump marker (see TheoryOfTreeTab). Model
-output is captured from the
+responses and their summaries, blocks and their results, the attempt
+structure nodes, the loop's own event nodes (generator specs, finish
+reasons, per-attempt usage, truncations, retries, handoffs,
+completions, component and idle continuations, thought summaries, and
+the terminal error), and the goal runner's verdict nodes in goal mode —
+and the Logs tab collects log records. The Tree tab renders the SAME
+tree the pipeline writes: withTUIOutputObserver taps the run's tree
+iterator and forwards every yielded tree to setTree, so the tab never
+maintains a separate display state; the v key cycles projections over
+the tree (all nodes, only the event nodes, only the summaries, or only
+one author's nodes), so the tree's internal representation is
+inspectable (see TheoryOfTreeTab and pipeline.TheoryOfLoopEvents). A
+finish event node clears the Output tab's "generating..." hint. The
+Logs tab renders consecutive lines with alternating background shades
+so entries are visually distinct when a background is configured; the
+panels paint no background by default, the alternation is inert
+without one, and the two shades derive from whatever backgrounds the
+tui config section sets. The Tree tab walks the tree depth-first, one
+line per node by default, with per-node expand toggles, per-node
+alternating shades, and the attempt node's 👉 jump marker (see
+TheoryOfTreeTab). Model output is captured from the
 generation state by the tuiOutputState decorator, passed through
 RunOptions.StateDecorators by runWithTUI: text parts stream to the Output
 tab, thoughts are colored distinctly and separated from non-thought content
@@ -102,13 +102,14 @@ nodes, so the TUI never parses streamed text for blocks, never scans
 rendered text for completion markers, and never captures model output
 through a stdout pipe; retry feedback cannot duplicate summary content
 because the session tree is the single authority. The goal-mode verdicts
-and failure notes are goal event nodes in the same tree (RunGoal records
-them through GoalTreeObserver), so they render in the Tree tab and never
-reach the Output tab. stdout is discarded in TUI mode, while stderr stays visible
-in the Output tab. Content is colored by role, matching the non-TUI output
-colors (see generators/colors.go): user input is blue, tool calls and
-results yellow, system messages cyan, log records red, and thoughts bright
-magenta; model output keeps the default foreground. Role colors are ANSI 16
+and failure notes are goal structure nodes in the same tree (RunGoal
+records them through GoalTreeObserver), so they render in the Tree tab
+and never reach the Output tab. stdout is discarded in TUI mode, while
+stderr stays visible in the Output tab. Content is colored by role,
+matching the non-TUI output colors (see generators/colors.go): user
+input is blue, tool calls and results yellow, system messages cyan, log
+records red, and thoughts bright magenta; model output keeps the
+default foreground. Role colors are ANSI 16
 palette colors by default, and every color is configurable through the
 tui config section (see UIStyle); by default no background is painted.
 Colors are carried per output line
@@ -122,7 +123,7 @@ repeated here. The v key cycles the Tree tab's projection. The Output
 tab starts expanded and focused, following the
 live tail — the model's stream is the pane the user watches, so it is open
 from the first frame — while the Tree and Logs tabs stay collapsed and
-expand on their first content (the Tree tab on its first event node,
+expand on their first content (the Tree tab on its first node,
 the Logs tab on any log record), so the interface surfaces panes
 only when they have something to show. The Logs tab caps its box at
 logsMaxBoxHeight rows while expanded but not focused — logs are internal
@@ -1566,9 +1567,9 @@ func (t *TUI) handleMouseKey(key string) bool {
 	return false
 }
 
-// eventJumpMarker is appended to the Tree tab's attempt-start node
-// line: a press on the marker's cells is the only Tree-tab press that
-// jumps the Output tab to the attempt's output section. See
+// eventJumpMarker is appended to the Tree tab's attempt node line: a
+// press on the marker's cells is the only Tree-tab press that jumps
+// the Output tab to the attempt's output section. See
 // TheoryOfTUIOutputSections and TheoryOfTreeTab.
 const eventJumpMarker = "👉"
 

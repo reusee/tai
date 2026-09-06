@@ -110,13 +110,13 @@ Tree tab theory (cmd/tai):
 - Each node's first display line right-aligns the elapsed timer
   ("+0:07") from the session start to the node's insert time; a pane
   too narrow for the timer omits it.
-- The attempt-start event node's line ends with the 👉 jump marker: a
+- The attempt structure node's line ends with the 👉 jump marker: a
   left press on the marker's cells jumps the Output tab to the output
   section that attempt wrote (see TheoryOfTUIOutputSections). Display
   records every node's row range, so a press maps onto the node the
   way the rows render.
-- The tab auto-expands on the first event node and follows the tail;
-  the unseen-dot, focus, and scroll semantics are the taiui tab
+- The tab auto-expands on the first consumed node and follows the
+  tail; the unseen-dot, focus, and scroll semantics are the taiui tab
   machine's.
 `
 
@@ -315,8 +315,8 @@ func treeFoldSlotWidth(options displaywidth.Options) int {
 	return options.String(treeFoldGlyph(false))
 }
 
-// attemptNumberOf parses the attempt number from an attempt event
-// node's content ("attempt 3 start (1/3)"). See TheoryOfTreeTab.
+// attemptNumberOf parses the attempt number from an attempt node's
+// content ("attempt 3 (1/3)"). See TheoryOfTreeTab.
 func attemptNumberOf(content string) (int, bool) {
 	var num int
 	if _, err := fmt.Sscanf(content, "attempt %d", &num); err == nil {
@@ -376,8 +376,8 @@ func treeNodeExpandable(n *tree.Node) bool {
 // multi-line content. The node name and author are secondary to the
 // user and hidden while collapsed; the expanded header reveals them
 // after the fold column and drops the preview, so the content starts
-// on the row below the header. The jump marker on an attempt-start
-// node stays on the header. The category/type fragments and the fold
+// on the row below the header. The jump marker on an attempt node
+// stays on the header. The category/type fragments and the fold
 // column align globally across every indent level, so the content
 // column starts at one fixed display column on every row. See
 // TheoryOfTreeTab.
@@ -418,7 +418,7 @@ func treeHeaderText(n *tree.Node, depth int, expanded bool, slot string, options
 		}
 	}
 	text := strings.TrimRight(b.String(), " ")
-	if n.Type == tree.TypeAttemptStart {
+	if n.Type == tree.TypeAttempt {
 		text += " " + eventJumpMarker
 	}
 	return text
@@ -472,10 +472,10 @@ func formatTreeElapsed(d time.Duration) string {
 	return fmt.Sprintf("+%d:%02d", minutes, secs)
 }
 
-// setTree stores the latest session tree and consumes its new event
-// nodes: an attempt-start node opens the output section the attempt's
-// streamed content will fill, and a finish node ends the request's
-// generating hint. The tab auto-expands on the first event node. See
+// setTree stores the latest session tree and consumes its new nodes:
+// an attempt node opens the output section the attempt's streamed
+// content will fill, and a finish node ends the request's generating
+// hint. The tab auto-expands on the first consumed node. See
 // TheoryOfTreeTab and TheoryOfTUIOutputSections.
 func (t *TUI) setTree(tr *tree.Tree) {
 	if tr == nil {
@@ -488,22 +488,31 @@ func (t *TUI) setTree(tr *tree.Tree) {
 	if t.treeTab.seen == nil {
 		t.treeTab.seen = make(map[string]bool)
 	}
-	eventNodes := tr.ByCategory(tree.CategoryEvent)
-	for _, n := range eventNodes {
+	consumed := 0
+	for _, n := range tr.ByCategory(tree.CategoryEvent) {
 		if t.treeTab.seen[n.Name] {
 			continue
 		}
 		t.treeTab.seen[n.Name] = true
-		if n.Type == tree.TypeAttemptStart {
-			if num, ok := attemptNumberOf(n.Content); ok {
-				t.pendingOwner = &outputSectionOwner{attempt: num}
-			}
-		}
+		consumed++
 		if n.Type == tree.TypeFinish {
 			t.generating = false
 		}
 	}
-	if len(eventNodes) > 0 {
+	// Attempt nodes are structure nodes, outside the event category:
+	// each new one opens the output section its attempt's streamed
+	// content will fill. See TheoryOfTUIOutputSections.
+	for _, n := range tr.ByType(tree.TypeAttempt) {
+		if t.treeTab.seen[n.Name] {
+			continue
+		}
+		t.treeTab.seen[n.Name] = true
+		consumed++
+		if num, ok := attemptNumberOf(n.Content); ok {
+			t.pendingOwner = &outputSectionOwner{attempt: num}
+		}
+	}
+	if consumed > 0 {
 		if t.tabs.AutoExpand(1) {
 			t.scrolls[1].Follow = true
 		}
@@ -786,14 +795,14 @@ func (t *TUI) toggleLastTreeExpandable() {
 
 // collapseAllTreeNodes toggles the c key's fold of the tree nodes,
 // mirroring collapseAllSections's two states: when not every node is
-// collapsed, it snapshots the expanded nodes, folds every node to its
-// one-line header, and scrolls the view to the top, so the collapsed
-// header list starts at the row below the title; when every node is
-// collapsed, it restores the nodes the last fold had expanded. Nodes
-// that arrive after the snapshot keep the default collapsed form on
-// restore. A manual expand breaks the all-collapsed state, so the next
-// press folds and re-snapshots rather than restoring. See
-// TheoryOfTreeTab and TheoryOfOutputControls.
+// collapsed, it snapshots the expanded nodes and folds every node to
+// its one-line header, anchoring the view on the node that held the
+// pane's top row before the fold, so the items the user was reading
+// stay in view; when every node is collapsed, it restores the nodes
+// the last fold had expanded. Nodes that arrive after the snapshot
+// keep the default collapsed form on restore. A manual expand breaks
+// the all-collapsed state, so the next press folds and re-snapshots
+// rather than restoring. See TheoryOfTreeTab and TheoryOfOutputControls.
 func (t *TUI) collapseAllTreeNodes() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -831,15 +840,25 @@ func (t *TUI) collapseAllTreeNodes() {
 		return
 	}
 	// Fold branch: snapshot the currently expanded nodes, fold
-	// everything, and scroll the view to the top, so the collapsed
-	// header list starts at the row below the title.
+	// everything, and anchor the view on the node the pane's top row
+	// belonged to before the fold, so the items the user was reading
+	// stay in view instead of the list jumping to the top. The rows
+	// and the offset both come from the last render, so they agree;
+	// when no node covers that row — the display never rendered —
+	// the offset is left alone and the render's clamp bounds it.
 	t.treeTab.collapseAllSaved = expanded
 	if len(expanded) > 0 {
+		anchorName := ""
+		topRow := t.scrolls[1].Offset
+		for _, r := range t.treeTab.rows {
+			if topRow >= r.startRow && topRow < r.endRow {
+				anchorName = r.name
+				break
+			}
+		}
 		t.treeTab.expanded = make(map[string]bool)
-		box := t.tabs.Boxes(t.width, t.height)[1]
-		if box.Width() > 0 && box.Height() > 0 {
-			t.scrolls[1].Offset = 0
-			t.scrolls[1].Follow = false
+		if anchorName != "" {
+			t.scrollToTreeNode(anchorName)
 		}
 	}
 }
@@ -979,10 +998,10 @@ func (t *TUI) scrollToTreeNode(name string) {
 }
 
 // treeAtClick handles a left press in the Tree pane: a press on an
-// attempt-start node's jump marker jumps the Output tab to that
-// attempt's output section, and a double-click — two presses at the
-// same cell within treeDoubleClickWindow — on a node's text toggles
-// its expansion; a single text press records itself and does nothing.
+// attempt node's jump marker jumps the Output tab to that attempt's
+// output section, and a double-click — two presses at the same cell
+// within treeDoubleClickWindow — on a node's text toggles its
+// expansion; a single text press records itself and does nothing.
 // Presses outside the pane's content area are no-ops. Called with
 // t.mu held. See TheoryOfTreeTab and TheoryOfTUIOutputSections.
 func (t *TUI) treeAtClick(x, y int) {
@@ -998,13 +1017,13 @@ func (t *TUI) treeAtClick(x, y int) {
 	if node == nil {
 		return
 	}
-	// Only the attempt-start node's jump marker jumps: the press must
-	// land on the marker's own columns in the header's first display
-	// row. The display lines render at the box's left edge, so the
-	// press column maps directly onto the line's display columns. See
+	// Only the attempt node's jump marker jumps: the press must land
+	// on the marker's own columns in the header's first display row.
+	// The display lines render at the box's left edge, so the press
+	// column maps directly onto the line's display columns. See
 	// TheoryOfTUIOutputSections and TheoryOfTreeTab.
 	pressCol := x - box.Left
-	if node.Type == tree.TypeAttemptStart {
+	if node.Type == tree.TypeAttempt {
 		if line, ok := t.treeDisplayLine(row, box); ok {
 			start, end, hasMarker := markerColumnRange(line.Text, taiui.DisplayWidthOptions())
 			if hasMarker && pressCol >= start && pressCol < end {
@@ -1029,8 +1048,8 @@ func (t *TUI) treeAtClick(x, y int) {
 	t.lastTreePressY = y
 }
 
-// sectionOfTreeNode resolves the output section an attempt-start node
-// maps to: the section owned by the node's attempt number. -1 when the
+// sectionOfTreeNode resolves the output section an attempt node maps
+// to: the section owned by the node's attempt number. -1 when the
 // attempt produced no section. See TheoryOfTreeTab and
 // TheoryOfTUIOutputSections.
 func (t *TUI) sectionOfTreeNode(node *tree.Node) int {

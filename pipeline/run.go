@@ -422,7 +422,7 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 	attemptBase := generators.CountContents(ls.state)
 
 	// Inner retry loop: each iteration is one attempt, opened by the
-	// attempt-start event node immediately before its work — including
+	// attempt structure node immediately before its work — including
 	// retries, so every attempt's opening is recorded the moment it
 	// begins. The attempt number is session-wide: it increments on
 	// every attempt and never resets across generations;
@@ -438,33 +438,33 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 		generationParseErrors = nil
 		prefetchedFutures = nil
 
-		// Attempt open: report to the interaction recorder, record the
-		// attempt-start event node, and reset per-attempt state (e.g.,
+		// Attempt open: report to the interaction recorder, write the
+		// attempt structure node with the user prompts the attempt
+		// consumes, and reset per-attempt state (e.g.,
 		// MemoryStore.Reset). Only the generation's first attempt
 		// honors the parse-error correction path's skip; retries
 		// reset unconditionally. See TheoryOfLoopEvents.
 		if ls.rec != nil && ls.rec.Enabled() {
 			ls.rec.AttemptStart()
 		}
-		ls.writeEventNode("attempt-start", fmt.Sprintf("attempt %d start (%d/%d)",
-			ls.attempt, ls.attemptInGeneration, ls.maxRetries))
+		ls.writeAttemptNode()
 		if ls.opts.OnAttemptStart != nil && (!ls.skipOnAttemptStart || retry > 0) {
 			ls.opts.OnAttemptStart()
 		}
 
-		// The request node precedes the attempt's request: it
-		// describes the actual generation parameters — the model and
-		// the effective temperature, reasoning effort, and token
-		// limits — resolved from the generator spec with the flag
-		// overrides, mirroring the generators' flag-over-spec
-		// precedence. Unlike the generators' "generating" log, which
-		// records the spec's effort even when the flag overrides it,
-		// the node's content reports the values the request actually
-		// carries. The loop cannot see retries internal to the
-		// generator's Retrier: one loop attempt may cover several API
-		// calls. See TheoryOfLoopEvents.
+		// The generator node precedes the attempt's request: it
+		// carries the generator spec the attempt runs on — the model
+		// and the effective temperature, reasoning effort, and token
+		// limits — resolved from the spec with the flag overrides,
+		// mirroring the generators' flag-over-spec precedence. Unlike
+		// the generators' "generating" log, which records the spec's
+		// effort even when the flag overrides it, the node's content
+		// reports the values the request actually carries. The loop
+		// cannot see retries internal to the generator's Retrier: one
+		// loop attempt may cover several API calls. See
+		// TheoryOfLoopEvents.
 		if ls.opts.Generator != nil {
-			ls.writeEventNode("request", describeRequest(
+			ls.writeEventNode(tree.TypeGenerator, describeGenerator(
 				ls.opts.Generator.Spec(),
 				ls.temperatureFlag,
 				ls.effortFlag,
@@ -839,7 +839,7 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 		ls.writeFeedbackInputNode(retryParts)
 
 		// The retry attempt opens on the next loop iteration: its
-		// attempt-start node and OnAttemptStart hook fire there,
+		// attempt node and OnAttemptStart hook fire there,
 		// keeping every attempt's opening bookkeeping in one place.
 		// See TheoryOfLoopEvents.
 	}
@@ -1134,24 +1134,24 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 	}, nil
 }
 
-// describeRequest renders the actual generation parameters of one
-// request as the request event node's content: the resolved spec path,
-// the model identity, and the effective temperature, reasoning effort,
-// and token limits. The spec path is the full resolved generator path
-// (Spec.Name after resolveSpec, e.g. "google/flash"); specs constructed
-// without resolution (built-in shortcuts, the ollama shorthand) carry
-// no path and omit the field. The effective values mirror the
-// generators' flag-over-spec precedence — the -temperature and -effort
-// flags override the spec fields (see Gemini.Generate and
-// OpenAI.Generate) — so the node's content reports the values the
-// request actually carries, unlike the generators' "generating" log,
-// which records the spec's effort even when the flag overrides it. Max
-// generate tokens come from the spec: every built-in command passes nil
+// describeGenerator renders the generator spec of one attempt as the
+// generator node's content: the resolved spec path, the model
+// identity, and the effective temperature, reasoning effort, and token
+// limits. The spec path is the full resolved generator path (Spec.Name
+// after resolveSpec, e.g. "google/flash"); specs constructed without
+// resolution (built-in shortcuts, the ollama shorthand) carry no path
+// and omit the field. The effective values mirror the generators'
+// flag-over-spec precedence — the -temperature and -effort flags
+// override the spec fields (see Gemini.Generate and OpenAI.Generate) —
+// so the node's content reports the values the request actually
+// carries, unlike the generators' "generating" log, which records the
+// spec's effort even when the flag overrides it. Max generate tokens
+// come from the spec: every built-in command passes nil
 // GenerateOptions, so the spec field is the effective limit;
 // flags.MaxTokens bounds only the input budget and is not part of the
 // request. Unset values are omitted from the detail. See
 // TheoryOfLoopEvents.
-func describeRequest(
+func describeGenerator(
 	spec generators.Spec,
 	temperatureFlag generators.TemperatureFlag,
 	effortFlag generators.EffortFlag,

@@ -57,19 +57,19 @@ tree theory: writes and transforms on immutable path-copying trees.
   need no processing (done, summary). Block execution results are written
   as block-result child nodes by the program.
 - Node kinds form two layers. Type is the fine-grained kind: structure
-  nodes (root, loop, attempt), message content (system, user, plan, model,
-  done, abort), per-occurrence event subtypes (attempt-start, request,
-  finish, usage, truncated, retry, handoff-start, handoff, completed,
-  synthesized-summary, thought-summary, continue, idle, run-error, goal,
-  context), block execution (block-result and summary, plus the block kinds — a
-  block node's type is the kind of the block it records, so unknown kinds
-  form types dynamically), and error. Category is the coarse layer derived
-  from the type (Node.Category): structure, message, event, block, error.
-  Category is never written — it is a pure function of Type — so the write
-  surface, merge identity, and chronology stay type-only, and consumers
-  select whole families with ByCategory. Every event subtype's string
-  equals the event node name prefix the pipeline has always written, so
-  typed event nodes keep their historical names. A block kind sharing a
+  nodes (root, loop, attempt, goal), message content (system, user, plan,
+  model, done, abort), per-occurrence event subtypes (generator, finish,
+  usage, truncated, retry, handoff-start, handoff, completed,
+  synthesized-summary, thought-summary, continue, idle, run-error,
+  context), block execution (block-result and summary, plus the block
+  kinds — a block node's type is the kind of the block it records, so
+  unknown kinds form types dynamically), and error. Category is the coarse
+  layer derived from the type (Node.Category): structure, message, event,
+  block, error. Category is never written — it is a pure function of Type —
+  so the write surface, merge identity, and chronology stay type-only, and
+  consumers select whole families with ByCategory. Every event subtype's
+  string equals the event node name prefix the pipeline writes, so typed
+  event nodes carry their kind in their names. A block kind sharing a
   string with an event subtype (continue) derives to that subtype's
   category; every other unknown string derives to block. Summary is a
   block kind: it records the response's summary block, not a message.
@@ -126,19 +126,28 @@ const TypeLoop Type = "loop"
 // pipeline.TheoryOfSessionTree.
 const TypeAttempt Type = "attempt"
 
+// TypeGoal marks one verdict or failure note the goal runner records
+// under the tree root: the run's progress, aligned with the loop nodes
+// it annotates. See pipeline.TheoryOfGoalMode.
+const TypeGoal Type = "goal"
+
 // TypeContext marks one context-assembly diagnostic — the token
 // composition summaries gotools records — replayed into the tree by
 // the generation loop at startup. See TheoryOfTree.
 const TypeContext Type = "context"
 
+// TypeGenerator marks one recorded generation request: the node
+// content is the generator spec the attempt runs on — the resolved
+// spec path, the model identity, and the effective parameters. See
+// TheoryOfTree.
+const TypeGenerator Type = "generator"
+
 // The event subtypes classify one recorded occurrence each: one type
 // per occurrence kind of a run. Every constant's string equals the
-// event node name prefix the pipeline has always written, so typed
-// event nodes keep their historical names. All of them derive to
+// event node name prefix the pipeline writes, so typed event nodes
+// carry their kind in their names. All of them derive to
 // CategoryEvent. See TheoryOfTree.
 const (
-	TypeAttemptStart       Type = "attempt-start"
-	TypeRequest            Type = "request"
 	TypeFinish             Type = "finish"
 	TypeUsage              Type = "usage"
 	TypeTruncated          Type = "truncated"
@@ -151,7 +160,6 @@ const (
 	TypeContinue           Type = "continue"
 	TypeIdle               Type = "idle"
 	TypeRunError           Type = "run-error"
-	TypeGoal               Type = "goal"
 )
 
 // Category is the coarse classification layer above Type: a pure
@@ -171,15 +179,15 @@ const (
 // Category returns the category the type belongs to. See TheoryOfTree.
 func (t Type) Category() Category {
 	switch t {
-	case TypeRoot, TypeLoop, TypeAttempt:
+	case TypeRoot, TypeLoop, TypeAttempt, TypeGoal:
 		return CategoryStructure
 	case TypeSystem, TypeUser, TypeModel, TypePlan,
 		TypeDone, TypeAbort:
 		return CategoryMessage
-	case TypeContext, TypeAttemptStart, TypeRequest, TypeFinish, TypeUsage,
+	case TypeContext, TypeGenerator, TypeFinish, TypeUsage,
 		TypeTruncated, TypeRetry, TypeHandoffStart, TypeHandoff,
 		TypeCompleted, TypeSynthesizedSummary, TypeThoughtSummary,
-		TypeContinue, TypeIdle, TypeRunError, TypeGoal:
+		TypeContinue, TypeIdle, TypeRunError:
 		return CategoryEvent
 	case TypeBlockResult, TypeSummary:
 		return CategoryBlock
@@ -204,6 +212,8 @@ func (t Type) Emoji() string {
 		return "🔁"
 	case TypeAttempt:
 		return "⏱️"
+	case TypeGoal:
+		return "🎯"
 	case TypeSystem:
 		return "📜"
 	case TypeUser:
@@ -220,9 +230,7 @@ func (t Type) Emoji() string {
 		return "🚫"
 	case TypeContext:
 		return "📊"
-	case TypeAttemptStart:
-		return "🚀"
-	case TypeRequest:
+	case TypeGenerator:
 		return "📤"
 	case TypeFinish:
 		return "🏁"
@@ -248,8 +256,6 @@ func (t Type) Emoji() string {
 		return "⏸️"
 	case TypeRunError:
 		return "❌"
-	case TypeGoal:
-		return "🎯"
 	// Built-in block kinds: a block node's type is its block kind.
 	case Type("change"):
 		return "🔧"

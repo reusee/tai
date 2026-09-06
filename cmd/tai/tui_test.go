@@ -1799,14 +1799,14 @@ func TestTuiStateAutoExpandTabs(t *testing.T) {
 	tui2.tabs.Expanded = []bool{true, false, false}
 	tui2.tabs.HasContent = []bool{true, false, false}
 	tui2.tabs.Focus = 0
-	tr2, err := tree.New().Write("root", "attempt-start-1", tree.TypeAttemptStart, tree.AuthorProgram,
-		"attempt 1 start (1/3)")
+	tr2, err := tree.New().Write("root", "attempt-1", tree.TypeAttempt, tree.AuthorProgram,
+		"attempt 1 (1/3)")
 	if err != nil {
 		t.Fatal(err)
 	}
 	tui2.setTree(tr2)
 	if !tui2.tabs.Expanded[1] {
-		t.Fatal("tree tab should auto-expand on the attempt-start node")
+		t.Fatal("tree tab should auto-expand on the attempt node")
 	}
 	if tui2.tabs.Focus != 0 {
 		t.Fatalf("auto-expand must not change an established focus, got %d", tui2.tabs.Focus)

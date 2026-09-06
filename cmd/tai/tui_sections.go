@@ -13,34 +13,33 @@ Output tab sections and event-to-output navigation theory (cmd/tai):
 - The Output tab's content stream is organized into sections. A section
   break happens where the output switches role or between thinking and
   non-thinking content — the existing blank-line separator points — and
-  where an attempt starts: a pendingOwner set from the run's
-  attempt-start event node is consumed by the next visible content
-  part, which then opens a section owned by that attempt number, so
-  consecutive attempts sharing one role still split into addressable
-  sections. A section records the source-line index where it starts in
-  the output buffer, so a section is an append-only slice of the
-  stream.
+  where an attempt starts: a pendingOwner set from the run's attempt
+  node is consumed by the next visible content part, which then opens
+  a section owned by that attempt number, so consecutive attempts
+  sharing one role still split into addressable sections. A section
+  records the source-line index where it starts in the output buffer,
+  so a section is an append-only slice of the stream.
 
 - The user's chat input opens the first section: displayChatInput
   opens a section before writing the chats, so the initial input is
   collapsible like every other section. See TheoryOfOutputControls.
 
-- The attempt-start event node's line carries the 👉 jump marker
+- The attempt node's line carries the 👉 jump marker
   (eventJumpMarker): a left press on the marker's cells jumps the
   Output tab's view to the section the attempt wrote — the only
   Tree-tab press that jumps. The press maps onto a tree node through
   the Tree tab's recorded row ranges (treeNodeAtRow), and only an
-  attempt-start node — a node of tree.TypeAttemptStart — is eligible;
-  the marker's cell range is then located in the pane's wrapped
-  display line, measured cluster by cluster with the same width
-  options the renderer uses, so the press must land on the marker's
-  own columns. Presses on other rows, other columns, rows without a
-  node, and attempt starts whose attempt produced no visible output
-  are no-ops; any other press on a node toggles its expansion.
-  Mirroring jumpToTransition, the jump expands and focuses the Output
-  tab when needed and stops following the tail; the live tail resumes
-  only when the view reaches the latest row. The display geometry is
-  recomputed on the click path only, not per frame.
+  attempt node — a node of tree.TypeAttempt — is eligible; the
+  marker's cell range is then located in the pane's wrapped display
+  line, measured cluster by cluster with the same width options the
+  renderer uses, so the press must land on the marker's own columns.
+  Presses on other rows, other columns, rows without a node, and
+  attempts that produced no visible output are no-ops; any other
+  press on a node toggles its expansion. Mirroring jumpToTransition,
+  the jump expands and focuses the Output tab when needed and stops
+  following the tail; the live tail resumes only when the view reaches
+  the latest row. The display geometry is recomputed on the click
+  path only, not per frame.
 
 - The scroll target is the display line where the section's first
   source line begins: the projection records each section's
@@ -622,8 +621,8 @@ func (t *TUI) expandCollapsedSectionAtClick(x, y int) bool {
 // beginOutputSection records a new section starting at the next source
 // line the output buffer will create — the line the caller is about to
 // write — and, when the section is owned by an attempt, binds the
-// attempt to it for the Tree tab's click-to-jump mapping (the
-// attempt-start node's 👉 marker). Guarded by mu.
+// attempt to it for the Tree tab's click-to-jump mapping (the attempt
+// node's 👉 marker). Guarded by mu.
 func (t *TUI) beginOutputSection(owner *outputSectionOwner) {
 	t.mu.Lock()
 	defer t.mu.Unlock()

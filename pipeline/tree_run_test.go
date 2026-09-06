@@ -81,7 +81,7 @@ func TestRunAttemptNodesUnderAttemptNode(t *testing.T) {
 		for _, child := range attempt.Children() {
 			kinds[child.Type]++
 		}
-		if kinds[tree.TypeAttemptStart] != 1 || kinds[tree.TypeCompleted] != 1 || kinds[tree.TypeModel] != 1 || kinds[tree.TypeUser] != 1 {
+		if kinds[tree.TypeCompleted] != 1 || kinds[tree.TypeModel] != 1 || kinds[tree.TypeUser] != 1 {
 			t.Fatalf("the attempt node must carry the attempt's events, input, and response, got %+v", kinds)
 		}
 		model, ok := tr.Node("model-1")
@@ -825,7 +825,7 @@ func TestRecordIdleUserInput(t *testing.T) {
 	if _, ok := ls.sessionTree.Node("user-1"); ok {
 		t.Fatal("the queued input must not join the tree before an attempt opens")
 	}
-	ls.writeEventNode(tree.TypeAttemptStart, "attempt 1 start")
+	ls.writeAttemptNode()
 	node, ok := ls.sessionTree.Node("user-1")
 	if !ok {
 		t.Fatal("expected a user node recorded from the idle handler's delta")
@@ -840,7 +840,7 @@ func TestRecordIdleUserInput(t *testing.T) {
 
 	// An empty delta records nothing.
 	ls.recordIdleUserInput(state, 1)
-	ls.writeEventNode(tree.TypeAttemptStart, "attempt 2 start")
+	ls.writeAttemptNode()
 	if _, ok := ls.sessionTree.Node("user-2"); ok {
 		t.Fatal("an empty delta must not record a user node")
 	}

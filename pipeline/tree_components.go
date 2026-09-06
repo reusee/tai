@@ -49,7 +49,7 @@ immutable tree, and one run owns exactly one tree.
   before any attempt and stays the attempt nodes' sibling.
 - The loop's own bookkeeping joins the same tree as event nodes
   (event-subtype types in Category event, program author) under the
-  current attempt node: attempt lifecycle, request parameters, finish
+  current attempt node: attempt lifecycle, the generator spec, finish
   reasons, token usage, truncations, retries, handoffs, completions,
   continuations, thought summaries, and the terminal error. Every
   event write yields the full tree to the run's consumer (see
@@ -815,20 +815,27 @@ func (ls *loopState) attemptParent() string {
 // under the session parent and records it as the attempt parent for
 // every node written until the next attempt opens: the attempt's
 // response, summaries, blocks, errors, events, feedback, and idle
-// input hang under it, and the initial user input joins the first
-// attempt node. The system node is written before any attempt and
+// input hang under it. The user prompts the attempt consumes — the
+// initial input on the first attempt, and the feedback and idle input
+// queued since the previous attempt — join the attempt node, written
+// right after it opens and before its generator node. The node
+// content carries the session-wide attempt number and the retry
+// budget figures. The system node is written before any attempt and
 // stays the attempt nodes' sibling. See TheoryOfSessionTree.
 func (ls *loopState) writeAttemptNode() {
 	if ls.sessionTree == nil {
 		return
 	}
 	next, name, err := ls.sessionTree.WriteAuto(ls.sessionParent(), "attempt", tree.TypeAttempt, tree.AuthorProgram,
-		fmt.Sprintf("attempt %d", ls.attempt))
+		fmt.Sprintf("attempt %d (%d/%d)", ls.attempt, ls.attemptInGeneration, ls.maxRetries))
 	if err != nil {
 		return
 	}
 	ls.sessionTree = next
 	ls.currentAttempt = name
+	// The attempt consumes the queued inputs; they join its node now.
+	// See TheoryOfSessionTree.
+	ls.writePendingUserInputs(ls.attemptParent())
 	ls.emitTree()
 }
 

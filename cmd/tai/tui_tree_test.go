@@ -35,8 +35,8 @@ func treeWithMultilineNode(t *testing.T) *tree.Tree {
 }
 
 // TestSetTreeConsumesSignals verifies that setTree consumes the tree's
-// new event nodes once: an attempt-start node opens the output section
-// the attempt will fill, a finish node clears the generating hint, and
+// new nodes once: an attempt node opens the output section the attempt
+// will fill, a finish node clears the generating hint, and
 // re-delivering the same tree triggers nothing again. setTree takes
 // t.mu itself, so the test calls it outside the lock and inspects the
 // state under the lock. See TheoryOfTreeTab and
@@ -45,7 +45,7 @@ func TestSetTreeConsumesSignals(t *testing.T) {
 	tui := newTUIForTest()
 	tui.generating = true
 	tr, err := tree.New().WriteAll(
-		tree.WriteOp{Parent: "root", Name: "attempt-start-1", Type: tree.TypeAttemptStart, Author: tree.AuthorProgram, Content: "attempt 1 start (1/3)"},
+		tree.WriteOp{Parent: "root", Name: "attempt-1", Type: tree.TypeAttempt, Author: tree.AuthorProgram, Content: "attempt 1 (1/3)"},
 		tree.WriteOp{Parent: "root", Name: "finish-1", Type: tree.TypeFinish, Author: tree.AuthorProgram, Content: "finish: stop"},
 	)
 	if err != nil {
@@ -61,10 +61,10 @@ func TestSetTreeConsumesSignals(t *testing.T) {
 		t.Fatal("expected the finish node to clear the generating hint")
 	}
 	if !tui.tabs.Expanded[1] {
-		t.Fatal("the tree tab should auto-expand on event nodes")
+		t.Fatal("the tree tab should auto-expand on consumed nodes")
 	}
 	// Re-arm the signals, release the lock, and re-deliver the same tree:
-	// the already-seen event nodes must not re-trigger anything.
+	// the already-seen nodes must not re-trigger anything.
 	tui.pendingOwner = nil
 	tui.generating = true
 	tui.mu.Unlock()
@@ -73,7 +73,7 @@ func TestSetTreeConsumesSignals(t *testing.T) {
 	tui.mu.Lock()
 	defer tui.mu.Unlock()
 	if tui.pendingOwner != nil || !tui.generating {
-		t.Fatal("re-delivered event nodes must not re-trigger the signals")
+		t.Fatal("re-delivered nodes must not re-trigger the signals")
 	}
 }
 
@@ -148,7 +148,7 @@ func TestTreeProjectionCycle(t *testing.T) {
 	tui := newTUIForTest()
 	tr, err := tree.New().WriteAll(
 		tree.WriteOp{Parent: "root", Name: "user-1", Type: tree.TypeUser, Author: tree.AuthorUser, Content: "task"},
-		tree.WriteOp{Parent: "root", Name: "attempt-start-1", Type: tree.TypeAttemptStart, Author: tree.AuthorProgram, Content: "attempt 1 start (1/3)"},
+		tree.WriteOp{Parent: "root", Name: "attempt-1", Type: tree.TypeAttempt, Author: tree.AuthorProgram, Content: "attempt 1 (1/3)"},
 		tree.WriteOp{Parent: "root", Name: "completed-1", Type: tree.TypeCompleted, Author: tree.AuthorProgram, Content: "attempt 1 complete"},
 	)
 	if err != nil {
@@ -164,7 +164,8 @@ func TestTreeProjectionCycle(t *testing.T) {
 	}
 	tui.mu.Unlock()
 
-	// Events projection: only the event nodes plus ancestors.
+	// Events projection: only the event nodes plus ancestors. The
+	// attempt node is a structure node, so it is pruned here.
 	tui.cycleTreeView()
 	if tui.treeTab.mode != treeViewEvents {
 		t.Fatalf("expected the events projection, got %d", tui.treeTab.mode)
@@ -172,18 +173,19 @@ func TestTreeProjectionCycle(t *testing.T) {
 	tui.mu.Lock()
 	display = tui.treeDisplay(60, panelStyle.BaseBG)
 	tui.mu.Unlock()
-	for _, want := range []string{"attempt 1 start", "attempt 1 complete"} {
-		found := false
-		for _, line := range display {
-			if strings.Contains(line.Text, want) {
-				found = true
-			}
-		}
-		if !found {
-			t.Fatalf("expected %q in the events projection, got %v", want, display)
+	found := false
+	for _, line := range display {
+		if strings.Contains(line.Text, "attempt 1 complete") {
+			found = true
 		}
 	}
+	if !found {
+		t.Fatalf("expected the completed node in the events projection, got %v", display)
+	}
 	for _, line := range display {
+		if strings.Contains(line.Text, "attempt 1 (1/3)") {
+			t.Fatalf("the attempt structure node must be pruned from the events projection, got %v", display)
+		}
 		if strings.Contains(line.Text, "task") {
 			t.Fatalf("the user node must be pruned from the events projection, got %v", display)
 		}
@@ -203,7 +205,7 @@ func TestTreeProjectionCycle(t *testing.T) {
 	tui.mu.Lock()
 	display = tui.treeDisplay(60, panelStyle.BaseBG)
 	tui.mu.Unlock()
-	found := false
+	found = false
 	for _, line := range display {
 		if strings.Contains(line.Text, "task") {
 			found = true
@@ -244,13 +246,12 @@ func TestTreeToggleLastExpandable(t *testing.T) {
 }
 
 // TestTreeCollapseAllToggle verifies the c key's fold of the tree
-// nodes: the first press snapshots the expanded nodes, folds every
-// node to its one-line header, and scrolls the view to the top so the
-// collapsed list starts below the title; the next press restores the
-// expansions; a manual expand breaks the all-collapsed state, so the
-// next press folds and re-snapshots again; and a node that arrives
-// after the snapshot keeps the collapsed form on restore. See
-// TheoryOfTreeTab.
+// nodes: the first press snapshots the expanded nodes and folds every
+// node to its one-line header while the view stays anchored on the
+// items the user was reading; the next press restores the expansions;
+// a manual expand breaks the all-collapsed state, so the next press
+// folds and re-snapshots again; and a node that arrives after the
+// snapshot keeps the collapsed form on restore. See TheoryOfTreeTab.
 func TestTreeCollapseAllToggle(t *testing.T) {
 	tui := newTUIForTest()
 	tr, err := tree.New().WriteAll(
@@ -263,23 +264,18 @@ func TestTreeCollapseAllToggle(t *testing.T) {
 	tui.treeView = tr
 
 	// Expand wide-1, then fold: every node shows one header row, and
-	// the view lands on the top so the list starts below the title.
+	// the view stays anchored instead of jumping to the top.
 	tui.mu.Lock()
 	tui.toggleTreeNodeByName("wide-1")
 	tui.width, tui.height = 80, 25
 	tui.tabs.Expanded[1] = true
-	tui.scrolls[1].Offset = 5
 	tui.mu.Unlock()
 	tui.collapseAllTreeNodes()
 	tui.mu.Lock()
 	display := tui.treeDisplay(120, panelStyle.BaseBG)
-	offset := tui.scrolls[1].Offset
 	tui.mu.Unlock()
 	if len(display) != 2 {
 		t.Fatalf("expected every node folded to one row, got %d rows", len(display))
-	}
-	if offset != 0 {
-		t.Fatalf("expected the fold to scroll the view to the top, got offset %d", offset)
 	}
 
 	// Press again: wide-1 expands again with its content — first line
@@ -332,6 +328,70 @@ func TestTreeCollapseAllToggle(t *testing.T) {
 	tui.mu.Unlock()
 	if len(display) != 4 {
 		t.Fatalf("expected wide-1 expanded and late-1 collapsed, got %d rows", len(display))
+	}
+}
+
+// TestTreeCollapseAllKeepsAnchor verifies that the c key's fold keeps
+// the view anchored: the node that held the pane's top row before the
+// fold stays the first visible row after it, so the items the user
+// was reading remain in view instead of the list jumping to the top.
+// See TheoryOfTreeTab.
+func TestTreeCollapseAllKeepsAnchor(t *testing.T) {
+	tui := newTUIForTest()
+	// Twelve multi-line nodes: 36 display rows when all expanded (one
+	// header plus two body lines each), so the folded 12-row list
+	// still exceeds the pane and anchoring is observable.
+	var ops []tree.WriteOp
+	for i := 0; i < 12; i++ {
+		ops = append(ops, tree.WriteOp{
+			Parent: "root", Name: string(rune('a' + i)),
+			Type: tree.TypeHandoff, Author: tree.AuthorProgram,
+			Content: "head\nbody",
+		})
+	}
+	tr, err := tree.New().WriteAll(ops...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tui.treeView = tr
+	tui.mu.Lock()
+	tui.width, tui.height = 80, 8
+	tui.tabs.Expanded[1] = true
+	for i := 0; i < 12; i++ {
+		tui.toggleTreeNodeByName(string(rune('a' + i)))
+	}
+	// Scroll node f — the sixth node — to the pane top through the
+	// ordinary scroll path, so the offset and the recorded rows agree.
+	tui.scrollToTreeNode("f")
+	tui.mu.Unlock()
+	tui.collapseAllTreeNodes()
+	tui.mu.Lock()
+	display := tui.treeDisplay(120, panelStyle.BaseBG)
+	offset := tui.scrolls[1].Offset
+	anchorStart := -1
+	for _, r := range tui.treeTab.rows {
+		if r.name == "f" {
+			anchorStart = r.startRow
+		}
+	}
+	tui.mu.Unlock()
+	if len(display) != 12 {
+		t.Fatalf("expected every node folded to one row, got %d rows", len(display))
+	}
+	if anchorStart < 0 {
+		t.Fatal("expected node f in the folded display")
+	}
+	if offset != anchorStart {
+		t.Fatalf("expected the view anchored on node f's header row %d, got offset %d", anchorStart, offset)
+	}
+
+	// The next press restores the expansions.
+	tui.collapseAllTreeNodes()
+	tui.mu.Lock()
+	display = tui.treeDisplay(120, panelStyle.BaseBG)
+	tui.mu.Unlock()
+	if len(display) != 36 {
+		t.Fatalf("expected the expansions restored, got %d rows", len(display))
 	}
 }
 
@@ -495,18 +555,18 @@ func TestTreeProjectionAncestors(t *testing.T) {
 	}
 }
 
-// TestTreeAttemptStartJumpMarker verifies that an attempt-start node's
-// header carries the jump marker and parses the attempt number its
-// content carries. See TheoryOfTreeTab and TheoryOfTUIOutputSections.
-func TestTreeAttemptStartJumpMarker(t *testing.T) {
-	tr, err := tree.New().Write("root", "attempt-start-1", tree.TypeAttemptStart, tree.AuthorProgram,
-		"attempt 3 start (1/3)")
+// TestTreeAttemptJumpMarker verifies that an attempt node's header
+// carries the jump marker and parses the attempt number its content
+// carries. See TheoryOfTreeTab and TheoryOfTUIOutputSections.
+func TestTreeAttemptJumpMarker(t *testing.T) {
+	tr, err := tree.New().Write("root", "attempt-1", tree.TypeAttempt, tree.AuthorProgram,
+		"attempt 3 (1/3)")
 	if err != nil {
 		t.Fatal(err)
 	}
-	node, _ := tr.Node("attempt-start-1")
+	node, _ := tr.Node("attempt-1")
 	if header := treeHeaderText(node, 0, false, "", displaywidth.Options{}, treeAlignments{}); !strings.HasSuffix(header, eventJumpMarker) {
-		t.Fatalf("expected the jump marker on the attempt-start header, got %q", header)
+		t.Fatalf("expected the jump marker on the attempt header, got %q", header)
 	}
 	num, ok := attemptNumberOf(node.Content)
 	if !ok || num != 3 {
@@ -520,8 +580,8 @@ func TestTreeAttemptStartJumpMarker(t *testing.T) {
 func TestTreeElapsedTimer(t *testing.T) {
 	tui := newTUIForTest()
 	tui.startTime = time.Now().Add(-70 * time.Second)
-	tr, err := tree.New().Write("root", "attempt-start-1", tree.TypeAttemptStart, tree.AuthorProgram,
-		"attempt 1 start (1/3)")
+	tr, err := tree.New().Write("root", "attempt-1", tree.TypeAttempt, tree.AuthorProgram,
+		"attempt 1 (1/3)")
 	if err != nil {
 		t.Fatal(err)
 	}

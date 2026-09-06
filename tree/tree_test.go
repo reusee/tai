@@ -397,24 +397,25 @@ func TestByTypeByAuthor(t *testing.T) {
 // the family, and every type and category carries a non-empty emoji.
 // A block node's type is its block kind: an unknown kind derives to
 // the block category and the fallback emoji, and a built-in kind
-// carries its predefined emoji. Summary is a block kind, and attempt
-// is a structure kind. Context is an event kind carrying the context
-// glyph. See TheoryOfTree.
+// carries its predefined emoji. Summary is a block kind; attempt and
+// goal are structure kinds. Context is an event kind carrying the
+// context glyph. See TheoryOfTree.
 func TestCategoryAndEmoji(t *testing.T) {
 	tr, err := New().WriteAll(
-		WriteOp{Parent: "root", Name: "a", Type: TypeAttemptStart, Author: AuthorProgram, Content: "x"},
-		WriteOp{Parent: "root", Name: "b", Type: TypeRequest, Author: AuthorProgram, Content: "y"},
+		WriteOp{Parent: "root", Name: "a", Type: TypeTruncated, Author: AuthorProgram, Content: "x"},
+		WriteOp{Parent: "root", Name: "b", Type: TypeGenerator, Author: AuthorProgram, Content: "y"},
 		WriteOp{Parent: "root", Name: "c", Type: TypeUser, Author: AuthorUser, Content: "z"},
 		WriteOp{Parent: "root", Name: "d", Type: Type("shell"), Author: AuthorModel, Content: "b"},
 		WriteOp{Parent: "root", Name: "e", Type: TypeError, Author: AuthorProgram, Content: "e"},
 		WriteOp{Parent: "root", Name: "f", Type: TypeSummary, Author: AuthorModel, Content: "s"},
 		WriteOp{Parent: "root", Name: "g", Type: TypeAttempt, Author: AuthorProgram, Content: "a"},
+		WriteOp{Parent: "root", Name: "h", Type: TypeGoal, Author: AuthorProgram, Content: "v"},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := mustNode(t, tr, "a").Category(); got != CategoryEvent {
-		t.Fatalf("attempt-start category = %v, want event", got)
+		t.Fatalf("truncated category = %v, want event", got)
 	}
 	if got := mustNode(t, tr, "c").Category(); got != CategoryMessage {
 		t.Fatalf("user category = %v, want message", got)
@@ -430,6 +431,9 @@ func TestCategoryAndEmoji(t *testing.T) {
 	}
 	if got := mustNode(t, tr, "g").Category(); got != CategoryStructure {
 		t.Fatalf("attempt category = %v, want structure", got)
+	}
+	if got := mustNode(t, tr, "h").Category(); got != CategoryStructure {
+		t.Fatalf("goal category = %v, want structure", got)
 	}
 	if got := len(tr.ByCategory(CategoryEvent)); got != 2 {
 		t.Fatalf("ByCategory(event) = %d, want 2", got)
@@ -454,6 +458,10 @@ func TestCategoryAndEmoji(t *testing.T) {
 	}
 	if got := TypeContext.Emoji(); got != "📊" {
 		t.Fatalf("context emoji = %q, want the context glyph", got)
+	}
+	// The generator subtype carries the request spec description.
+	if got := TypeGenerator.Category(); got != CategoryEvent {
+		t.Fatalf("generator category = %v, want event", got)
 	}
 	for _, n := range tr.Subtree("root") {
 		if n.Type.Emoji() == "" {

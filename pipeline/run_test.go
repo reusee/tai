@@ -501,8 +501,8 @@ func TestRunMultiGenerationTriggered(t *testing.T) {
 // TestRunAttemptNumbersContinueAcrossGenerations verifies the
 // session-wide attempt counter: component-triggered generations
 // continue the attempt sequence instead of restarting at 1. Each
-// attempt-start event node's content carries the session-wide attempt
-// number and its position within the generation's retry budget. See
+// attempt node's content carries the session-wide attempt number and
+// its position within the generation's retry budget. See
 // TheoryOfLoopEvents.
 func TestRunAttemptNumbersContinueAcrossGenerations(t *testing.T) {
 	withRun(t, func(run Run) {
@@ -537,20 +537,18 @@ func TestRunAttemptNumbersContinueAcrossGenerations(t *testing.T) {
 		if lastTree == nil {
 			t.Fatal("expected the run to yield trees")
 		}
-		var starts []string
-		for _, n := range lastTree.ByCategory(tree.CategoryEvent) {
-			if strings.HasPrefix(n.Name, "attempt-start") {
-				starts = append(starts, n.Content)
-			}
+		var attempts []string
+		for _, n := range lastTree.ByType(tree.TypeAttempt) {
+			attempts = append(attempts, n.Content)
 		}
-		if len(starts) != 2 {
-			t.Fatalf("expected 2 attempt-start event nodes, got %d", len(starts))
+		if len(attempts) != 2 {
+			t.Fatalf("expected 2 attempt nodes, got %d", len(attempts))
 		}
-		if !strings.Contains(starts[0], "attempt 1 start (1/") {
-			t.Fatalf("first attempt content: got %q, want attempt 1 position 1", starts[0])
+		if !strings.Contains(attempts[0], "attempt 1 (1/") {
+			t.Fatalf("first attempt content: got %q, want attempt 1 position 1", attempts[0])
 		}
-		if !strings.Contains(starts[1], "attempt 2 start (1/") {
-			t.Fatalf("second generation's attempt number must continue the session-wide sequence: got %q, want attempt 2 position 1", starts[1])
+		if !strings.Contains(attempts[1], "attempt 2 (1/") {
+			t.Fatalf("second generation's attempt number must continue the session-wide sequence: got %q, want attempt 2 position 1", attempts[1])
 		}
 	})
 }

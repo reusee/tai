@@ -495,8 +495,8 @@ func TestRunGoalAggregatesStatsWithLoopNumbers(t *testing.T) {
 
 // TestRunGoalReportsTreeThroughObserver verifies that the goal tree
 // observer receives the run's session tree after each progress message
-// is recorded as a goal event node, so a display front-end renders the
-// same tree the pipeline writes. See TheoryOfGoalMode and
+// is recorded as a goal structure node, so a display front-end renders
+// the same tree the pipeline writes. See TheoryOfGoalMode and
 // TheoryOfLoopEvents.
 func TestRunGoalReportsTreeThroughObserver(t *testing.T) {
 	output := &bytes.Buffer{}
@@ -519,15 +519,13 @@ func TestRunGoalReportsTreeThroughObserver(t *testing.T) {
 	}
 	// A done block emitted by a loop that applied no change blocks
 	// achieves the goal directly: the achieved verdict is the only goal
-	// event node.
+	// node.
 	var goalTexts []string
-	for _, n := range trees[len(trees)-1].ByCategory(tree.CategoryEvent) {
-		if strings.HasPrefix(n.Name, "goal") {
-			goalTexts = append(goalTexts, n.Content)
-		}
+	for _, n := range trees[len(trees)-1].ByType(tree.TypeGoal) {
+		goalTexts = append(goalTexts, n.Content)
 	}
 	if len(goalTexts) == 0 || !strings.Contains(goalTexts[len(goalTexts)-1], "Goal Achieved") {
-		t.Fatalf("expected the achieved verdict as a goal event node, got %v", goalTexts)
+		t.Fatalf("expected the achieved verdict as a goal node, got %v", goalTexts)
 	}
 	if output.Len() != 0 {
 		t.Fatalf("expected the output writer to stay empty when the observer is set, got %q", output.String())
