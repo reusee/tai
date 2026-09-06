@@ -359,6 +359,54 @@ func TestRunGoalDoneWithoutChangesEndsRun(t *testing.T) {
 	}
 }
 
+// TestRunGoalDoneIgnoredWhilePlanPending verifies the done gate on plan
+// completion: a done block emitted by a loop whose own plan still
+// carries pending entries is ignored — the run continues, the
+// declaration advances no verification state — and a later change-free
+// done block from a loop whose plan carries no pending work ends the
+// run. The ignored-done report goes to stderr (no observer is set), so
+// the feedback the next loop receives is the checked signal. See
+// TheoryOfGoalMode.
+func TestRunGoalDoneIgnoredWhilePlanPending(t *testing.T) {
+	calls := 0
+	result := RunGoal(context.Background(), GoalOptions{
+		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries, _ string, _ SessionTreeContinuation) (Result, []AttemptStat, error) {
+			calls++
+			if calls == 1 {
+				// The declaring loop's own plan root hangs under its
+				// loop node and carries a pending entry.
+				planRoot := planRootNameOf("loop-1")
+				tr, err := tree.New().Write("root", planRoot, tree.TypePlan, tree.AuthorProgram, "objective")
+				if err != nil {
+					t.Fatal(err)
+				}
+				next, err := tr.Write(planRoot, "e1", tree.TypePlan, tree.AuthorModel, "first")
+				if err != nil {
+					t.Fatal(err)
+				}
+				return Result{
+					SessionTree:     next,
+					RemainingBlocks: []blocks.Block{{Kind: "done", Body: "declared while pending"}},
+				}, nil, nil
+			}
+			if !strings.Contains(string(feedback), "done block was ignored") {
+				t.Fatalf("expected the done-gate feedback in the next loop, got %q", feedback)
+			}
+			return doneResult(), nil, nil
+		},
+		Review: noopReview,
+	})
+	if calls != 2 {
+		t.Fatalf("ran %d loops, want 2: a done block while the plan is pending must not end the run", calls)
+	}
+	if result.LoopsRun != 2 {
+		t.Fatalf("LoopsRun = %d, want 2", result.LoopsRun)
+	}
+	if !result.Achieved {
+		t.Fatal("the later change-free done block must mark the goal achieved")
+	}
+}
+
 // TestRunGoalDoneWithChangesDoesNotEndRun verifies the core completion
 // rule of the done mechanism: a done block emitted together with change
 // blocks never ends the run — there is no confirmation-by-repetition.

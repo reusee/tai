@@ -183,6 +183,12 @@ type ProcessContext struct {
 	// the tree from component to component. See
 	// pipeline.TheoryOfSessionTree.
 	SessionTree *tree.Tree
+	// SessionParent is the node under which the owning session writes
+	// its own nodes: the loop node of a goal run, the tree's root for a
+	// fresh run. Plan-tree components derive the loop's plan root from
+	// it, so each loop's plan hangs under its own loop node and never
+	// carries across loops. See pipeline.TheoryOfPlan.
+	SessionParent string
 }
 
 // ProcessResult holds the outcome of processing blocks of a single kind.
@@ -445,7 +451,10 @@ type ComponentOutput struct {
 // read it through ProcessContext.SessionTree and return the updated tree
 // through ProcessResult.Tree; the tree is threaded from component to
 // component and returned as treeOut. A nil tree passes through unchanged.
-// See pipeline.TheoryOfSessionTree.
+// sessionParent is the node under which the owning session writes its own
+// nodes, carried to components through ProcessContext.SessionParent so
+// plan-tree components derive the loop's plan root from it. See
+// pipeline.TheoryOfSessionTree and pipeline.TheoryOfPlan.
 //
 // prefetched optionally carries, aligned with the original allBlocks
 // order, the prefetched computation of each block: a non-nil entry
@@ -470,6 +479,7 @@ func ProcessComponents(
 	root *os.Root,
 	httpClient nets.HTTPClient,
 	sessionTree *tree.Tree,
+	sessionParent string,
 	prefetched ...PrefetchFuture,
 ) (
 	remainingBlocks []blocks.Block,
@@ -528,12 +538,13 @@ func ProcessComponents(
 		}
 
 		result := comp.Process(ctx, &ProcessContext{
-			Blocks:      compBlocks,
-			Prefetched:  compFutures,
-			State:       state,
-			Root:        root,
-			HttpClient:  httpClient,
-			SessionTree: treeOut,
+			Blocks:        compBlocks,
+			Prefetched:    compFutures,
+			State:         state,
+			Root:          root,
+			HttpClient:    httpClient,
+			SessionTree:   treeOut,
+			SessionParent: sessionParent,
 		})
 		if result.Err != nil {
 			return allBlocks, state, combinedParts, outputs, treeOut, triggered, result.Err

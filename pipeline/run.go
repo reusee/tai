@@ -359,9 +359,11 @@ type loopState struct {
 	// after it. See TheoryOfSessionTree and TheoryOfUnknownBlockKinds.
 	namingErrs []string
 
-	// planRoot names the plan tree's root node when plan mode is active;
-	// empty otherwise. The plan tree is the session's flow definition
-	// and persists across goal loops. See TheoryOfPlan.
+	// planRoot names this loop's plan tree's root node when plan mode is
+	// active; empty otherwise. The root is derived from the session
+	// parent — the loop node of a goal run, the tree's root for a fresh
+	// run — so each loop owns its plan and no plan carries across
+	// loops. See TheoryOfPlan.
 	planRoot string
 	// planCompletionNotified records that the plan-complete feedback was
 	// already produced, so the completion notice triggers exactly one
@@ -1023,7 +1025,9 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 	// collected blocks, so each component consumes its blocks' own
 	// outcomes in block order; the failed attempt's futures were
 	// discarded with its blocks at the attempt reset. The session
-	// tree is threaded through the tree-writing components. See
+	// tree is threaded through the tree-writing components, and the
+	// session parent travels with it so plan-tree components derive
+	// the loop's plan root from it. See
 	// components.TheoryOfReadOnlyPrefetch and TheoryOfSessionTree.
 	var generationRemaining []blocks.Block
 	var combinedParts []generators.Part
@@ -1034,7 +1038,7 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 	generationRemaining, ls.state, combinedParts, outputs, treeOut, triggered, cerr = components.ProcessComponents(
 		ls.ctx, ls.opts.Components, collectedBlocks, ls.state,
 		ls.opts.Root, ls.opts.HTTPClient,
-		ls.sessionTree,
+		ls.sessionTree, ls.sessionRoot,
 		prefetchedFutures...,
 	)
 	if cerr != nil {
@@ -1066,10 +1070,13 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 	// complete plan triggers exactly one closing round — the
 	// completion notice — and the session ends on the round after it.
 	// An un-updated plan re-provides the same entry: not updating the
-	// plan means the work is not done. See TheoryOfPlan.
+	// plan means the work is not done. The plan root belongs to this
+	// loop: it derives from the session parent, so a goal loop plans
+	// its own work and never inherits a previous loop's plan. See
+	// TheoryOfPlan.
 	if ls.opts.PlanMode && len(ls.opts.Components) > 0 {
 		if ls.planRoot == "" {
-			ls.planRoot = planRootName
+			ls.planRoot = planRootNameOf(ls.sessionRoot)
 		}
 		planParts, planComplete := planFeedback(ls.sessionTree, ls.planRoot, ls.planCompletionNotified)
 		planContinue := true

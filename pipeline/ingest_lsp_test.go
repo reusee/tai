@@ -63,6 +63,7 @@ func TestIngestComponentPassesLSPHandler(t *testing.T) {
 			root,
 			nets.HTTPClient{&http.Client{}},
 			nil,
+			"",
 		)
 		if err != nil {
 			t.Fatal(err)

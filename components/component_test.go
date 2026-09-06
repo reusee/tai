@@ -259,7 +259,7 @@ func TestProcessComponents(t *testing.T) {
 		}
 
 		remaining, _, combinedParts, outputs, _, triggered, err := ProcessComponents(
-			context.Background(), comps, allBlocks, nil, nil, nets.HTTPClient{}, nil,
+			context.Background(), comps, allBlocks, nil, nil, nets.HTTPClient{}, nil, "",
 		)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -311,7 +311,7 @@ func TestProcessComponents(t *testing.T) {
 		}
 
 		_, _, _, _, _, _, err := ProcessComponents(
-			context.Background(), comps, allBlocks, nil, nil, nets.HTTPClient{}, nil,
+			context.Background(), comps, allBlocks, nil, nil, nets.HTTPClient{}, nil, "",
 		)
 		if err != testErr {
 			t.Fatalf("expected testErr, got %v", err)
@@ -321,7 +321,7 @@ func TestProcessComponents(t *testing.T) {
 	t.Run("empty component set returns not triggered", func(t *testing.T) {
 		comps := ComponentSet{}
 		_, _, _, _, _, triggered, err := ProcessComponents(
-			context.Background(), comps, nil, nil, nil, nets.HTTPClient{}, nil,
+			context.Background(), comps, nil, nil, nil, nets.HTTPClient{}, nil, "",
 		)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -347,7 +347,7 @@ func TestProcessComponents(t *testing.T) {
 		}
 
 		remaining, _, _, _, _, _, err := ProcessComponents(
-			context.Background(), comps, allBlocks, nil, nil, nets.HTTPClient{}, nil,
+			context.Background(), comps, allBlocks, nil, nil, nets.HTTPClient{}, nil, "",
 		)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -376,7 +376,7 @@ func TestProcessComponents(t *testing.T) {
 		}
 		allBlocks := []blocks.Block{{Kind: "writer", Body: "b"}}
 		_, _, parts, _, treeOut, triggered, err := ProcessComponents(
-			context.Background(), comps, allBlocks, nil, nil, nets.HTTPClient{}, base,
+			context.Background(), comps, allBlocks, nil, nil, nets.HTTPClient{}, base, "",
 		)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -389,6 +389,26 @@ func TestProcessComponents(t *testing.T) {
 		}
 		if _, ok := treeOut.Node("n1"); !ok {
 			t.Fatal("the node written by the component is missing from the threaded tree")
+		}
+	})
+
+	t.Run("carries the session parent to components", func(t *testing.T) {
+		comps := ComponentSet{
+			{
+				Kind: "plan-op",
+				Process: func(ctx context.Context, pctx *ProcessContext) ProcessResult {
+					if pctx.SessionParent != "loop-3" {
+						t.Errorf("session parent = %q, want %q", pctx.SessionParent, "loop-3")
+					}
+					return ProcessResult{}
+				},
+			},
+		}
+		_, _, _, _, _, _, err := ProcessComponents(
+			context.Background(), comps, []blocks.Block{{Kind: "plan-op"}}, nil, nil, nets.HTTPClient{}, nil, "loop-3",
+		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
 		}
 	})
 }
@@ -422,7 +442,7 @@ func TestProcessComponentsStateModificationTriggers(t *testing.T) {
 	}
 
 	remaining, newState, combinedParts, _, _, triggered, err := ProcessComponents(
-		context.Background(), comps, allBlocks, initialState, nil, nets.HTTPClient{}, nil,
+		context.Background(), comps, allBlocks, initialState, nil, nets.HTTPClient{}, nil, "",
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -546,7 +566,7 @@ func TestProcessComponentsConsumesPrefetched(t *testing.T) {
 	}
 
 	_, _, combinedParts, _, _, triggered, err := ProcessComponents(
-		context.Background(), comps, allBlocks, nil, nil, nets.HTTPClient{}, nil,
+		context.Background(), comps, allBlocks, nil, nil, nets.HTTPClient{}, nil, "",
 		prefetched...,
 	)
 	if err != nil {
@@ -609,7 +629,7 @@ func TestProcessComponentsPrefetchAlignmentAcrossKinds(t *testing.T) {
 	done := make(chan outcome, 1)
 	go func() {
 		_, _, parts, _, _, _, err := ProcessComponents(
-			context.Background(), comps, allBlocks, nil, nil, nets.HTTPClient{}, nil,
+			context.Background(), comps, allBlocks, nil, nil, nets.HTTPClient{}, nil, "",
 			prefetched...,
 		)
 		done <- outcome{parts: parts, err: err}

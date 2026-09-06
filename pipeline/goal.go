@@ -59,6 +59,17 @@ fails or produces uncorrected malformed blocks carries corrective
 feedback into the next loop: the goal state is unknown or changes are
 missing, so the goal is not achieved.
 
+A done block is gated on the loop's own plan completion: each loop
+owns its plan — a plan root under its loop node — and while the
+declaring loop's plan carries pending entries, a done declaration is
+ignored: the run continues, the declaration advances no verification
+state and no review-model selection, and goalDonePendingPlanPrompt is
+carried into the next loop, which assesses the remaining work against
+the goal and completes it first. A plan is per-loop scaffolding and
+never carries across loops; cross-loop transfer is GoalFeedback and
+GoalLoopSummaries. Only a done block from a loop whose own plan
+carries no pending work can end the run.
+
 A change-free loop that emitted a done block achieves the goal and ends
 the run; analytical tasks that need no code changes end the same way,
 with an explicit done block. A change-free loop without a done block
@@ -446,6 +457,14 @@ type goalLoopState struct {
 	stopRequested           bool
 }
 
+// goalLoopNodeName names the session-tree node of one goal loop. The
+// runner writes the loop node before the loop runs, and the done gate
+// resolves the declaring loop's plan root from the same name, so both
+// sides share one source of truth. See TheoryOfGoalMode.
+func goalLoopNodeName(loop int) string {
+	return fmt.Sprintf("loop-%d", loop)
+}
+
 // applyLoopResult folds one loop's outcome into the runner state and
 // reports whether the run should stop after this loop. See
 // TheoryOfGoalMode.
@@ -529,14 +548,17 @@ func (s *goalLoopState) applyLoopError(loopsRun int, err error, reporter goalRep
 // applyLoopSuccess folds a successful loop into the runner state:
 // uncorrected malformed blocks carry re-emit feedback into the next
 // loop; a done block from a loop that applied no change blocks achieves
-// the goal — the done block is the run's only exit; a loop that applied
-// change blocks never ends the run — even when it also emits a done
-// block, because the changes must be checked by the next loop — and a
-// done declaration with changes carries the verification prompt into
-// the next loop; a loop that applied no change blocks without a done
-// block is a model output failure, so the runner carries corrective
-// feedback into the next loop and continues; a clean loop with changes
-// and no done block clears the feedback. See TheoryOfGoalMode and
+// the goal — the done block is the run's only exit, but only when the
+// loop's own plan carries no pending entries: a done declaration
+// emitted while the loop's plan work is pending is ignored and the
+// next loop completes the work first; a loop that applied change
+// blocks never ends the run — even when it also emits a done block,
+// because the changes must be checked by the next loop — and a done
+// declaration with changes carries the verification prompt into the
+// next loop; a loop that applied no change blocks without a done block
+// is a model output failure, so the runner carries corrective feedback
+// into the next loop and continues; a clean loop with changes and no
+// done block clears the feedback. See TheoryOfGoalMode and
 // TheoryOfGoalReviewModel.
 func (s *goalLoopState) applyLoopSuccess(loopsRun int, result Result, reporter goalReporter) bool {
 	s.consecutiveErrors = 0
@@ -561,6 +583,24 @@ func (s *goalLoopState) applyLoopSuccess(loopsRun int, result Result, reporter g
 			foundDone = true
 			break
 		}
+	}
+
+	// A done block ends the run only when the declaring loop's own
+	// plan carries no pending entries: each loop owns its plan under
+	// its loop node, the done protocol requires that plan to be
+	// complete first, and a declaration emitted while the loop's plan
+	// work is pending is ignored — it advances no verification state
+	// and no review-model selection — while the next loop assesses the
+	// remaining work and completes it first. A previous loop's
+	// unfinished plan never blocks a later loop's done block. See
+	// TheoryOfGoalMode.
+	if foundDone && planHasPendingWork(result.SessionTree, planRootNameOf(goalLoopNodeName(loopsRun))) {
+		reporter.failure(fmt.Sprintf(
+			"Goal loop %d emitted a done block while its own plan still carries pending entries; the done block was ignored.\n",
+			loopsRun))
+		s.pendingDoneVerification = false
+		s.feedback = GoalFeedback(goalDonePendingPlanPrompt)
+		return false
 	}
 
 	// A change-free loop that emitted the done block is the run's only
@@ -713,7 +753,7 @@ func RunGoal(ctx context.Context, opts GoalOptions) GoalResult {
 		if runTree == nil {
 			runTree = tree.New()
 		}
-		loopNode := fmt.Sprintf("loop-%d", loopsRun)
+		loopNode := goalLoopNodeName(loopsRun)
 		if next, werr := runTree.Write("root", loopNode, tree.TypeLoop, tree.AuthorProgram, fmt.Sprintf("goal loop %d", loopsRun)); werr == nil {
 			runTree = next
 		}

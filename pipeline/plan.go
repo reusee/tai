@@ -13,48 +13,58 @@ import (
 
 const TheoryOfPlan = `
 Plan-driven flow theory:
-- The plan tree is the session's flow definition: a subtree of the
-  session tree rooted at the node "plan" (TypePlan, program author,
-  fixed seed content naming the root's role). Entries are TypePlan
+- The plan tree is the flow definition of one loop: a subtree of the
+  session tree rooted at the loop's plan root — a child of the
+  session's parent node (the loop node of a goal run, the tree's root
+  for a fresh run), named by suffixing the parent with "-plan" via
+  planRootNameOf. Each loop owns its plan: the root is ensured lazily
+  when the first plan-op batch of that loop arrives, and no plan
+  carries across loops — a later loop starts with no plan and plans
+  only its own work. Cross-loop information transfer is GoalFeedback
+  and GoalLoopSummaries, which is sufficient. Entries are TypePlan
   nodes the model adds; a done mark is a TypeDone child the program
   writes when it applies a plan-op done block. The task itself stays
-  in the session's user input; the root anchors the tree. The root is
-  ensured lazily: applyPlanOps creates it when the first plan-op batch
-  arrives and the tree lacks it, and reuses the existing root in a
-  continued run, so the plan persists across goal loops and the flow
-  spans attempts.
+  in the session's user input; the root anchors the tree.
 - The model decides whether to plan: a simple task — one bounded piece
   of work — is done directly, and an empty plan produces no plan
   feedback; a non-simple task is decomposed into plan-op add entries
   first. No flag selects this: the plan-op component is unconditional
   in CodesComponents, so every codes session carries the plan tree.
 - The model operates the plan through plan-op blocks with five ops:
-  add (create an entry; parent defaults to the plan root, so add with a
-  parent is refinement), done (mark complete; the body carries the
-  completion note), edit, delete, and reopen (clear a done mark when an
-  entry needs more work). The batch is atomic: operations apply
-  sequentially to a working copy and any failure discards the whole
-  batch, returning the input tree with the collected errors as
-  feedback, so a partially applied plan never persists. The structural
-  root write is the one exception: it persists even when the batch is
-  discarded, because it is scaffolding, not model work.
+  add (create an entry; parent defaults to the loop's plan root, so
+  add with a parent is refinement), done (mark complete; the body
+  carries the completion note), edit, delete, and reopen (clear a
+  done mark when an entry needs more work). delete is soft: the
+  program writes a deleted-mark child (type "deleted", program
+  author, the block body as the marker content) under the entry for
+  tracking and audit; the entry and its subtasks stay in the tree,
+  deleting an already-deleted entry is a no-op, and every op other
+  than delete on a deleted entry is rejected. The batch is atomic:
+  operations apply sequentially to a working copy and any failure
+  discards the whole batch, returning the input tree with the
+  collected errors as feedback, so a partially applied plan never
+  persists. The structural root write is the one exception: it
+  persists even when the batch is discarded, because it is
+  scaffolding, not model work.
 - The invariant: a done node's subtree is fully resolved. done is
-  rejected while any plan-entry child lacks a done mark, and add under
-  a done node is rejected (reopen first), so a done subtree never hides
-  pending work.
+  rejected while any plan-entry child lacks a done or deleted mark, and
+  add under a done or deleted node is rejected, so a done subtree never
+  hides pending work.
 - While the plan carries entries, the program drives the flow: every
   round's feedback ends with the plan feedback — the next pending entry
-  found by depth-first search (descent stops at done or aborted nodes; a
-  node all of whose children are resolved surfaces itself for the model
-  to mark or refine). A resolved root yields the root prompt; a done
-  root yields the completion notice exactly once
+  found by depth-first search (descent stops at done, deleted, or
+  aborted nodes; a node all of whose children are resolved surfaces
+  itself for the model to mark or refine). A resolved root yields the
+  root prompt; a done root yields the completion notice exactly once
   (loopState.planCompletionNotified, reset when the plan reopens),
   closing the session. A model that does not update the plan is
   re-provided the same entry — not updating the plan means the work is
-  not done.
-- The flow root is exempt from new-plan revision: writeNamedTreeNodes
-  never aborts it, because it is program-managed scaffolding, not a
-  model-authored plan.
+  not done. An entry may span multiple rounds: the same entry is
+  re-provided each round until the plan is updated, and no round
+  demands that the entry's work completes in that response.
+- The loop's plan root is exempt from new-plan revision:
+  writeNamedTreeNodes never aborts it, because it is program-managed
+  scaffolding, not a model-authored plan.
 - Plan mode is selected by RunOptions.PlanMode, which the codes
   pipeline derives from the plan-op component's presence; the plan-op
   component is unconditional in CodesComponents, so every codes session
@@ -63,50 +73,72 @@ Plan-driven flow theory:
   feedback.
 `
 
-// planRootName is the session-tree node name of the plan tree's root.
-const planRootName = "plan"
+const planRootSeedContent = "plan root: this loop's plan tree. Entries under this node decompose the task this loop works on; the program feeds the next pending entry as each round's feedback."
 
-// planRootSeedContent is the plan root's content: it names the root's
-// role; the task itself stays in the session's user input. See
-// TheoryOfPlan.
-const planRootSeedContent = "plan root: the session's plan tree. Entries under this node decompose the task stated in the session's initial user input; the program feeds the next pending entry as each round's feedback."
+// planRootNameOf derives the session-tree node name of the plan
+// tree's root for the given session parent: the parent's name with a
+// "-plan" suffix. The plan root is a child of the session parent —
+// the loop node of a goal run, the tree's root for a fresh run — so
+// every loop's plan hangs under its own loop node and the names never
+// collide across loops. See TheoryOfPlan.
+func planRootNameOf(sessionParent string) string {
+	if sessionParent == "" {
+		sessionParent = "root"
+	}
+	return sessionParent + "-plan"
+}
+
+// planTypeDeleted is the node type of a soft-delete mark: the program
+// writes it as a child under a plan entry when the model issues the
+// plan-op delete operation. The mark keeps the entry and its subtasks
+// in the tree for tracking and audit. See TheoryOfPlan.
+const planTypeDeleted tree.Type = "deleted"
 
 const PlanBlockSystemPrompt = `
 Plan-Op Block Kind:
 
-The plan tree is the session's flow definition: a tree of plan nodes
-in the session tree, rooted at the node "plan".
+The plan tree is the flow definition of this loop: a tree of plan
+nodes under this loop's plan node, created automatically the first
+time a plan-op block arrives. Each loop owns its plan and maintains
+it independently; plans do not carry across loops — cross-loop
+context arrives through the loop summaries and feedback.
 You decide whether to plan: a simple task — one bounded piece of work
 that fits this response — needs no plan, do the work directly; a
 non-simple task — multi-step analysis, implementation, or refactoring
 spanning several rounds — needs a plan: decompose it into entries with
 plan-op add blocks before executing work. When the plan carries
 entries, the program provides the next pending entry each round as
-user content; you do the entry's work and update the plan with plan-op
-blocks in the same response. When you do not update the plan, the same
-entry is provided again next round — updating the plan is how completed
-work is recorded.
+user content; work on the entry and update the plan with plan-op
+blocks when its work completes. An entry may span several rounds: when
+you do not update the plan, the same entry is provided again next
+round — updating the plan is how completed work is recorded.
 
 **Operations** (parameters in the opening header; the body carries the text):
 - add: create an entry. name=<unique-name> is required; parent=<node-name>
-  is optional and defaults to the plan root — adding with a parent
-  refines that entry into subtasks. Body: the entry's work description.
+  is optional and defaults to this loop's plan root — adding with a
+  parent refines that entry into subtasks. Body: the entry's work
+  description.
 - done: mark an entry complete. name required. Body: what was
-  accomplished. Every subtask must be done first; the program rejects a
-  done mark while a subtask is pending.
+  accomplished. Every subtask must be done or deleted first; the
+  program rejects a done mark while a subtask is pending.
 - edit: rewrite an entry's description. name required. Body: the new
   description.
-- delete: remove an entry and its subtasks. name required. The plan
-  root cannot be deleted.
+- delete: soft-delete an entry. name required. The plan root cannot be
+  deleted. A deleted mark is recorded under the entry for tracking and
+  audit; the entry and its subtasks stay in the tree. Deleting an
+  already-deleted entry is a no-op. Deleted entries are skipped by the
+  pending-entry search and count as resolved subtasks.
 - reopen: clear a done mark when an entry needs more work. name required.
 
 **Rules:**
 - The batch is atomic: one invalid operation discards the whole batch
   and no plan change takes effect; the errors are fed back.
-- When the plan carries a pending entry, execute the provided entry's
-  work in this response (change blocks, tests, and other blocks as
-  needed), then update the plan in the same response: mark the entry
-  done, or refine it into subtasks when it needs splitting.
+- When the plan carries a pending entry, work on the provided entry in
+  this response (change blocks, tests, and other blocks as needed). An
+  entry may span several rounds: when a response cannot finish it, use
+  a continue block and the program provides the same entry again next
+  round. When the entry's work completes, update the plan: mark the
+  entry done, or refine it into subtasks when it needs splitting.
 - When every subtask of a node is done, the node itself surfaces: mark
   it done or refine it. Mark the plan root done when the whole task is
   complete; the flow then ends.
@@ -122,36 +154,52 @@ const planRootNotice = `[Plan] Every entry of the plan is done. Mark the plan ro
 const planEntryNotice = `[Plan] Current entry: %s
 %s
 
-Do this entry's work in this response (change blocks, tests, and other
-blocks as needed), then update the plan in the same response: emit a
-plan-op done block for %s with a completion note, or refine %s into
-subtasks with plan-op add blocks when it needs splitting. End the
-response with the summary block.`
+Work on this entry in this response (change blocks, tests, and other
+blocks as needed). An entry may span several rounds: when a response
+cannot finish it, use a continue block and the program provides the
+same entry again next round. When the entry's work completes, update
+the plan: emit a plan-op done block for %s with a completion note, or
+refine %s into subtasks with plan-op add blocks when it needs
+splitting. End the response with the summary block.`
 
-// goalPlanModeNote tells the goal-mode model that the plan tree is
-// available alongside the continue mechanism. See TheoryOfPlan.
-const goalPlanModeNote = `[Plan] The plan tree is available in this session: for a non-simple task, decompose it into plan entries with plan-op add blocks and work through the entries — the program provides the next pending entry each round; a simple task needs no plan, do the work directly. Continue blocks remain available for chaining rounds as the goal protocol above describes. Marking the plan root done completes the plan flow; the run still ends only per the goal protocol above.`
+const goalPlanModeNote = `[Plan] The plan tree is available in this loop: for a non-simple task, decompose it into plan entries with plan-op add blocks and work through the entries — the program provides the next pending entry each round; a simple task needs no plan, do the work directly. Each loop maintains its own plan under its loop node; plans do not carry across loops — cross-loop context arrives through the summaries and feedback. Continue blocks remain available for chaining rounds as the goal protocol above describes. Marking the plan root done completes the plan flow; while the plan still carries pending entries, a done block does not end the run — complete every plan entry (done or deleted) before emitting the done block; the run still ends only per the goal protocol above.`
 
-// ensurePlanRoot returns the plan tree's root: the existing "plan" node
-// when one is already present (a continued run), or a freshly written
-// root. See TheoryOfPlan.
-func ensurePlanRoot(tr *tree.Tree) (*tree.Tree, string, error) {
-	if n, ok := tr.Node(planRootName); ok {
+const goalDonePendingPlanPrompt = `[System note: The previous goal loop emitted a done block while its own plan still carried pending entries; the done block was ignored because the declared completion was premature. This loop starts with its own plan: assess the remaining work against the goal, plan it with plan-op add blocks when non-trivial, complete it, and only then emit the done block.]`
+
+// ensurePlanRoot returns the plan tree's root of the current loop: the
+// existing root when plan-op blocks arrived earlier in the same loop,
+// or a freshly written root under the session parent. See
+// TheoryOfPlan.
+func ensurePlanRoot(tr *tree.Tree, sessionParent string) (*tree.Tree, string, error) {
+	root := planRootNameOf(sessionParent)
+	if n, ok := tr.Node(root); ok {
 		if n.Type == tree.TypePlan {
-			return tr, planRootName, nil
+			return tr, root, nil
 		}
 	}
-	next, err := tr.Write("root", planRootName, tree.TypePlan, tree.AuthorProgram, planRootSeedContent)
+	next, err := tr.Write(sessionParent, root, tree.TypePlan, tree.AuthorProgram, planRootSeedContent)
 	if err != nil {
 		return tr, "", err
 	}
-	return next, planRootName, nil
+	return next, root, nil
 }
 
 // planDoneChild returns the node's done-marker child, or nil.
 func planDoneChild(n *tree.Node) *tree.Node {
 	for _, c := range n.Children() {
 		if c.Type == tree.TypeDone {
+			return c
+		}
+	}
+	return nil
+}
+
+// planDeletedChild returns the node's deleted-marker child, or nil. A
+// deleted mark soft-deletes a plan entry: the entry and its subtasks
+// stay in the tree for tracking and audit. See TheoryOfPlan.
+func planDeletedChild(n *tree.Node) *tree.Node {
+	for _, c := range n.Children() {
+		if c.Type == planTypeDeleted {
 			return c
 		}
 	}
@@ -182,10 +230,21 @@ func planEntryNode(tr *tree.Tree, name string) (*tree.Node, error) {
 	return n, nil
 }
 
+// rejectDeletedPlanEntry returns an error when the entry carries a
+// deleted mark, so every plan operation other than delete is rejected
+// on a deleted entry. See TheoryOfPlan.
+func rejectDeletedPlanEntry(n *tree.Node, name string) error {
+	if planDeletedChild(n) != nil {
+		return fmt.Errorf("entry %q is deleted", name)
+	}
+	return nil
+}
+
 // nextPendingPlanEntry returns the plan node the model works on next:
-// the first node in depth-first order that carries no done mark while
-// every plan-entry child of it is resolved. A done root reports
-// complete; a root without entries reports empty. See TheoryOfPlan.
+// the first node in depth-first order that carries no done or deleted
+// mark while every plan-entry child of it is resolved. A done root
+// reports complete; a root without entries reports empty. See
+// TheoryOfPlan.
 func nextPendingPlanEntry(tr *tree.Tree, root string) (name, content string, complete, empty bool) {
 	rootNode, ok := tr.Node(root)
 	if !ok || rootNode.Type != tree.TypePlan {
@@ -199,7 +258,7 @@ func nextPendingPlanEntry(tr *tree.Tree, root string) (name, content string, com
 	}
 	var visit func(n *tree.Node) (string, string)
 	visit = func(n *tree.Node) (string, string) {
-		if planDoneChild(n) != nil || n.IsAborted() {
+		if planDoneChild(n) != nil || planDeletedChild(n) != nil || n.IsAborted() {
 			return "", ""
 		}
 		for _, c := range planEntries(n) {
@@ -217,6 +276,23 @@ func nextPendingPlanEntry(tr *tree.Tree, root string) (name, content string, com
 		return root, rootNode.Content, false, false
 	}
 	return name, content, false, false
+}
+
+// planHasPendingWork reports whether the given loop's plan tree
+// carries pending work: a plan root with entries whose done mark is
+// absent (the root or an entry still surfaces as pending). A loop
+// without a plan, or with an empty or completed plan, carries no
+// pending work. The plan root is the loop's own — the check never
+// consults another loop's plan. See TheoryOfGoalMode.
+func planHasPendingWork(tr *tree.Tree, planRoot string) bool {
+	if tr == nil {
+		return false
+	}
+	_, _, complete, empty := nextPendingPlanEntry(tr, planRoot)
+	if empty {
+		return false
+	}
+	return !complete
 }
 
 // planFeedback renders the plan-driven round feedback: the next pending
@@ -272,20 +348,25 @@ func NewPlanOpComponent() components.Component {
 	}
 }
 
-// applyPlanOps applies the plan-op blocks of one attempt to the session
-// tree. The batch is atomic: the operations apply sequentially to a
-// working copy, and any failing operation discards the whole batch —
-// the input tree is returned with the collected errors as feedback, so
-// a partially applied plan never persists. The plan root is ensured
-// before the batch: its write persists even when the batch is
-// discarded, because it is structural scaffolding. See TheoryOfPlan.
+// applyPlanOps applies the plan-op blocks of one attempt to the
+// session tree. The batch is atomic: the operations apply sequentially
+// to a working copy, and any failing operation discards the whole
+// batch — the input tree is returned with the collected errors as
+// feedback, so a partially applied plan never persists. The loop's
+// plan root is ensured before the batch: its write persists even when
+// the batch is discarded, because it is structural scaffolding, and it
+// hangs under the session's parent node so each loop owns its plan.
+// See TheoryOfPlan.
 func applyPlanOps(pctx *components.ProcessContext) components.ProcessResult {
 	tr := pctx.SessionTree
 	if tr == nil {
 		return components.ProcessResult{}
 	}
+	root := ""
 	if len(pctx.Blocks) > 0 {
-		next, _, err := ensurePlanRoot(tr)
+		var err error
+		var next *tree.Tree
+		next, root, err = ensurePlanRoot(tr, pctx.SessionParent)
 		if err != nil {
 			return components.ProcessResult{
 				Parts: []generators.Part{generators.Text(fmt.Sprintf(
@@ -300,7 +381,7 @@ func applyPlanOps(pctx *components.ProcessContext) components.ProcessResult {
 	var parts []generators.Part
 	var errs []string
 	for _, block := range pctx.Blocks {
-		next, part, err := applyOnePlanOp(cur, block)
+		next, part, err := applyOnePlanOp(cur, block, root)
 		if err != nil {
 			errs = append(errs, fmt.Sprintf("block %q: %v", block.Boundary, err))
 			continue
@@ -322,8 +403,10 @@ func applyPlanOps(pctx *components.ProcessContext) components.ProcessResult {
 
 // applyOnePlanOp applies one plan-op block to the tree and returns the
 // new tree with a confirmation part, or an error describing why the
-// operation is invalid. See TheoryOfPlan.
-func applyOnePlanOp(tr *tree.Tree, block blocks.Block) (*tree.Tree, generators.Part, error) {
+// operation is invalid. planRoot is the plan root of the loop the
+// block belongs to: the add default parent and the delete protection
+// resolve against it. See TheoryOfPlan.
+func applyOnePlanOp(tr *tree.Tree, block blocks.Block, planRoot string) (*tree.Tree, generators.Part, error) {
 	op := block.Attributes["op"]
 	name := block.Attributes["name"]
 	parent := block.Attributes["parent"]
@@ -336,7 +419,7 @@ func applyOnePlanOp(tr *tree.Tree, block blocks.Block) (*tree.Tree, generators.P
 			return nil, nil, fmt.Errorf("op add needs a non-empty body describing the entry")
 		}
 		if parent == "" {
-			parent = planRootName
+			parent = planRoot
 		}
 		pn, ok := tr.Node(parent)
 		if !ok {
@@ -348,10 +431,16 @@ func applyOnePlanOp(tr *tree.Tree, block blocks.Block) (*tree.Tree, generators.P
 		if pn.IsAborted() {
 			return nil, nil, fmt.Errorf("parent %q is aborted", parent)
 		}
+		if planDeletedChild(pn) != nil {
+			return nil, nil, fmt.Errorf("parent %q is deleted", parent)
+		}
 		if planDoneChild(pn) != nil {
 			return nil, nil, fmt.Errorf("parent %q is done; reopen it before adding subtasks", parent)
 		}
-		if _, exists := tr.Node(name); exists {
+		if existing, exists := tr.Node(name); exists {
+			if planDeletedChild(existing) != nil {
+				return nil, nil, fmt.Errorf("entry %q already exists and is deleted; choose a new name", name)
+			}
 			return nil, nil, fmt.Errorf("entry %q already exists", name)
 		}
 		next, err := tr.Write(parent, name, tree.TypePlan, tree.AuthorModel, block.Body)
@@ -367,6 +456,9 @@ func applyOnePlanOp(tr *tree.Tree, block blocks.Block) (*tree.Tree, generators.P
 		if err != nil {
 			return nil, nil, err
 		}
+		if err := rejectDeletedPlanEntry(n, name); err != nil {
+			return nil, nil, err
+		}
 		if n.IsAborted() {
 			return nil, nil, fmt.Errorf("entry %q is aborted", name)
 		}
@@ -374,7 +466,7 @@ func applyOnePlanOp(tr *tree.Tree, block blocks.Block) (*tree.Tree, generators.P
 			return nil, nil, fmt.Errorf("entry %q is already done", name)
 		}
 		for _, c := range planEntries(n) {
-			if planDoneChild(c) == nil {
+			if planDoneChild(c) == nil && planDeletedChild(c) == nil {
 				return nil, nil, fmt.Errorf("cannot mark %q done: subtask %q is still pending", name, c.Name)
 			}
 		}
@@ -390,7 +482,11 @@ func applyOnePlanOp(tr *tree.Tree, block blocks.Block) (*tree.Tree, generators.P
 		if strings.TrimSpace(block.Body) == "" {
 			return nil, nil, fmt.Errorf("op edit needs a non-empty body with the new description")
 		}
-		if _, err := planEntryNode(tr, name); err != nil {
+		n, err := planEntryNode(tr, name)
+		if err != nil {
+			return nil, nil, err
+		}
+		if err := rejectDeletedPlanEntry(n, name); err != nil {
 			return nil, nil, err
 		}
 		next, err := tr.Modify(name, block.Body)
@@ -402,23 +498,36 @@ func applyOnePlanOp(tr *tree.Tree, block blocks.Block) (*tree.Tree, generators.P
 		if name == "" {
 			return nil, nil, fmt.Errorf("op delete needs a name header parameter")
 		}
-		if name == planRootName {
+		if name == planRoot {
 			return nil, nil, fmt.Errorf("the plan root cannot be deleted")
 		}
-		if _, err := planEntryNode(tr, name); err != nil {
-			return nil, nil, err
-		}
-		next, err := tr.Delete(name)
+		n, err := planEntryNode(tr, name)
 		if err != nil {
 			return nil, nil, err
 		}
-		return next, generators.Text(fmt.Sprintf("[Plan] entry %q deleted.\n\n", name)), nil
+		if planDeletedChild(n) != nil {
+			// Soft delete is idempotent: an already-deleted entry
+			// deletes as a no-op.
+			return tr, generators.Text(fmt.Sprintf("[Plan] entry %q is already deleted.\n\n", name)), nil
+		}
+		content := strings.TrimSpace(block.Body)
+		if content == "" {
+			content = "deleted"
+		}
+		next, _, err := tr.WriteAuto(name, "deleted", planTypeDeleted, tree.AuthorProgram, content)
+		if err != nil {
+			return nil, nil, err
+		}
+		return next, generators.Text(fmt.Sprintf("[Plan] entry %q soft-deleted: a deleted mark was recorded under it.\n\n", name)), nil
 	case "reopen":
 		if name == "" {
 			return nil, nil, fmt.Errorf("op reopen needs a name header parameter")
 		}
 		n, err := planEntryNode(tr, name)
 		if err != nil {
+			return nil, nil, err
+		}
+		if err := rejectDeletedPlanEntry(n, name); err != nil {
 			return nil, nil, err
 		}
 		done := planDoneChild(n)
