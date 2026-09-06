@@ -12,6 +12,7 @@ import (
 	"github.com/reusee/tai/changes"
 	"github.com/reusee/tai/components"
 	"github.com/reusee/tai/generators"
+	"github.com/reusee/tai/gotools"
 	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/nets"
 	"github.com/reusee/tai/records"
@@ -1610,6 +1611,7 @@ func (Module) Run(
 	effortFlag generators.EffortFlag,
 	continuation SessionTreeContinuation,
 	decorators RunDecorators,
+	treeSink *gotools.TreeEventSink,
 ) Run {
 	run := Run(func(ctx context.Context, opts RunOptions, result *Result) iter.Seq2[*tree.Tree, error] {
 		if result == nil {
@@ -1663,6 +1665,20 @@ func (Module) Run(
 				ls.sessionRoot = "root"
 			}
 			ls.sessionTree = writeInitialSystemNode(ls.sessionTree, ls.sessionRoot, opts.InitialState)
+			// gotools' context-assembly diagnostics — the token
+			// composition summaries recorded during PartsProvider.Parts
+			// and SimplifyFiles — are buffered in the per-scope
+			// TreeEventSink, because context assembly runs before the
+			// session tree opens. Drain them here, before the first
+			// yield, and replay each record as a context event node
+			// under the session root, so the display's event projection
+			// shows what the context assembly decided. The sink is
+			// dscope-provided and fresh per Reset, so each goal loop
+			// drains only its own assembly. See TheoryOfLoopEvents and
+			// gotools.TheoryOfTokenComposition.
+			for _, detail := range treeSink.Drain() {
+				ls.writeEventNode("context", detail)
+			}
 			// The initial user input is the first queued user prompt: it
 			// joins the first attempt node when the attempt opens. See
 			// TheoryOfSessionTree.

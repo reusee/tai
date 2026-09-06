@@ -28,6 +28,7 @@ type PartsProvider struct {
 	DocPatterns     dscope.Inject[DocPatterns]
 	ModuleRootFiles dscope.Inject[GetModuleRootFiles]
 	FileHashes      dscope.Inject[*changes.FileHashes]
+	TreeSink        dscope.Inject[*TreeEventSink]
 }
 
 var _ codetypes.PartsProvider = PartsProvider{}
@@ -434,6 +435,13 @@ func (c PartsProvider) Parts(
 		"module_root", moduleRootTokens,
 		"total", totalTokens,
 	)
+
+	// The composition also joins the session tree: the per-scope sink
+	// buffers it and Module.Run replays it as a context event node,
+	// because context assembly runs before the tree opens. See
+	// TheoryOfTokenComposition.
+	c.TreeSink().Record(fmt.Sprintf("assembled tokens: focus %d, context %d, extra %d, doc %d, module_root %d, total %d",
+		focusTokens, contextTokens, extraTokens, docTokens, moduleRootTokens, totalTokens))
 
 	// The working directory hint is appended after all file contents so
 	// the model can construct correct absolute paths for change block

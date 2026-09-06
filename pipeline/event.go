@@ -10,7 +10,8 @@ a generation run — attempt lifecycle (start, completion, truncation,
 error), the actual request parameters, retry decisions, handoffs,
 synthesized completion summaries, attempt finish reasons, per-attempt
 token usage, periodic thought summaries, component-triggered
-continuations, and idle-handler input — is recorded as one event node
+continuations, idle-handler input, and the context-assembly
+diagnostics replayed at startup — is recorded as one event node
 (an event-subtype type in Category event, program author) in the
 session tree, and then the FULL tree is yielded to the consumer
 (iter.Seq2[*tree.Tree, error]). There is no separate event stream: the
@@ -38,15 +39,15 @@ writeEventNode opens the structure node when it records the attempt's
 start. The node type IS the event kind — one of the event subtypes
 (attempt-start, request, finish, usage, truncated, retry,
 handoff-start, handoff, completed, synthesized-summary,
-thought-summary, continue, idle, run-error), and the goal runner
-writes goal verdicts as tree.TypeGoal nodes — while the node name
-carries the subtype as a prefix, made unique by AutoName, so typed
-event nodes keep their historical names. The node content is the
-human-readable description; multi-line content (handoff and completion
-summaries) collapses by default in the display front-end's Tree tab.
-Event nodes are program bookkeeping: every model-facing outline
-excludes them by category (treeOutlinePart, handoffOutlinePart), so
-the model never sees the loop's own bookkeeping.
+thought-summary, continue, idle, run-error, context), and the goal
+runner writes goal verdicts as tree.TypeGoal nodes — while the node
+name carries the subtype as a prefix, made unique by AutoName, so
+typed event nodes keep their historical names. The node content is
+the human-readable description; multi-line content (handoff and
+completion summaries) collapses by default in the display front-end's
+Tree tab. Event nodes are program bookkeeping: every model-facing
+outline excludes them by category (treeOutlinePart, handoffOutlinePart),
+so the model never sees the loop's own bookkeeping.
 
 The attempt is the loop's bookkeeping unit: one pass through the
 phase chain, and one attempt structure node in the tree — the
@@ -81,6 +82,11 @@ writes a thought-summary event node and yields the tree. Goal
 progress joins from the outside: RunGoal records verdicts and failure
 notes as tree.TypeGoal event nodes under the tree root and forwards
 the tree through GoalTreeObserver (see TheoryOfGoalMode).
+Context-assembly diagnostics join at startup: Module.Run drains the
+per-scope gotools.TreeEventSink before the first attempt and replays
+each buffered record as a context event node under the session root,
+because context assembly runs before the tree opens (see
+gotools.TheoryOfTokenComposition).
 
 loopState owns the guarded yield: after the consumer stops, the
 iterator contract forbids calling yield again, but the loop's

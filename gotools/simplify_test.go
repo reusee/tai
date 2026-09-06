@@ -1203,7 +1203,8 @@ func TestLogTokenComposition(t *testing.T) {
 
 	var buf bytes.Buffer
 	logger := logs.Logger{slog.New(slog.NewTextHandler(&buf, nil))}
-	logTokenComposition(logger, pkgs)
+	treeSink := &TreeEventSink{}
+	logTokenComposition(logger, treeSink, pkgs)
 	output := buf.String()
 
 	for _, want := range []string{
@@ -1223,6 +1224,19 @@ func TestLogTokenComposition(t *testing.T) {
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("expected %q in composition log, got: %s", want, output)
+		}
+	}
+
+	// The allocation composition is also recorded into the tree event
+	// sink, so the generation loop can replay it as a session-tree
+	// context event node. See TheoryOfTokenComposition.
+	recorded := treeSink.Drain()
+	if len(recorded) != 1 {
+		t.Fatalf("expected 1 recorded composition, got %d", len(recorded))
+	}
+	for _, want := range []string{"focus 500", "context budget 32768", "context 940", "short-doc packages 1"} {
+		if !strings.Contains(recorded[0], want) {
+			t.Fatalf("expected %q in recorded composition, got: %s", want, recorded[0])
 		}
 	}
 }

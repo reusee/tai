@@ -60,8 +60,8 @@ tree theory: writes and transforms on immutable path-copying trees.
   nodes (root, loop, attempt), message content (system, user, plan, model,
   done, abort), per-occurrence event subtypes (attempt-start, request,
   finish, usage, truncated, retry, handoff-start, handoff, completed,
-  synthesized-summary, thought-summary, continue, idle, run-error, goal),
-  block execution (block-result and summary, plus the block kinds — a
+  synthesized-summary, thought-summary, continue, idle, run-error, goal,
+  context), block execution (block-result and summary, plus the block kinds — a
   block node's type is the kind of the block it records, so unknown kinds
   form types dynamically), and error. Category is the coarse layer derived
   from the type (Node.Category): structure, message, event, block, error.
@@ -126,6 +126,11 @@ const TypeLoop Type = "loop"
 // pipeline.TheoryOfSessionTree.
 const TypeAttempt Type = "attempt"
 
+// TypeContext marks one context-assembly diagnostic — the token
+// composition summaries gotools records — replayed into the tree by
+// the generation loop at startup. See TheoryOfTree.
+const TypeContext Type = "context"
+
 // The event subtypes classify one recorded occurrence each: one type
 // per occurrence kind of a run. Every constant's string equals the
 // event node name prefix the pipeline has always written, so typed
@@ -171,7 +176,7 @@ func (t Type) Category() Category {
 	case TypeSystem, TypeUser, TypeModel, TypePlan,
 		TypeDone, TypeAbort:
 		return CategoryMessage
-	case TypeAttemptStart, TypeRequest, TypeFinish, TypeUsage,
+	case TypeContext, TypeAttemptStart, TypeRequest, TypeFinish, TypeUsage,
 		TypeTruncated, TypeRetry, TypeHandoffStart, TypeHandoff,
 		TypeCompleted, TypeSynthesizedSummary, TypeThoughtSummary,
 		TypeContinue, TypeIdle, TypeRunError, TypeGoal:
@@ -213,6 +218,8 @@ func (t Type) Emoji() string {
 		return "✅"
 	case TypeAbort:
 		return "🚫"
+	case TypeContext:
+		return "📊"
 	case TypeAttemptStart:
 		return "🚀"
 	case TypeRequest:

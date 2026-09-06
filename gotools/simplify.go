@@ -66,6 +66,13 @@ there), extra files from -file patterns, and package documentation from
 the token budget is dominated by focus files, context files, or
 user-requested additions, and whether the dynamic context budget is
 under- or over-allocated. See TheoryOfVisibilityAllocation.
+
+Both views also join the session tree: each Record call site buffers its
+summary in the per-scope TreeEventSink — context assembly runs before
+the session tree opens — and the generation loop drains the sink at
+startup, replaying every record as a context event node so the session
+record shows what the context assembly decided. See
+pipeline.TheoryOfLoopEvents.
 `
 
 type SimplifyFiles func(files []*File, maxTokens int, countTokens func(string) (int, error)) ([]*File, error)
@@ -81,6 +88,7 @@ func (Module) SimplifyFiles(
 	workspace Workspace,
 	hidden HiddenPatterns,
 	allSrc AllSrc,
+	treeSink *TreeEventSink,
 ) SimplifyFiles {
 	return func(files []*File, maxTokens int, countTokens func(string) (int, error)) ([]*File, error) {
 		rootPkgs, err := getRootPackages()
@@ -235,7 +243,7 @@ func (Module) SimplifyFiles(
 		// dynamic context budget derived from them, and how the context
 		// packages consume that budget by visibility level.
 		// See TheoryOfTokenComposition.
-		logTokenComposition(logger, logicalPkgs)
+		logTokenComposition(logger, treeSink, logicalPkgs)
 
 		// 7. Collect output files at their assigned visibility levels
 		var result []*File
@@ -458,6 +466,7 @@ func compareFilesForOutput(a, b *File) int {
 
 func logTokenComposition(
 	logger logs.Logger,
+	treeSink *TreeEventSink,
 	logicalPkgs []*LogicalPackage,
 ) {
 	// Focus tokens are read at the focus packages' pinned visibility
@@ -496,6 +505,24 @@ func logTokenComposition(
 		"code tokens", contextTokensByLevel[VisibilityCode],
 		"full tokens", contextTokensByLevel[VisibilityAll],
 	)
+	// The allocation composition also joins the session tree: the
+	// per-scope sink buffers it and Module.Run replays it as a context
+	// event node, because SimplifyFiles runs before the tree opens. See
+	// TheoryOfTokenComposition.
+	treeSink.Record(fmt.Sprintf("allocation tokens: focus %d, context budget %d, context %d, short-doc packages %d, doc packages %d, code packages %d, full packages %d, invisible packages %d, short-doc tokens %d, doc tokens %d, code tokens %d, full tokens %d",
+		focusTokens,
+		calculateMaxContextTokens(focusTokens),
+		contextTokens,
+		contextPackagesByLevel[VisibilityShortDoc],
+		contextPackagesByLevel[VisibilityDoc],
+		contextPackagesByLevel[VisibilityCode],
+		contextPackagesByLevel[VisibilityAll],
+		contextPackagesByLevel[VisibilityInvisible],
+		contextTokensByLevel[VisibilityShortDoc],
+		contextTokensByLevel[VisibilityDoc],
+		contextTokensByLevel[VisibilityCode],
+		contextTokensByLevel[VisibilityAll],
+	))
 }
 
 // matchPattern reports whether the relative path matches the glob pattern,

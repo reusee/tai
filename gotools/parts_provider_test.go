@@ -446,10 +446,27 @@ func TestPartsTokenCompositionLog(t *testing.T) {
 	).Call(func(
 		provider PartsProvider,
 		countTokens generators.BPETokenCounter,
+		treeSink *TreeEventSink,
 	) {
 		_, err := provider.Parts(1<<20, countTokens, nil)
 		if err != nil {
 			t.Fatal(err)
+		}
+		// Both compositions are buffered for the session tree: the
+		// allocation record from SimplifyFiles, then the assembled
+		// record from Parts. The generation loop replays them as
+		// context event nodes. See TheoryOfTokenComposition.
+		recorded := treeSink.Drain()
+		if len(recorded) != 2 {
+			t.Fatalf("expected 2 recorded compositions (allocation and assembled), got %d", len(recorded))
+		}
+		if !strings.Contains(recorded[0], "allocation tokens") {
+			t.Fatalf("expected the allocation composition first, got: %s", recorded[0])
+		}
+		for _, want := range []string{"assembled tokens", "focus ", "context ", "extra ", "doc ", "total "} {
+			if !strings.Contains(recorded[1], want) {
+				t.Fatalf("expected %q in assembled composition, got: %s", want, recorded[1])
+			}
 		}
 	})
 

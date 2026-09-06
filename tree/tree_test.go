@@ -398,7 +398,8 @@ func TestByTypeByAuthor(t *testing.T) {
 // A block node's type is its block kind: an unknown kind derives to
 // the block category and the fallback emoji, and a built-in kind
 // carries its predefined emoji. Summary is a block kind, and attempt
-// is a structure kind. See TheoryOfTree.
+// is a structure kind. Context is an event kind carrying the context
+// glyph. See TheoryOfTree.
 func TestCategoryAndEmoji(t *testing.T) {
 	tr, err := New().WriteAll(
 		WriteOp{Parent: "root", Name: "a", Type: TypeAttemptStart, Author: AuthorProgram, Content: "x"},
@@ -444,6 +445,15 @@ func TestCategoryAndEmoji(t *testing.T) {
 	}
 	if got := Type("shell").Emoji(); got != "🐚" {
 		t.Fatalf("shell kind emoji = %q, want the predefined glyph", got)
+	}
+	// Context is an event subtype: the context-assembly diagnostics
+	// replayed at run start derive to the event category with the
+	// context glyph. See TheoryOfTree.
+	if got := TypeContext.Category(); got != CategoryEvent {
+		t.Fatalf("context category = %v, want event", got)
+	}
+	if got := TypeContext.Emoji(); got != "📊" {
+		t.Fatalf("context emoji = %q, want the context glyph", got)
 	}
 	for _, n := range tr.Subtree("root") {
 		if n.Type.Emoji() == "" {
