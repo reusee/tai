@@ -413,6 +413,13 @@ func GoalSystemPromptText(comps CodesComponents, feedback GoalFeedback, summarie
 	prompt := prompts.Codes + "\n" +
 		GoalSystemPrompt + "\n" +
 		comps.PromptSections()
+	// Plan availability: the plan-op component's presence marks the plan
+	// machinery, which CodesComponents includes unconditionally; the note
+	// tells the goal-mode model the plan tree is available alongside the
+	// continue mechanism. See TheoryOfPlan.
+	if hasPlanOpComponent(comps) {
+		prompt += "\n\n" + goalPlanModeNote
+	}
 	if section := summaries.SystemPromptSection(); section != "" {
 		prompt += "\n\n" + section
 	}

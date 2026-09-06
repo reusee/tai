@@ -66,9 +66,6 @@ temperature?: float
 // apply controls whether change blocks are applied to the working tree during generation.
 apply?: bool
 
-// plan enables mandatory planning and multi-round generation.
-plan?: bool
-
 // log_level sets the log level (debug, info, warn, error).
 log_level?: string
 

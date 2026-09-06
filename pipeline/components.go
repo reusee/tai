@@ -20,9 +20,9 @@ the ai command's AIComponents).
 
 The pipeline reuses components.CommonComponents for the shell and continue
 component kinds, prepending its codes-specific components (change, go-test,
-go-src, ingest, new-plan, response) and appending summary, read-only files
-(prompt-only), skeleton files (prompt-only), hidden packages (prompt-only,
-conditional), mandatory planning (prompt-only, conditional), and extra
+go-src, ingest, new-plan, response, and the plan-op component) and
+appending summary, read-only files (prompt-only), skeleton files
+(prompt-only), hidden packages (prompt-only, conditional), and extra
 system prompt (prompt-only).
 
 The unified block format prompt (blocks.BlockFormatSystemPrompt) is included
@@ -84,9 +84,17 @@ block is parsed during streaming, overlapping the remainder of the
 generation; after the response ends the component consumes the prefetched
 outcomes in block order. See components.TheoryOfReadOnlyPrefetch.
 
-Read-only files, skeleton files, hidden packages, and mandatory planning
-are prompt-only Components: they contribute system prompt sections without
-defining a block kind or processing blocks. The skeleton-files section
+The plan-op component is unconditional: the session tree carries a plan
+tree rooted at the node "plan" that the model operates through plan-op
+blocks, and the model decides whether to plan — a simple task is done
+directly, a non-simple task is decomposed into plan-op entries and the
+loop feeds the next pending entry as every round's feedback (see
+TheoryOfPlan). The continue component stays in the common set: continue
+blocks remain the model's way of prompting the next round's user input.
+
+Read-only files, skeleton files, and hidden packages are prompt-only
+Components: they contribute system prompt sections without defining a
+block kind or processing blocks. The skeleton-files section
 teaches the "begin of skeleton of file" marker contract (SkeletonFilesSystemPrompt
 is itself the theory text for the consumption rules and is not repeated here)
 and is included unconditionally: the gotools module-root listing always renders
@@ -236,7 +244,6 @@ func (Module) CodesComponents(
 	goFamilyExtra gotools.FamilyExtraSystemPrompt,
 	modelFamily generators.ModelFamily,
 	apply flags.Apply,
-	plan flags.Plan,
 	summaryLanguage flags.SummaryLanguage,
 	flagShell flags.Shell,
 	applyChangeBlocks changes.ApplyChangeBlocks,
@@ -350,19 +357,26 @@ func (Module) CodesComponents(
 
 	// Common components: shell (conditional on flagShell) and continue.
 	// Reused from components.CommonComponents so that shell and continue
-	// configuration is shared across all generation commands.
-	// See TheoryOfCommonComponents in components/common_components.go.
+	// configuration is shared across all generation commands. The
+	// continue component stays available: continue blocks remain the
+	// model's way of prompting the next round's user input. See
+	// TheoryOfCommonComponents.
 	comps = append(comps, components.CommonComponents(bool(flagShell))...)
 
-	// Disabled-blocks notice: when the shell flag is off, state it
-	// explicitly instead of leaving the shell slot silent. A model that
-	// emits shell blocks from habit would have them silently ignored
-	// while implying commands had run. Under -no-apply the change prompt
-	// above is still included and change is deliberately not listed as
-	// disabled: the blocks are the deliverable of a dry run. See
-	// components.TheoryOfDisabledBlocks and TheoryOfCodesComponents.
+	// Disabled-blocks notice: shell without the flag is announced
+	// explicitly instead of leaving its slot silent. A model that emits
+	// an unavailable kind from habit would have it silently ignored
+	// while implying an action that never happened. Under -no-apply the
+	// change prompt above is still included and change is deliberately
+	// not listed as disabled: the blocks are the deliverable of a dry
+	// run. See components.TheoryOfDisabledBlocks and
+	// TheoryOfCodesComponents.
+	var disabled []string
 	if !bool(flagShell) {
-		comps = append(comps, components.DisabledBlocksComponent("shell"))
+		disabled = append(disabled, "shell")
+	}
+	if len(disabled) > 0 {
+		comps = append(comps, components.DisabledBlocksComponent(disabled...))
 	}
 
 	// Summary component: processed in runGeneration for completion
@@ -407,12 +421,11 @@ func (Module) CodesComponents(
 		})
 	}
 
-	// Mandatory planning: prompt-only component, conditional on plan.
-	if bool(plan) {
-		comps = append(comps, components.Component{
-			PromptSection: MandatoryPlanningSystemPrompt,
-		})
-	}
+	// Plan-op component: unconditional — the plan tree is available in
+	// every codes session and the model decides whether to plan. The
+	// loop feeds the next pending entry as every round's feedback while
+	// the plan carries entries. See NewPlanOpComponent and TheoryOfPlan.
+	comps = append(comps, NewPlanOpComponent())
 
 	// Extra system prompt from configuration: prompt-only Component.
 	// Each entry is added as a separate prompt-only Component so that

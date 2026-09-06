@@ -260,7 +260,8 @@ func ResponseComponent() components.Component {
 // reading the parent and name header parameters. A block missing a
 // parameter, naming an unknown parent, or colliding with an existing
 // name is skipped with feedback text; the plan revision aborts the old
-// plan first. See TheoryOfSessionTree.
+// plan first. The plan-driven flow root is never aborted (see
+// TheoryOfPlan). See TheoryOfSessionTree.
 func writeNamedTreeNodes(pctx *components.ProcessContext, typ tree.Type, prefix string) components.ProcessResult {
 	tr := pctx.SessionTree
 	if tr == nil {
@@ -283,7 +284,11 @@ func writeNamedTreeNodes(pctx *components.ProcessContext, typ tree.Type, prefix 
 				prefix, name, parent)))
 			continue
 		}
-		if typ == tree.TypePlan && parentNode.Type == tree.TypePlan {
+		// Plan revision aborts the superseded plan before the new plan is
+		// recorded. The plan-driven flow root is exempt: it is
+		// program-managed, and a new-plan block naming it as parent must
+		// never abort the flow. See TheoryOfPlan.
+		if typ == tree.TypePlan && parentNode.Type == tree.TypePlan && parent != planRootName {
 			aborted, err := tr.Abort(parent, tree.AuthorModel, "superseded by "+name)
 			if err != nil {
 				parts = append(parts, generators.Text(fmt.Sprintf(

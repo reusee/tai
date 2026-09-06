@@ -113,7 +113,6 @@ Gemini, OpenAI, DeepSeek, Volcano Engine (Huoshan), Baidu, Tencent, Alibaba Clou
 | `-shell` | Enable shell block execution |
 | `-stdin` | Add standard input content to the chat messages |
 | `clean` | Add the code cleanup prompt to the chat messages |
-| `-plan` | Enable mandatory planning and multi-round generation |
 | `-apply` / `-no-apply` | Control whether change blocks are applied |
 | `-no-memory` | Disable user profile memory persistence |
 | `-record` | Record interaction sessions for self-improvement analysis |
@@ -165,7 +164,7 @@ func Foo() {
 貞觀
 ```
 
-Block kinds: `change`, `shell`, `go-test`, `go-src`, `continue`, `summary`, `ingest`, `memory`, `done`, `new-plan`, `response`.
+Block kinds: `change`, `shell`, `go-test`, `go-src`, `continue`, `summary`, `ingest`, `memory`, `done`, `new-plan`, `response`, `plan-op`.
 
 ### Session Tree
 
@@ -181,7 +180,7 @@ Every operation of a run — user input, model response, summary, blocks, block 
 
 ### Generation Loop
 
-Each generation wraps the state with a `ParserState` that collects blocks during streaming. After the generation, components process collected blocks. If a component produces parts or modifies state, a new generation starts. When no component triggers, the loop ends (or prompts for input in interactive mode).
+Each generation wraps the state with a `ParserState` that collects blocks during streaming. After the generation, components process collected blocks. If a component produces parts or modifies state, a new generation starts. When no component triggers, the loop ends (or prompts for input in interactive mode). The plan tree is always available: the model decides whether to plan — a simple task is done directly; a non-simple task is decomposed into `plan-op` entries and the program feeds the next pending plan entry as each round's feedback. Continue blocks remain the model's way of prompting the next round's user input.
 Block kinds that are not available in a session are announced as disabled in the system prompt (for example shell blocks without `-shell`, or the pipeline block kinds in `tai ai`), so the model does not emit blocks that would be silently ignored.
 
 ### State Immutability

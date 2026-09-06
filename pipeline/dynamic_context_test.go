@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/reusee/dscope"
-	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/gotools"
 	"github.com/reusee/tai/modes"
@@ -121,136 +120,15 @@ func TestSystemPromptContinueBlock(t *testing.T) {
 		new(Module),
 	).Fork(
 		func() codetypes.PartsProvider { return mockPartsProvider{} },
-		func() flags.Plan { return true },
-	).Call(func(
-		prompt SystemPrompt,
-	) {
-		if !strings.Contains(string(prompt), "Continue Block Kind") {
-			t.Fatal("system prompt must include continue block section")
-		}
-		if !strings.Contains(string(prompt), "Task Decomposition") {
-			t.Fatal("system prompt must include task decomposition strategy for complex tasks")
-		}
-		if !strings.Contains(string(prompt), "task list") {
-			t.Fatal("system prompt must include task list concept for multi-round continue blocks")
-		}
-	})
-}
-
-func TestSystemPromptMandatoryPlanning(t *testing.T) {
-	dscope.New(
-		modes.ForTest(t),
-		new(Module),
-	).Fork(
-		func() codetypes.PartsProvider { return mockPartsProvider{} },
-		func() flags.Plan { return true },
 	).Call(func(
 		prompt SystemPrompt,
 	) {
 		s := string(prompt)
-		if !strings.Contains(s, "Mandatory Planning") {
-			t.Fatal("system prompt must include the mandatory planning section")
+		if !strings.Contains(s, "Continue Block Kind") {
+			t.Fatal("system prompt must teach continue blocks in every codes session: continue blocks remain the model's way of prompting the next round's user input")
 		}
-		if !strings.Contains(s, "overall plan") {
-			t.Fatal("system prompt must require an overall plan before any change blocks")
-		}
-		if !strings.Contains(s, "Emit NO change blocks in the planning round") {
-			t.Fatal("system prompt must forbid change blocks in the planning round")
-		}
-		if !strings.Contains(s, "supersedes") {
-			t.Fatal("system prompt must state the mandate supersedes the single-response exemption")
-		}
-	})
-}
-
-func TestSystemPromptDecompositionPrecedesAnalysis(t *testing.T) {
-	dscope.New(
-		modes.ForTest(t),
-		new(Module),
-	).Fork(
-		func() codetypes.PartsProvider { return mockPartsProvider{} },
-		func() flags.Plan { return true },
-	).Call(func(
-		prompt SystemPrompt,
-	) {
-		s := string(prompt)
-		if !strings.Contains(s, "precede any action") {
-			t.Fatal("system prompt must state that decomposition must precede any action including analysis")
-		}
-		if !strings.Contains(s, "partition the input space") {
-			t.Fatal("system prompt must require partitioning the input space for composite tasks")
-		}
-		if !strings.Contains(s, "find bugs and fix") {
-			t.Fatal("system prompt must use the find-bugs-and-fix example to illustrate analysis-phase decomposition")
-		}
-	})
-}
-
-func TestSystemPromptParallelRounds(t *testing.T) {
-	dscope.New(
-		modes.ForTest(t),
-		new(Module),
-	).Fork(
-		func() codetypes.PartsProvider { return mockPartsProvider{} },
-		func() flags.Plan { return true },
-	).Call(func(
-		prompt SystemPrompt,
-	) {
-		s := string(prompt)
-		if !strings.Contains(s, "Round Granularity") {
-			t.Fatal("system prompt must include the round granularity section")
-		}
-		if !strings.Contains(s, "Maximize parallelism inside a round") {
-			t.Fatal("round granularity must teach batching independent work into one round")
-		}
-	})
-}
-
-func TestSystemPromptTaskDecompositionStrategies(t *testing.T) {
-	dscope.New(
-		modes.ForTest(t),
-		new(Module),
-	).Fork(
-		func() codetypes.PartsProvider { return mockPartsProvider{} },
-		func() flags.Plan { return true },
-	).Call(func(
-		prompt SystemPrompt,
-	) {
-		s := string(prompt)
-
-		categories := []string{
-			"Structural strategies",
-			"Adaptive strategies",
-			"Quality strategies",
-			"Scheduling strategies",
-		}
-		for _, c := range categories {
-			if !strings.Contains(s, c) {
-				t.Fatalf("system prompt must include category %q", c)
-			}
-		}
-
-		strategies := []string{
-			"Input-driven",
-			"Logical-step-driven",
-			"Interface-first",
-			"Independence-driven",
-			"Output-length-driven",
-			"Progressive refinement",
-			"Error recovery",
-			"Feedback-driven",
-			"Verification-driven",
-			"Risk-driven",
-			"Context-collection-first",
-			"Dependency-driven",
-			"Blast-radius-driven",
-			"Token-budget-driven",
-			"Reversibility-driven",
-		}
-		for _, strategy := range strategies {
-			if !strings.Contains(s, strategy) {
-				t.Fatalf("system prompt must include strategy %q", strategy)
-			}
+		if strings.Contains(s, "continue blocks are not accepted in this session") {
+			t.Fatal("system prompt must not announce continue blocks as unavailable: the continue mechanism is retained")
 		}
 	})
 }

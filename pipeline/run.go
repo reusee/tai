@@ -358,6 +358,15 @@ type loopState struct {
 	// consumed by the shared block-correction decision and cleared
 	// after it. See TheoryOfSessionTree and TheoryOfUnknownBlockKinds.
 	namingErrs []string
+
+	// planRoot names the plan tree's root node when plan mode is active;
+	// empty otherwise. The plan tree is the session's flow definition
+	// and persists across goal loops. See TheoryOfPlan.
+	planRoot string
+	// planCompletionNotified records that the plan-complete feedback was
+	// already produced, so the completion notice triggers exactly one
+	// closing round. See TheoryOfPlan.
+	planCompletionNotified bool
 }
 
 // buildContinueReason describes why the generation loop continues to
@@ -1050,6 +1059,37 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 		triggered = true
 	}
 
+	// Plan-driven flow: while the plan carries entries, the plan tree
+	// selects the next pending entry as every round's feedback. The
+	// model decides whether to plan: an empty plan produces no plan
+	// feedback, so a simple task runs with continue blocks alone. A
+	// complete plan triggers exactly one closing round — the
+	// completion notice — and the session ends on the round after it.
+	// An un-updated plan re-provides the same entry: not updating the
+	// plan means the work is not done. See TheoryOfPlan.
+	if ls.opts.PlanMode && len(ls.opts.Components) > 0 {
+		if ls.planRoot == "" {
+			ls.planRoot = planRootName
+		}
+		planParts, planComplete := planFeedback(ls.sessionTree, ls.planRoot, ls.planCompletionNotified)
+		planContinue := true
+		if planComplete {
+			if ls.planCompletionNotified {
+				planContinue = false
+			} else {
+				ls.planCompletionNotified = true
+			}
+		} else {
+			// The plan reopened or was restructured: a later completion
+			// delivers the notice again.
+			ls.planCompletionNotified = false
+		}
+		if planContinue && len(planParts) > 0 {
+			combinedParts = append(combinedParts, planParts...)
+			triggered = true
+		}
+	}
+
 	if triggered {
 		// The continue reason states why the next generation starts:
 		// the kinds of blocks processed by components, the correction
@@ -1400,6 +1440,11 @@ type RunOptions struct {
 	// MaxGenerations limits the number of generations. 0 means
 	// unlimited.
 	MaxGenerations int
+	// PlanMode enables the plan-driven flow: when the plan tree carries
+	// entries, the program feeds the next pending entry as every round's
+	// feedback; the model decides whether to plan — an empty plan
+	// produces no plan feedback. See TheoryOfPlan.
+	PlanMode bool
 
 	// InteractionRecorder receives generation events (contents, blocks,
 	// attempt lifecycle) for interaction recording and self-improvement

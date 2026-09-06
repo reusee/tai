@@ -797,6 +797,9 @@ func (Module) GenerateWithResultWithStats(
 			InitialState: state,
 			Components:   comps.ComponentSet,
 			BlockHandler: blockHandler,
+			// Plan mode derives from the plan-op component's presence, so
+			// the -plan flag has a single source. See TheoryOfPlan.
+			PlanMode: hasPlanOpComponent(comps),
 			// Unknown-kind correction: the session's processable kinds
 			// are the component set's declared kinds plus "done" — the
 			// goal runner's completion contract, checked in

@@ -35,7 +35,6 @@ func TestShellBlockSystemPrompt(t *testing.T) {
 			new(Module),
 		).Fork(
 			func() codetypes.PartsProvider { return mockPartsProvider{} },
-			func() flags.Plan { return true },
 			func() flags.Shell { return true },
 		).Call(func(
 			prompt SystemPrompt,
