@@ -312,7 +312,7 @@ tab that was last focused; pressing another tab's strip takes the focus
 without collapsing and keeps that tab's current view. A press inside an
 expanded tab's scroll area focuses the tab (when it was not already
 focused) and records the origin of a drag-scroll. Inside the Tree pane,
-a left press is inert unless it lands on the attempt-start node's 👉
+a left press is inert unless it lands on the attempt node's 👉
 jump marker, which jumps the Output tab to the section that attempt
 wrote (see TheoryOfTUIOutputSections); a double-click on a node's
 text toggles its expansion, and a single text press does nothing
@@ -712,8 +712,8 @@ type TUI struct {
 	// section begins, so navigation can scroll the pane to a section's
 	// first display line. eventSections binds an attempt number to the
 	// section the attempt wrote, and pendingOwner carries an
-	// attempt-start event node's attempt number to the next visible
-	// content part, which then opens the attempt's section. All three
+	// attempt node's attempt number to the next visible content
+	// part, which then opens the attempt's section. All three
 	// are guarded by mu. See TheoryOfTUIOutputSections.
 	outputSections []outputSection
 	eventSections  map[outputSectionOwner]int

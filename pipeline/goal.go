@@ -849,7 +849,7 @@ func makeGoalLoopGenerator(reset dscope.Reset) GoalLoopGenerator {
 // reset to the resolving scope, so the command's forks (parts provider,
 // goal system prompt) apply to every loop. The goal tree observer is
 // resolved from the scope, so a display front-end's fork receives the
-// goal verdicts as goal event nodes in the run's tree. The configured
+// goal verdicts as goal structure nodes in the run's tree. The configured
 // review models rotate across the post-done loops, one per done block;
 // see TheoryOfGoalReviewModel.
 func (Module) GoalRun(

@@ -317,7 +317,7 @@ type loopState struct {
 
 	// temperatureFlag and effortFlag carry the dscope-resolved
 	// temperature and reasoning-effort flag values, captured by the Run
-	// provider. The request event node's content resolves the effective
+	// provider. The generator node's content resolves the effective
 	// generation parameters from the generator spec and these flag
 	// overrides, mirroring the generators' flag-over-spec precedence.
 	// See TheoryOfLoopEvents.

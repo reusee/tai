@@ -8,7 +8,7 @@ import (
 )
 
 const TheoryOfTUIOutputSections = `
-Output tab sections and event-to-output navigation theory (cmd/tai):
+Output tab sections and attempt-to-output navigation theory (cmd/tai):
 
 - The Output tab's content stream is organized into sections. A section
   break happens where the output switches role or between thinking and
@@ -160,7 +160,7 @@ type outputSection struct {
 }
 
 // outputSectionOwner identifies the attempt that owns a section: the
-// attempt number the attempt-start event node carries in its content.
+// attempt number the attempt node carries in its content.
 // See TheoryOfTUIOutputSections.
 type outputSectionOwner struct {
 	attempt int
