@@ -213,104 +213,60 @@ func TestOpenAIParserToolCallStreamedArgs(t *testing.T) {
 }
 
 func TestOpenAIParserMultipleToolCalls(t *testing.T) {
-	parser := new(OpenAIParser)
-
-	// Role and first tool call
-	_, err := parser.Input(ChatCompletionStreamChoiceDelta{
-		Role: string(RoleAssistant),
-		ToolCalls: []ToolCall{
-			{
-				ID:   "call_1",
-				Type: "function",
-				Function: FunctionCall{
-					Name:      "func1",
-					Arguments: `{"a": 1}`,
-				},
-			},
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Second tool call
-	_, err = parser.Input(ChatCompletionStreamChoiceDelta{
-		ToolCalls: []ToolCall{
-			{
-				ID:   "call_2",
-				Type: "function",
-				Function: FunctionCall{
-					Name:      "func2",
-					Arguments: `{"b": 2}`,
-				},
-			},
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	contents, err := parser.End()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(contents) != 1 {
-		t.Fatalf("expected 1 content, got %d", len(contents))
-	}
-	content := contents[0]
-	if len(content.Parts) != 2 {
-		t.Fatalf("expected 2 parts, got %d", len(content.Parts))
-	}
-
-	// Check first call
-	funcCall1, ok := content.Parts[0].(FuncCall)
-	if !ok {
-		t.Fatalf("part 0 is not FuncCall: %+v", content.Parts)
-	}
-	if funcCall1.ID != "call_1" || funcCall1.Name != "func1" {
-		t.Errorf("unexpected funcCall1: %+v", funcCall1)
-	}
-	if !reflect.DeepEqual(funcCall1.Arguments, map[string]any{"a": float64(1)}) {
-		t.Errorf("unexpected args for funcCall1: %+v", funcCall1.Arguments)
-	}
-
-	// Check second call
-	funcCall2, ok := content.Parts[1].(FuncCall)
-	if !ok {
-		t.Fatalf("part 1 is not FuncCall: %+v", content.Parts)
-	}
-	if funcCall2.ID != "call_2" || funcCall2.Name != "func2" {
-		t.Errorf("unexpected funcCall2: %+v", funcCall2)
-	}
-	if !reflect.DeepEqual(funcCall2.Arguments, map[string]any{"b": float64(2)}) {
-		t.Errorf("unexpected args for funcCall2: %+v", funcCall2.Arguments)
-	}
-}
-
-func TestOpenAIParserTextAndToolCall(t *testing.T) {
-	toolCall := ToolCall{
-		ID:   "call_123",
-		Type: "function",
-		Function: FunctionCall{
-			Name:      "test_func",
-			Arguments: `{}`,
-		},
+	want := []struct {
+		id   string
+		name string
+		args map[string]any
+	}{
+		{"call_1", "func1", map[string]any{"a": float64(1)}},
+		{"call_2", "func2", map[string]any{"b": float64(2)}},
 	}
 	for _, tt := range []struct {
 		name   string
 		deltas []ChatCompletionStreamChoiceDelta
 	}{
 		{
-			name: "text and tool call in separate deltas",
+			name: "two tool calls in separate deltas",
 			deltas: []ChatCompletionStreamChoiceDelta{
-				{Role: string(RoleAssistant), Content: "Here is the tool call: "},
-				{ToolCalls: []ToolCall{toolCall}},
+				{
+					Role: string(RoleAssistant),
+					ToolCalls: []ToolCall{
+						{
+							ID:       "call_1",
+							Type:     "function",
+							Function: FunctionCall{Name: "func1", Arguments: `{"a": 1}`},
+						},
+					},
+				},
+				{
+					ToolCalls: []ToolCall{
+						{
+							ID:       "call_2",
+							Type:     "function",
+							Function: FunctionCall{Name: "func2", Arguments: `{"b": 2}`},
+						},
+					},
+				},
 			},
 		},
 		{
-			name: "text and tool call in one delta",
+			name: "two tool calls in one delta",
 			deltas: []ChatCompletionStreamChoiceDelta{
-				{Role: string(RoleAssistant), Content: "Here is the tool call: ", ToolCalls: []ToolCall{toolCall}},
+				{
+					Role: string(RoleAssistant),
+					ToolCalls: []ToolCall{
+						{
+							ID:       "call_1",
+							Type:     "function",
+							Function: FunctionCall{Name: "func1", Arguments: `{"a": 1}`},
+						},
+						{
+							ID:       "call_2",
+							Type:     "function",
+							Function: FunctionCall{Name: "func2", Arguments: `{"b": 2}`},
+						},
+					},
+				},
 			},
 		},
 	} {
@@ -332,73 +288,98 @@ func TestOpenAIParserTextAndToolCall(t *testing.T) {
 			if len(content.Parts) != 2 {
 				t.Fatalf("expected 2 parts, got %d", len(content.Parts))
 			}
-			text, ok := content.Parts[0].(Text)
-			if !ok || text != "Here is the tool call: " {
-				t.Errorf("unexpected part 0: %+v", content.Parts)
-			}
-			funcCall, ok := content.Parts[1].(FuncCall)
-			if !ok {
-				t.Fatalf("part 1 is not FuncCall: %+v", content.Parts)
-			}
-			if funcCall.Name != "test_func" {
-				t.Errorf("unexpected funcCall: %+v", funcCall)
+			for i, w := range want {
+				funcCall, ok := content.Parts[i].(FuncCall)
+				if !ok {
+					t.Fatalf("part %d is not FuncCall: %+v", i, content.Parts)
+				}
+				if funcCall.ID != w.id || funcCall.Name != w.name {
+					t.Errorf("unexpected funcCall %d: %+v", i, funcCall)
+				}
+				if !reflect.DeepEqual(funcCall.Arguments, w.args) {
+					t.Errorf("unexpected args for funcCall %d: %+v", i, funcCall.Arguments)
+				}
 			}
 		})
 	}
 }
 
-func TestOpenAIParserToolCallAndText(t *testing.T) {
-	parser := new(OpenAIParser)
-
-	// Role and tool call
-	_, err := parser.Input(ChatCompletionStreamChoiceDelta{
-		Role: string(RoleAssistant),
-		ToolCalls: []ToolCall{
-			{
-				ID:   "call_123",
-				Type: "function",
-				Function: FunctionCall{
-					Name:      "test_func",
-					Arguments: `{}`,
-				},
-			},
+func TestOpenAIParserTextAndToolCall(t *testing.T) {
+	toolCall := ToolCall{
+		ID:   "call_123",
+		Type: "function",
+		Function: FunctionCall{
+			Name:      "test_func",
+			Arguments: `{}`,
 		},
-	})
-	if err != nil {
-		t.Fatal(err)
 	}
-
-	// Text
-	_, err = parser.Input(ChatCompletionStreamChoiceDelta{
-		Content: "Tool call finished.",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	contents, err := parser.End()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(contents) != 1 {
-		t.Fatalf("expected 1 content, got %d", len(contents))
-	}
-	content := contents[0]
-	if len(content.Parts) != 2 {
-		t.Fatalf("expected 2 parts, got %d, parts: %+v", len(content.Parts), content.Parts)
-	}
-
-	funcCall, ok := content.Parts[0].(FuncCall)
-	if !ok {
-		t.Fatalf("part 0 is not FuncCall: %+v", content.Parts)
-	}
-	if funcCall.Name != "test_func" {
-		t.Errorf("unexpected funcCall: %+v", funcCall)
-	}
-
-	text, ok := content.Parts[1].(Text)
-	if !ok || text != "Tool call finished." {
-		t.Errorf("unexpected part 1: %+v", content.Parts)
+	for _, tt := range []struct {
+		name     string
+		deltas   []ChatCompletionStreamChoiceDelta
+		textPart int
+		callPart int
+		text     string
+	}{
+		{
+			name: "text and tool call in separate deltas",
+			deltas: []ChatCompletionStreamChoiceDelta{
+				{Role: string(RoleAssistant), Content: "Here is the tool call: "},
+				{ToolCalls: []ToolCall{toolCall}},
+			},
+			textPart: 0,
+			callPart: 1,
+			text:     "Here is the tool call: ",
+		},
+		{
+			name: "text and tool call in one delta",
+			deltas: []ChatCompletionStreamChoiceDelta{
+				{Role: string(RoleAssistant), Content: "Here is the tool call: ", ToolCalls: []ToolCall{toolCall}},
+			},
+			textPart: 0,
+			callPart: 1,
+			text:     "Here is the tool call: ",
+		},
+		{
+			name: "tool call then text in separate deltas",
+			deltas: []ChatCompletionStreamChoiceDelta{
+				{Role: string(RoleAssistant), ToolCalls: []ToolCall{toolCall}},
+				{Content: "Tool call finished."},
+			},
+			textPart: 1,
+			callPart: 0,
+			text:     "Tool call finished.",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := new(OpenAIParser)
+			for _, delta := range tt.deltas {
+				if _, err := parser.Input(delta); err != nil {
+					t.Fatal(err)
+				}
+			}
+			contents, err := parser.End()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(contents) != 1 {
+				t.Fatalf("expected 1 content, got %d", len(contents))
+			}
+			content := contents[0]
+			if len(content.Parts) != 2 {
+				t.Fatalf("expected 2 parts, got %d", len(content.Parts))
+			}
+			text, ok := content.Parts[tt.textPart].(Text)
+			if !ok || string(text) != tt.text {
+				t.Errorf("unexpected part %d: %+v", tt.textPart, content.Parts)
+			}
+			funcCall, ok := content.Parts[tt.callPart].(FuncCall)
+			if !ok {
+				t.Fatalf("part %d is not FuncCall: %+v", tt.callPart, content.Parts)
+			}
+			if funcCall.Name != "test_func" {
+				t.Errorf("unexpected funcCall: %+v", funcCall)
+			}
+		})
 	}
 }
 
@@ -571,72 +552,6 @@ func TestOpenAIParserFlushOnBufferFull(t *testing.T) {
 	}
 	if content := contents[0]; len(content.Parts) != 1 || content.Parts[0].(Text) != longText[70:] {
 		t.Errorf("unexpected final content: %+v", content)
-	}
-}
-
-func TestOpenAIParserSingleDeltaMultipleToolCalls(t *testing.T) {
-	parser := new(OpenAIParser)
-
-	// Role and two tool calls in one delta
-	_, err := parser.Input(ChatCompletionStreamChoiceDelta{
-		Role: string(RoleAssistant),
-		ToolCalls: []ToolCall{
-			{
-				ID:   "call_1",
-				Type: "function",
-				Function: FunctionCall{
-					Name:      "func1",
-					Arguments: `{"a": 1}`,
-				},
-			},
-			{
-				ID:   "call_2",
-				Type: "function",
-				Function: FunctionCall{
-					Name:      "func2",
-					Arguments: `{"b": 2}`,
-				},
-			},
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	contents, err := parser.End()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(contents) != 1 {
-		t.Fatalf("expected 1 content, got %d", len(contents))
-	}
-	content := contents[0]
-	if len(content.Parts) != 2 {
-		t.Fatalf("expected 2 parts, got %d", len(content.Parts))
-	}
-
-	// Check first call
-	funcCall1, ok := content.Parts[0].(FuncCall)
-	if !ok {
-		t.Fatalf("part 0 is not FuncCall: %+v", content.Parts)
-	}
-	if funcCall1.ID != "call_1" || funcCall1.Name != "func1" {
-		t.Errorf("unexpected funcCall1: %+v", funcCall1)
-	}
-	if !reflect.DeepEqual(funcCall1.Arguments, map[string]any{"a": float64(1)}) {
-		t.Errorf("unexpected args for funcCall1: %+v", funcCall1.Arguments)
-	}
-
-	// Check second call
-	funcCall2, ok := content.Parts[1].(FuncCall)
-	if !ok {
-		t.Fatalf("part 1 is not FuncCall: %+v", content.Parts)
-	}
-	if funcCall2.ID != "call_2" || funcCall2.Name != "func2" {
-		t.Errorf("unexpected funcCall2: %+v", funcCall2)
-	}
-	if !reflect.DeepEqual(funcCall2.Arguments, map[string]any{"b": float64(2)}) {
-		t.Errorf("unexpected args for funcCall2: %+v", funcCall2.Arguments)
 	}
 }
 

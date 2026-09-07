@@ -49,13 +49,9 @@ they are incomplete (e.g., truncated output) and applying them would produce
 errors. When the apply flag is disabled, no handler is set and all blocks are
 collected, preserving the no-apply behavior.
 
-Applied change blocks are recorded in the session tree: each applied
-block's node content leads with its op, target, and file, and the node
-carries an applied result child, so the round-triggering feedback's
-outline is the applied-changes record and no separate note is fed back
-(see TheoryOfSessionTree). The record resets with each attempt,
-mirroring the MemoryStore reset, so a failed attempt's blocks never
-reach the tree.
+Applied change blocks join the session tree as described in
+TheoryOfSessionTree. The record resets with each attempt, mirroring the
+MemoryStore reset, so a failed attempt's blocks never reach the tree.
 `
 
 const maxRetriesForMissingSummary = 3
@@ -455,18 +451,14 @@ attempt. An attempt is complete only when a summary block is present AND
 the finish reason is not abnormal. The missing-summary causes, the
 component-triggering-block rule, and the retry feedback wording live in
 TheoryOfLoops; every violating attempt is retried from the original
-pre-generation State. State immutability (see TheoryOfStateImmutability
-in generators/state.go) is the foundation for this retry: the
-pre-generation State is unaffected by the failed attempt, so retrying
-starts from a clean snapshot rather than corrupted partial state. The
-retry count is bounded to prevent infinite loops when a model
-consistently truncates or omits the summary. Change blocks from a failed
-attempt are NOT applied: the retry discards the partial output entirely
-and regenerates from the pre-attempt state, avoiding incomplete or
-malformed change blocks. This is distinct from the generator-level retry
-(see TheoryOfRetry in generators/gemini.go and TheoryOfGenerateRetry in
-generators/generate.go), which handles transient API errors; this retry
-handles successful-but-incomplete or non-conforming output.
+pre-generation State, whose immutability (see TheoryOfStateImmutability
+in generators/state.go) keeps the retry on a clean snapshot. Change
+blocks from a failed attempt are not applied: the MemoryStore reset on
+retry is covered by TheoryOfStreamingApply. This retry handles
+successful-but-incomplete or non-conforming output; the generator-level
+retry (see TheoryOfRetry in generators/gemini.go and
+TheoryOfGenerateRetry in generators/generate.go) handles transient API
+errors.
 
 Completion is detected by checking the externally collected blocks for
 summary kind and the finish reason in the state for abnormal termination.

@@ -167,11 +167,8 @@ replacement behavior, and to resume the original task. The two
 categories share one correction decision and one budget; see
 TheoryOfUnknownBlockKinds.
 
-Applied change blocks are recorded in the session tree: each applied
-block's node content leads with its op, target, and file, and the node
-carries an applied result child, so the round-triggering feedback's
-outline is the applied-changes record and no separate note is fed back.
-See TheoryOfSessionTree and TheoryOfStreamingApply.
+Applied change blocks are recorded in the session tree; see
+TheoryOfSessionTree and TheoryOfStreamingApply.
 `
 
 const TheoryOfUsageLogging = `

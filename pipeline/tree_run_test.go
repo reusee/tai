@@ -2,7 +2,6 @@ package pipeline
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -653,66 +652,6 @@ func TestResultCarriesSessionTree(t *testing.T) {
 		if _, ok := result.SessionTree.Node("model-1"); !ok {
 			t.Fatal("expected the attempt's response node in the result's tree")
 		}
-	})
-}
-
-// TestRunRetryFeedbackCarriesTreeOutline verifies that the retry
-// feedback of a truncated or errored attempt ends with the session
-// tree outline: the retry is a round-triggering feedback. See
-// TheoryOfSessionTree.
-func TestRunRetryFeedbackCarriesTreeOutline(t *testing.T) {
-	withRun(t, func(run Run) {
-		t.Run("missing summary", func(t *testing.T) {
-			callCount := 0
-			phaseBuilder := func(g generators.Generator) generators.Phase {
-				callCount++
-				if callCount == 1 {
-					return appendPhase("incomplete output without summary")
-				}
-				return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
-			}
-			result, err := runOnce(run, RunOptions{
-				Generator: nil,
-				InitialState: generators.NewPrompts("", []*generators.Content{
-					{Role: generators.RoleUser, Parts: []generators.Part{generators.Text("task input")}},
-				}),
-				Components:               nil,
-				PhaseBuilder:             phaseBuilder,
-				RetryOnMissingCompletion: true,
-				MaxRetries:               3,
-				Handoff: func(text string) (*Handoff, error) {
-					return &Handoff{Summary: "summary", Prompt: "retry prompt"}, nil
-				},
-			})
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			assertUserTextContains(t, result, "[Session tree]", "user-1 [user/user]")
-		})
-		t.Run("error retry", func(t *testing.T) {
-			callCount := 0
-			phaseBuilder := func(g generators.Generator) generators.Phase {
-				callCount++
-				if callCount == 1 {
-					return appendThenErrorPhase("partial output", errors.New("boom"))
-				}
-				return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
-			}
-			result, err := runOnce(run, RunOptions{
-				Generator: nil,
-				InitialState: generators.NewPrompts("", []*generators.Content{
-					{Role: generators.RoleUser, Parts: []generators.Part{generators.Text("task input")}},
-				}),
-				Components:   nil,
-				PhaseBuilder: phaseBuilder,
-				RetryOnError: true,
-				MaxRetries:   3,
-			})
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			assertUserTextContains(t, result, "[Session tree]", "user-1 [user/user]")
-		})
 	})
 }
 

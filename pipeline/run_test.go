@@ -1007,6 +1007,121 @@ func TestRunRetryMaxRetries(t *testing.T) {
 	})
 }
 
+// TestRunRetryFeedback verifies the fragments every retry feedback
+// carries — the attempt number, the re-emit instruction, and the
+// session-tree outline — across the missing-completion and error
+// retry paths, and the resume directive of the change-block apply
+// error. See TheoryOfLoops and TheoryOfSessionTree.
+func TestRunRetryFeedback(t *testing.T) {
+	withRun(t, func(run Run) {
+		// assertFeedback joins the user-role texts of the state and
+		// requires every fragment to appear in them.
+		assertFeedback := func(t *testing.T, state generators.State, fragments ...string) {
+			var joined strings.Builder
+			for c := range state.Contents() {
+				if c.Role != generators.RoleUser {
+					continue
+				}
+				for _, p := range c.Parts {
+					if text, ok := p.(generators.Text); ok {
+						joined.WriteString(string(text))
+						joined.WriteString("\n")
+					}
+				}
+			}
+			for _, fragment := range fragments {
+				if !strings.Contains(joined.String(), fragment) {
+					t.Fatalf("missing feedback fragment %q", fragment)
+				}
+			}
+		}
+
+		t.Run("MissingCompletion", func(t *testing.T) {
+			callCount := 0
+			phaseBuilder := func(g generators.Generator) generators.Phase {
+				callCount++
+				if callCount == 1 {
+					return appendPhase("incomplete output without summary")
+				}
+				return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
+			}
+			result, err := runOnce(run, RunOptions{
+				Generator: nil,
+				InitialState: generators.NewPrompts("", []*generators.Content{
+					{Role: generators.RoleUser, Parts: []generators.Part{generators.Text("task input")}},
+				}),
+				Components:               nil,
+				PhaseBuilder:             phaseBuilder,
+				RetryOnMissingCompletion: true,
+				MaxRetries:               1,
+				Handoff: func(text string) (*Handoff, error) {
+					return &Handoff{Summary: "summary", Prompt: "retry prompt"}, nil
+				},
+			})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			assertFeedback(t, result.FinalState, "retry attempt 1 of 1", "Re-emit every block", "[Session tree]", "user-1 [user/user]")
+		})
+
+		t.Run("Error", func(t *testing.T) {
+			callCount := 0
+			phaseBuilder := func(g generators.Generator) generators.Phase {
+				callCount++
+				if callCount == 1 {
+					return appendThenErrorPhase("partial output", errors.New("some error"))
+				}
+				return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
+			}
+			result, err := runOnce(run, RunOptions{
+				Generator: nil,
+				InitialState: generators.NewPrompts("", []*generators.Content{
+					{Role: generators.RoleUser, Parts: []generators.Part{generators.Text("task input")}},
+				}),
+				Components:   nil,
+				PhaseBuilder: phaseBuilder,
+				RetryOnError: true,
+				MaxRetries:   1,
+				Handoff: func(text string) (*Handoff, error) {
+					return &Handoff{Summary: "summary", Prompt: "retry prompt"}, nil
+				},
+			})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			assertFeedback(t, result.FinalState, "retry attempt 1 of 1", "Re-emit every block", "[Session tree]", "user-1 [user/user]")
+		})
+
+		t.Run("ApplyErrorContinuesTask", func(t *testing.T) {
+			callCount := 0
+			phaseBuilder := func(g generators.Generator) generators.Phase {
+				callCount++
+				if callCount == 1 {
+					return appendThenErrorPhase(
+						"partial model output",
+						&changes.ApplyError{Err: errors.New("apply change block MODIFY Foo: parse error")},
+					)
+				}
+				return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
+			}
+			result, err := runOnce(run, RunOptions{
+				Generator: nil,
+				InitialState: generators.NewPrompts("", []*generators.Content{
+					{Role: generators.RoleUser, Parts: []generators.Part{generators.Text("task input")}},
+				}),
+				Components:   nil,
+				PhaseBuilder: phaseBuilder,
+				RetryOnError: true,
+				MaxRetries:   3,
+			})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			assertFeedback(t, result.FinalState, "continue the ORIGINAL task", "Re-emit every block", "[Session tree]", "user-1 [user/user]")
+		})
+	})
+}
+
 func TestRunOnAttemptStartCalled(t *testing.T) {
 	withRun(t, func(run Run) {
 		callCount := 0
@@ -1570,58 +1685,6 @@ func TestRunRetryOnApplyErrorGuidance(t *testing.T) {
 	})
 }
 
-// TestRunRetryFeedbackInstructsContinuingTask verifies that the error-retry
-// feedback tells the model to resume the original task after correction, so
-// a corrected response does not end the generation and strand the remaining
-// plan. See TheoryOfLoops.
-func TestRunRetryFeedbackInstructsContinuingTask(t *testing.T) {
-	withRun(t, func(run Run) {
-		callCount := 0
-		phaseBuilder := func(g generators.Generator) generators.Phase {
-			callCount++
-			if callCount == 1 {
-				return appendThenErrorPhase(
-					"partial model output",
-					&changes.ApplyError{Err: errors.New("apply change block MODIFY Foo: parse error")},
-				)
-			}
-			return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
-		}
-
-		result, err := runOnce(run, RunOptions{
-			Generator:    nil,
-			InitialState: generators.NewPrompts("", nil),
-			Components:   nil,
-			PhaseBuilder: phaseBuilder,
-			RetryOnError: true,
-			MaxRetries:   3,
-		})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if callCount != 2 {
-			t.Fatalf("expected 2 calls (retry once), got %d", callCount)
-		}
-
-		foundContinuation := false
-		for c := range result.FinalState.Contents() {
-			if c.Role != generators.RoleUser {
-				continue
-			}
-			for _, p := range c.Parts {
-				if text, ok := p.(generators.Text); ok {
-					if strings.Contains(string(text), "continue the ORIGINAL task") {
-						foundContinuation = true
-					}
-				}
-			}
-		}
-		if !foundContinuation {
-			t.Fatal("expected continuation instruction in error retry feedback")
-		}
-	})
-}
-
 func TestRunDiskChangeApplyEndsRun(t *testing.T) {
 	withRun(t, func(run Run) {
 		callCount := 0
@@ -1713,194 +1776,6 @@ func TestRunRetryOnErrorMaxRetries(t *testing.T) {
 		if callCount != 3 {
 			t.Fatalf("expected 3 calls (initial + 2 retries), got %d", callCount)
 		}
-	})
-}
-
-func TestRunRetryFeedbackIncludesAttemptNumber(t *testing.T) {
-	withRun(t, func(run Run) {
-		t.Run("MissingCompletion", func(t *testing.T) {
-			callCount := 0
-			phaseBuilder := func(g generators.Generator) generators.Phase {
-				callCount++
-				if callCount == 1 {
-					return appendPhase("incomplete output without summary")
-				}
-				return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
-			}
-
-			result, err := runOnce(run, RunOptions{
-				Generator:                nil,
-				InitialState:             generators.NewPrompts("", nil),
-				Components:               nil,
-				PhaseBuilder:             phaseBuilder,
-				RetryOnMissingCompletion: true,
-				MaxRetries:               1,
-				Handoff: func(text string) (*Handoff, error) {
-					return &Handoff{Summary: "summary", Prompt: "retry prompt"}, nil
-				},
-			})
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if callCount != 2 {
-				t.Fatalf("expected 2 calls, got %d", callCount)
-			}
-
-			foundAttempt := false
-			for c := range result.FinalState.Contents() {
-				if c.Role == generators.RoleUser {
-					for _, p := range c.Parts {
-						if text, ok := p.(generators.Text); ok {
-							if strings.Contains(string(text), "retry attempt 1 of 1") {
-								foundAttempt = true
-							}
-						}
-					}
-				}
-			}
-			if !foundAttempt {
-				t.Fatal("expected retry attempt number in state")
-			}
-		})
-
-		t.Run("Error", func(t *testing.T) {
-			callCount := 0
-			phaseBuilder := func(g generators.Generator) generators.Phase {
-				callCount++
-				if callCount == 1 {
-					return appendThenErrorPhase("partial output", errors.New("some error"))
-				}
-				return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
-			}
-
-			result, err := runOnce(run, RunOptions{
-				Generator:    nil,
-				InitialState: generators.NewPrompts("", nil),
-				Components:   nil,
-				PhaseBuilder: phaseBuilder,
-				RetryOnError: true,
-				MaxRetries:   1,
-				Handoff: func(text string) (*Handoff, error) {
-					return &Handoff{Summary: "summary", Prompt: "retry prompt"}, nil
-				},
-			})
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if callCount != 2 {
-				t.Fatalf("expected 2 calls, got %d", callCount)
-			}
-
-			foundAttempt := false
-			for c := range result.FinalState.Contents() {
-				if c.Role == generators.RoleUser {
-					for _, p := range c.Parts {
-						if text, ok := p.(generators.Text); ok {
-							if strings.Contains(string(text), "retry attempt 1 of 1") {
-								foundAttempt = true
-							}
-						}
-					}
-				}
-			}
-			if !foundAttempt {
-				t.Fatal("expected retry attempt number in state")
-			}
-		})
-	})
-}
-
-func TestRunRetryFeedbackInstructsReEmittingBlocks(t *testing.T) {
-	withRun(t, func(run Run) {
-		t.Run("MissingCompletion", func(t *testing.T) {
-			callCount := 0
-			phaseBuilder := func(g generators.Generator) generators.Phase {
-				callCount++
-				if callCount == 1 {
-					return appendPhase("incomplete output without summary")
-				}
-				return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
-			}
-
-			result, err := runOnce(run, RunOptions{
-				Generator:                nil,
-				InitialState:             generators.NewPrompts("", nil),
-				Components:               nil,
-				PhaseBuilder:             phaseBuilder,
-				RetryOnMissingCompletion: true,
-				MaxRetries:               1,
-				Handoff: func(text string) (*Handoff, error) {
-					return &Handoff{Summary: "summary", Prompt: "retry prompt"}, nil
-				},
-			})
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if callCount != 2 {
-				t.Fatalf("expected 2 calls, got %d", callCount)
-			}
-
-			foundInstruction := false
-			for c := range result.FinalState.Contents() {
-				if c.Role == generators.RoleUser {
-					for _, p := range c.Parts {
-						if text, ok := p.(generators.Text); ok {
-							if strings.Contains(string(text), "Re-emit every block") {
-								foundInstruction = true
-							}
-						}
-					}
-				}
-			}
-			if !foundInstruction {
-				t.Fatal("expected re-emit instruction in state")
-			}
-		})
-
-		t.Run("Error", func(t *testing.T) {
-			callCount := 0
-			phaseBuilder := func(g generators.Generator) generators.Phase {
-				callCount++
-				if callCount == 1 {
-					return appendThenErrorPhase("partial output", errors.New("some error"))
-				}
-				return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
-			}
-
-			result, err := runOnce(run, RunOptions{
-				Generator:    nil,
-				InitialState: generators.NewPrompts("", nil),
-				Components:   nil,
-				PhaseBuilder: phaseBuilder,
-				RetryOnError: true,
-				MaxRetries:   1,
-				Handoff: func(text string) (*Handoff, error) {
-					return &Handoff{Summary: "summary", Prompt: "retry prompt"}, nil
-				},
-			})
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if callCount != 2 {
-				t.Fatalf("expected 2 calls, got %d", callCount)
-			}
-
-			foundInstruction := false
-			for c := range result.FinalState.Contents() {
-				if c.Role == generators.RoleUser {
-					for _, p := range c.Parts {
-						if text, ok := p.(generators.Text); ok {
-							if strings.Contains(string(text), "Re-emit every block") {
-								foundInstruction = true
-							}
-						}
-					}
-				}
-			}
-			if !foundInstruction {
-				t.Fatal("expected re-emit instruction in state")
-			}
-		})
 	})
 }
 

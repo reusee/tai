@@ -27,85 +27,66 @@ func TestParseGoSrcSymbols(t *testing.T) {
 	}
 }
 
-func TestGoSrcPromptsDescribePackageSymbols(t *testing.T) {
-	// The go-src prompt must teach the package form: a symbol that is
-	// a loaded package's exact import path or package name returns the
-	// package's go doc documentation, with command and unexported
-	// documentation for focus packages. See TheoryOfGoSrcBlocks.
-	if !strings.Contains(GoSrcBlockSystemPrompt, "go doc documentation") ||
-		!strings.Contains(GoSrcBlockSystemPrompt, "package name") {
-		t.Fatal("GoSrcBlockSystemPrompt does not describe package symbols")
-	}
-}
-
-func TestGoSrcPromptsPreferGoSrcOverIngest(t *testing.T) {
-	// The go-src prompt must teach the division of labor with ingest:
-	// Go source is fetched by symbol — gaining the defining file and the
-	// references report — while ingest serves non-Go files, whole-file
-	// views, glob discovery, and network resources. See
-	// TheoryOfGoSrcBlocks.
+// TestGoSrcPrompts verifies the fragments the go-src system prompt
+// must teach: the package-symbol form, the division of labor with
+// ingest, batch fetching, the resolution-result contract, and the
+// summary-first stop rule. See TheoryOfGoSrcBlocks and
+// TheoryOfGoSrcResolution.
+func TestGoSrcPrompts(t *testing.T) {
 	prompt := GoSrcBlockSystemPrompt
-	if !strings.Contains(prompt, "Prefer go-src over ingest") {
-		t.Fatal("GoSrcBlockSystemPrompt does not teach the go-src preference for Go source")
-	}
-	if !strings.Contains(prompt, "references report") {
-		t.Fatal("GoSrcBlockSystemPrompt does not cite the references report as the reason for the preference")
-	}
-	if !strings.Contains(prompt, "non-Go files") {
-		t.Fatal("GoSrcBlockSystemPrompt does not delineate the ingest block's remaining uses")
-	}
-}
 
-func TestGoSrcPromptsEncourageBatchFetch(t *testing.T) {
-	if !strings.Contains(GoSrcBlockSystemPrompt, "Batch fetches: collect every symbol you expect to need into one go-src block") {
-		t.Fatal("go-src prompt must teach batching every needed symbol into one block to minimize fetching rounds")
-	}
-}
+	t.Run("PackageSymbols", func(t *testing.T) {
+		if !strings.Contains(prompt, "go doc documentation") ||
+			!strings.Contains(prompt, "package name") {
+			t.Fatal("GoSrcBlockSystemPrompt does not describe package symbols")
+		}
+	})
 
-func TestGoSrcPromptsDescribeResultsAndFilePath(t *testing.T) {
-	// The go-src prompt teaches two facts about resolution results:
-	// prefer the import-path qualifier, and the resolved source names the
-	// defining file (usable as a change block file-path). The prompt must
-	// not teach the in-memory snapshot or any disk-verification action:
-	// an accepted change block is treated as written to disk, and the
-	// next loop reads the current filesystem state. See
-	// TheoryOfGoSrcBlocks and TheoryOfGoSrcResolution.
-	prompt := GoSrcBlockSystemPrompt
-	if !strings.Contains(prompt, "full import path") {
-		t.Fatal("GoSrcBlockSystemPrompt does not recommend the import-path qualifier")
-	}
-	if !strings.Contains(prompt, "file-path") {
-		t.Fatal("GoSrcBlockSystemPrompt does not describe the defining file usage")
-	}
-	if strings.Contains(prompt, "in-memory snapshot") {
-		t.Fatal("GoSrcBlockSystemPrompt must not expose the snapshot semantics")
-	}
-	if strings.Contains(prompt, "Verify applied changes") {
-		t.Fatal("GoSrcBlockSystemPrompt must not instruct disk verification")
-	}
-}
+	t.Run("PreferOverIngest", func(t *testing.T) {
+		if !strings.Contains(prompt, "Prefer go-src over ingest") {
+			t.Fatal("GoSrcBlockSystemPrompt does not teach the go-src preference for Go source")
+		}
+		if !strings.Contains(prompt, "references report") {
+			t.Fatal("GoSrcBlockSystemPrompt does not cite the references report as the reason for the preference")
+		}
+		if !strings.Contains(prompt, "non-Go files") {
+			t.Fatal("GoSrcBlockSystemPrompt does not delineate the ingest block's remaining uses")
+		}
+	})
 
-func TestGoSrcPromptsEndWithSummary(t *testing.T) {
-	// The go-src stop rule must be phrased summary-first: emit the
-	// summary block IMMEDIATELY after the last go-src block's closing
-	// line, then end the response and wait. A bare "stop generating"
-	// instruction placed before the summary requirement makes the model
-	// halt at the closing line — the observed failure shape of a lone
-	// go-src block ending a response — and contradicts the
-	// every-response requirement of blocks.SummaryBlockSystemPrompt.
-	// The prompt must also state the sequence rule — the block after the
-	// go-src block's closing line must be the summary block. See
-	// TheoryOfGoSrcBlocks.
-	if !strings.Contains(GoSrcBlockSystemPrompt, "emit the summary block IMMEDIATELY") {
-		t.Fatal("system prompt must phrase the stop rule summary-first: emit the summary block immediately after the last go-src block")
-	}
-	if strings.Contains(GoSrcBlockSystemPrompt, "stop generating") {
-		t.Fatal("system prompt must not carry a bare stop instruction before the summary requirement")
-	}
-	if !strings.Contains(GoSrcBlockSystemPrompt, "never stop at") {
-		t.Fatal("system prompt must forbid stopping at a go-src block's closing line")
-	}
-	if !strings.Contains(GoSrcBlockSystemPrompt, "Never end a response on a go-src block") {
-		t.Fatal("system prompt must state the sequence rule: the block after a go-src block must be the summary block")
-	}
+	t.Run("BatchFetch", func(t *testing.T) {
+		if !strings.Contains(prompt, "Batch fetches: collect every symbol you expect to need into one go-src block") {
+			t.Fatal("go-src prompt must teach batching every needed symbol into one block to minimize fetching rounds")
+		}
+	})
+
+	t.Run("ResultsAndFilePath", func(t *testing.T) {
+		if !strings.Contains(prompt, "full import path") {
+			t.Fatal("GoSrcBlockSystemPrompt does not recommend the import-path qualifier")
+		}
+		if !strings.Contains(prompt, "file-path") {
+			t.Fatal("GoSrcBlockSystemPrompt does not describe the defining file usage")
+		}
+		if strings.Contains(prompt, "in-memory snapshot") {
+			t.Fatal("GoSrcBlockSystemPrompt must not expose the snapshot semantics")
+		}
+		if strings.Contains(prompt, "Verify applied changes") {
+			t.Fatal("GoSrcBlockSystemPrompt must not instruct disk verification")
+		}
+	})
+
+	t.Run("SummaryStopRule", func(t *testing.T) {
+		if !strings.Contains(prompt, "emit the summary block IMMEDIATELY") {
+			t.Fatal("system prompt must phrase the stop rule summary-first: emit the summary block immediately after the last go-src block")
+		}
+		if strings.Contains(prompt, "stop generating") {
+			t.Fatal("system prompt must not carry a bare stop instruction before the summary requirement")
+		}
+		if !strings.Contains(prompt, "never stop at") {
+			t.Fatal("system prompt must forbid stopping at a go-src block's closing line")
+		}
+		if !strings.Contains(prompt, "Never end a response on a go-src block") {
+			t.Fatal("system prompt must state the sequence rule: the block after a go-src block must be the summary block")
+		}
+	})
 }

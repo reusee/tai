@@ -258,6 +258,22 @@ func TestTabsBoxesWeighted(t *testing.T) {
 	if boxes[2].Top != 44 || boxes[2].Bottom != 45 {
 		t.Fatalf("unexpected collapsed panel box: %+v", boxes[2])
 	}
+
+	tabs3 := NewTabs(3)
+	// The last set of assertions also exercises the side-by-side layout.
+	tabs3.SplitVertical = true
+	tabs3.Expanded = []bool{true, true, true}
+	tabs3.Focus = 1
+	boxes = tabs3.Boxes(90, 24)
+	if boxes[0].Left != 0 || boxes[0].Right != 18 {
+		t.Fatalf("unexpected first panel box: %+v", boxes[0])
+	}
+	if boxes[1].Left != 18 || boxes[1].Right != 72 {
+		t.Fatalf("unexpected focused middle panel box: %+v", boxes[1])
+	}
+	if boxes[2].Left != 72 || boxes[2].Right != 90 {
+		t.Fatalf("unexpected last panel box: %+v", boxes[2])
+	}
 }
 
 func TestTabsBoxesCollapsedInPlace(t *testing.T) {
@@ -276,6 +292,39 @@ func TestTabsBoxesCollapsedInPlace(t *testing.T) {
 	}
 	if boxes[2].Left != 67 || boxes[2].Right != 90 {
 		t.Fatalf("unexpected logs panel box: %+v", boxes[2])
+	}
+
+	tabs2 := NewTabs(3)
+	tabs2.Expanded = []bool{true, false, true}
+	tabs2.Focus = 0
+	boxes = tabs2.Boxes(80, 45)
+	// The stacked layout splits the expanded height (44) the same way:
+	// 33 rows for the focused tab, 11 for the other expanded tab.
+	if boxes[0].Top != 0 || boxes[0].Bottom != 33 {
+		t.Fatalf("unexpected output panel box: %+v", boxes[0])
+	}
+	if boxes[1].Top != 33 || boxes[1].Bottom != 34 {
+		t.Fatalf("collapsed round tab must stay in the middle, got %+v", boxes[1])
+	}
+	if boxes[2].Top != 34 || boxes[2].Bottom != 45 {
+		t.Fatalf("unexpected logs panel box: %+v", boxes[2])
+	}
+
+	tabs3 := NewTabs(3)
+	// Collapsed first and last tabs leave one-column strips at both
+	// edges of the vertical split.
+	tabs3.SplitVertical = true
+	tabs3.Expanded = []bool{false, true, false}
+	tabs3.Focus = 1
+	boxes = tabs3.Boxes(90, 40)
+	if boxes[0].Left != 0 || boxes[0].Right != 1 {
+		t.Fatalf("unexpected collapsed output panel box: %+v", boxes[0])
+	}
+	if boxes[1].Left != 1 || boxes[1].Right != 89 {
+		t.Fatalf("unexpected expanded round panel box: %+v", boxes[1])
+	}
+	if boxes[2].Left != 89 || boxes[2].Right != 90 {
+		t.Fatalf("unexpected collapsed logs panel box: %+v", boxes[2])
 	}
 }
 

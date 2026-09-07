@@ -79,10 +79,8 @@ found, the block is unclosed. The closing marker line does not require a
 trailing newline: when the delimiter is the last content in the buffer, the
 parser extracts it from the remaining content, and an incomplete (still
 streaming) delimiter — a shorter extracted string — will not match, so the
-block remains unclosed until the full delimiter arrives. One lenient
-closing form is accepted: a line whose trimmed content is the delimiter
-followed by ">>", optionally separated by whitespace, closes the block like
-the exact form; see TheoryOfLenientClosingMarkers.
+block remains unclosed until the full delimiter arrives. The lenient
+closing forms are owned by TheoryOfLenientClosingMarkers.
 
 BlockFormatSystemPrompt is itself the theory text for the delimiter
 selection policy, and TheoryOfBlockFormatGeneral owns the rarity rationale
@@ -122,8 +120,9 @@ is RFC 3986 URI syntax: the scheme is the block kind, the optional path
 follows the colon, and the query holds key=value pairs. A bare kind without
 the colon is also accepted (see TheoryOfBareKinds). The delimiter is extracted
 as the text between << and the first whitespace or ( character on the opening
-line. The closing marker is the delimiter alone on its own line (with one
-lenient exception: a trailing ">>"; see TheoryOfLenientClosingMarkers).
+line. The closing marker is the delimiter alone on its own line; the closing
+semantics and their lenient exception live in TheoryOfBoundaryUniqueness and
+TheoryOfLenientClosingMarkers.
 
 An opening marker whose line extends to the end of the content (no trailing newline)
 is a truncated block. The parser reports an unclosed-block error.

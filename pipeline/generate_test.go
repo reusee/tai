@@ -82,6 +82,86 @@ func TestPrintAttemptStats(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("NoSummaries", func(t *testing.T) {
+		var buf bytes.Buffer
+		stats := []AttemptStat{
+			{Attempt: 1, PromptTokens: 1000, CompletionTokens: 500},
+		}
+		PrintAttemptStats(&buf, stats)
+		output := buf.String()
+		if strings.Contains(output, "=== Attempt Summaries ===") {
+			t.Fatalf("should not print summaries section when no summaries exist, got: %s", output)
+		}
+	})
+
+	t.Run("Duration", func(t *testing.T) {
+		var buf bytes.Buffer
+		stats := []AttemptStat{
+			{Attempt: 1, PromptTokens: 1000, CompletionTokens: 500, Duration: 3 * time.Second},
+			{Attempt: 2, PromptTokens: 2000, CompletionTokens: 800, Duration: 1500 * time.Millisecond},
+		}
+		PrintAttemptStats(&buf, stats)
+		output := buf.String()
+		if !strings.Contains(output, "Duration") {
+			t.Fatalf("expected Duration column header, got: %s", output)
+		}
+		if !strings.Contains(output, "3s") {
+			t.Fatalf("expected duration '3s' in output, got: %s", output)
+		}
+		if !strings.Contains(output, "1.5s") {
+			t.Fatalf("expected duration '1.5s' in output, got: %s", output)
+		}
+		// Total duration: 3s + 1.5s = 4.5s
+		if !strings.Contains(output, "4.5s") {
+			t.Fatalf("expected total duration '4.5s' in output, got: %s", output)
+		}
+	})
+
+	t.Run("Summaries", func(t *testing.T) {
+		var buf bytes.Buffer
+		stats := []AttemptStat{
+			{Attempt: 1, PromptTokens: 1000, CompletionTokens: 500, Summary: "Analyzed the code."},
+			{Attempt: 2, PromptTokens: 2000, CompletionTokens: 800, Summary: "Fixed the bug."},
+		}
+		PrintAttemptStats(&buf, stats)
+		output := buf.String()
+		if !strings.Contains(output, "=== Attempt Summaries ===") {
+			t.Fatalf("expected summaries section, got: %s", output)
+		}
+		if !strings.Contains(output, "Attempt 1: Analyzed the code.") {
+			t.Fatalf("expected attempt 1 summary, got: %s", output)
+		}
+		if !strings.Contains(output, "Attempt 2: Fixed the bug.") {
+			t.Fatalf("expected attempt 2 summary, got: %s", output)
+		}
+	})
+
+	t.Run("LoopColumn", func(t *testing.T) {
+		var buf bytes.Buffer
+		stats := []AttemptStat{
+			{Loop: 1, Attempt: 1, PromptTokens: 111, CompletionTokens: 51, Duration: time.Second, Summary: "first round"},
+			{Loop: 1, Attempt: 2, PromptTokens: 222, CompletionTokens: 82, Duration: time.Second, Summary: "second round"},
+		}
+		PrintAttemptStats(&buf, stats, "Goal Loop Statistics")
+		output := buf.String()
+		if !strings.Contains(output, "=== Goal Loop Statistics ===") {
+			t.Fatalf("expected custom title, got: %s", output)
+		}
+		if !strings.Contains(output, "Loop") {
+			t.Fatalf("expected Loop column in output, got: %s", output)
+		}
+		if !strings.Contains(output, "Loop 1 Attempt 1: first round") {
+			t.Fatalf("expected loop-aware summary for attempt 1, got: %s", output)
+		}
+		if !strings.Contains(output, "Loop 1 Attempt 2: second round") {
+			t.Fatalf("expected loop-aware summary for attempt 2, got: %s", output)
+		}
+		// Total prompt tokens across all loops: 111 + 222 = 333
+		if !strings.Contains(output, "333") {
+			t.Fatalf("expected aggregated total prompt tokens, got: %s", output)
+		}
+	})
 }
 
 func TestHandoffRetryState(t *testing.T) {
@@ -299,86 +379,6 @@ func TestHandoffSystemPromptRequiresHandoffBlock(t *testing.T) {
 		if !strings.Contains(HandoffSystemPrompt, want) {
 			t.Fatalf("HandoffSystemPrompt must contain %q", want)
 		}
-	}
-}
-
-func TestPrintAttemptStatsWithSummaries(t *testing.T) {
-	var buf bytes.Buffer
-	stats := []AttemptStat{
-		{Attempt: 1, PromptTokens: 1000, CompletionTokens: 500, Summary: "Analyzed the code."},
-		{Attempt: 2, PromptTokens: 2000, CompletionTokens: 800, Summary: "Fixed the bug."},
-	}
-	PrintAttemptStats(&buf, stats)
-	output := buf.String()
-	if !strings.Contains(output, "=== Attempt Summaries ===") {
-		t.Fatalf("expected summaries section, got: %s", output)
-	}
-	if !strings.Contains(output, "Attempt 1: Analyzed the code.") {
-		t.Fatalf("expected attempt 1 summary, got: %s", output)
-	}
-	if !strings.Contains(output, "Attempt 2: Fixed the bug.") {
-		t.Fatalf("expected attempt 2 summary, got: %s", output)
-	}
-}
-
-func TestPrintAttemptStatsNoSummaries(t *testing.T) {
-	var buf bytes.Buffer
-	stats := []AttemptStat{
-		{Attempt: 1, PromptTokens: 1000, CompletionTokens: 500},
-	}
-	PrintAttemptStats(&buf, stats)
-	output := buf.String()
-	if strings.Contains(output, "=== Attempt Summaries ===") {
-		t.Fatalf("should not print summaries section when no summaries exist, got: %s", output)
-	}
-}
-
-func TestPrintAttemptStatsWithDuration(t *testing.T) {
-	var buf bytes.Buffer
-	stats := []AttemptStat{
-		{Attempt: 1, PromptTokens: 1000, CompletionTokens: 500, Duration: 3 * time.Second},
-		{Attempt: 2, PromptTokens: 2000, CompletionTokens: 800, Duration: 1500 * time.Millisecond},
-	}
-	PrintAttemptStats(&buf, stats)
-	output := buf.String()
-	if !strings.Contains(output, "Duration") {
-		t.Fatalf("expected Duration column header, got: %s", output)
-	}
-	if !strings.Contains(output, "3s") {
-		t.Fatalf("expected duration '3s' in output, got: %s", output)
-	}
-	if !strings.Contains(output, "1.5s") {
-		t.Fatalf("expected duration '1.5s' in output, got: %s", output)
-	}
-	// Total duration: 3s + 1.5s = 4.5s
-	if !strings.Contains(output, "4.5s") {
-		t.Fatalf("expected total duration '4.5s' in output, got: %s", output)
-	}
-}
-
-func TestPrintAttemptStatsWithLoopColumn(t *testing.T) {
-	var buf bytes.Buffer
-	stats := []AttemptStat{
-		{Loop: 1, Attempt: 1, PromptTokens: 111, CompletionTokens: 51, Duration: time.Second, Summary: "first round"},
-		{Loop: 1, Attempt: 2, PromptTokens: 222, CompletionTokens: 82, Duration: time.Second, Summary: "second round"},
-	}
-	PrintAttemptStats(&buf, stats, "Goal Loop Statistics")
-	output := buf.String()
-	if !strings.Contains(output, "=== Goal Loop Statistics ===") {
-		t.Fatalf("expected custom title, got: %s", output)
-	}
-	if !strings.Contains(output, "Loop") {
-		t.Fatalf("expected Loop column in output, got: %s", output)
-	}
-	if !strings.Contains(output, "Loop 1 Attempt 1: first round") {
-		t.Fatalf("expected loop-aware summary for attempt 1, got: %s", output)
-	}
-	if !strings.Contains(output, "Loop 1 Attempt 2: second round") {
-		t.Fatalf("expected loop-aware summary for attempt 2, got: %s", output)
-	}
-	// Total prompt tokens across all loops: 111 + 222 = 333
-	if !strings.Contains(output, "333") {
-		t.Fatalf("expected aggregated total prompt tokens, got: %s", output)
 	}
 }
 

@@ -55,21 +55,14 @@ reasons, per-attempt usage, truncations, retries, handoffs,
 completions, component and idle continuations, thought summaries, and
 the terminal error), and the goal runner's verdict nodes in goal mode —
 and the Logs tab collects log records. The Tree tab renders the SAME
-tree the pipeline writes: withTUIOutputObserver taps the run's tree
-iterator and forwards every yielded tree to setTree, so the tab never
-maintains a separate display state; the v key cycles projections over
-the tree (all nodes, only the event nodes, only the summaries, or only
-one author's nodes), so the tree's internal representation is
-inspectable (see TheoryOfTreeTab and pipeline.TheoryOfLoopEvents). A
+tree the pipeline writes and cycles projections with the v key; the
+walk, the projection modes, and the jump marker live in TheoryOfTreeTab
+(see also pipeline.TheoryOfLoopEvents). A
 finish event node clears the Output tab's "generating..." hint. The
 Logs tab renders consecutive lines with alternating background shades
-so entries are visually distinct when a background is configured; the
-panels paint no background by default, the alternation is inert
-without one, and the two shades derive from whatever backgrounds the
-tui config section sets. The Tree tab walks the tree depth-first, one
-line per node by default, with per-node expand toggles, per-node
-alternating shades, and the attempt node's 👉 jump marker (see
-TheoryOfTreeTab). Model output is captured from the
+(taiui.TheoryOfLines owns the alternation and its inert default); the
+two shades derive from whatever backgrounds the
+tui config section sets. Model output is captured from the
 generation state by the tuiOutputState decorator, passed through
 RunOptions.StateDecorators by runWithTUI: text parts stream to the Output
 tab, thoughts are colored distinctly and separated from non-thought content
@@ -106,20 +99,14 @@ and failure notes are goal structure nodes in the same tree (RunGoal
 records them through GoalTreeObserver), so they render in the Tree tab
 and never reach the Output tab. stdout is discarded in TUI mode, while
 stderr stays visible in the Output tab. Content is colored by role,
-matching the non-TUI output colors (see generators/colors.go): user
-input is blue, tool calls and results yellow, system messages cyan, log
-records red, and thoughts bright magenta; model output keeps the
-default foreground. Role colors are ANSI 16
-palette colors by default, and every color is configurable through the
-tui config section (see UIStyle); by default no background is painted.
-Colors are carried per output line
-through wrapping, so a wrapped line keeps its role color. The keys
+matching generators.TheoryOfOutputColors; the palette defaults and the
+tui config section's configurability live in TheoryOfUIStyle. The keys
 1, 2, and 3 select the corresponding tab (Output, Tree, Logs
 respectively); the number-key collapse/expand and focus-handoff semantics,
 first-content auto-expansion, the unseen dot on collapsed strips, and
 the weighted layout (the focused tab weighs 3, every other expanded tab 1)
 are the taiui tab state machine's (taiui.TheoryOfTabs) and are not
-repeated here. The v key cycles the Tree tab's projection. The Output
+repeated here. The Output
 tab starts expanded and focused, following the
 live tail — the model's stream is the pane the user watches, so it is open
 from the first frame — while the Tree and Logs tabs stay collapsed and
@@ -132,7 +119,7 @@ freed rows go to the other expanded tabs by weight; focusing Logs
 restores the usual ratio. The s key switches between vertical splitting
 (tabs side by side, a vertical split line) and horizontal splitting (tabs
 stacked, one above the other). Tab cycles the focus among the expanded
-tabs, skipping collapsed ones; the [ and ] keys jump the Output tab's view
+tabs; the [ and ] keys jump the Output tab's view
 through the section transitions — in the Output tab a transition is a role
 change or a thought/non-thought change, i.e., a color change between
 consecutive wrapped display lines — using the exit and entry jump stops of
@@ -144,10 +131,8 @@ whenever the view sits in the last section or the output has one uniform
 section. The jump stops following the tail, and a collapsed Output tab
 expands and takes the focus so the jump result is visible. When the
 generation finishes, the TUI stays open so the output can be browsed, and
-q (or Ctrl-C) quits the TUI after a confirmation: the first press shows a
-confirmation bar at the bottom of the screen, and a second press quits;
-any other key cancels the confirmation and is processed normally, so an
-accidental q press never loses the session.
+q (or Ctrl-C) quits through the two-press confirmation owned by
+taiui.TheoryOfSessionChrome.
 
 - Rendering is a plain function of the TUI's state, following the
 taiuidemo pattern: render() computes the wrapped display lines of each
@@ -155,15 +140,10 @@ expanded tab (wrappedDisplay), updates the scroll offsets against the
 fresh display lengths, and builds the element tree with plain functions
 (one taiui.TabPanel per tab — the expanded Output tab through
 outputPanelView with its control column — plus buildRoot). The Output
-tab's content is its per-section projection (see TheoryOfOutputControls):
-each completed source line wraps at most once, the trailing partial line
-re-wraps fresh, and a section toggle, the collapse-all key, or a
-content-width change resets the projection. The Logs tab wraps through
-a taiui.WrapCache so that
-when new output streams in, only the newly arrived completed lines and
-the trailing partial line are wrapped, avoiding O(N) full re-wrapping of
-large buffers on every frame; the Tree tab caches each node's wrapped
-lines instead (see TheoryOfTreeTab), so a frame re-wraps only
+tab's content is its per-section projection (see TheoryOfOutputControls).
+The Logs tab wraps through
+a taiui.WrapCache (taiui.TheoryOfWrapCache owns the mechanism);
+the Tree tab caches each node's wrapped lines instead (see TheoryOfTreeTab), so a frame re-wraps only
 nodes that are new or repositioned.
 When the display width or tab background changes, the cache is reset
 and recomputed. The TUI holds nothing but the raw state values — line

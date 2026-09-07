@@ -42,9 +42,9 @@ Menu bar and mouse-complete interaction theory (cmd/tai):
   rows: one cell of side padding, no vertical padding, no border and
   no title, drawn over the tabs; the element tree places it after the
   panels and the help overlay, so an open menu covers both.
-- Quit keeps the two-press protocol: the first Quit press arms the
-  confirmation bar, the second confirms, and any other press — menu
-  entry or pane — cancels.
+- Quit runs the two-press confirmation owned by
+  taiui.TheoryOfSessionChrome; any other press — menu entry or pane —
+  cancels a pending confirmation.
 - A press inside the help overlay closes it; the overlay's box comes
   from taiui.HelpOverlayBox.
 - The chat input bar carries a submit glyph ↵ at its right end. A

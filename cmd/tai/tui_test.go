@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"io"
 	"iter"
 	"strings"
 	"testing"
@@ -782,126 +781,55 @@ func TestTUIPanelShowsTailOfWrappedContent(t *testing.T) {
 }
 
 func TestReadTUIKeys(t *testing.T) {
-	ch := make(chan string, 10)
-	go taiui.ReadKeys(strings.NewReader("\x1b[Aq\x1b[5~\x1b[6~"), ch)
-	var got []string
-	for len(got) < 4 {
-		select {
-		case k := <-ch:
-			got = append(got, mapTUIKey(k))
-		case <-time.After(time.Second):
-			t.Fatal("timeout waiting for keys")
-		}
-	}
-	want := []string{"up", "quit", "pageup", "pagedown"}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("key %d: expected %q, got %q", i, want[i], got[i])
-		}
-	}
-}
-
-func TestReadTUIMouseKeys(t *testing.T) {
-	// SGR mouse sequences: ESC [ < Cb ; Cx ; Cy M for press, drag, and
-	// wheel events, m for releases. Wire coordinates are 1-based and
-	// emitted 0-based. No-button motion (mode 1003) reports the pointer
-	// position as a motion event. See taiui.TheoryOfMouseInput.
-	pr, pw := io.Pipe()
-	ch := make(chan string, 10)
-	go taiui.ReadKeys(pr, ch)
-	go func() {
-		pw.Write([]byte("\x1b[<0;11;6M")) // left press at (10,5)
-		pw.Write([]byte("\x1b[<3;11;6m")) // release at (10,5)
-		pw.Write([]byte("\x1b[<64;8;9M")) // wheel up at (7,8)
-		pw.Write([]byte("\x1b[<65;8;9M")) // wheel down at (7,8)
-		pw.Write([]byte("\x1b[<32;5;5M")) // left drag at (4,4)
-		pw.Write([]byte("\x1b[<35;5;5M")) // no-button motion at (4,4)
-		pw.Close()
-	}()
-	var got []string
-	for len(got) < 6 {
-		select {
-		case k := <-ch:
-			got = append(got, k)
-		case <-time.After(time.Second):
-			t.Fatal("timeout waiting for mouse keys")
-		}
-	}
-	want := []string{
-		"mouse-left@10,5",
-		"mouse-release@10,5",
-		"mouse-wheel-up@7,8",
-		"mouse-wheel-down@7,8",
-		"mouse-leftdrag@4,4",
-		"mouse-motion@4,4",
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("key %d: expected %q, got %q", i, want[i], got[i])
-		}
-	}
-}
-
-func TestReadTUIKeysTabAndSplit(t *testing.T) {
-	ch := make(chan string, 10)
-	go taiui.ReadKeys(strings.NewReader("123sS"), ch)
-	var got []string
-	for len(got) < 5 {
-		select {
-		case k := <-ch:
-			got = append(got, mapTUIKey(k))
-		case <-time.After(time.Second):
-			t.Fatal("timeout waiting for keys")
-		}
-	}
-	want := []string{"1", "2", "3", "split", "split"}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("key %d: expected %q, got %q", i, want[i], got[i])
-		}
-	}
-}
-
-func TestReadTUIMouseKeysStreamed(t *testing.T) {
-	// A mouse sequence may arrive split across reads; the parser must
-	// wait for the terminator before emitting. See
-	// taiui.TheoryOfMouseInput.
-	pr, pw := io.Pipe()
-	ch := make(chan string, 10)
-	go taiui.ReadKeys(pr, ch)
-	go func() {
-		pw.Write([]byte("\x1b[<0;1"))
-		time.Sleep(10 * time.Millisecond)
-		pw.Write([]byte("1;6M"))
-		pw.Close()
-	}()
-	select {
-	case k := <-ch:
-		if k != "mouse-left@10,5" {
-			t.Fatalf("unexpected key: %q", k)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("timeout waiting for the streamed mouse key")
-	}
-}
-
-func TestReadTUIKeysTransitions(t *testing.T) {
-	ch := make(chan string, 10)
-	go taiui.ReadKeys(strings.NewReader("[]"), ch)
-	var got []string
-	for len(got) < 2 {
-		select {
-		case k := <-ch:
-			got = append(got, mapTUIKey(k))
-		case <-time.After(time.Second):
-			t.Fatal("timeout waiting for keys")
-		}
-	}
-	want := []string{"prev-transition", "next-transition"}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("key %d: expected %q, got %q", i, want[i], got[i])
-		}
+	for _, tt := range []struct {
+		name  string
+		input string
+		want  []string
+	}{
+		{
+			name:  "navigation",
+			input: "\x1b[Aq\x1b[5~\x1b[6~",
+			want:  []string{"up", "quit", "pageup", "pagedown"},
+		},
+		{
+			name:  "help",
+			input: "?\x1b[A",
+			want:  []string{"help", "up"},
+		},
+		{
+			name:  "ss3AndVT220",
+			input: "\x1bOA\x1bOB\x1bOH\x1bOF\x1b[1~\x1b[4~",
+			want:  []string{"up", "down", "home", "end", "home", "end"},
+		},
+		{
+			name:  "tabAndSplit",
+			input: "123sS",
+			want:  []string{"1", "2", "3", "split", "split"},
+		},
+		{
+			name:  "transitions",
+			input: "[]",
+			want:  []string{"prev-transition", "next-transition"},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ch := make(chan string, 10)
+			go taiui.ReadKeys(strings.NewReader(tt.input), ch)
+			var got []string
+			for len(got) < len(tt.want) {
+				select {
+				case k := <-ch:
+					got = append(got, mapTUIKey(k))
+				case <-time.After(time.Second):
+					t.Fatal("timeout waiting for keys")
+				}
+			}
+			for i := range tt.want {
+				if got[i] != tt.want[i] {
+					t.Fatalf("key %d: expected %q, got %q", i, tt.want[i], got[i])
+				}
+			}
+		})
 	}
 }
 
@@ -1096,25 +1024,6 @@ func TestTUINumberKeySwitchKeepsFollowState(t *testing.T) {
 	}
 	if !tui.scrolls[1].Follow {
 		t.Fatal("re-expanding a collapsed tab must resume following")
-	}
-}
-
-func TestTUICycleFocusSkipsCollapsedTabs(t *testing.T) {
-	tui := newTUIForTest()
-	tui.tabs.Expanded = []bool{true, false, true}
-	tui.tabs.Focus = 0
-	tui.cycleFocus()
-	if tui.tabs.Focus != 2 {
-		t.Fatalf("focus should skip the collapsed summary tab and land on logs, got %d", tui.tabs.Focus)
-	}
-	tui.cycleFocus()
-	if tui.tabs.Focus != 0 {
-		t.Fatalf("focus should wrap to the output tab, got %d", tui.tabs.Focus)
-	}
-	tui.tabs.Expanded = []bool{false, false, false}
-	tui.cycleFocus()
-	if tui.tabs.Focus != -1 {
-		t.Fatalf("focus should be -1 with no expanded tabs, got %d", tui.tabs.Focus)
 	}
 }
 
@@ -1601,131 +1510,6 @@ func TestTUIRenderBuildsViewFromState(t *testing.T) {
 	tui.render()
 	if !strings.Contains(sb.String(), "world") {
 		t.Fatalf("expected updated rendered output, got: %q", sb.String())
-	}
-}
-
-func TestTabPanelBoxWeighted(t *testing.T) {
-	tabs := taiui.NewTabs(3)
-	// The first set of assertions exercises the side-by-side (vertical
-	// split) layout; the default is horizontal (stacked). See
-	// TheoryOfTUI.
-	tabs.SplitVertical = true
-	tabs.Expanded = []bool{true, true, false}
-	tabs.Focus = 0
-	boxes := tabs.Boxes(90, 40)
-	if boxes[0].Left != 0 || boxes[0].Right != 66 || boxes[0].Top != 0 || boxes[0].Bottom != 40 {
-		t.Fatalf("unexpected focused panel box: %+v", boxes[0])
-	}
-	if boxes[1].Left != 66 || boxes[1].Right != 89 {
-		t.Fatalf("unexpected non-focused panel box: %+v", boxes[1])
-	}
-	if boxes[2].Left != 89 || boxes[2].Right != 90 {
-		t.Fatalf("unexpected collapsed panel box: %+v", boxes[2])
-	}
-
-	tabs.Focus = 1
-	boxes = tabs.Boxes(90, 40)
-	if boxes[0].Left != 0 || boxes[0].Right != 22 {
-		t.Fatalf("unexpected non-focused panel box: %+v", boxes[0])
-	}
-	if boxes[1].Left != 22 || boxes[1].Right != 89 {
-		t.Fatalf("unexpected focused panel box: %+v", boxes[1])
-	}
-
-	tabs.Focus = -1
-	boxes = tabs.Boxes(90, 40)
-	if boxes[0].Left != 0 || boxes[0].Right != 44 {
-		t.Fatalf("unexpected equal-share panel box: %+v", boxes[0])
-	}
-	if boxes[1].Left != 44 || boxes[1].Right != 89 {
-		t.Fatalf("unexpected equal-share panel box: %+v", boxes[1])
-	}
-
-	tabs2 := taiui.NewTabs(3)
-	tabs2.Expanded = []bool{true, true, false}
-	tabs2.Focus = 0
-	boxes = tabs2.Boxes(80, 45)
-	if boxes[0].Top != 0 || boxes[0].Bottom != 33 {
-		t.Fatalf("unexpected focused panel box: %+v", boxes[0])
-	}
-	if boxes[1].Top != 33 || boxes[1].Bottom != 44 {
-		t.Fatalf("unexpected non-focused panel box: %+v", boxes[1])
-	}
-	if boxes[2].Top != 44 || boxes[2].Bottom != 45 {
-		t.Fatalf("unexpected collapsed panel box: %+v", boxes[2])
-	}
-
-	tabs3 := taiui.NewTabs(3)
-	// The last set of assertions also exercises the side-by-side layout.
-	tabs3.SplitVertical = true
-	tabs3.Expanded = []bool{true, true, true}
-	tabs3.Focus = 1
-	boxes = tabs3.Boxes(90, 24)
-	if boxes[0].Left != 0 || boxes[0].Right != 18 {
-		t.Fatalf("unexpected first panel box: %+v", boxes[0])
-	}
-	if boxes[1].Left != 18 || boxes[1].Right != 72 {
-		t.Fatalf("unexpected focused middle panel box: %+v", boxes[1])
-	}
-	if boxes[2].Left != 72 || boxes[2].Right != 90 {
-		t.Fatalf("unexpected last panel box: %+v", boxes[2])
-	}
-}
-
-func TestTabPanelBoxCollapsedInPlace(t *testing.T) {
-	tabs := taiui.NewTabs(3)
-	// Side-by-side (vertical split) layout is exercised explicitly; the
-	// default is horizontal (stacked).
-	tabs.SplitVertical = true
-	tabs.Expanded = []bool{true, false, true}
-	tabs.Focus = 0
-	boxes := tabs.Boxes(90, 40)
-	// The focused tab has weight 3, the other expanded tab weight 1: the
-	// expanded width (89) splits as 66 and 23, and the collapsed tab
-	// keeps its one-column strip in the middle.
-	if boxes[0].Left != 0 || boxes[0].Right != 66 {
-		t.Fatalf("unexpected output panel box: %+v", boxes[0])
-	}
-	if boxes[1].Left != 66 || boxes[1].Right != 67 {
-		t.Fatalf("collapsed round tab must stay in the middle, got %+v", boxes[1])
-	}
-	if boxes[2].Left != 67 || boxes[2].Right != 90 {
-		t.Fatalf("unexpected logs panel box: %+v", boxes[2])
-	}
-
-	tabs2 := taiui.NewTabs(3)
-	tabs2.Expanded = []bool{true, false, true}
-	tabs2.Focus = 0
-	boxes = tabs2.Boxes(80, 45)
-	// The stacked layout splits the expanded height (44) the same way:
-	// 33 rows for the focused tab, 11 for the other expanded tab.
-	if boxes[0].Top != 0 || boxes[0].Bottom != 33 {
-		t.Fatalf("unexpected output panel box: %+v", boxes[0])
-	}
-	if boxes[1].Top != 33 || boxes[1].Bottom != 34 {
-		t.Fatalf("collapsed round tab must stay in the middle, got %+v", boxes[1])
-	}
-	if boxes[2].Top != 34 || boxes[2].Bottom != 45 {
-		t.Fatalf("unexpected logs panel box: %+v", boxes[2])
-	}
-}
-
-func TestTabPanelBoxCollapsedFirstAndLast(t *testing.T) {
-	tabs := taiui.NewTabs(3)
-	// Side-by-side (vertical split) layout is exercised explicitly; the
-	// default is horizontal (stacked).
-	tabs.SplitVertical = true
-	tabs.Expanded = []bool{false, true, false}
-	tabs.Focus = 1
-	boxes := tabs.Boxes(90, 40)
-	if boxes[0].Left != 0 || boxes[0].Right != 1 {
-		t.Fatalf("unexpected collapsed output panel box: %+v", boxes[0])
-	}
-	if boxes[1].Left != 1 || boxes[1].Right != 89 {
-		t.Fatalf("unexpected expanded round panel box: %+v", boxes[1])
-	}
-	if boxes[2].Left != 89 || boxes[2].Right != 90 {
-		t.Fatalf("unexpected collapsed logs panel box: %+v", boxes[2])
 	}
 }
 
@@ -2560,26 +2344,6 @@ func TestTUIJumpToTransition(t *testing.T) {
 	})
 }
 
-func TestReadTUIKeysHelp(t *testing.T) {
-	ch := make(chan string, 10)
-	go taiui.ReadKeys(strings.NewReader("?\x1b[A"), ch)
-	var got []string
-	for len(got) < 2 {
-		select {
-		case k := <-ch:
-			got = append(got, mapTUIKey(k))
-		case <-time.After(time.Second):
-			t.Fatal("timeout waiting for keys")
-		}
-	}
-	want := []string{"help", "up"}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("key %d: expected %q, got %q", i, want[i], got[i])
-		}
-	}
-}
-
 func TestMapTUIKey(t *testing.T) {
 	cases := []struct {
 		in, want string
@@ -2679,26 +2443,6 @@ func TestTUIHelpOverlay(t *testing.T) {
 	}
 	if !strings.Contains(output, "1 / 2 / 3") {
 		t.Fatalf("expected the key bindings in the rendered output, got: %q", output)
-	}
-}
-
-func TestReadTUIKeysSS3AndVT220(t *testing.T) {
-	ch := make(chan string, 10)
-	go taiui.ReadKeys(strings.NewReader("\x1bOA\x1bOB\x1bOH\x1bOF\x1b[1~\x1b[4~"), ch)
-	var got []string
-	for len(got) < 6 {
-		select {
-		case k := <-ch:
-			got = append(got, mapTUIKey(k))
-		case <-time.After(time.Second):
-			t.Fatal("timeout waiting for keys")
-		}
-	}
-	want := []string{"up", "down", "home", "end", "home", "end"}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("key %d: expected %q, got %q", i, want[i], got[i])
-		}
 	}
 }
 
