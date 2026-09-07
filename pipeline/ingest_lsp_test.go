@@ -55,7 +55,7 @@ func TestIngestComponentPassesLSPHandler(t *testing.T) {
 		}
 		defer root.Close()
 
-		remaining, newState, _, _, _, triggered, err := components.ProcessComponents(
+		remaining, _, combinedParts, _, _, triggered, err := components.ProcessComponents(
 			context.Background(),
 			comps.ComponentSet,
 			[]blocks.Block{{Kind: "ingest", Body: `<lsp method="hover" symbol="Foo" />`}},
@@ -77,19 +77,18 @@ func TestIngestComponentPassesLSPHandler(t *testing.T) {
 		if gotQuery.Method != "hover" || gotQuery.Symbol != "Foo" {
 			t.Fatalf("unexpected query passed to the handler: %+v", gotQuery)
 		}
-		if newState == nil {
-			t.Fatal("expected a modified state")
-		}
+		// The fetched parts travel through the round's combined parts:
+		// the generation loop appends them as user content exactly once,
+		// and the session tree's block-result nodes carry the same
+		// parts. See TheoryOfSessionTree.
 		found := false
-		for c := range newState.Contents() {
-			for _, p := range c.Parts {
-				if text, ok := p.(generators.Text); ok && strings.Contains(string(text), "fake lsp result") {
-					found = true
-				}
+		for _, p := range combinedParts {
+			if text, ok := p.(generators.Text); ok && strings.Contains(string(text), "fake lsp result") {
+				found = true
 			}
 		}
 		if !found {
-			t.Fatal("expected the handler result in the new state")
+			t.Fatal("expected the handler result in the combined parts")
 		}
 	})
 }

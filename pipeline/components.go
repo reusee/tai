@@ -184,12 +184,17 @@ type CodesComponents struct {
 // blocks.FetchIngestBlock without side effects, so the generation loop
 // prefetches it at parse time; its Process consumes the prefetched
 // outcomes in block order, falling back to a synchronous compute when no
-// future exists, and appends the collected parts as user content so the
-// next generation runs with the fetched context. A nil handler keeps the
-// lsp section out of the prompt; an emitted lsp tag then returns an
-// explicit unavailability error part instead of being silently ignored.
-// The caller's RunOptions must carry the filesystem root and the HTTP
-// client the component's file and fetch tags need. See
+// future exists, and delivers the collected parts through
+// ProcessResult.Parts: ProcessComponents collects them into the round's
+// combined parts, which the generation loop appends as user content
+// exactly once, and the session tree's block-result nodes carry the
+// fetched content, so the Tree tab shows what an ingest block fetched.
+// An ingest block whose fetches yielded no parts still signals the round
+// through the unchanged state. A nil handler keeps the lsp section out
+// of the prompt; an emitted lsp tag then returns an explicit
+// unavailability error part instead of being silently ignored. The
+// caller's RunOptions must carry the filesystem root and the HTTP client
+// the component's file and fetch tags need. See
 // TheoryOfCodesComponents, blocks.TheoryOfIngestBlocks,
 // cmd/tai.TheoryOfAIComponents, and components.TheoryOfReadOnlyPrefetch.
 func NewIngestComponent(lspHandler blocks.LSPHandler) components.Component {
@@ -217,21 +222,19 @@ func NewIngestComponent(lspHandler blocks.LSPHandler) components.Component {
 			if err != nil {
 				return components.ProcessResult{Err: err}
 			}
-			// State is set whenever ingest blocks were processed, so
-			// result.State != nil reliably signals a state modification
-			// that triggers a new generation, mirroring the previous
-			// hasIngest flag: an ingest block whose fetches yielded no
-			// parts still signals the round.
+			// Parts delivery: returning the parts through
+			// ProcessResult.Parts lets ProcessComponents collect them
+			// into ComponentOutput.Parts, so the block-result nodes
+			// carry the fetched content, and lets the generation loop
+			// append them as user content exactly once — setting State
+			// here as well would append the parts twice. See
+			// TheoryOfSessionTree.
 			if len(parts) > 0 {
-				newState, appendErr := pctx.State.AppendContent(&generators.Content{
-					Role:  "user",
-					Parts: parts,
-				})
-				if appendErr != nil {
-					return components.ProcessResult{Err: appendErr}
-				}
-				return components.ProcessResult{State: newState}
+				return components.ProcessResult{Parts: parts}
 			}
+			// An ingest block whose fetches yielded no parts still
+			// signals the round: the unchanged state is non-nil, so
+			// ProcessComponents counts the processing as triggered.
 			return components.ProcessResult{State: pctx.State}
 		},
 	}
