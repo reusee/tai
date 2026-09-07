@@ -150,3 +150,40 @@ func TestSystemPromptSummaryBlock(t *testing.T) {
 		}
 	})
 }
+
+func TestSystemPromptNoTheoryConstantReferences(t *testing.T) {
+	// System prompts are model-facing text, and a theory constant's source
+	// may never reach the model's context, so a prompt reference such as
+	// "See TheoryOfXxx." is a dangling pointer the model cannot resolve.
+	// The assembled prompts of the codes pipeline — the plain prompt and
+	// the goal-mode prompt, which embed every kind prompt and the change
+	// prompt — must carry no such reference. The "**Theory Storage**"
+	// guidance bullet is excluded: it teaches the theory-constant naming
+	// convention with illustrative constant names, not a reference to a
+	// constant's value. Lines are trimmed before matching because the
+	// guidance section indents its sub-bullets.
+	dscope.New(
+		modes.ForTest(t),
+		new(Module),
+	).Fork(
+		func() codetypes.PartsProvider { return mockPartsProvider{} },
+	).Call(func(
+		prompt SystemPrompt,
+		comps CodesComponents,
+	) {
+		for _, text := range []string{
+			string(prompt),
+			string(GoalSystemPromptText(comps, "", nil)),
+		} {
+			for _, line := range strings.Split(text, "\n") {
+				trimmed := strings.TrimSpace(line)
+				if strings.HasPrefix(trimmed, "- **Theory Storage**") {
+					continue
+				}
+				if strings.Contains(trimmed, "TheoryOf") {
+					t.Fatalf("system prompt must not reference theory text constants: %s", trimmed)
+				}
+			}
+		}
+	})
+}
