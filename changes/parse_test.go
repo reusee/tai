@@ -532,4 +532,7 @@ func TestChangeBlockPromptPrefersPreciseModifications(t *testing.T) {
 	if !strings.Contains(prompt, "WRITE should only be used when creating a new file") {
 		t.Fatal("ChangeBlockSystemPrompt should explain when WRITE is appropriate")
 	}
+	if !strings.Contains(prompt, "existing test file of the same package") {
+		t.Fatal("ChangeBlockSystemPrompt should prefer existing test files for new test functions")
+	}
 }
