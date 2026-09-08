@@ -60,6 +60,14 @@ root directory so that doublestar.FilepathGlob searches within the root's
 tree rather than the process's current working directory, and a ** segment
 that forms a complete path component matches zero or more directories.
 
+Symbolic links are followed: os.Root refuses to resolve symlinks whose
+targets lie outside the root, and a model-emitted path or glob passing
+through an in-root symlink is an intentional reference, so file reads fall
+back to the resolved absolute path and glob matches reached through a
+symlink stay listed. The semantics mirror directory traversal's
+follow-the-symlink rule (anytexts.TheoryOfReadOnlySymlinks). Static
+parent-directory traversal keeps its rejection.
+
 The ingest prompt follows the summary-first stop discipline shared by every
 stop-and-wait kind (see TheoryOfSummaryBlocks). At the loop level an ingest
 block never completes a round on its own: a round carrying ingest blocks but
@@ -365,7 +373,10 @@ func FetchIngestBlock(
 // two dots (e.g., "..hidden", "..."). Absolute paths are resolved relative to
 // the root directory when within it, or read directly from the filesystem when
 // outside it, so the model can reference files in system directories like /tmp.
-// See TheoryOfIngestBlocks.
+// Relative paths are read through the root; when the root refuses the path
+// because a symlink in it resolves outside the root, the read falls back to
+// the resolved absolute path: a symlink is an intentional reference, so its
+// target is read like an absolute path. See TheoryOfIngestBlocks.
 func readContextFile(root *os.Root, path string) (string, error) {
 	if !filepath.IsAbs(path) {
 		cleaned := filepath.Clean(path)
@@ -373,31 +384,42 @@ func readContextFile(root *os.Root, path string) (string, error) {
 			return "", fmt.Errorf("path escapes current directory: %s", path)
 		}
 	}
-	// Absolute paths are permitted as explicit references. os.Root methods
-	// reject absolute paths, so convert to a root-relative path when the
-	// absolute path is within the root, or fall back to os.ReadFile for
-	// paths outside the root. See TheoryOfIngestBlocks.
 	if filepath.IsAbs(path) {
+		// os.Root methods reject absolute paths, so convert to a
+		// root-relative path when the absolute path is within the root,
+		// or fall back to os.ReadFile for paths outside the root.
+		// See TheoryOfIngestBlocks.
 		rootDir, err := filepath.Abs(root.Name())
 		if err != nil {
 			return "", err
 		}
-		rel, err := filepath.Rel(rootDir, path)
-		if err == nil && !pathutil.EscapesDir(filepath.Clean(rel)) {
-			content, err := root.ReadFile(rel)
-			if err == nil {
+		rel, relErr := filepath.Rel(rootDir, path)
+		if relErr == nil && !pathutil.EscapesDir(filepath.Clean(rel)) {
+			content, contentErr := root.ReadFile(rel)
+			if contentErr == nil {
 				return string(content), nil
 			}
 		}
-		content, err := os.ReadFile(path)
-		if err != nil {
-			return "", err
+		content, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return "", readErr
 		}
 		return string(content), nil
 	}
 	content, err := root.ReadFile(path)
 	if err != nil {
-		return "", err
+		// os.Root refuses to resolve symlinks whose targets lie outside
+		// the root; a symlink is an intentional reference, so its target
+		// is read from the resolved absolute path. See
+		// anytexts.TheoryOfReadOnlySymlinks.
+		rootDir, absErr := filepath.Abs(root.Name())
+		if absErr != nil {
+			return "", err
+		}
+		content, err = os.ReadFile(filepath.Join(rootDir, path))
+		if err != nil {
+			return "", err
+		}
 	}
 	return string(content), nil
 }
@@ -441,6 +463,13 @@ func globFiles(root *os.Root, pattern string) ([]string, error) {
 			relPath = rel
 		}
 		if _, statErr := root.Stat(relPath); statErr == nil {
+			filtered = append(filtered, m)
+			continue
+		}
+		// os.Root refuses to resolve symlinks whose targets lie outside
+		// the root; a match reached through an in-root symlink stays
+		// listed when the absolute path exists.
+		if _, statErr := os.Stat(m); statErr == nil {
 			filtered = append(filtered, m)
 		}
 	}

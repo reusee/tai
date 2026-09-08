@@ -186,6 +186,33 @@ func TestReadContextFile(t *testing.T) {
 	}
 }
 
+func TestReadContextFileSymlinkOutsideRoot(t *testing.T) {
+	dir := t.TempDir()
+	external := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+
+	content := "symlinked content"
+	externalPath := filepath.Join(external, "target.txt")
+	if err := os.WriteFile(externalPath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(externalPath, filepath.Join(dir, "link.txt")); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := readContextFile(root, "link.txt")
+	if err != nil {
+		t.Fatalf("unexpected error reading symlinked file: %v", err)
+	}
+	if got != content {
+		t.Fatalf("expected %q, got %q", content, got)
+	}
+}
+
 func TestReadContextFileNotPathEscapeForDoubleDotPrefix(t *testing.T) {
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)
@@ -249,6 +276,31 @@ func TestGlobFiles(t *testing.T) {
 	_, err = globFiles(root, "../../../etc/*")
 	if err == nil {
 		t.Fatal("expected error for path escape")
+	}
+}
+
+func TestGlobFilesFollowsSymlinkedDir(t *testing.T) {
+	dir := t.TempDir()
+	external := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+
+	if err := os.WriteFile(filepath.Join(external, "note.txt"), []byte("note content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(external, filepath.Join(dir, "external-link")); err != nil {
+		t.Fatal(err)
+	}
+
+	matches, err := globFiles(root, "external-link/*.txt")
+	if err != nil {
+		t.Fatalf("unexpected error globbing through symlinked directory: %v", err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("expected 1 match, got %d: %v", len(matches), matches)
 	}
 }
 
@@ -678,6 +730,32 @@ func TestReadContextFileAbsolutePath(t *testing.T) {
 	got, err := readContextFile(root, path)
 	if err != nil {
 		t.Fatalf("unexpected error reading absolute path: %v", err)
+	}
+	if got != content {
+		t.Fatalf("expected %q, got %q", content, got)
+	}
+}
+
+func TestReadContextFileInSymlinkedDir(t *testing.T) {
+	dir := t.TempDir()
+	external := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+
+	content := "content behind symlinked directory"
+	if err := os.WriteFile(filepath.Join(external, "target.txt"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(external, filepath.Join(dir, "external-link")); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := readContextFile(root, filepath.Join("external-link", "target.txt"))
+	if err != nil {
+		t.Fatalf("unexpected error reading file in symlinked directory: %v", err)
 	}
 	if got != content {
 		t.Fatalf("expected %q, got %q", content, got)
