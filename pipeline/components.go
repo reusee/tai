@@ -61,9 +61,11 @@ the next generation. Like ingest it is read-only context fetching, but
 unconditional: symbol resolution reuses the packages the loader already
 fetched, so it is always available in the codes pipeline. The codes session
 presents both kinds, and the go-src prompt teaches their division of labor:
-Go source is fetched by symbol — gaining the defining file, line, and the
-references report — while ingest serves non-Go files, whole-file views, glob
-discovery, and network resources. See gotools.TheoryOfGoSrcBlocks.
+Go source and package information are fetched by symbol — a declaration
+gains the defining file, line, and the references report; a package name
+returns its go doc documentation — while ingest serves non-Go files,
+whole-file views, glob discovery, and network resources. See
+gotools.TheoryOfGoSrcBlocks.
 
 The ingest component carries the session's language-server handler. blocks
 parses the lsp tag language-neutrally and defines the LSPHandler contract;

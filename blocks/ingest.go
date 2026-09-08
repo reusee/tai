@@ -33,10 +33,10 @@ of this block protocol. An uncommon kind name eliminates the collision.
 
 Symbol-level source fetching belongs to a dedicated kind where one exists:
 the codes pipeline teaches go-src — which appends a references report of the
-resolved declarations' callers — as the preferred path for Go source, so
-ingest keeps whole files, glob discovery, and network resources. The ingest
-prompt itself stays language-neutral; see gotools.TheoryOfGoSrcBlocks for the
-division of labor.
+resolved declarations' callers — as the preferred path for Go source and
+package information, so ingest keeps whole files, glob discovery, and network
+resources. The ingest prompt itself stays language-neutral; see
+gotools.TheoryOfGoSrcBlocks for the division of labor.
 
 The lsp tag is ingest's language-server extension point: blocks parses the
 tag and defines the LSPHandler contract language-neutrally, while a session

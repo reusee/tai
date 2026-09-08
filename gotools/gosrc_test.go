@@ -52,6 +52,9 @@ func TestGoSrcPrompts(t *testing.T) {
 		if !strings.Contains(prompt, "non-Go files") {
 			t.Fatal("GoSrcBlockSystemPrompt does not delineate the ingest block's remaining uses")
 		}
+		if !strings.Contains(prompt, "information about a specific package") {
+			t.Fatal("GoSrcBlockSystemPrompt does not teach preferring go-src for package information")
+		}
 	})
 
 	t.Run("BatchFetch", func(t *testing.T) {
