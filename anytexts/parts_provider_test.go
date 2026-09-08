@@ -696,6 +696,83 @@ func TestBinaryFileTokenBudget(t *testing.T) {
 	})
 }
 
+func TestBinaryFileSkippingAndDirectMatchException(t *testing.T) {
+	// A binary file discovered during directory traversal is skipped
+	// entirely: no marker text, no content part, no parse. A binary file
+	// the user named via a directly matched pattern is attached with the
+	// binary begin marker and its content. See TheoryOfBinaryFileSkipping
+	// and TheoryOfBinaryFileMarkers.
+	dir := t.TempDir()
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(oldWd)
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	png := []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}
+	if err := os.WriteFile("b.png", png, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	dscope.New(
+		new(Module),
+		modes.ForTest(t),
+	).Call(func(
+		provider PartsProvider,
+		countTokens generators.BPETokenCounter,
+	) {
+		// Directory traversal: the binary file must not appear at all.
+		parts, err := provider.Parts(math.MaxInt, countTokens, []string{"."})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(parts) == 0 {
+			t.Fatal("expected at least the working directory hint part")
+		}
+		for _, part := range parts {
+			if text, ok := part.(generators.Text); ok {
+				if strings.Contains(string(text), "b.png") {
+					t.Fatalf("traversal-discovered binary file must be skipped, got:\n%s", text)
+				}
+			}
+			if fc, ok := part.(generators.FileContent); ok {
+				if fc.MimeType == "image/png" {
+					t.Fatal("traversal-discovered binary content must be skipped")
+				}
+			}
+		}
+
+		// Directly matched via -file: the binary file is attached with
+		// its markers and content.
+		parts, err = provider.Parts(math.MaxInt, countTokens, []string{"b.png"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		foundMarker := false
+		foundContent := false
+		for _, part := range parts {
+			if text, ok := part.(generators.Text); ok {
+				if strings.Contains(string(text), "begin of file b.png (binary, image/png)") {
+					foundMarker = true
+				}
+			}
+			if fc, ok := part.(generators.FileContent); ok {
+				if fc.MimeType == "image/png" && string(fc.Content) == string(png) {
+					foundContent = true
+				}
+			}
+		}
+		if !foundMarker {
+			t.Fatal("directly matched binary file must carry the binary begin marker")
+		}
+		if !foundContent {
+			t.Fatal("directly matched binary file content must be attached")
+		}
+	})
+}
+
 func TestIterFilesHiddenFileDirectlyMatched(t *testing.T) {
 	dir := t.TempDir()
 	oldWd, err := os.Getwd()

@@ -97,6 +97,26 @@ and the next file's content begins, especially when multiple binary files are
 included consecutively.
 `
 
+const TheoryOfBinaryFileSkipping = `
+Binary files discovered during directory traversal are skipped entirely:
+the file header is probed with mimetype's magic-number detection over a
+bounded read of the leading bytes, and a file whose type chain reaches
+neither text/plain nor an explicitly included MIME type is skipped before
+its full content is read — no full read, no skeleton or grammar parsing,
+no rendering into the context. Binary files need no summary in the
+initial context, so a directory traversal must not spend tokens or I/O
+on them. No extension heuristics are used: mimetype's magic numbers
+identify the binary formats and text detection is content-based, so an
+extension check would only duplicate a brittle signal.
+
+The skip applies only to files discovered during traversal. A file the
+user named via a directly matched pattern (-file) is a work target: its
+binary content is attached with the begin and end markers of
+TheoryOfBinaryFileMarkers even when its MIME type is not explicitly
+included. IncludeMimeTypes (e.g., the -pdf flag) remains the explicit
+opt-in for auto-including specific binary formats found by traversal.
+`
+
 const TheoryOfPatternMatching = `
 All file pattern matching — glob expansion and path matching — is unified on the
 doublestar library (github.com/bmatcuk/doublestar/v4). Glob expansion uses
@@ -339,6 +359,22 @@ func (c PartsProvider) IterFiles(patterns []string) iter.Seq2[FileInfo, error] {
 
 		// Process candidates in sorted order
 		for _, cand := range candidates {
+			// Probe the file header for the skip decision: mimetype
+			// identifies formats by magic numbers read from the start of
+			// the file, so the probe never loads the whole file. A binary
+			// file discovered during directory traversal is skipped before
+			// its full content is read. See TheoryOfBinaryFileSkipping.
+			if !cand.directMatch {
+				headerType, err := mimetype.DetectFile(cand.path)
+				if err != nil {
+					yield(FileInfo{}, err)
+					return
+				}
+				if ok, _ := mimeAccepted(headerType, c.IncludeMimeTypes()); !ok {
+					continue
+				}
+			}
+
 			content, err := os.ReadFile(cand.path)
 			if err != nil {
 				yield(FileInfo{}, err)
@@ -347,24 +383,12 @@ func (c PartsProvider) IterFiles(patterns []string) iter.Seq2[FileInfo, error] {
 
 			// mime type
 			mtype := mimetype.Detect(content)
-			ok := false
-			isText := false
-		loop:
-			for t := mtype; t != nil; t = t.Parent() {
-				if t.Is("text/plain") {
-					ok = true
-					isText = true
-					break
-				}
-				for m := range c.IncludeMimeTypes() {
-					if t.Is(m) {
-						ok = true
-						break loop
-					}
-				}
-			}
+			ok, isText := mimeAccepted(mtype, c.IncludeMimeTypes())
 
-			if !ok {
+			// A binary file enters the context only when the user named it
+			// via a directly matched pattern; binaries found by traversal
+			// are skipped. See TheoryOfBinaryFileSkipping.
+			if !ok && !cand.directMatch {
 				continue
 			}
 
@@ -430,6 +454,25 @@ func isUnderExternalDir(path string, externalDirs map[string]bool) bool {
 		dir = filepath.Dir(dir)
 	}
 	return false
+}
+
+// mimeAccepted reports whether a file with the given mime type enters
+// the model context: its type chain reaches text/plain (a text file) or
+// one of the types in include (an explicitly included binary format,
+// e.g., a PDF via the -pdf flag). isText reports whether the file is
+// text. See TheoryOfBinaryFileSkipping.
+func mimeAccepted(mtype *mimetype.MIME, include IncludeMimeTypes) (ok bool, isText bool) {
+	for t := mtype; t != nil; t = t.Parent() {
+		if t.Is("text/plain") {
+			return true, true
+		}
+		for m := range include {
+			if t.Is(m) {
+				return true, false
+			}
+		}
+	}
+	return false, false
 }
 
 // WorkingDirectoryPart returns a Text part carrying the absolute path of
