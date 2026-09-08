@@ -21,14 +21,15 @@ that import path. Matching normalizes test variants to the base path
 
 Hiding is enforced at the two boundaries where package content enters the
 pipeline. GetFiles removes hidden packages before file discovery, so their
-Go, embed, and non-Go files are never read, parsed, or token-counted, and
-the go-src resolver — which searches the collected file set — reports
-their symbols as not found. SimplifyFiles drops their logical packages
-before categorization, so a hidden package produces no documentation block
-even when loaded as a focus package, loses the context-package visibility
-guarantee, and contributes no focus tokens to the dynamic context budget
-(hiding an inflated focus package also shrinks the budget it would have
-inflated).
+Go, embed, and non-Go files are never read, parsed, or token-counted. The
+go-src resolver reports their symbols as not found: it searches the
+collected file set, and its go doc fallback for unloaded import paths
+consults the same hidden-package matcher before probing. SimplifyFiles
+drops their logical packages before categorization, so a hidden package
+produces no documentation block even when loaded as a focus package, loses
+the context-package visibility guarantee, and contributes no focus tokens
+to the dynamic context budget (hiding an inflated focus package also
+shrinks the budget it would have inflated).
 
 Hidden wins over the automatic pipeline: focus (-pkg), context (-ctx),
 and import-graph discovery cannot unhide a package. Explicit -doc

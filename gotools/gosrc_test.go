@@ -42,6 +42,12 @@ func TestGoSrcPrompts(t *testing.T) {
 		}
 	})
 
+	t.Run("UnloadedPackagePath", func(t *testing.T) {
+		if !strings.Contains(prompt, "even when the session never loaded the package") {
+			t.Fatal("GoSrcBlockSystemPrompt must teach that an unloaded import path still resolves to its go doc documentation")
+		}
+	})
+
 	t.Run("PreferOverIngest", func(t *testing.T) {
 		if !strings.Contains(prompt, "Prefer go-src over ingest") {
 			t.Fatal("GoSrcBlockSystemPrompt does not teach the go-src preference for Go source")

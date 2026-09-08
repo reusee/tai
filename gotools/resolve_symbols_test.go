@@ -661,6 +661,93 @@ func (Stars) Poll() int { return 7 }
 	})
 }
 
+// TestResolveGoSymbolsUnloadedPackageDoc verifies that a package the
+// session never loaded still resolves to its go doc documentation through
+// the module context — including a bare standard-library path — that a
+// symbol expression in such a package does not widen into the whole
+// package, and that a path the module context cannot resolve keeps the
+// not-found report. See TheoryOfGoSrcResolution.
+func TestResolveGoSymbolsUnloadedPackageDoc(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("GOWORK", "")
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/unloaded\n\ngo 1.21\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "root.go"), []byte("package root\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	subDir := filepath.Join(dir, "sub")
+	if err := os.MkdirAll(subDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(subDir, "sub.go"), []byte(`// Package sub is not loaded by the session.
+package sub
+
+// Exported is documented.
+func Exported() {}
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	dscope.New(
+		modes.ForTest(t),
+		new(Module),
+	).Fork(
+		func() LoadDir { return LoadDir(dir) },
+		func() LoadPatterns { return LoadPatterns{"."} },
+	).Call(func(resolve ResolveGoSymbols) {
+
+		parts, err := resolve([]string{"example.com/unloaded/sub"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := partsText(t, parts)
+		for _, want := range []string{
+			"``` begin of source package example.com/unloaded/sub",
+			"Package sub is not loaded by the session",
+			"func Exported()",
+		} {
+			if !strings.Contains(got, want) {
+				t.Fatalf("expected %q in unloaded package doc:\n%s", want, got)
+			}
+		}
+
+		// A bare standard-library path is an exact import path too: the
+		// standard library never enters the loaded file set, so fmt
+		// resolves only through the module context.
+		parts, err = resolve([]string{"fmt"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got = partsText(t, parts); !strings.Contains(got, "``` begin of source package fmt") ||
+			!strings.Contains(got, "Println") {
+			t.Fatalf("expected a bare standard-library path to resolve, got:\n%s", got)
+		}
+
+		// A symbol expression must never widen into the whole package:
+		// the declaration is not loaded, so the resolver reports
+		// not-found instead of returning the package documentation.
+		parts, err = resolve([]string{"example.com/unloaded/sub.Exported"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got = partsText(t, parts); !strings.Contains(got, "not found") {
+			t.Fatalf("expected not-found for a symbol in an unloaded package, got:\n%s", got)
+		}
+		if strings.Contains(got, "begin of source package") {
+			t.Fatalf("a symbol expression must not return whole-package documentation, got:\n%s", got)
+		}
+
+		parts, err = resolve([]string{"example.com/unloaded/missing"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got = partsText(t, parts); !strings.Contains(got, "not found") {
+			t.Fatalf("expected not-found for an unresolvable import path, got:\n%s", got)
+		}
+	})
+}
+
 func TestResolveGoSymbolsPackageDocs(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("GOWORK", "")

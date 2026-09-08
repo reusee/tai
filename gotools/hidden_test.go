@@ -178,6 +178,64 @@ func TestHiddenPackagesExcludeFilesAndDocs(t *testing.T) {
 	})
 }
 
+// TestHiddenPackagesBlockGoSrcFallback verifies that the go-src go doc
+// fallback for unloaded import paths never probes a hidden package: both
+// the package path and a symbol inside it keep the plain not-found
+// report, and the hidden documentation never reaches the context.
+// See TheoryOfHiddenPackages.
+func TestHiddenPackagesBlockGoSrcFallback(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("GOWORK", "")
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/hiddensrc\n\ngo 1.21\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "root.go"), []byte("package root\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	barDir := filepath.Join(root, "bar")
+	if err := os.MkdirAll(barDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(barDir, "bar.go"), []byte("// Package bar is hidden.\npackage bar\n\n// Baz is a declaration of the hidden package.\nfunc Baz() {}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	dscope.New(
+		modes.ForTest(t),
+		new(Module),
+	).Fork(
+		func() LoadDir { return LoadDir(root) },
+		func() LoadPatterns { return LoadPatterns{"."} },
+		func() HiddenPatterns { return HiddenPatterns{"example.com/hiddensrc/bar"} },
+	).Call(func(resolve ResolveGoSymbols) {
+		parts, err := resolve([]string{"example.com/hiddensrc/bar"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := partsText(t, parts)
+		if !strings.Contains(got, "not found") {
+			t.Fatalf("expected not-found for a hidden import path, got:\n%s", got)
+		}
+		if strings.Contains(got, "Package bar is hidden") {
+			t.Fatalf("hidden package documentation must not leak through the go-src fallback, got:\n%s", got)
+		}
+
+		// The import-path prefix of a symbol expression is checked
+		// before any probe, so a symbol inside the hidden package is
+		// blocked like the package path itself.
+		parts, err = resolve([]string{"example.com/hiddensrc/bar.Baz"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got = partsText(t, parts); !strings.Contains(got, "not found") {
+			t.Fatalf("expected not-found for a symbol inside a hidden package, got:\n%s", got)
+		}
+		if strings.Contains(got, "Package bar is hidden") {
+			t.Fatalf("hidden package documentation must not leak for a symbol inside it, got:\n%s", got)
+		}
+	})
+}
+
 // TestUnhidePatternsForWorkingDirectory verifies the working-directory
 // exemption: a pattern whose base package directory contains the process
 // working directory is dropped, while patterns for other directories of

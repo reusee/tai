@@ -16,8 +16,9 @@ const TheoryOfGoSrcResolution = `
 ResolveGoSymbols turns the symbol names collected from go-src blocks into
 declaration source parts (see TheoryOfGoSrcBlocks). The resolver
 searches the Go files collected by GetFiles — the same file set the context
-pipeline loaded, with raw content and parsed ASTs already cached — so
-resolution spawns no Go toolchain subprocesses. The symbol forms follow
+pipeline loaded, with raw content and parsed ASTs already cached — so a
+loaded declaration resolves without a Go toolchain subprocess. The
+symbol forms follow
 go doc: [<pkg>.][<sym>.][<methodOrField>]. A package qualifier — the
 full import path, a proper suffix of it (e.g., "pkg" for "a/b/pkg"), or
 a loaded package's declared name — restricts matching to that package,
@@ -44,19 +45,36 @@ a non-Go project where the loader was never run for the context)
 degrades to an informational part so one stray block cannot abort the
 run.
 
-A symbol that exactly matches a loaded package — by import path (base
-path, test variants merged) or by declared package name — resolves to
-the package's go doc documentation instead of declaration source.
-Package matching takes precedence over symbol matching, mirroring go
-doc, and a package name may match several packages, all of which are
-returned. go doc runs from the load directory (or the workspace root in
-workspace mode) with the read-only environment of TheoryOfGoDocReadonly,
-so go.sum is never modified; every package is documented with -all -cmd —
-all declarations, including a main package's — and a focus (root) package
-adds -u so unexported symbols are shown: the model edits focus packages
-and needs their complete surface, while a context package's exported API
-surface suffices. A failed go doc yields an explicit error part for that
-package, never an abort.
+A symbol that names a package resolves to the package's go doc
+documentation instead of declaration source: an exact import path (base
+path, test variants merged, loaded or not) or a loaded package's declared
+name. Package matching takes precedence over symbol matching, mirroring
+go doc, and a package name may match several packages, all of which are
+returned. The loaded set alone would tie package references to the
+session's load patterns, so a package the session never loaded — a
+standard-library package such as fmt or net/http, a focus package
+excluded by -pkg — resolves through the module context. The package
+reference is decided by one check, not by the argument's shape: a short
+go doc render is accepted as a package only when the opening package
+header carries the argument itself as its import path, while a symbol
+expression renders the symbol's package path — a strict prefix of the
+argument — in the same header. A package is then re-rendered with
+-all -cmd for its declaration surface, so a symbol expression in an
+unloaded package never returns a whole package's documentation. The
+unloaded surface is the one a load would produce minus the session extras
+that only loading provides: test-function names, file names, focus -u,
+and the reports. A hidden path is never probed: it keeps the plain
+not-found report, so the hide stays unobservable through go-src (see
+TheoryOfHiddenPackages). go doc runs from the load directory (or the
+workspace root in workspace mode) with the read-only environment of
+TheoryOfGoDocReadonly, so go.sum is never modified; every package is
+documented with -all -cmd — all declarations, including a main package's —
+and a focus (root) package adds -u so unexported symbols are shown: the
+model edits focus packages and needs their complete surface, while a
+context package's exported API surface suffices. A failed go doc never
+aborts the resolve: a loaded package's failure yields an explicit error
+part, and an unloaded path that fails the probe keeps the not-found
+report, which names the module context as well.
 
 Resolution is a read over the cached file set, not a fresh disk scan:
 GetFiles is a scope-cached provider resolved once (at context assembly),
@@ -73,8 +91,9 @@ that may match several same-named packages.
 
 // ResolveGoSymbols resolves Go symbol names to their declaration source
 // code, returned as user-content parts for the next generation round. A
-// symbol that names a loaded package (exact import path or package name)
-// resolves to the package's go doc documentation instead.
+// symbol that names a package — an exact import path, loaded or not, or a
+// loaded package's declared name — resolves to the package's go doc
+// documentation instead.
 // See TheoryOfGoSrcResolution and blocks.TheoryOfGoSrcBlocks.
 type ResolveGoSymbols func(symbols []string) ([]generators.Part, error)
 
@@ -84,6 +103,7 @@ func (Module) ResolveGoSymbols(
 	loadDir LoadDir,
 	workspace Workspace,
 	envs Envs,
+	hidden HiddenPatterns,
 	logger logs.Logger,
 ) ResolveGoSymbols {
 	return func(symbols []string) (parts []generators.Part, err error) {
@@ -96,6 +116,7 @@ func (Module) ResolveGoSymbols(
 				"[go-src: cannot resolve symbols, Go package loading failed: %v]\n\n", err))}, nil
 		}
 		pkgIndex := indexLoadedPackages(files)
+		hiddenPkg := newHiddenPackageMatcher(hidden)
 		docDir := string(loadDir)
 		if workspace != "" {
 			docDir = string(workspace)
@@ -130,6 +151,10 @@ func (Module) ResolveGoSymbols(
 			}
 			matches := findSymbolDeclarations(files, symbol)
 			if len(matches) == 0 {
+				if part, ok := unloadedPackageDocPart(symbol, docDir, []string(envs), hiddenPkg); ok {
+					parts = append(parts, part)
+					continue
+				}
 				parts = append(parts, generators.Text(fmt.Sprintf(
 					"[go-src: symbol or package %q not found in the loaded packages]\n\n", symbol)))
 				continue
@@ -215,6 +240,16 @@ func matchLoadedPackages(symbol string, index map[string]loadedPackage) []loaded
 	return matches
 }
 
+// renderPackageDocPart wraps raw go doc output for a package with the
+// source package markers, so a loaded package and an unloaded import
+// path render under the same boundary form.
+// See TheoryOfGoSrcResolution.
+func renderPackageDocPart(pkgPath, text string) string {
+	return "``` begin of source package " + pkgPath + "\n" +
+		text +
+		"``` end of source package " + pkgPath + "\n\n"
+}
+
 // renderGoSrcPackageDoc runs go doc -all -cmd for the package and wraps
 // the output with source package markers: -all documents every
 // declaration, not only the top-level summary, and -cmd documents a main
@@ -228,9 +263,7 @@ func renderGoSrcPackageDoc(pkgPath string, focus bool, dir string, envs []string
 	if err != nil {
 		return "", err
 	}
-	return "``` begin of source package " + pkgPath + "\n" +
-		text +
-		"``` end of source package " + pkgPath + "\n\n", nil
+	return renderPackageDocPart(pkgPath, text), nil
 }
 
 // appendPackageDocParts appends the go doc documentation parts for the
@@ -264,6 +297,85 @@ func appendPackageDocParts(
 		parts = append(parts, generators.Text(doc))
 	}
 	return parts, true
+}
+
+// unloadedPackageDocPart resolves a package the loaded file set does not
+// contain: the module context resolves the argument, so a package the
+// session never loaded — including a bare standard-library path such as
+// fmt — still yields its declaration surface. go doc's opening package
+// header decides whether the argument names a package, so a symbol
+// expression never returns a whole package; a hidden path is never
+// probed and keeps the plain not-found report. A failed probe keeps the
+// not-found report and names the module context as well.
+// See TheoryOfGoSrcResolution and TheoryOfHiddenPackages.
+func unloadedPackageDocPart(
+	symbol string,
+	docDir string,
+	envs []string,
+	hidden func(string) bool,
+) (generators.Part, bool) {
+	if hiddenImportPath(symbol, hidden) {
+		return nil, false
+	}
+	if !packagePathExists(symbol, docDir, envs) {
+		return generators.Text(fmt.Sprintf(
+			"[go-src: symbol or package %q not found in the loaded packages or the module context]\n\n", symbol)), true
+	}
+	text, err := goDocOutput(symbol, docDir, envs, false)
+	if err != nil {
+		return generators.Text(fmt.Sprintf(
+			"[go-src: package %q documentation unavailable: %v]\n\n", symbol, err)), true
+	}
+	return generators.Text(renderPackageDocPart(symbol, text)), true
+}
+
+// packagePathExists reports whether the argument names a real package:
+// go doc renders the argument's own import path in the opening package
+// header for a package, while a symbol expression renders the path of the
+// package the symbol belongs to — a strict prefix of the argument. The
+// header check separates the two shapes before the -all render, so a
+// symbol argument can never return a whole package.
+// See TheoryOfGoSrcResolution.
+func packagePathExists(symbol, docDir string, envs []string) bool {
+	text, err := goDocShortOutput(symbol, docDir, envs, false)
+	if err != nil {
+		return false
+	}
+	return packageHeaderImportPath(text) == symbol
+}
+
+// packageHeaderImportPath extracts the import path of go doc's opening
+// package header line, `package name // import "path"`. A line without
+// an import clause yields the empty string, which declines the fallback
+// rather than guessing.
+func packageHeaderImportPath(text string) string {
+	line, _, _ := strings.Cut(text, "\n")
+	_, rest, ok := strings.Cut(line, "// import ")
+	if !ok {
+		return ""
+	}
+	return strings.Trim(rest, `"`)
+}
+
+// hiddenImportPath reports whether the symbol or one of its import-path
+// prefixes names a hidden package: the prefix before each dot is a
+// package-path candidate, so a symbol inside a hidden package is blocked
+// like the package path itself. See TheoryOfHiddenPackages.
+func hiddenImportPath(symbol string, hidden func(string) bool) bool {
+	if hidden == nil {
+		return false
+	}
+	if hidden(symbol) {
+		return true
+	}
+	for i := len(symbol) - 1; i > 0; i-- {
+		if symbol[i] == '.' {
+			if hidden(symbol[:i]) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // symbolDeclaration is one resolved declaration: its package-qualified
