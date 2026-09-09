@@ -74,12 +74,7 @@ func (r Review) ConfigPaths() []string {
 }
 
 func (r Review) HandleConfig(path string, values []*cue.Value) (any, error) {
-	var b bool
-	if err := values[0].Decode(&b); err != nil {
-		return nil, err
-	}
-	ret := Review(b)
-	return &ret, nil
+	return configs.DecodeConfig[Review](values)
 }
 
 func (Module) ReviewModels() ReviewModels {

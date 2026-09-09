@@ -1,9 +1,6 @@
 package flags
 
 import (
-	"fmt"
-	"slices"
-
 	"cuelang.org/go/cue"
 
 	"github.com/reusee/tai/configs"
@@ -39,39 +36,12 @@ func (f FamilyExtraSystemPrompt) ConfigPaths() []string {
 }
 
 func (f FamilyExtraSystemPrompt) HandleConfig(path string, values []*cue.Value) (any, error) {
-	ret := make(FamilyExtraSystemPrompt, len(f))
-	for family, prompts := range f {
-		ret[family] = slices.Clone(prompts)
+	ret, err := configs.AppendFamilyStringsConfig(f, values)
+	if err != nil {
+		return nil, err
 	}
-	for _, v := range values {
-		iter, err := v.Fields()
-		if err != nil {
-			return nil, err
-		}
-		for iter.Next() {
-			family := iter.Selector().Unquoted()
-			val := iter.Value()
-			switch val.Kind() {
-			case cue.StringKind:
-				var s string
-				if err := val.Decode(&s); err != nil {
-					return nil, err
-				}
-				if s != "" {
-					ret[family] = append(ret[family], s)
-				}
-			case cue.ListKind:
-				var list []string
-				if err := val.Decode(&list); err != nil {
-					return nil, err
-				}
-				ret[family] = append(ret[family], list...)
-			default:
-				return nil, fmt.Errorf("expected string or list for family %q, got %v", family, val.Kind())
-			}
-		}
-	}
-	return &ret, nil
+	v := FamilyExtraSystemPrompt(ret)
+	return &v, nil
 }
 
 // ExtraSystemPrompt is a list of additional system prompt sections that are
@@ -90,26 +60,10 @@ func (e ExtraSystemPrompt) ConfigPaths() []string {
 }
 
 func (e ExtraSystemPrompt) HandleConfig(path string, values []*cue.Value) (any, error) {
-	ret := slices.Clone(e)
-	for _, v := range values {
-		switch v.Kind() {
-		case cue.StringKind:
-			var s string
-			if err := v.Decode(&s); err != nil {
-				return nil, err
-			}
-			if s != "" {
-				ret = append(ret, s)
-			}
-		case cue.ListKind:
-			var list []string
-			if err := v.Decode(&list); err != nil {
-				return nil, err
-			}
-			ret = append(ret, list...)
-		default:
-			return nil, fmt.Errorf("expected string or list, got %v", v.Kind())
-		}
+	ret, err := configs.AppendStringsConfig(e, values)
+	if err != nil {
+		return nil, err
 	}
-	return &ret, nil
+	v := ExtraSystemPrompt(ret)
+	return &v, nil
 }

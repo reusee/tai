@@ -20,12 +20,7 @@ func (l LoadDir) ConfigPaths() []string {
 }
 
 func (l LoadDir) HandleConfig(path string, values []*cue.Value) (any, error) {
-	s, err := values[0].String()
-	if err != nil {
-		return nil, err
-	}
-	ret := LoadDir(s)
-	return &ret, nil
+	return configs.DecodeConfig[LoadDir](values)
 }
 
 func (l LoadDir) Handle(key string, args []string) (newDef any, remainArgs []string, err error) {

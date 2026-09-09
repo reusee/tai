@@ -457,21 +457,14 @@ func (c PartsProvider) Parts(
 }
 
 const TheoryOfExclusionPatterns = `
-Exclusion patterns (prefixed with "!") filter files from the context provided
-to the model. A non-glob pattern like "pkg" matches both a file named "pkg"
-and all files under the "pkg/" directory, acting as a directory prefix filter.
-Glob patterns (containing *, ?, or []) support ** for recursive directory
-matching. Patterns are also matched against the path with leading ".."
-components stripped, so a file in a sibling workspace module (relPath
-"../mod2/README.md") is excluded by the pattern "mod2/README.md". Slash-less
-patterns (e.g., "*.md" or "README.md") additionally match the path's basename
-at any depth, following gitignore-style semantics: automatically-included
-markdown files are excluded by name or extension regardless of their
-directory. The implementation is anytexts.IsExcludedPath, shared with the
-anytexts parts provider; this package's isExcludedPath delegates to it.
-Exclusion patterns must be separated from inclusion patterns before being
-passed to IterFiles, because IterFiles treats all patterns as file paths to
-glob-expand.
+Exclusion patterns (prefixed with "!") filter files from the context
+provided to the model. The matching semantics — directory-prefix
+matching, ** globs, and the gitignore-style basename rule — are owned
+by anytexts.TheoryOfPatternMatching; the implementation is
+anytexts.IsExcludedPath, and this package's isExcludedPath delegates
+to it. Exclusion patterns must be separated from inclusion patterns
+before being passed to IterFiles, because IterFiles treats all
+patterns as file paths to glob-expand.
 `
 
 const TheoryOfEmbedFileSizeLimit = `
@@ -489,8 +482,8 @@ never emitted in the initial context (see TheoryOfNonGoFiles).
 `
 
 // isExcludedPath delegates to the shared implementation in the anytexts
-// package; the matching semantics are documented there and in
-// TheoryOfExclusionPatterns.
+// package; the matching semantics are owned by
+// anytexts.TheoryOfPatternMatching.
 func isExcludedPath(relPath string, excludePatterns []string) bool {
 	return anytexts.IsExcludedPath(relPath, excludePatterns)
 }

@@ -45,10 +45,5 @@ func (l SummaryLanguage) ConfigPaths() []string {
 }
 
 func (l SummaryLanguage) HandleConfig(path string, values []*cue.Value) (any, error) {
-	s, err := values[0].String()
-	if err != nil {
-		return nil, err
-	}
-	ret := SummaryLanguage(s)
-	return &ret, nil
+	return configs.DecodeConfig[SummaryLanguage](values)
 }

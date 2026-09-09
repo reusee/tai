@@ -37,10 +37,5 @@ func (s Shell) ConfigPaths() []string {
 }
 
 func (s Shell) HandleConfig(path string, values []*cue.Value) (any, error) {
-	var b bool
-	if err := values[0].Decode(&b); err != nil {
-		return nil, err
-	}
-	ret := Shell(b)
-	return &ret, nil
+	return configs.DecodeConfig[Shell](values)
 }

@@ -17,12 +17,7 @@ func (n NoTests) ConfigPaths() []string {
 }
 
 func (n NoTests) HandleConfig(path string, values []*cue.Value) (any, error) {
-	var b bool
-	if err := values[0].Decode(&b); err != nil {
-		return nil, err
-	}
-	ret := NoTests(b)
-	return &ret, nil
+	return configs.DecodeConfig[NoTests](values)
 }
 
 func (n NoTests) Handle(key string, args []string) (newDef any, remainArgs []string, err error) {

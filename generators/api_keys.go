@@ -29,12 +29,7 @@ func (g GoogleAPIKey) ConfigPaths() []string {
 }
 
 func (g GoogleAPIKey) HandleConfig(path string, values []*cue.Value) (any, error) {
-	s, err := values[0].String()
-	if err != nil {
-		return nil, err
-	}
-	ret := GoogleAPIKey(s)
-	return &ret, nil
+	return configs.DecodeConfig[GoogleAPIKey](values)
 }
 
 func (Module) GoogleAPIKey() GoogleAPIKey {
@@ -48,12 +43,7 @@ func (h HuoshanAPIKey) ConfigPaths() []string {
 }
 
 func (h HuoshanAPIKey) HandleConfig(path string, values []*cue.Value) (any, error) {
-	s, err := values[0].String()
-	if err != nil {
-		return nil, err
-	}
-	ret := HuoshanAPIKey(s)
-	return &ret, nil
+	return configs.DecodeConfig[HuoshanAPIKey](values)
 }
 
 func (Module) HuoshanAPIKey() HuoshanAPIKey {
@@ -67,12 +57,7 @@ func (b BaiduAPIKey) ConfigPaths() []string {
 }
 
 func (b BaiduAPIKey) HandleConfig(path string, values []*cue.Value) (any, error) {
-	s, err := values[0].String()
-	if err != nil {
-		return nil, err
-	}
-	ret := BaiduAPIKey(s)
-	return &ret, nil
+	return configs.DecodeConfig[BaiduAPIKey](values)
 }
 
 func (Module) BaiduAPIKey() BaiduAPIKey {
@@ -86,12 +71,7 @@ func (d DeepseekAPIKey) ConfigPaths() []string {
 }
 
 func (d DeepseekAPIKey) HandleConfig(path string, values []*cue.Value) (any, error) {
-	s, err := values[0].String()
-	if err != nil {
-		return nil, err
-	}
-	ret := DeepseekAPIKey(s)
-	return &ret, nil
+	return configs.DecodeConfig[DeepseekAPIKey](values)
 }
 
 func (Module) DeepseekAPIKey() DeepseekAPIKey {
@@ -105,12 +85,7 @@ func (o OpenRouterAPIKey) ConfigPaths() []string {
 }
 
 func (o OpenRouterAPIKey) HandleConfig(path string, values []*cue.Value) (any, error) {
-	s, err := values[0].String()
-	if err != nil {
-		return nil, err
-	}
-	ret := OpenRouterAPIKey(s)
-	return &ret, nil
+	return configs.DecodeConfig[OpenRouterAPIKey](values)
 }
 
 func (Module) OpenRouterAPIKey() OpenRouterAPIKey {
@@ -127,12 +102,7 @@ func (t TencentAPIKey) ConfigPaths() []string {
 }
 
 func (t TencentAPIKey) HandleConfig(path string, values []*cue.Value) (any, error) {
-	s, err := values[0].String()
-	if err != nil {
-		return nil, err
-	}
-	ret := TencentAPIKey(s)
-	return &ret, nil
+	return configs.DecodeConfig[TencentAPIKey](values)
 }
 
 func (Module) TencentAPIKey() TencentAPIKey {
@@ -165,12 +135,7 @@ func (z ZhipuAPIKey) ConfigPaths() []string {
 }
 
 func (z ZhipuAPIKey) HandleConfig(path string, values []*cue.Value) (any, error) {
-	s, err := values[0].String()
-	if err != nil {
-		return nil, err
-	}
-	ret := ZhipuAPIKey(s)
-	return &ret, nil
+	return configs.DecodeConfig[ZhipuAPIKey](values)
 }
 
 func (Module) ZhipuAPIKey() ZhipuAPIKey {
@@ -184,12 +149,7 @@ func (v VercelAPIKey) ConfigPaths() []string {
 }
 
 func (v VercelAPIKey) HandleConfig(path string, values []*cue.Value) (any, error) {
-	s, err := values[0].String()
-	if err != nil {
-		return nil, err
-	}
-	ret := VercelAPIKey(s)
-	return &ret, nil
+	return configs.DecodeConfig[VercelAPIKey](values)
 }
 
 func (Module) VercelKey() VercelAPIKey {
@@ -203,12 +163,7 @@ func (n NvidiaAPIKey) ConfigPaths() []string {
 }
 
 func (n NvidiaAPIKey) HandleConfig(path string, values []*cue.Value) (any, error) {
-	s, err := values[0].String()
-	if err != nil {
-		return nil, err
-	}
-	ret := NvidiaAPIKey(s)
-	return &ret, nil
+	return configs.DecodeConfig[NvidiaAPIKey](values)
 }
 
 func (Module) NvidiaAPIKey() NvidiaAPIKey {
@@ -222,12 +177,7 @@ func (a AzureAPIKey) ConfigPaths() []string {
 }
 
 func (a AzureAPIKey) HandleConfig(path string, values []*cue.Value) (any, error) {
-	s, err := values[0].String()
-	if err != nil {
-		return nil, err
-	}
-	ret := AzureAPIKey(s)
-	return &ret, nil
+	return configs.DecodeConfig[AzureAPIKey](values)
 }
 
 func (Module) AzureAPIKey() AzureAPIKey {
@@ -241,12 +191,7 @@ func (b BedrockAPIKey) ConfigPaths() []string {
 }
 
 func (b BedrockAPIKey) HandleConfig(path string, values []*cue.Value) (any, error) {
-	s, err := values[0].String()
-	if err != nil {
-		return nil, err
-	}
-	ret := BedrockAPIKey(s)
-	return &ret, nil
+	return configs.DecodeConfig[BedrockAPIKey](values)
 }
 
 func (Module) BedrockAPIKey() BedrockAPIKey {
@@ -262,12 +207,7 @@ func (o OpenCodeGoAPIKey) ConfigPaths() []string {
 }
 
 func (o OpenCodeGoAPIKey) HandleConfig(path string, values []*cue.Value) (any, error) {
-	s, err := values[0].String()
-	if err != nil {
-		return nil, err
-	}
-	ret := OpenCodeGoAPIKey(s)
-	return &ret, nil
+	return configs.DecodeConfig[OpenCodeGoAPIKey](values)
 }
 
 func (Module) OpenCodeGoAPIKey() OpenCodeGoAPIKey {

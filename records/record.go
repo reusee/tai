@@ -143,12 +143,7 @@ func (e Enabled) ConfigPaths() []string {
 }
 
 func (e Enabled) HandleConfig(path string, values []*cue.Value) (any, error) {
-	var b bool
-	if err := values[0].Decode(&b); err != nil {
-		return nil, err
-	}
-	ret := Enabled(b)
-	return &ret, nil
+	return configs.DecodeConfig[Enabled](values)
 }
 
 type Recorder struct {

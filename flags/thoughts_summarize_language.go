@@ -44,10 +44,5 @@ func (l ThoughtsSummarizeLanguage) ConfigPaths() []string {
 }
 
 func (l ThoughtsSummarizeLanguage) HandleConfig(path string, values []*cue.Value) (any, error) {
-	s, err := values[0].String()
-	if err != nil {
-		return nil, err
-	}
-	ret := ThoughtsSummarizeLanguage(s)
-	return &ret, nil
+	return configs.DecodeConfig[ThoughtsSummarizeLanguage](values)
 }

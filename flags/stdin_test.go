@@ -7,22 +7,24 @@ import (
 	"github.com/reusee/dscope"
 )
 
-func TestParseStdinFlag(t *testing.T) {
+func withStdinPipe(t *testing.T, content string) {
+	t.Helper()
 	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer r.Close()
-
-	if _, err := w.Write([]byte("stdin content")); err != nil {
+	t.Cleanup(func() { r.Close() })
+	if _, err := w.Write([]byte(content)); err != nil {
 		t.Fatal(err)
 	}
 	w.Close()
-
 	oldStdin := os.Stdin
 	os.Stdin = r
-	defer func() { os.Stdin = oldStdin }()
+	t.Cleanup(func() { os.Stdin = oldStdin })
+}
 
+func TestParseStdinFlag(t *testing.T) {
+	withStdinPipe(t, "stdin content")
 	scope := dscope.New(Module{})
 	result, err := Parse(scope, []string{"-stdin"})
 	if err != nil {
@@ -36,21 +38,7 @@ func TestParseStdinFlag(t *testing.T) {
 }
 
 func TestParseStdinAndChat(t *testing.T) {
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer r.Close()
-
-	if _, err := w.Write([]byte("stdin content")); err != nil {
-		t.Fatal(err)
-	}
-	w.Close()
-
-	oldStdin := os.Stdin
-	os.Stdin = r
-	defer func() { os.Stdin = oldStdin }()
-
+	withStdinPipe(t, "stdin content")
 	scope := dscope.New(Module{})
 	result, err := Parse(scope, []string{"-stdin", "chat", "hello"})
 	if err != nil {
@@ -64,21 +52,7 @@ func TestParseStdinAndChat(t *testing.T) {
 }
 
 func TestParseChatAndStdin(t *testing.T) {
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer r.Close()
-
-	if _, err := w.Write([]byte("stdin content")); err != nil {
-		t.Fatal(err)
-	}
-	w.Close()
-
-	oldStdin := os.Stdin
-	os.Stdin = r
-	defer func() { os.Stdin = oldStdin }()
-
+	withStdinPipe(t, "stdin content")
 	scope := dscope.New(Module{})
 	result, err := Parse(scope, []string{"chat", "hello", "-stdin"})
 	if err != nil {

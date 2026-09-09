@@ -78,6 +78,17 @@ func TestParseUnknownFlag(t *testing.T) {
 	}
 }
 
+// TestParseFlagNoArg verifies that every single-argument flag reports an
+// error when invoked with no argument.
+func TestParseFlagNoArg(t *testing.T) {
+	for _, flag := range []string{"-effort", "-file", "-focus", "-ignore", "-match", "-model", "-fast-model"} {
+		scope := dscope.New(Module{})
+		if _, err := Parse(scope, []string{flag}); err == nil {
+			t.Errorf("expected error for %s with no argument, got nil", flag)
+		}
+	}
+}
+
 func TestParseChatHandleError(t *testing.T) {
 	scope := dscope.New(Module{})
 	_, err := Parse(scope, []string{"chat"})
@@ -128,14 +139,6 @@ func TestParseEffort(t *testing.T) {
 	})
 }
 
-func TestParseEffortNoArg(t *testing.T) {
-	scope := dscope.New(Module{})
-	_, err := Parse(scope, []string{"-effort"})
-	if err == nil {
-		t.Fatal("expected error for effort with no argument, got nil")
-	}
-}
-
 func TestParseFiles(t *testing.T) {
 	scope := dscope.New(Module{})
 	result, err := Parse(scope, []string{"-file", "a.go", "-file", "b.go"})
@@ -147,14 +150,6 @@ func TestParseFiles(t *testing.T) {
 			t.Fatalf("expected a.go and b.go, got %v", files)
 		}
 	})
-}
-
-func TestParseFilesNoArg(t *testing.T) {
-	scope := dscope.New(Module{})
-	_, err := Parse(scope, []string{"-file"})
-	if err == nil {
-		t.Fatal("expected error for file with no argument, got nil")
-	}
 }
 
 func TestParseFocus(t *testing.T) {
@@ -170,14 +165,6 @@ func TestParseFocus(t *testing.T) {
 	})
 }
 
-func TestParseFocusNoArg(t *testing.T) {
-	scope := dscope.New(Module{})
-	_, err := Parse(scope, []string{"-focus"})
-	if err == nil {
-		t.Fatal("expected error for focus with no argument, got nil")
-	}
-}
-
 func TestParseIgnoreWithAlias(t *testing.T) {
 	scope := dscope.New(Module{})
 	result, err := Parse(scope, []string{"-ignore", "a", "-skip", "b", "-exclude", "c"})
@@ -189,14 +176,6 @@ func TestParseIgnoreWithAlias(t *testing.T) {
 			t.Fatalf("expected a, b, c, got %v", ignore)
 		}
 	})
-}
-
-func TestParseIgnoreNoArg(t *testing.T) {
-	scope := dscope.New(Module{})
-	_, err := Parse(scope, []string{"-ignore"})
-	if err == nil {
-		t.Fatal("expected error for ignore with no argument, got nil")
-	}
 }
 
 func TestParseMatchWithAlias(t *testing.T) {
@@ -212,14 +191,6 @@ func TestParseMatchWithAlias(t *testing.T) {
 	})
 }
 
-func TestParseMatchNoArg(t *testing.T) {
-	scope := dscope.New(Module{})
-	_, err := Parse(scope, []string{"-match"})
-	if err == nil {
-		t.Fatal("expected error for match with no argument, got nil")
-	}
-}
-
 func TestParseModelName(t *testing.T) {
 	scope := dscope.New(Module{})
 	result, err := Parse(scope, []string{"-model", "gpt-4"})
@@ -231,14 +202,6 @@ func TestParseModelName(t *testing.T) {
 			t.Fatalf("expected gpt-4, got %v", name)
 		}
 	})
-}
-
-func TestParseModelNameNoArg(t *testing.T) {
-	scope := dscope.New(Module{})
-	_, err := Parse(scope, []string{"-model"})
-	if err == nil {
-		t.Fatal("expected error for model with no argument, got nil")
-	}
 }
 
 func TestParseFastModelName(t *testing.T) {
@@ -254,77 +217,47 @@ func TestParseFastModelName(t *testing.T) {
 	})
 }
 
-func TestParseFastModelNameNoArg(t *testing.T) {
-	scope := dscope.New(Module{})
-	_, err := Parse(scope, []string{"-fast-model"})
-	if err == nil {
-		t.Fatal("expected error for fast-model with no argument, got nil")
+func TestParseShell(t *testing.T) {
+	for _, tt := range []struct {
+		args []string
+		want bool
+	}{
+		{[]string{"-shell"}, true},
+		{[]string{"-no-shell"}, false},
+		{[]string{"-shell", "-no-shell"}, false},
+	} {
+		scope := dscope.New(Module{})
+		result, err := Parse(scope, tt.args)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		result.Call(func(shell Shell) {
+			if bool(shell) != tt.want {
+				t.Errorf("args %v: expected %v, got %v", tt.args, tt.want, shell)
+			}
+		})
 	}
 }
 
-func TestParseShellTrue(t *testing.T) {
-	scope := dscope.New(Module{})
-	result, err := Parse(scope, []string{"-shell"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	result.Call(func(shell Shell) {
-		if !bool(shell) {
-			t.Fatalf("expected true, got %v", shell)
+func TestParseThoughts(t *testing.T) {
+	for _, tt := range []struct {
+		args []string
+		want bool
+	}{
+		{[]string{"-thoughts"}, true},
+		{[]string{"-no-thoughts"}, false},
+	} {
+		scope := dscope.New(Module{})
+		result, err := Parse(scope, tt.args)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
 		}
-	})
-}
-
-func TestParseShellFalse(t *testing.T) {
-	scope := dscope.New(Module{})
-	result, err := Parse(scope, []string{"-no-shell"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		result.Call(func(thoughts Thoughts) {
+			if thoughts.Value == nil || *thoughts.Value != tt.want {
+				t.Errorf("args %v: expected %v, got %v", tt.args, tt.want, thoughts.Value)
+			}
+		})
 	}
-	result.Call(func(shell Shell) {
-		if bool(shell) {
-			t.Fatalf("expected false, got %v", shell)
-		}
-	})
-}
-
-func TestParseShellToggle(t *testing.T) {
-	scope := dscope.New(Module{})
-	result, err := Parse(scope, []string{"-shell", "-no-shell"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	result.Call(func(shell Shell) {
-		if bool(shell) {
-			t.Fatalf("expected false after toggle, got %v", shell)
-		}
-	})
-}
-
-func TestParseThoughtsTrue(t *testing.T) {
-	scope := dscope.New(Module{})
-	result, err := Parse(scope, []string{"-thoughts"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	result.Call(func(thoughts Thoughts) {
-		if thoughts.Value == nil || !*thoughts.Value {
-			t.Fatalf("expected true, got %v", thoughts.Value)
-		}
-	})
-}
-
-func TestParseThoughtsFalse(t *testing.T) {
-	scope := dscope.New(Module{})
-	result, err := Parse(scope, []string{"-no-thoughts"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	result.Call(func(thoughts Thoughts) {
-		if thoughts.Value == nil || *thoughts.Value {
-			t.Fatalf("expected false, got %v", thoughts.Value)
-		}
-	})
 }
 
 func TestParseMixedFlags(t *testing.T) {

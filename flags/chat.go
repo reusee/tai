@@ -9,27 +9,30 @@ import (
 	"golang.org/x/term"
 )
 
+const TheoryOfChatPromptFlags = `
+Theory of the fixed-prompt chat flags (stdin, clean, align, distill):
+each is an additional key on the Chats flag type, registered as a bare word
+like "chat"; Parse matches arguments verbatim, so the invocation carries no
+leading dash. Each Handle invocation reads the current Chats value from the
+scope (which includes all previously parsed chat and prompt flags), appends
+its contribution, and forks an updated pointer, so the flags compose with
+chat flags in any argument order. A fixed-prompt flag takes no argument;
+the prompt is fixed.
+`
+
 const TheoryOfStdinFlag = `
 The -stdin flag adds the content of standard input to the chat messages
-(Chats). It is implemented as an additional key on the Chats flag type itself,
-alongside "chat". This composes correctly with chat flags regardless of
-argument order: each Handle invocation reads the current Chats value from the
-scope (which includes all previously parsed chat and stdin flags), appends its
-contribution, and forks an updated pointer. Standard input is read at flag
-parse time, so the content is captured exactly once. If standard input is a
-terminal, no content is read and the current Chats value is forked unchanged.
+(Chats). Standard input is read at flag parse time, so the content is
+captured exactly once. If standard input is a terminal, no content is read
+and the current Chats value is forked unchanged. See TheoryOfChatPromptFlags
+for the composition mechanics shared by the fixed-prompt chat flags.
 `
 
 const TheoryOfCleanFlag = `
 The clean flag appends a fixed cleanup prompt to the chat messages (Chats).
 The prompt instructs the model to delete redundant code and mechanisms, to
 merge and simplify duplicate tests, and to delete theory text content that
-duplicates other theory texts. It is an additional key on the Chats
-flag type, registered as the bare word "clean" like "chat"; Parse matches
-arguments verbatim, so the invocation carries no leading dash. It composes
-with chat flags in any argument order: each Handle invocation reads the
-current Chats value from the scope, appends its contribution, and forks an
-updated pointer. The flag takes no argument; the prompt is fixed.
+duplicates other theory texts. See TheoryOfChatPromptFlags.
 `
 
 const TheoryOfAlignFlag = `
@@ -41,12 +44,7 @@ nothing else: an inconsistency may come from outdated theory or from a
 faulty implementation, and only the user can decide which side to correct.
 When everything matches, _alignment.md is not created or changed, so an
 absent or untouched file means the theory and the implementation align.
-It is an additional key on the Chats flag type, registered as the bare
-word "align" like "chat"; Parse matches arguments verbatim, so the
-invocation carries no leading dash. It composes with chat flags in any
-argument order: each Handle invocation reads the current Chats value from
-the scope, appends its contribution, and forks an updated pointer. The
-flag takes no argument; the prompt is fixed.
+See TheoryOfChatPromptFlags.
 `
 
 const TheoryOfDistillFlag = `
@@ -58,12 +56,7 @@ alone is sufficient to rebuild the entire project, and to write the result
 to _theory.go. File and directory structure are excluded: the theory is the
 design rationale, not a tree listing. The work is split into steps: the
 model first produces the overall skeleton and writes it to the file, then
-refines it step by step. It is an additional key on the Chats flag type,
-registered as the bare word "distill" like "chat"; Parse matches arguments
-verbatim, so the invocation carries no leading dash. It composes with chat
-flags in any argument order: each Handle invocation reads the current Chats
-value from the scope, appends its contribution, and forks an updated
-pointer. The flag takes no argument; the prompt is fixed.
+refines it step by step. See TheoryOfChatPromptFlags.
 `
 
 // cleanPrompt is the fixed task directive the clean flag appends to the

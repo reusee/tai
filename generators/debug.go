@@ -73,12 +73,7 @@ func (e AzureEndpoint) ConfigPaths() []string {
 }
 
 func (e AzureEndpoint) HandleConfig(path string, values []*cue.Value) (any, error) {
-	s, err := values[0].String()
-	if err != nil {
-		return nil, err
-	}
-	ret := AzureEndpoint(s)
-	return &ret, nil
+	return configs.DecodeConfig[AzureEndpoint](values)
 }
 
 var _ configs.Config = AzureAPIVersion("")
@@ -88,12 +83,7 @@ func (a AzureAPIVersion) ConfigPaths() []string {
 }
 
 func (a AzureAPIVersion) HandleConfig(path string, values []*cue.Value) (any, error) {
-	s, err := values[0].String()
-	if err != nil {
-		return nil, err
-	}
-	ret := AzureAPIVersion(s)
-	return &ret, nil
+	return configs.DecodeConfig[AzureAPIVersion](values)
 }
 
 var _ configs.Config = OpenRouterEndpoint("")
@@ -103,10 +93,5 @@ func (e OpenRouterEndpoint) ConfigPaths() []string {
 }
 
 func (e OpenRouterEndpoint) HandleConfig(path string, values []*cue.Value) (any, error) {
-	s, err := values[0].String()
-	if err != nil {
-		return nil, err
-	}
-	ret := OpenRouterEndpoint(s)
-	return &ret, nil
+	return configs.DecodeConfig[OpenRouterEndpoint](values)
 }

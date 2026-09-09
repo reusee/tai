@@ -46,12 +46,11 @@ Architectural constraints:
   compressed context.
 
 - No blind exploration. The upfront context always carries the complete
-  declaration surface, so the model never starts from nothing (see
-  gotools.TheoryOfContextStrategy). Implementation source is fetched on
-  demand with go-src blocks — a targeted pull from the known surface, not
-  semantic-search probing. Ingest blocks serve external resources unavailable
-  at construction time (network fetches, glob expansion), not as a
-  substitute for upfront context.
+  declaration surface, so the model never starts from nothing; implementation
+  source is fetched on demand from that known surface, and ingest blocks
+  serve external resources unavailable at construction time (network
+  fetches, glob expansion), not as a substitute for upfront context. See
+  gotools.TheoryOfContextStrategy for the strategy.
 
 - Multi-round generation is task decomposition, not conversation. Continue
   blocks split large tasks into bounded rounds; shell and go-test blocks run

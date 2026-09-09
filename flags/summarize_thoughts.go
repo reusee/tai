@@ -38,10 +38,5 @@ func (s SummarizeThoughts) ConfigPaths() []string {
 }
 
 func (s SummarizeThoughts) HandleConfig(path string, values []*cue.Value) (any, error) {
-	var b bool
-	if err := values[0].Decode(&b); err != nil {
-		return nil, err
-	}
-	ret := SummarizeThoughts(b)
-	return &ret, nil
+	return configs.DecodeConfig[SummarizeThoughts](values)
 }

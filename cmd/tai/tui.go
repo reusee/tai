@@ -278,40 +278,25 @@ record.
 
 const TheoryOfMouseSupport = `
 Mouse support extends the TUI's keyboard model with wheel scrolling,
-click-based tab switching, and drag scrolling.
+click-based tab switching, and drag scrolling; the wheel/press/drag
+semantics over the tab layout and the mouse-reporting wire formats live
+in taiui.TheoryOfMouseInteraction and taiui.TheoryOfMouseInput.
 
-Wheel events scroll the tab whose panel is under the cursor, without
-changing the focus: the user can read any pane while keyboard navigation
-stays put, and a wheel over a collapsed tab is a no-op.
-
-A left press on a collapsed tab's strip expands it and takes the focus,
-resuming the live tail — the same as pressing its number key. A press on
-an expanded tab's label strip toggles it like its number key: pressing
-the focused tab's strip collapses it and moves the focus to the expanded
-tab that was last focused; pressing another tab's strip takes the focus
-without collapsing and keeps that tab's current view. A press inside an
-expanded tab's scroll area focuses the tab (when it was not already
-focused) and records the origin of a drag-scroll. Inside the Tree pane,
-a left press is inert unless it lands on the attempt node's 👉
-jump marker, which jumps the Output tab to the section that attempt
-wrote (see TheoryOfTUIOutputSections); a double-click on a node's
-text toggles its expansion, and a single text press does nothing
-(see TheoryOfTreeTab). In the Output tab, a press
-on the control column toggles the section under the control, a press on
-a collapsed section's row expands it, and both preempt the ordinary
-press handling (see TheoryOfOutputControls). In the Tree tab, a press
-on the fold column — the fold slot right of the category/type columns —
-toggles the node under the control, preempting the ordinary press
-handling like the Output tab's control column (see TheoryOfTreeTab).
-On any expanded tab's title row, a press on one of the tab's
-operation buttons runs the button's action, preempting the ordinary
-press handling (see TheoryOfTitleButtons).
-Presses outside every
-panel, middle and right presses are ignored; no-button motion
-(mode 1003) drives the control column's hover strip and the menu bar's
-pointer hover: the hovered category title and the open dropdown's item
-render reversed, and while a dropdown is open, motion over another
-title switches menus (see TheoryOfControlBar).
+Press routing in the TUI: a press on the Tree tab is inert except for
+the attempt node's 👉 jump marker, which jumps the Output tab to the
+section that attempt wrote (see TheoryOfTUIOutputSections); a
+double-click on a node's text toggles its expansion (see
+TheoryOfTreeTab). A press on the Output tab's control column toggles
+the section under it; a press on a collapsed section's row expands it;
+both preempt the ordinary press handling (see TheoryOfOutputControls).
+A press on the Tree tab's fold column toggles the node under it,
+preempting ordinary handling like the control column (see
+TheoryOfTreeTab). A press on an expanded tab's title button runs the
+button's action, preempting ordinary handling (see
+TheoryOfTitleButtons). Presses outside every panel, and middle and
+right presses, are ignored; no-button motion (mode 1003) drives the
+control column's hover strip and the menu bar's pointer hover (see
+TheoryOfControlBar).
 
 In interactive sessions, the Output tab's input row is the one press
 target with its own semantics: a left press on the chat input bar's row
@@ -323,30 +308,15 @@ change the input focus; a non-interactive session has no input row, so
 every press drives the ordinary tab interaction. See
 TheoryOfTUIChatInput.
 
-Drag-scrolling follows the pointer: holding the left button inside a
-scroll area and dragging up reveals earlier content, dragging down
-reveals the tail. The drag is anchored to the press origin, so the
-content moves with the pointer rather than tracking incremental motion
-deltas that would be lost when a motion event is skipped. The release
-that ends the drag carries no button number; any release ends it.
-
 Mouse reporting is enabled on start and disabled on every exit path by
-the taiui.Session that drives the TUI loop (MouseEnableSequence and
-MouseDisableSequence in the taiui package), so the terminal returns to
-ordinary input handling when the TUI stops. taiui.ReadKeys decodes the
-SGR mouse sequences into key names carrying the cell coordinates, and
-the parsed events route onto taiui.TabMouse through handleMouseKey. See
-taiui.TheoryOfMouseInput and taiui.TheoryOfMouseInteraction.
-
-Mouse reporting is also runtime-switchable: the m key toggles it via
-toggleMouse, which flips the recorded state and calls
-taiui.Session.SetMouse to write the enable or disable sequence. While
-reporting is off, the terminal performs its own text selection and copy
-and the wheel feeds the terminal scrollback, so the displayed output can
-be selected and copied; most terminals also offer Shift+drag as a
-selection bypass while reporting is on. Pressing m again restores the
-TUI's pointer interaction. Each toggle records the new state as a log
-line in the Logs tab.
+the taiui.Session that drives the TUI loop, so the terminal returns to
+ordinary input handling when the TUI stops. Mouse reporting is
+runtime-switchable: the m key toggles it via toggleMouse, which flips
+the recorded state and calls taiui.Session.SetMouse. While reporting
+is off, the terminal performs its own text selection and copy; most
+terminals also offer Shift+drag as a selection bypass while reporting
+is on. Pressing m again restores the TUI's pointer interaction. Each
+toggle records the new state as a log line in the Logs tab.
 `
 
 // Tui controls the terminal UI mode. The default is the TUI when stdout

@@ -43,13 +43,11 @@ Focus files (files directly specified via patterns) that resolve to a
 location outside all writable directories are marked as read-only at
 collection time rather than rejected. The writable directories are
 determined by the security package's container filesystem policy (see
-security.TheoryOfWritableDirs for the directory set), so the check is
-consistent with the security package's container isolation — no more and
-no less restrictive. A focus file outside writable directories can still
-provide useful reference context even though it cannot be modified;
-marking it as read-only informs the model that change blocks must not
-target it, while still allowing its content to inform changes to
-writable project files.
+security.TheoryOfWritableDirs for the directory set). A focus file
+outside writable directories can still provide useful reference
+context even though it cannot be modified; marking it as read-only
+informs the model that change blocks must not target it, while still
+allowing its content to inform changes to writable project files.
 
 This check applies to directly-matched patterns (directMatch=true), not to
 files discovered during directory traversal. Files discovered via symlinks

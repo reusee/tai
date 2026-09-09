@@ -48,12 +48,7 @@ func (c ConfidentialMode) ConfigPaths() []string {
 }
 
 func (c ConfidentialMode) HandleConfig(path string, values []*cue.Value) (any, error) {
-	var b bool
-	if err := values[0].Decode(&b); err != nil {
-		return nil, err
-	}
-	ret := ConfidentialMode(b)
-	return &ret, nil
+	return configs.DecodeConfig[ConfidentialMode](values)
 }
 
 // check returns an error when confidential mode is enabled and the spec

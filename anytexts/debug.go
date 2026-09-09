@@ -36,10 +36,5 @@ func (d Debug) ConfigPaths() []string {
 }
 
 func (d Debug) HandleConfig(path string, values []*cue.Value) (any, error) {
-	var b bool
-	if err := values[0].Decode(&b); err != nil {
-		return nil, err
-	}
-	ret := Debug(b)
-	return &ret, nil
+	return configs.DecodeConfig[Debug](values)
 }

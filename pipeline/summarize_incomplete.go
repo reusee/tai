@@ -27,22 +27,21 @@ effect are hallucinations. The handoff is therefore transient error
 recovery, not history: it is injected into one retry request and never
 persists as compressed context (see TheoryOfContextPhilosophy).
 
-The handoff model is a single model specified by HandoffModel. When empty,
-the fast model (FastModelName) is used if configured; otherwise the default
-model (ModelName) is used. See TheoryOfHandoffModel. The handoff prompt
-instructs the model to wrap the concise handoff summary in a
-boundary-delimited block with kind "handoff". The system parses the block
-body as the handoff content; if the model does not emit a valid handoff
-block (missing, malformed, or unclosed), the response is treated as empty
-and retried, preventing incorrect or incomplete content from being used as
-handoff instructions. Handoff generation retries without an attempt limit
-on failure or missing block; the loop exits only when a valid handoff block
-is produced or the context is cancelled. Cancellation is logged and the
-caller retries with empty handoff content, so the run continues rather than
-aborting. The bounded caller is goal mode: a goal loop's handoff abandons
-after three consecutive failed attempts — a generation error or a response
-without a valid block — and the returned error is fatal for the run, so the
-goal runner abandons the loop and carries the error into the next loop as
+The handoff model selection rule is owned by TheoryOfHandoffModel and is
+not repeated here. The handoff prompt instructs the model to wrap the
+concise handoff summary in a boundary-delimited block with kind "handoff".
+The system parses the block body as the handoff content; if the model does
+not emit a valid handoff block (missing, malformed, or unclosed), the
+response is treated as empty and retried, preventing incorrect or
+incomplete content from being used as handoff instructions. Handoff
+generation retries without an attempt limit on failure or missing block;
+the loop exits only when a valid handoff block is produced or the context
+is cancelled. Cancellation is logged and the caller retries with empty
+handoff content, so the run continues rather than aborting. The bounded
+caller is goal mode: a goal loop's handoff abandons after three
+consecutive failed attempts — a generation error or a response without a
+valid block — and the returned error is fatal for the run, so the goal
+runner abandons the loop and carries the error into the next loop as
 corrective feedback (see TheoryOfGoalMode). Three consecutive failures
 indicate severe model failure; unbounded retries would burn the loop's
 budget on a hopeless generation, while attended sessions keep the

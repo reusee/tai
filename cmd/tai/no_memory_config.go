@@ -14,10 +14,5 @@ func (n NoMemory) ConfigPaths() []string {
 }
 
 func (n NoMemory) HandleConfig(path string, values []*cue.Value) (any, error) {
-	var b bool
-	if err := values[0].Decode(&b); err != nil {
-		return nil, err
-	}
-	ret := NoMemory(b)
-	return &ret, nil
+	return configs.DecodeConfig[NoMemory](values)
 }

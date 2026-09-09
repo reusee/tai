@@ -1,6 +1,7 @@
 package gotools
 
 import (
+	"slices"
 	"testing"
 
 	"cuelang.org/go/cue"
@@ -15,109 +16,73 @@ func TestExtraSystemPromptConfigPaths(t *testing.T) {
 	}
 }
 
-func TestExtraSystemPromptHandleConfigAggregatesStrings(t *testing.T) {
-	ctx := cuecontext.New()
+// TestExtraSystemPromptHandleConfigTableDriven covers string aggregation,
+// list aggregation, mixed string-and-list values, empty-string skipping,
+// and cross-call accumulation in one table.
+func TestExtraSystemPromptHandleConfigTableDriven(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		cues []string
+		want []string
+	}{
+		{name: "strings", cues: []string{`"prompt1"`, `"prompt2"`}, want: []string{"prompt1", "prompt2"}},
+		{name: "list", cues: []string{`["prompt1", "prompt2", "prompt3"]`}, want: []string{"prompt1", "prompt2", "prompt3"}},
+		{name: "mixed", cues: []string{`"single"`, `["list1", "list2"]`}, want: []string{"single", "list1", "list2"}},
+		{name: "empty skipped", cues: []string{`""`}, want: []string{}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := cuecontext.New()
+			values := make([]*cue.Value, 0, len(tt.cues))
+			for _, src := range tt.cues {
+				v := ctx.CompileString(src)
+				values = append(values, &v)
+			}
+			e := ExtraSystemPrompt(nil)
+			result, err := e.HandleConfig("go.extra_system_prompt", values)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ret, ok := result.(*ExtraSystemPrompt)
+			if !ok {
+				t.Fatalf("expected *ExtraSystemPrompt, got %T", result)
+			}
+			if !slices.Equal(*ret, tt.want) {
+				t.Fatalf("expected %v, got %v", tt.want, *ret)
+			}
+		})
+	}
 
+	// Accumulation across HandleConfig calls: the result of one call is
+	// the receiver of the next.
+	ctx := cuecontext.New()
 	v1 := ctx.CompileString(`"prompt1"`)
+	e := ExtraSystemPrompt(nil)
+	result, err := e.HandleConfig("go.extra_system_prompt", []*cue.Value{&v1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ret1 := result.(*ExtraSystemPrompt)
 	v2 := ctx.CompileString(`"prompt2"`)
-
-	e := ExtraSystemPrompt(nil)
-	result, err := e.HandleConfig("go.extra_system_prompt", []*cue.Value{&v1, &v2})
+	result2, err := ret1.HandleConfig("go.extra_system_prompt", []*cue.Value{&v2})
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	ret, ok := result.(*ExtraSystemPrompt)
-	if !ok {
-		t.Fatalf("expected *ExtraSystemPrompt, got %T", result)
-	}
-
-	if len(*ret) != 2 {
-		t.Fatalf("expected 2 prompts, got %d: %v", len(*ret), *ret)
-	}
-	if (*ret)[0] != "prompt1" || (*ret)[1] != "prompt2" {
-		t.Fatalf("expected [prompt1, prompt2], got %v", *ret)
+	ret2 := result2.(*ExtraSystemPrompt)
+	if !slices.Equal(*ret2, []string{"prompt1", "prompt2"}) {
+		t.Fatalf("expected accumulated [prompt1 prompt2], got %v", *ret2)
 	}
 }
 
-func TestExtraSystemPromptHandleConfigAggregatesList(t *testing.T) {
+// TestFamilyExtraSystemPromptHandleConfigTableDriven covers mixed
+// string-and-list family values and cross-call accumulation in one test.
+func TestFamilyExtraSystemPromptHandleConfigTableDriven(t *testing.T) {
 	ctx := cuecontext.New()
 
-	v := ctx.CompileString(`["prompt1", "prompt2", "prompt3"]`)
-
-	e := ExtraSystemPrompt(nil)
-	result, err := e.HandleConfig("go.extra_system_prompt", []*cue.Value{&v})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	ret, ok := result.(*ExtraSystemPrompt)
-	if !ok {
-		t.Fatalf("expected *ExtraSystemPrompt, got %T", result)
-	}
-
-	if len(*ret) != 3 {
-		t.Fatalf("expected 3 prompts, got %d: %v", len(*ret), *ret)
-	}
-	if (*ret)[0] != "prompt1" || (*ret)[1] != "prompt2" || (*ret)[2] != "prompt3" {
-		t.Fatalf("expected [prompt1, prompt2, prompt3], got %v", *ret)
-	}
-}
-
-func TestExtraSystemPromptHandleConfigMixedStringAndList(t *testing.T) {
-	ctx := cuecontext.New()
-
-	v1 := ctx.CompileString(`"single"`)
-	v2 := ctx.CompileString(`["list1", "list2"]`)
-
-	e := ExtraSystemPrompt(nil)
-	result, err := e.HandleConfig("go.extra_system_prompt", []*cue.Value{&v1, &v2})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	ret, ok := result.(*ExtraSystemPrompt)
-	if !ok {
-		t.Fatalf("expected *ExtraSystemPrompt, got %T", result)
-	}
-
-	if len(*ret) != 3 {
-		t.Fatalf("expected 3 prompts, got %d: %v", len(*ret), *ret)
-	}
-	if (*ret)[0] != "single" || (*ret)[1] != "list1" || (*ret)[2] != "list2" {
-		t.Fatalf("expected [single, list1, list2], got %v", *ret)
-	}
-}
-
-func TestExtraSystemPromptHandleConfigSkipsEmptyString(t *testing.T) {
-	ctx := cuecontext.New()
-
-	v := ctx.CompileString(`""`)
-
-	e := ExtraSystemPrompt(nil)
-	result, err := e.HandleConfig("go.extra_system_prompt", []*cue.Value{&v})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	ret, ok := result.(*ExtraSystemPrompt)
-	if !ok {
-		t.Fatalf("expected *ExtraSystemPrompt, got %T", result)
-	}
-
-	if len(*ret) != 0 {
-		t.Fatalf("expected 0 prompts for empty string, got %d: %v", len(*ret), *ret)
-	}
-}
-
-func TestFamilyExtraSystemPromptHandleConfig(t *testing.T) {
-	ctx := cuecontext.New()
-
+	// Mixed string and list values per family.
 	v := ctx.CompileString(`{
 		gemini: "gemini prompt"
 		deepseek: ["deepseek one", "deepseek two"]
 	}`)
-
 	f := FamilyExtraSystemPrompt(nil)
 	result, err := f.HandleConfig("go.family_extra_system_prompt", []*cue.Value{&v})
 	if err != nil {
@@ -127,40 +92,32 @@ func TestFamilyExtraSystemPromptHandleConfig(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected *FamilyExtraSystemPrompt, got %T", result)
 	}
-	if len(*ret) != 2 {
-		t.Fatalf("expected 2 families, got %d: %v", len(*ret), *ret)
-	}
-	if got := (*ret)["gemini"]; len(got) != 1 || got[0] != "gemini prompt" {
+	if got := (*ret)["gemini"]; !slices.Equal(got, []string{"gemini prompt"}) {
 		t.Fatalf("unexpected gemini prompts: %v", got)
 	}
-	if got := (*ret)["deepseek"]; len(got) != 2 || got[0] != "deepseek one" || got[1] != "deepseek two" {
+	if got := (*ret)["deepseek"]; !slices.Equal(got, []string{"deepseek one", "deepseek two"}) {
 		t.Fatalf("unexpected deepseek prompts: %v", got)
 	}
-}
 
-func TestFamilyExtraSystemPromptHandleConfigAccumulates(t *testing.T) {
-	ctx := cuecontext.New()
-
+	// Accumulation across calls: the same family accumulates, a new
+	// family is added.
 	v1 := ctx.CompileString(`{gemini: "one"}`)
 	v2 := ctx.CompileString(`{gemini: "two", deepseek: "three"}`)
-
-	f := FamilyExtraSystemPrompt(nil)
-	result, err := f.HandleConfig("go.family_extra_system_prompt", []*cue.Value{&v1})
+	f = FamilyExtraSystemPrompt(nil)
+	result, err = f.HandleConfig("go.family_extra_system_prompt", []*cue.Value{&v1})
 	if err != nil {
 		t.Fatal(err)
 	}
 	ret1 := result.(*FamilyExtraSystemPrompt)
-
 	result2, err := ret1.HandleConfig("go.family_extra_system_prompt", []*cue.Value{&v2})
 	if err != nil {
 		t.Fatal(err)
 	}
 	ret2 := result2.(*FamilyExtraSystemPrompt)
-
-	if got := (*ret2)["gemini"]; len(got) != 2 || got[0] != "one" || got[1] != "two" {
+	if got := (*ret2)["gemini"]; !slices.Equal(got, []string{"one", "two"}) {
 		t.Fatalf("expected accumulated gemini prompts, got %v", got)
 	}
-	if got := (*ret2)["deepseek"]; len(got) != 1 || got[0] != "three" {
+	if got := (*ret2)["deepseek"]; !slices.Equal(got, []string{"three"}) {
 		t.Fatalf("unexpected deepseek prompts: %v", got)
 	}
 }

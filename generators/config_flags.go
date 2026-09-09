@@ -18,12 +18,7 @@ func (d DebugGemini) ConfigPaths() []string {
 }
 
 func (d DebugGemini) HandleConfig(path string, values []*cue.Value) (any, error) {
-	var b bool
-	if err := values[0].Decode(&b); err != nil {
-		return nil, err
-	}
-	ret := DebugGemini(b)
-	return &ret, nil
+	return configs.DecodeConfig[DebugGemini](values)
 }
 
 // DebugOpenAI configs.Config implementation.
@@ -35,12 +30,7 @@ func (d DebugOpenAI) ConfigPaths() []string {
 }
 
 func (d DebugOpenAI) HandleConfig(path string, values []*cue.Value) (any, error) {
-	var b bool
-	if err := values[0].Decode(&b); err != nil {
-		return nil, err
-	}
-	ret := DebugOpenAI(b)
-	return &ret, nil
+	return configs.DecodeConfig[DebugOpenAI](values)
 }
 
 // TapOpenAI configs.Config implementation.
@@ -52,12 +42,7 @@ func (d TapOpenAI) ConfigPaths() []string {
 }
 
 func (d TapOpenAI) HandleConfig(path string, values []*cue.Value) (any, error) {
-	var b bool
-	if err := values[0].Decode(&b); err != nil {
-		return nil, err
-	}
-	ret := TapOpenAI(b)
-	return &ret, nil
+	return configs.DecodeConfig[TapOpenAI](values)
 }
 
 // AzureEndpoint flags.Flag implementation. The configs.Config

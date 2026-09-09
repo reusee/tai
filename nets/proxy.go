@@ -41,11 +41,7 @@ func (p ProxyAddr) ConfigPaths() []string {
 }
 
 func (p ProxyAddr) HandleConfig(path string, values []*cue.Value) (any, error) {
-	var ret ProxyAddr
-	if err := values[0].Decode(&ret); err != nil {
-		return nil, err
-	}
-	return &ret, nil
+	return configs.DecodeConfig[ProxyAddr](values)
 }
 
 func (Module) ProxyAddr(

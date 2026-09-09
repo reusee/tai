@@ -39,10 +39,5 @@ func (e Effort) ConfigPaths() []string {
 }
 
 func (e Effort) HandleConfig(path string, values []*cue.Value) (any, error) {
-	var s string
-	if err := values[0].Decode(&s); err != nil {
-		return nil, err
-	}
-	ret := Effort(s)
-	return &ret, nil
+	return configs.DecodeConfig[Effort](values)
 }

@@ -29,12 +29,7 @@ func (a AllSrc) ConfigPaths() []string {
 }
 
 func (a AllSrc) HandleConfig(path string, values []*cue.Value) (any, error) {
-	var b bool
-	if err := values[0].Decode(&b); err != nil {
-		return nil, err
-	}
-	ret := AllSrc(b)
-	return &ret, nil
+	return configs.DecodeConfig[AllSrc](values)
 }
 
 func (a AllSrc) Handle(key string, args []string) (newDef any, remainArgs []string, err error) {

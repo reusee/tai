@@ -31,14 +31,11 @@ it, and the kind prompts describe only their kind-specific semantics without
 restating the heredoc format. See blocks.TheoryOfBlockFormatGeneral.
 
 The session tree is taught by a prompt-only component placed right after
-the block-format one (SessionTreeSystemPrompt): every block kind's header
-may carry an optional parent parameter, new-plan and response blocks must
-carry parent and name, node naming is program-validated — a duplicate name
-or unknown parent discards the whole block batch and is fed back as a
-System note through the shared block-correction budget — and every
-round-triggering feedback closes with the session tree outline. The
-new-plan and response components follow the ingest component; declaring
-their kinds registers them in KnownKinds. See TheoryOfSessionTree.
+the block-format one (SessionTreeSystemPrompt); the optional-parent,
+required parent/name, and program-validated-naming contracts are owned by
+TheoryOfSessionTree and are not repeated here. The new-plan and response
+components follow the ingest component; declaring their kinds registers
+them in KnownKinds.
 
 When the shell flag is off, the set carries the disabled-blocks notice for
 shell (components.DisabledBlocksComponent), so the model is explicitly told
@@ -59,25 +56,20 @@ The go-src component resolves go-src block symbols — Go symbol names, one
 per line — through gotools.ResolveGoSymbols, appended as user content for
 the next generation. Like ingest it is read-only context fetching, but
 unconditional: symbol resolution reuses the packages the loader already
-fetched, so it is always available in the codes pipeline. The codes session
-presents both kinds, and the go-src prompt teaches their division of labor:
-Go source and package information are fetched by symbol — a declaration
-gains the defining file, line, and the references report; a package name
-returns its go doc documentation — while ingest serves non-Go files,
-whole-file views, glob discovery, and network resources. See
-gotools.TheoryOfGoSrcBlocks.
+fetched, so it is always available in the codes pipeline. The go-src
+prompt teaches its division of labor with ingest; the division is owned
+by gotools.TheoryOfGoSrcBlocks and is not repeated here.
 
 The ingest component carries the session's language-server handler. blocks
-parses the lsp tag language-neutrally and defines the LSPHandler contract;
-gotools provides the gopls-backed handler — one gopls process per
-directory, lazily started at the first lsp request (see
-gotools.TheoryOfGopls). The Go-specific lsp tag documentation
-(gotools.LSPIngestTagSystemPrompt) is appended to the ingest prompt only when
-the handler is attached, keeping the base ingest prompt language-neutral. A
-nil handler keeps the section out of the prompt entirely; an lsp tag
-emitted in such a session returns an explicit unavailability error part
-rather than being silently ignored, matching the disabled-blocks
-philosophy (see components.TheoryOfDisabledBlocks).
+parses the lsp tag language-neutrally and defines the LSPHandler contract,
+and gotools provides the gopls-backed handler (see gotools.TheoryOfGopls).
+The Go-specific lsp tag documentation (gotools.LSPIngestTagSystemPrompt) is
+appended to the ingest prompt only when the handler is attached, keeping the
+base ingest prompt language-neutral. A nil handler keeps the section out of
+the prompt entirely; an lsp tag emitted in such a session returns an
+explicit unavailability error part rather than being silently ignored,
+matching the disabled-blocks philosophy (see
+components.TheoryOfDisabledBlocks).
 
 Parse-time prefetch: the go-src and ingest components declare
 side-effect-free per-block Compute functions, so the generation loop starts
@@ -87,12 +79,10 @@ generation; after the response ends the component consumes the prefetched
 outcomes in block order. See components.TheoryOfReadOnlyPrefetch.
 
 The plan-op component is unconditional: the session tree carries a plan
-tree rooted at the node "plan" that the model operates through plan-op
-blocks, and the model decides whether to plan — a simple task is done
-directly, a non-simple task is decomposed into plan-op entries and the
-loop feeds the next pending entry as every round's feedback (see
-TheoryOfPlan). The continue component stays in the common set: continue
-blocks remain the model's way of prompting the next round's user input.
+tree that the model operates through plan-op blocks; the whether-to-plan
+rule and the plan-driven round feedback live in TheoryOfPlan. The continue
+component stays in the common set: continue blocks remain the model's way
+of prompting the next round's user input.
 
 Read-only files, skeleton files, and hidden packages are prompt-only
 Components: they contribute system prompt sections without defining a
@@ -115,12 +105,9 @@ prompt restate (see TheoryOfComponents in the components package).
 The generation loop checks for the summary block to distinguish a normally
 ended attempt from truncated or non-conforming output: no other block kind
 completes an attempt, so an attempt carrying component-triggering blocks
-(ingest, shell, continue, go-test, go-src) without a summary block is
-retried with feedback naming the missing summary (see TheoryOfLoops). Every
-kind prompt that stops and waits states the summary requirement with the
-same wording and adds the sequence rule — the block after the kind's
-closing line must be the summary block — so no stop instruction licenses
-omitting the summary block.
+without a summary block is retried with feedback naming the missing summary
+(see TheoryOfLoops). The stop-and-wait kinds' summary-wording and sequence
+rules are owned by blocks.TheoryOfSummaryBlocks and are not repeated here.
 `
 
 // computeGoSrcBlock computes the user-content parts of one go-src

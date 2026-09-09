@@ -36,10 +36,5 @@ func (s ShowTokenCounts) ConfigPaths() []string {
 }
 
 func (s ShowTokenCounts) HandleConfig(path string, values []*cue.Value) (any, error) {
-	var b bool
-	if err := values[0].Decode(&b); err != nil {
-		return nil, err
-	}
-	ret := ShowTokenCounts(b)
-	return &ret, nil
+	return configs.DecodeConfig[ShowTokenCounts](values)
 }
