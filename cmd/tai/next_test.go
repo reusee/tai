@@ -289,57 +289,24 @@ func TestExtraSystemPrompt(t *testing.T) {
 	})
 }
 
-func TestSystemPromptAndUserPromptChangeBlockPlacement(t *testing.T) {
-	dir := t.TempDir()
-	oldWd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(oldWd)
-	if err := os.Chdir(dir); err != nil {
-		t.Fatal(err)
-	}
-	// General-purpose tools must support file editing capabilities (change blocks)
-	// for any type of file, not exclusively Go files. The fixture exceeds the
-	// restate threshold under restateThresholdMockGenerator's byte counting, so
-	// the assembled user prompt carries the verbatim restate.
-	if err := os.WriteFile("test.md", []byte(strings.Repeat("# data\n", 1024)), 0644); err != nil {
-		t.Fatal(err)
-	}
-
+// TestNextSystemPromptIsTextOnly verifies the text-output regime of the
+// next command: the system prompt carries no change block prompt, and the
+// disabled-blocks notice lists change among the unprocessed kinds, so a
+// model emitting change blocks is corrected instead of having its output
+// silently ignored while implying edits that never happened. See
+// TheoryOfNextCommand and components.TheoryOfDisabledBlocks.
+func TestNextSystemPromptIsTextOnly(t *testing.T) {
 	dscope.New(
 		new(Module),
 	).Fork(
 		modes.ForTest(t),
-		func() generators.GetDefaultGenerator {
-			return func() (generators.Generator, error) {
-				return restateThresholdMockGenerator{}, nil
-			}
-		},
-		func() flags.Files { return flags.Files{"test.md": true} },
-		func() flags.MaxTokens { return flags.MaxTokens(1 << 20) },
-	).Call(func(
-		systemPrompt SystemPrompt,
-		userPrompt UserPrompt,
-	) {
+	).Call(func(systemPrompt SystemPrompt) {
 		s := string(systemPrompt)
-		if !strings.Contains(s, "Change Block Kind") {
-			t.Fatal("system prompt must include change block prompt when focus files are present")
+		if strings.Contains(s, "Change Block Kind") {
+			t.Fatal("next system prompt must not include the change block prompt")
 		}
-		// The user prompt ends with the verbatim system prompt restate,
-		// so the change block rules — including the precise-modification
-		// guidance — are re-read right before generating. See
-		// components.TheoryOfComponents.
-		if len(userPrompt) == 0 {
-			t.Fatal("user prompt must have parts")
-		}
-		last := userPrompt[len(userPrompt)-1]
-		text, ok := last.(generators.Text)
-		if !ok || text != components.SystemPromptRestate(s) {
-			t.Fatalf("user prompt must end with the verbatim system prompt restate, got %T", last)
-		}
-		if !strings.Contains(string(text), "Prefer Precise Modifications") {
-			t.Fatal("the restate must carry the change block prompt's guidance")
+		if !strings.Contains(s, "change blocks are not processed") {
+			t.Fatal("next disabled-blocks notice must list change")
 		}
 	})
 }
@@ -572,12 +539,6 @@ func TestSystemPromptIgnoreOrderDeterministic(t *testing.T) {
 		new(Module),
 	).Fork(
 		modes.ForTest(t),
-		func() flags.Files {
-			// A pattern that matches nothing, so HasFiles is false and no
-			// change-block prompt is included; the test only checks the
-			// ignore section ordering.
-			return flags.Files{"/nonexistent-prefix-cache-test": true}
-		},
 		func() flags.Ignore {
 			return flags.Ignore{"bbb": true, "aaa": true, "ccc": true}
 		},

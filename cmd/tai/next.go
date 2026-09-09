@@ -8,7 +8,6 @@ import (
 
 	"github.com/reusee/prompts"
 	"github.com/reusee/tai/apps"
-	"github.com/reusee/tai/changes"
 	"github.com/reusee/tai/components"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
@@ -19,37 +18,25 @@ import (
 )
 
 const TheoryOfNextCommand = `
-The "next" subcommand identifies and executes the most valuable next step to
-advance the user's goal. It uses the prompts.NextStep system prompt as its
-base, augmented with the change block prompt when Go files are detected in the
-input, plus optional extra, focus, and ignore directives. Unlike the "ai"
-subcommand which supports multi-turn conversation with memory, shell, and
-continue blocks, "next" performs a single generation: it builds the
-system prompt and user prompt from file context, runs one generate-chat phase
-chain, and writes the result to stdout. This makes it the simplest entry point
-for autonomous, single-shot task execution.
+The "next" subcommand identifies the most valuable next step to advance
+the user's goal. It is a text-output command: it uses the prompts.NextStep
+system prompt as its base, augmented with optional extra, focus, and
+ignore directives. Unlike the "ai" subcommand which supports multi-turn
+conversation with memory, shell, and continue blocks, "next" performs a
+single generation: it builds the system prompt and user prompt from file
+context, runs one generate-chat phase chain, and writes the result to
+stdout. This makes it the simplest entry point for autonomous, single-shot
+task execution.
 
-The system prompt carries a disabled-blocks notice
-(components.DisabledBlocksNotice) listing shell, continue, go-test, go-src,
-and ingest: the single-shot loop runs with no components, so these kinds are
-never processed here, and without the notice the model could emit them from
-habit and have them silently ignored while implying actions that never
-happened. Change is not listed: it is handled by the BlockHandler (or
-dry-run under -no-apply) whenever hasFiles included the change prompt. The
-notice is static for this command, so it sits directly after the base prompt
+The next command never modifies files and processes no block kind: the
+system prompt carries a disabled-blocks notice
+(components.DisabledBlocksNotice) listing shell, continue, change,
+go-test, go-src, and ingest. The single-shot loop runs with no components
+and no change-block handler, so these kinds are never processed here;
+without the notice the model could emit them from habit and have them
+silently ignored while implying actions that never happened. The notice
+is static for this command, so it sits directly after the base prompt
 inside the stable prefix region. See components.TheoryOfDisabledBlocks.
-
-Change blocks emitted by the model are applied to the working tree via a
-ParserState block handler that writes to an in-memory MemoryStore during
-streaming, then flushes to disk after the generation succeeds. This
-reuses the same in-memory apply mechanism as the pipeline (see
-changes.TheoryOfInMemoryApply), ensuring early error detection — a malformed
-change block triggers a retry via changes.ApplyError, resetting the
-MemoryStore to discard failed changes — while preserving filesystem
-consistency on failure. The handler is built by
-changes.BuildChangeBlockHandler, sharing the change-application logic with
-the pipeline. The -no-apply flag disables change block application,
-causing blocks to be parsed but not applied to disk.
 
 The -summarize-thoughts flag wires pipeline.NewThoughtsSummarize around the
 output layer, mirroring the ai command (see pipeline.TheoryOfThoughtsSummarize).
@@ -61,36 +48,27 @@ when given, following pipeline.TheoryOfChatBracketing.
 type SystemPrompt string
 
 func (Module) SystemPrompt(
-	logger logs.Logger,
 	extra flags.ExtraSystemPrompt,
 	familyExtra flags.FamilyExtraSystemPrompt,
 	modelFamily generators.ModelFamily,
-	hasFiles HasFiles,
 	flagFocus flags.Focus,
 	flagIgnore flags.Ignore,
 ) (ret SystemPrompt) {
 
 	ret += SystemPrompt(prompts.NextStep)
 
-	// Disabled-blocks notice: the next command runs a single-shot loop
-	// with no components, so the component-driven kinds are never
-	// processed here — shell commands are not run, no next round is
-	// triggered by a continue block, and no context, symbol sources, or
-	// test results are fetched. Listing them explicitly prevents blocks
-	// that would be silently ignored while implying actions that never
-	// happened. Change is not listed: it is handled by the BlockHandler
-	// (or dry-run under -no-apply) whenever hasFiles included the change
-	// prompt. The notice is static for this command, so it sits directly
-	// after the base prompt inside the stable prefix region. See
-	// components.TheoryOfDisabledBlocks and TheoryOfNextCommand.
+	// Disabled-blocks notice: the next command is a text-output command.
+	// It runs a single-shot loop with no components and no change-block
+	// handler, so no block kind is processed here — shell commands are
+	// not run, no next round is triggered, nothing is fetched, and no
+	// change is applied to any file. Listing them explicitly prevents
+	// blocks that would be silently ignored while implying actions that
+	// never happened. The notice is static for this command, so it sits
+	// directly after the base prompt inside the stable prefix region.
+	// See components.TheoryOfDisabledBlocks and TheoryOfNextCommand.
 	ret += "\n\n" + SystemPrompt(components.DisabledBlocksNotice(
-		"shell", "continue", "go-test", "go-src", "ingest",
+		"shell", "continue", "change", "go-test", "go-src", "ingest",
 	))
-
-	if hasFiles {
-		logger.Info("has focus file")
-		ret += "\n\n" + SystemPrompt(changes.ChangeBlockSystemPrompt()) + "\n\n"
-	}
 
 	for _, e := range extra {
 		if e != "" {
@@ -136,7 +114,7 @@ func (Module) SystemPrompt(
 }
 
 var NextCommand = apps.New("next",
-	"Identify and execute the most valuable next step",
+	"Identify the most valuable next step",
 	func(
 		getDefaultGenerator generators.GetDefaultGenerator,
 		systemPrompt SystemPrompt,
@@ -145,11 +123,8 @@ var NextCommand = apps.New("next",
 		buildGenerate generators.BuildGenerate,
 		buildChat pipeline.BuildChat,
 		flagThoughts flags.Thoughts,
-		apply flags.Apply,
-		buildChangeBlockHandler changes.BuildChangeBlockHandler,
 		loopRun pipeline.Run,
 		recorder *records.Recorder,
-		writeTimes *changes.FileWriteTimes,
 		getDefaultSummarizer pipeline.GetDefaultSummarizer,
 		summarizeThoughts flags.SummarizeThoughts,
 	) {
@@ -157,12 +132,6 @@ var NextCommand = apps.New("next",
 
 		generator, err := getDefaultGenerator()
 		ce(err)
-
-		root, err := os.OpenRoot(".")
-		ce(err)
-		defer root.Close()
-
-		memStore := changes.NewMemoryStore(changes.NewRootStoreWithWriteTimes(root, writeTimes))
 
 		logger.Info("generate", "model", generator.Spec().Model)
 		var state generators.State
@@ -189,43 +158,28 @@ var NextCommand = apps.New("next",
 			state = generators.NewOutput(state, os.Stdout, showThoughts)
 		}
 
-		// BlockHandler applies change blocks immediately to the
-		// MemoryStore as they are parsed during streaming, enabling
-		// early error detection. Apply errors are returned as
-		// *changes.ApplyError so the loop can retry, resetting the
-		// MemoryStore to discard failed changes. The handler is built
-		// by changes.BuildChangeBlockHandler so the change-application
-		// logic is shared with the pipeline. See
-		// changes.TheoryOfInMemoryApply and pipeline.TheoryOfLoops.
-		var blockHandler pipeline.BlockHandler
-		if bool(apply) {
-			handler := buildChangeBlockHandler(memStore)
-			blockHandler = pipeline.BlockHandler(handler)
-		}
-
 		// Run the unified generation loop in single-shot mode (no
-		// components). The phase chain (generate -> chat) drives the
-		// interactive session. Apply errors trigger a retry with the
-		// error message fed back as user content. The interaction
-		// recorder is passed explicitly so the session is captured when
-		// -record is enabled. The result is filled into result as the run
-		// progresses; every tree yield carries the run's full session
-		// tree — the loop's own event nodes included — and the terminal
-		// error, if any, arrives with the final yield's error component.
-		// See pipeline.TheoryOfLoops and pipeline.TheoryOfLoopEvents.
+		// components, no change-block handler): next is a text-output
+		// command, so collected blocks are never applied to the working
+		// tree. The phase chain (generate -> chat) drives the
+		// interactive session. Generation errors after content output
+		// retry with the error message fed back as user content. The
+		// interaction recorder is passed explicitly so the session is
+		// captured when -record is enabled. The result is filled into
+		// result as the run progresses; every tree yield carries the
+		// run's full session tree — the loop's own event nodes
+		// included — and the terminal error, if any, arrives with the
+		// final yield's error component. See pipeline.TheoryOfLoops and
+		// pipeline.TheoryOfLoopEvents.
 		var result pipeline.Result
 		for _, e := range loopRun(ctx, pipeline.RunOptions{
 			Generator:           generator,
 			InitialState:        state,
 			Components:          nil,
-			BlockHandler:        blockHandler,
 			Command:             "next",
 			InteractionRecorder: recorder,
 			PhaseBuilder: func(g generators.Generator) generators.Phase {
 				return buildGenerate(g, nil)(buildChat(g, nil)(nil))
-			},
-			OnAttemptStart: func() {
-				memStore.Reset()
 			},
 			RetryOnError: true,
 		}, &result) {
@@ -234,11 +188,6 @@ var NextCommand = apps.New("next",
 			}
 		}
 		ce(err)
-
-		if bool(apply) {
-			err = memStore.Flush()
-			ce(err)
-		}
 
 	},
 	modes.ForProduction(),

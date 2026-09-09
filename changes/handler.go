@@ -16,7 +16,7 @@ import (
 type ChangeBlockHandler func(block blocks.Block) (bool, error)
 
 // BuildChangeBlockHandler returns a factory that creates a ChangeBlockHandler
-// for the given FileStore. Callers (codes, next) construct the handler with
+// for the given FileStore. Callers (codes) construct the handler with
 // their in-memory or on-disk store and share the change-application logic,
 // including ApplyError construction for parse and apply failures.
 // ApplyChangeBlockStore is captured from the dscope scope.

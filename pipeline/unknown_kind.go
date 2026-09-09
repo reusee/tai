@@ -28,8 +28,8 @@ ComponentSet.KnownKinds plus kinds processed outside the component loop
 extracts summary blocks before the check. A kindless block is
 unavailable by construction — no component declares an empty kind.
 Sessions that intentionally collect arbitrary block kinds (ping's
-random validation kinds, next's dry-run change deliverable) leave the
-predicate nil and keep the trust-collection behavior.
+random validation kinds) leave the predicate nil and keep the
+trust-collection behavior.
 
 The correction shares the parse-error budget and reset semantics
 (decideBlockCorrectionFeedback): one cumulative per-run budget for all

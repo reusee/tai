@@ -31,8 +31,8 @@ are documented in changes.TheoryOfInMemoryApply.
 The streaming-specific mechanism is a BlockHandler callback on ParserState: when a
 complete change block is parsed during AppendContent, the handler applies it via
 changes.ApplyChangeBlockStore to the MemoryStore. The handler is built by
-changes.BuildChangeBlockHandler, sharing the change-application logic with the next
-command. If a change block fails to apply, the handler returns a *changes.ApplyError
+changes.BuildChangeBlockHandler from the dscope scope. If a change block fails to
+apply, the handler returns a *changes.ApplyError
 so the retry loop provides change-block-specific guidance — the retry discards all
 change blocks from the failed attempt, so the model must re-emit every intended
 change block — and routes the error through OnPhaseError like any other phase error,

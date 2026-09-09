@@ -69,7 +69,7 @@ tai ai -model gemini-pro -shell
 Single-shot task execution:
 
 ```
-tai next -file main.go chat "fix the nil pointer dereference in the init function"
+tai next -file main.go chat "explain the nil pointer dereference in the init function"
 ```
 
 ### Terminal UI

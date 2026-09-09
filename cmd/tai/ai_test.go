@@ -285,9 +285,10 @@ func TestNextSystemPromptListsDisabledBlocks(t *testing.T) {
 	).Call(func(
 		systemPrompt SystemPrompt,
 	) {
-		// The next command runs a single-shot loop with no components, so
-		// the component-driven kinds are never processed here. The notice
-		// states that explicitly. See components.TheoryOfDisabledBlocks
+		// The next command is a text-output command: it runs a
+		// single-shot loop with no components and no change-block
+		// handler, so no block kind is processed here. The notice states
+		// that explicitly. See components.TheoryOfDisabledBlocks
 		// and TheoryOfNextCommand.
 		prompt := string(systemPrompt)
 		if !strings.Contains(prompt, "Disabled Block Kinds") {
@@ -299,11 +300,11 @@ func TestNextSystemPromptListsDisabledBlocks(t *testing.T) {
 		if !strings.Contains(prompt, "continue blocks are not accepted") {
 			t.Fatal("next disabled-blocks notice should list continue")
 		}
+		if !strings.Contains(prompt, "change blocks are not processed") {
+			t.Fatal("next disabled-blocks notice should list change; the next command never applies change blocks")
+		}
 		if !strings.Contains(prompt, "additional files and network resources are not fetched") {
 			t.Fatal("next disabled-blocks notice should list ingest")
-		}
-		if strings.Contains(prompt, "change blocks are not processed") {
-			t.Fatal("next disabled-blocks notice must not list change; change blocks are applied by the BlockHandler")
 		}
 	})
 }
