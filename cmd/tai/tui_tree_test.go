@@ -657,6 +657,106 @@ func TestTreeHeaderAlignment(t *testing.T) {
 	}
 }
 
+// TestTreeTitleStatus verifies the title status: the viewport's first
+// visible entry resolves to its loop and attempt — the loop alone
+// when no attempt is visible, the pair under a goal run. See
+// TheoryOfTreeTitleStatus.
+func TestTreeTitleStatus(t *testing.T) {
+	tui := newTUIForTest()
+	tr, err := tree.New().WriteAll(
+		tree.WriteOp{Parent: "root", Name: "loop-1", Type: tree.TypeLoop, Author: tree.AuthorProgram, Content: "loop one"},
+		tree.WriteOp{Parent: "loop-1", Name: "attempt-1", Type: tree.TypeAttempt, Author: tree.AuthorProgram, Content: "attempt 1"},
+		tree.WriteOp{Parent: "attempt-1", Name: "user-1", Type: tree.TypeUser, Author: tree.AuthorUser, Content: "task one"},
+		tree.WriteOp{Parent: "root", Name: "loop-2", Type: tree.TypeLoop, Author: tree.AuthorProgram, Content: "loop two"},
+		tree.WriteOp{Parent: "loop-2", Name: "attempt-2", Type: tree.TypeAttempt, Author: tree.AuthorProgram, Content: "attempt 2"},
+		tree.WriteOp{Parent: "attempt-2", Name: "user-2", Type: tree.TypeUser, Author: tree.AuthorUser, Content: "task two"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tui.treeView = tr
+	tui.mu.Lock()
+	defer tui.mu.Unlock()
+	// Record the row ranges at a fixed width: the status maps the
+	// scroll offset onto the recorded rows.
+	tui.treeDisplay(120, panelStyle.BaseBG)
+	// The viewport top sits on loop-1: the loop alone, no attempt
+	// visible.
+	if status := tui.treeTitleStatus(); status != "loop 1" {
+		t.Fatalf("expected the loop-only status at offset 0, got %q", status)
+	}
+	var attemptRow int
+	for _, r := range tui.treeTab.rows {
+		if r.name == "attempt-2" {
+			attemptRow = r.startRow
+		}
+	}
+	tui.scrolls[1].Offset = attemptRow
+	if status := tui.treeTitleStatus(); status != "loop 2 / attempt 2" {
+		t.Fatalf("expected the loop and attempt status, got %q", status)
+	}
+}
+
+// TestTreeTitleStatusFreshRun verifies the fresh-run form: a system
+// node with neither a loop nor an attempt ancestor shows no status,
+// and an attempt under the root shows the attempt alone. See
+// TheoryOfTreeTitleStatus.
+func TestTreeTitleStatusFreshRun(t *testing.T) {
+	tui := newTUIForTest()
+	tr, err := tree.New().WriteAll(
+		tree.WriteOp{Parent: "root", Name: "system-1", Type: tree.TypeSystem, Author: tree.AuthorProgram, Content: "sys"},
+		tree.WriteOp{Parent: "root", Name: "attempt-1", Type: tree.TypeAttempt, Author: tree.AuthorProgram, Content: "attempt 1"},
+		tree.WriteOp{Parent: "attempt-1", Name: "user-1", Type: tree.TypeUser, Author: tree.AuthorUser, Content: "task"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tui.treeView = tr
+	tui.mu.Lock()
+	defer tui.mu.Unlock()
+	tui.treeDisplay(120, panelStyle.BaseBG)
+	if status := tui.treeTitleStatus(); status != "" {
+		t.Fatalf("expected no status on the system node, got %q", status)
+	}
+	var attemptRow int
+	for _, r := range tui.treeTab.rows {
+		if r.name == "attempt-1" {
+			attemptRow = r.startRow
+		}
+	}
+	tui.scrolls[1].Offset = attemptRow
+	if status := tui.treeTitleStatus(); status != "attempt 1" {
+		t.Fatalf("expected the attempt-only status, got %q", status)
+	}
+}
+
+// titleFrameScreen captures the presented frame of one render, so a
+// test reads the exact cells the overlay drew.
+type titleFrameScreen struct {
+	frame taiui.Frame
+}
+
+func (s *titleFrameScreen) Width() int  { return 20 }
+func (s *titleFrameScreen) Height() int { return 1 }
+
+func (s *titleFrameScreen) Present(f taiui.Frame) { s.frame = f }
+
+func TestTreeTitleStatusOverlay(t *testing.T) {
+	screen := &titleFrameScreen{}
+	row := taiui.Text(strings.Repeat(" ", 20), taiui.Box{Top: 0, Left: 0, Bottom: 1, Right: 20})
+	el := treeStatusElement(taiui.Box{Top: 0, Left: 0, Bottom: 1, Right: 20}, "loop 1", false)
+	taiui.Render(taiui.Overlay(row, el), screen)
+	frame := screen.frame
+	if got := frame.Cells[2].Rune; got != 'l' {
+		t.Fatalf("expected the status to start at column 2, got %q", string(got))
+	}
+	for x := 0; x < 2; x++ {
+		if c := frame.Cells[x]; c.Rune != ' ' {
+			t.Fatalf("expected the two leading cells untouched, got %q at column %d", string(c.Rune), x)
+		}
+	}
+}
+
 // TestTreeExpansionWrapsBody verifies the expansion contract: a node
 // collapsed renders one truncated header row, and expanding moves the
 // content — first line included — onto the body rows below the header,

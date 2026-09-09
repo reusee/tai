@@ -185,6 +185,15 @@ func buildRoot(t *TUI, width, height int, displays [3][]taiui.Line) taiui.Elemen
 		if panel != nil {
 			elements = append(elements, panel)
 		}
+		if i == 1 && panel != nil && t.tabs.Expanded[1] {
+			// The Tree tab's title row shows the loop and attempt of
+			// the first visible entry, two cells from the box's left
+			// edge; the two leading cells keep the title's rule. See
+			// TheoryOfTreeTitleStatus.
+			if status := t.treeTitleStatus(); status != "" {
+				elements = append(elements, treeStatusElement(box, status, t.tabs.Focus == 1))
+			}
+		}
 		if inputBar != nil {
 			elements = append(elements, inputBar)
 			if submitGlyphEl != nil {

@@ -10,6 +10,23 @@ import (
 	"github.com/reusee/tai/tree"
 )
 
+// TheoryOfTreeTitleStatus states the Tree tab title's left status. See
+// also TheoryOfTreeTab.
+const TheoryOfTreeTitleStatus = `
+Tree tab title status theory:
+- The Tree tab's title row shows, two cells from the box's left edge,
+  the loop and attempt of the first visible entry: the node whose row
+  range contains the pane's scroll offset, walked up to its loop
+  ancestor (a loop-N node, number parsed from the name) and attempt
+  ancestor (an attempt node, number parsed from its content). An
+  available part renders alone; neither present leaves the title
+  unchanged.
+- The two leading cells stay untouched, keeping the title row's dim
+  strike-through rule intact at the box edge. The status is an overlay
+  element over the panel, derived per render like the input bar and
+  the submit glyph.
+`
+
 const TheoryOfTreeTab = `
 Tree tab theory (cmd/tai):
 - The Tree tab renders the session tree pipeline.Run yields: setTree
@@ -1058,4 +1075,98 @@ func (t *TUI) sectionOfTreeNode(node *tree.Node) int {
 		return -1
 	}
 	return t.eventSections[outputSectionOwner{attempt: num}]
+}
+
+// treeTitleStatus renders the Tree tab title's left status: the loop
+// and attempt of the first visible entry, or "" when the tree is
+// empty or the first visible node carries neither. The caller holds
+// t.mu. See TheoryOfTreeTitleStatus.
+func (t *TUI) treeTitleStatus() string {
+	if t.treeView == nil {
+		return ""
+	}
+	offset := t.scrolls[1].Offset
+	for _, r := range t.treeTab.rows {
+		if offset >= r.startRow && offset < r.endRow {
+			n, ok := t.treeView.Node(r.name)
+			if !ok {
+				return ""
+			}
+			return treeTitleStatusOf(t.treeView, n)
+		}
+	}
+	return ""
+}
+
+// treeTitleStatusOf walks n's ancestors for its loop and attempt: a
+// loop node's number comes from its loop-N name, an attempt node's
+// from its "attempt N" content. Available parts join with " / "; none
+// renders "". See TheoryOfTreeTitleStatus.
+func treeTitleStatusOf(tr *tree.Tree, n *tree.Node) string {
+	loop, attempt := 0, 0
+	cur := n
+	for {
+		if cur.Type == tree.TypeLoop && loop == 0 {
+			if num, ok := treeLoopNumberOf(cur); ok {
+				loop = num
+			}
+		}
+		if cur.Type == tree.TypeAttempt && attempt == 0 {
+			if num, ok := attemptNumberOf(cur.Content); ok {
+				attempt = num
+			}
+		}
+		if (loop != 0 && attempt != 0) || cur.Parent == "" {
+			break
+		}
+		parent, ok := tr.Node(cur.Parent)
+		if !ok {
+			break
+		}
+		cur = parent
+	}
+	switch {
+	case loop != 0 && attempt != 0:
+		return fmt.Sprintf("loop %d / attempt %d", loop, attempt)
+	case loop != 0:
+		return fmt.Sprintf("loop %d", loop)
+	case attempt != 0:
+		return fmt.Sprintf("attempt %d", attempt)
+	}
+	return ""
+}
+
+// treeLoopNumberOf parses the loop number from a loop node's loop-N
+// name. See TheoryOfTreeTitleStatus.
+func treeLoopNumberOf(n *tree.Node) (int, bool) {
+	var num int
+	if _, err := fmt.Sscanf(n.Name, "loop-%d", &num); err == nil {
+		return num, true
+	}
+	return 0, false
+}
+
+func treeStatusElement(box taiui.Box, status string, focused bool) taiui.Element {
+	base := panelStyle.BaseBG
+	fg := panelStyle.LabelFG
+	if focused {
+		base = panelStyle.FocusBG
+		fg = panelStyle.FocusLabelFG
+	}
+	// Text's variadic list sits at the first parameter, so the status
+	// string joins the slice as its first element and the list spreads
+	// once; a mixed form (leading string plus a spread) does not
+	// compile.
+	specs := []any{
+		status,
+		taiui.Box{Top: box.Top, Left: box.Left + 2, Bottom: box.Top + 1, Right: box.Right},
+		taiui.FGColor(fg),
+	}
+	if base != taiui.NoColor {
+		specs = append(specs, taiui.BGColor(base))
+	}
+	if focused {
+		specs = append(specs, taiui.Bold(true))
+	}
+	return taiui.Text(specs...)
 }
