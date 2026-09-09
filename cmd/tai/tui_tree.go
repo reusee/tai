@@ -88,8 +88,9 @@ Tree tab theory (cmd/tai):
   truncated — single-line content fitting the pane — carries a blank
   slot, so the content column stays aligned on every row. A press on
   the fold column's cells on a node's first display row toggles the
-  node; the slot width is the glyph's display width, so the press
-  maps onto the rendered glyph exactly.
+  node; the slot spans the fold glyph plus one adjacent cell — two
+  terminal cells — so the press target is easy to hit and maps onto
+  the rendered slot exactly.
 - The fold control follows the content: a node whose header row
   scrolled above the viewport top carries its fold glyph on its first
   visible display row — clamped to the viewport top — so an expanded
@@ -248,10 +249,11 @@ func treeControlRow(r treeRowRange, offset, paneHeight int) (int, bool) {
 // treeFloatGlyph replaces a display line's fold column with the fold
 // glyph, reporting whether the replacement applied: the column must
 // hold blank cells — a body row's leading indent — so the glyph never
-// overwrites content and the display layout is preserved. A pane too
-// narrow for the content column yields no replacement. See
-// TheoryOfTreeTab.
-func treeFloatGlyph(line taiui.Line, foldX, foldWidth int, glyph string) (taiui.Line, bool) {
+// overwrites content and the display layout is preserved. The glyph
+// is padded to the slot width with the given options, so the replaced
+// span keeps its display width. A pane too narrow for the content
+// column yields no replacement. See TheoryOfTreeTab.
+func treeFloatGlyph(line taiui.Line, foldX, foldWidth int, glyph string, options displaywidth.Options) (taiui.Line, bool) {
 	if foldX < 0 || foldX+foldWidth > len(line.Text) {
 		return line, false
 	}
@@ -260,7 +262,8 @@ func treeFloatGlyph(line taiui.Line, foldX, foldWidth int, glyph string) (taiui.
 			return line, false
 		}
 	}
-	line.Text = line.Text[:foldX] + glyph + line.Text[foldX+foldWidth:]
+	w := options.String(glyph)
+	line.Text = line.Text[:foldX] + glyph + strings.Repeat(" ", foldWidth-w) + line.Text[foldX+foldWidth:]
 	return line, true
 }
 
@@ -325,11 +328,21 @@ func treeAlignmentsOf(tr *tree.Tree, options displaywidth.Options) treeAlignment
 }
 
 // treeFoldSlotWidth returns the display width of one fold slot: the
-// fold glyph's width under the given options, so the slot in the
-// header text matches the rendered glyph exactly. See
-// TheoryOfTreeTab.
+// fold glyph plus one adjacent clickable cell, so the slot spans two
+// terminal cells and the press target is easy to hit. The header
+// text, the float replacement, and the fold-column hit test derive
+// from it, so what is drawn is what is pressed. See TheoryOfTreeTab.
 func treeFoldSlotWidth(options displaywidth.Options) int {
-	return options.String(treeFoldGlyph(false))
+	return options.String(treeFoldGlyph(false)) + 1
+}
+
+// treeFoldSlot returns the header text of one expandable node's fold
+// slot: the fold glyph padded to the slot width, so the slot spans
+// the glyph plus one adjacent clickable cell. See TheoryOfTreeTab.
+func treeFoldSlot(expanded bool, options displaywidth.Options) string {
+	w := treeFoldSlotWidth(options)
+	glyph := treeFoldGlyph(expanded)
+	return glyph + strings.Repeat(" ", w-options.String(glyph))
 }
 
 // attemptNumberOf parses the attempt number from an attempt node's
@@ -610,18 +623,6 @@ func (t *TUI) treeDisplay(contentWidth int, base taiui.Color) []taiui.Line {
 	return out
 }
 
-// treeNodeLines renders one node's display lines: the one-row header
-// and, when expanded, the full content starting on the row below the
-// header. The collapsed header carries the first content line as its
-// preview at the content column; the expanded header drops the
-// preview, so the content — first line included — always begins on
-// the next row. Body lines start at the content column and wrap at
-// its width instead of truncating. The second result reports the
-// node's expandability at this width: multi-line content, or a
-// collapsed header truncated on non-empty content. Lines are cached
-// per width, depth, shade, expansion, and alignment, so a frame
-// re-renders only nodes that are new or repositioned. The caller
-// holds t.mu. See TheoryOfTreeTab.
 func (t *TUI) treeNodeLines(n *tree.Node, depth int, shade taiui.Color, contentWidth int, options displaywidth.Options, align treeAlignments) ([]taiui.Line, bool) {
 	expanded := t.treeTab.expanded[n.Name]
 	if c, ok := t.treeTab.cache[n.Name]; ok &&
@@ -659,7 +660,7 @@ func (t *TUI) treeNodeLines(n *tree.Node, depth int, shade taiui.Color, contentW
 		(options.String(collapsedHeader) > measureWidth && first != "")
 	slot := blankSlot
 	if expandable {
-		slot = treeFoldGlyph(expanded)
+		slot = treeFoldSlot(expanded, options)
 	}
 	header := collapsedHeader
 	if expanded || expandable {
@@ -905,13 +906,6 @@ func treeFoldGlyph(expanded bool) string {
 	return sectionGlyphCollapsed
 }
 
-// floatTreeControls rewrites the Tree tab's display lines so a node
-// whose header row scrolled above the viewport carries its fold glyph
-// on its first visible display row, at the fold column, replacing
-// blank indent cells. The glyph keeps the row's own colors, so the
-// float blends with the content. It runs after the scroll offsets are
-// updated, so the float reads the offsets the panels render with. The
-// caller holds t.mu. See TheoryOfTreeTab.
 func (t *TUI) floatTreeControls(box taiui.Box, display []taiui.Line) {
 	if !t.tabs.Expanded[1] || t.treeView == nil {
 		return
@@ -936,7 +930,7 @@ func (t *TUI) floatTreeControls(box taiui.Box, display []taiui.Line) {
 			continue
 		}
 		glyph := treeFoldGlyph(t.treeTab.expanded[r.name])
-		if line, ok := treeFloatGlyph(display[controlRow], foldX, foldWidth, glyph); ok {
+		if line, ok := treeFloatGlyph(display[controlRow], foldX, foldWidth, glyph, options); ok {
 			display[controlRow] = line
 		}
 	}

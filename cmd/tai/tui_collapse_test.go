@@ -7,8 +7,10 @@ import (
 	"testing"
 
 	"github.com/clipperhouse/displaywidth"
+	"github.com/gdamore/tcell/v3/vt"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/taiui"
+	"github.com/reusee/tai/tree"
 )
 
 // displayTexts extracts the text of each display line.
@@ -538,4 +540,200 @@ func TestControlStripText(t *testing.T) {
 	if strip != "▾ ✕ " {
 		t.Fatalf("unexpected strip %q", strip)
 	}
+}
+
+// TestTabTitleButtons verifies the per-tab button sets: the Output tab
+// carries the section navigation and the sections collapse-all, the
+// Tree tab the view cycling and the nodes collapse-all, and the Logs
+// tab none. See TheoryOfTitleButtons.
+func TestTabTitleButtons(t *testing.T) {
+	if got := tabTitleButtons(0); len(got) != 3 {
+		t.Fatalf("expected 3 Output buttons, got %+v", got)
+	}
+	if got := tabTitleButtons(1); len(got) != 2 {
+		t.Fatalf("expected 2 Tree buttons, got %+v", got)
+	}
+	if got := tabTitleButtons(2); len(got) != 0 {
+		t.Fatalf("expected no Logs buttons, got %+v", got)
+	}
+}
+
+// TestTitleButtonLayout pins the right-to-left layout of the title
+// row's buttons: the two rightmost cells stay reserved, each button
+// occupies its two-cell label, adjacent buttons carry no separator
+// cells, and a box too narrow drops the buttons that do not fit. See
+// TheoryOfTitleButtons.
+func TestTitleButtonLayout(t *testing.T) {
+	buttons := tabTitleButtons(0)
+	slots := titleButtonLayout(taiui.Box{Top: 0, Left: 0, Bottom: 1, Right: 40},
+		displaywidth.Options{}, buttons)
+	want := []titleButtonSlot{
+		{index: 0, x0: 32, x1: 34},
+		{index: 1, x0: 34, x1: 36},
+		{index: 2, x0: 36, x1: 38},
+	}
+	if !slices.Equal(slots, want) {
+		t.Fatalf("unexpected layout: %+v", slots)
+	}
+
+	// A box five cells wide holds exactly one button.
+	slots = titleButtonLayout(taiui.Box{Top: 0, Left: 0, Bottom: 1, Right: 5},
+		displaywidth.Options{}, buttons)
+	if len(slots) != 1 || slots[0].x0 != 1 || slots[0].x1 != 3 {
+		t.Fatalf("unexpected narrow-box layout: %+v", slots)
+	}
+
+	// A box narrower than one button drops every button; the reserved
+	// cells stay.
+	slots = titleButtonLayout(taiui.Box{Top: 0, Left: 0, Bottom: 1, Right: 3},
+		displaywidth.Options{}, buttons)
+	if len(slots) != 0 {
+		t.Fatalf("expected no slots in a 3-wide box, got %+v", slots)
+	}
+}
+
+// TestTitleButtonsRendering verifies the rendered labels and the two
+// reserved cells: the buttons draw right-aligned and adjacent — no
+// separator cells — before the reserved stretch, and hovering a
+// button renders it reversed. See TheoryOfTitleButtons.
+func TestTitleButtonsRendering(t *testing.T) {
+	tui := newTUIForTest()
+	tui.interactive = false
+	box := taiui.Box{Top: 0, Left: 0, Bottom: 1, Right: 40}
+	tui.mu.Lock()
+	el := tui.titleButtonsElement(0, box)
+	tui.mu.Unlock()
+	if el == nil {
+		t.Fatal("expected the Output tab's title buttons element")
+	}
+	screen := &panelTestScreen{width: 40, height: 1}
+	taiui.Render(el, screen)
+	frame := screen.frames[len(screen.frames)-1]
+	if frame.Cells[32].Rune != '上' || frame.Cells[34].Rune != '下' || frame.Cells[36].Rune != '收' {
+		t.Fatalf("unexpected button labels: %q %q %q",
+			string(frame.Cells[32].Rune), string(frame.Cells[34].Rune), string(frame.Cells[36].Rune))
+	}
+	for _, x := range []int{38, 39} {
+		if frame.Cells[x].Set {
+			t.Fatalf("cell %d must stay reserved for the title rule", x)
+		}
+	}
+
+	// Hovering the leftmost button renders it reversed.
+	tui.mu.Lock()
+	tui.ctlHover = true
+	tui.mouseReporting = true
+	tui.ctlHoverX = 32
+	tui.ctlHoverY = 0
+	tui.mu.Unlock()
+	tui.mu.Lock()
+	el = tui.titleButtonsElement(0, box)
+	tui.mu.Unlock()
+	screen = &panelTestScreen{width: 40, height: 1}
+	taiui.Render(el, screen)
+	frame = screen.frames[len(screen.frames)-1]
+	hovered := frame.Cells[32].Style.Attr()&vt.Reverse != 0
+	if !hovered {
+		t.Fatal("expected the hovered button to render reversed")
+	}
+}
+
+// TestTUITitleButtonClicks verifies the pointer path: a press on a
+// title button runs its action through the shared dispatch and
+// preempts the ordinary press handling, so the tab itself is not
+// toggled; a press outside the buttons keeps the strip semantics.
+// See TheoryOfTitleButtons.
+func TestTUITitleButtonClicks(t *testing.T) {
+	t.Run("OutputCollapseAll", func(t *testing.T) {
+		tui := newTUIForTest()
+		tui.interactive = false
+		tui.width, tui.height = 40, 10
+		tui.writeOutputPart(generators.RoleUser, outputColorUserLine, false, "q\n")
+		tui.writeOutputPart(generators.RoleModel, outputColorThoughtLine, true, "t1\nt2\n")
+		tui.writeOutputPart(generators.RoleModel, taiui.NoColor, false, "answer\n")
+		box := tui.tabs.Boxes(40, 10)[0]
+		// The collapse-all button occupies [Right-4, Right-2).
+		tui.handleMouseKey(fmt.Sprintf("mouse-left@%d,%d", box.Right-3, box.Top))
+		tui.mu.Lock()
+		collapsed := tui.outputSections[0].collapsed &&
+			tui.outputSections[1].collapsed && tui.outputSections[2].collapsed
+		expanded := tui.tabs.Expanded[0]
+		tui.mu.Unlock()
+		if !collapsed {
+			t.Fatal("expected the press on the collapse-all button to fold the sections")
+		}
+		if !expanded {
+			t.Fatal("the button press must not toggle the tab")
+		}
+
+		// A second press restores the sections.
+		tui.handleMouseKey(fmt.Sprintf("mouse-left@%d,%d", box.Right-3, box.Top))
+		tui.mu.Lock()
+		defer tui.mu.Unlock()
+		if tui.outputSections[0].collapsed {
+			t.Fatal("expected the second press to restore the sections")
+		}
+	})
+
+	t.Run("OutputNextSection", func(t *testing.T) {
+		tui := newTUIForTest()
+		tui.interactive = false
+		tui.width, tui.height = 80, 10
+		for i := 0; i < 20; i++ {
+			tui.write([]byte(fmt.Sprintf("line %02d\n", i)))
+		}
+		tui.writeColored(outputColorThoughtLine, []byte("a thought\n"))
+		tui.scrolls[0].Follow = true
+		box := tui.tabs.Boxes(80, 10)[0]
+		// The next-section button occupies [Right-6, Right-4).
+		tui.handleMouseKey(fmt.Sprintf("mouse-left@%d,%d", box.Right-5, box.Top))
+		tui.mu.Lock()
+		defer tui.mu.Unlock()
+		if tui.scrolls[0].Follow {
+			t.Fatal("the next-section button must stop following the tail")
+		}
+		tail := taiui.ClampOffset(1<<30, len(wrappedDisplay(tui, 0, box)), tui.tuiPaneHeight(0, box))
+		if tui.scrolls[0].Offset == tail {
+			t.Fatal("the next-section button must move the view off the tail")
+		}
+	})
+
+	t.Run("TreeCycle", func(t *testing.T) {
+		tui := newTUIForTest()
+		tui.interactive = false
+		tui.width, tui.height = 40, 10
+		tui.tabs.Expanded = []bool{true, true, false}
+		tui.tabs.HasContent = []bool{true, true, false}
+		tui.tabs.Focus = 1
+		tr, err := tree.New().Write("root", "finish-1", tree.TypeFinish, tree.AuthorProgram, "finish: stop")
+		if err != nil {
+			t.Fatal(err)
+		}
+		tui.setTree(tr)
+		before := tui.treeTab.mode
+		box := tui.tabs.Boxes(40, 10)[1]
+		// The cycle button occupies [Right-6, Right-4): the layout lays
+		// the buttons right to left, so collapse sits right of cycle.
+		tui.handleMouseKey(fmt.Sprintf("mouse-left@%d,%d", box.Right-5, box.Top))
+		tui.mu.Lock()
+		defer tui.mu.Unlock()
+		if tui.treeTab.mode == before {
+			t.Fatal("expected the press on the cycle button to advance the projection")
+		}
+	})
+
+	t.Run("OutsideButtonsKeepsStrip", func(t *testing.T) {
+		tui := newTUIForTest()
+		tui.interactive = false
+		tui.width, tui.height = 40, 10
+		tui.tabs.Expanded = []bool{true, false, false}
+		tui.tabs.HasContent = []bool{true, false, false}
+		tui.tabs.Focus = 0
+		// A press on the reserved cells is not a button: the ordinary
+		// strip semantics toggle the focused tab.
+		tui.handleMouseKey("mouse-left@39,0")
+		if tui.tabs.Expanded[0] {
+			t.Fatal("expected the press outside the buttons to keep the strip semantics")
+		}
+	})
 }

@@ -275,9 +275,6 @@ func submitGlyph(waiting bool) (string, taiui.Color) {
 	return "↵", color.PaletteColor(8)
 }
 
-// dispatchControlBar runs one bar action. It runs without t.mu held:
-// the actions take the lock themselves. The bool reports a confirmed
-// quit. See TheoryOfControlBar.
 func (t *TUI) dispatchControlBar(action controlBarAction) bool {
 	switch action {
 	case controlPrevSections:
@@ -302,6 +299,10 @@ func (t *TUI) dispatchControlBar(action controlBarAction) bool {
 		t.setTreeView(treeViewProgram)
 	case controlTreeViewUser:
 		t.setTreeView(treeViewUser)
+	case controlTreeViewCycle:
+		t.cycleTreeView()
+	case controlCollapseTree:
+		t.collapseAllTreeNodes()
 	case controlHelpToggle:
 		t.toggleHelp()
 	case controlQuit:

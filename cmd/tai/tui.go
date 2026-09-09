@@ -303,6 +303,9 @@ press handling (see TheoryOfOutputControls). In the Tree tab, a press
 on the fold column — the fold slot right of the category/type columns —
 toggles the node under the control, preempting the ordinary press
 handling like the Output tab's control column (see TheoryOfTreeTab).
+On any expanded tab's title row, a press on one of the tab's
+operation buttons runs the button's action, preempting the ordinary
+press handling (see TheoryOfTitleButtons).
 Presses outside every
 panel, middle and right presses are ignored; no-button motion
 (mode 1003) drives the control column's hover strip and the menu bar's
@@ -1505,6 +1508,14 @@ func (t *TUI) handleMouseKey(key string) bool {
 				// hands the keyboard back to navigation. See
 				// TheoryOfTUIChatInput.
 				t.inputFocused = false
+				// A press on a tab title's operation button runs the
+				// button's action through the shared dispatch,
+				// preempting the ordinary press handling. See
+				// TheoryOfTitleButtons.
+				if btnAction, hit := t.titleButtonHitLocked(x, y); hit {
+					action, dispatchBar = btnAction, true
+					break
+				}
 				// A press on the Output tab's control column toggles
 				// the section under the control instead of driving tab
 				// interaction. See TheoryOfOutputControls.

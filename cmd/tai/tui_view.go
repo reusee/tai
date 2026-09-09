@@ -124,6 +124,7 @@ var tuiHelpLines = []string{
 	"output column\tclick ▸ / ▾ at a section's first row to collapse / expand it",
 	"tree row\tclick 👉 on an attempt line to jump the Output tab to its output section; double-click a node to expand or collapse it",
 	"tree column\tclick ▸ / ▾ on an expandable node's first row (or its first visible row when scrolled) to collapse / expand it",
+	"title buttons\tclick the labels at an expanded tab title's right edge: Output 上下收, Tree 换收",
 	"wheel / drag\tscroll pane under cursor",
 	"m\ttoggle mouse reporting (off: select & copy in the terminal)",
 	"q / Ctrl-C\tquit (press again to confirm)",
@@ -192,6 +193,14 @@ func buildRoot(t *TUI, width, height int, displays [3][]taiui.Line) taiui.Elemen
 			// TheoryOfTreeTitleStatus.
 			if status := t.treeTitleStatus(); status != "" {
 				elements = append(elements, treeStatusElement(box, status, t.tabs.Focus == 1))
+			}
+		}
+		if panel != nil && t.tabs.Expanded[i] {
+			// The title row's operation buttons draw over the panel,
+			// right-aligned before the two reserved cells. See
+			// TheoryOfTitleButtons.
+			if el := t.titleButtonsElement(i, box); el != nil {
+				elements = append(elements, el)
 			}
 		}
 		if inputBar != nil {
