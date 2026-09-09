@@ -11,6 +11,7 @@ import (
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/gotools"
 	"github.com/reusee/tai/nets"
+	"github.com/reusee/tai/pipeline/codetypes"
 )
 
 const TheoryOfCodesComponents = `
@@ -98,9 +99,18 @@ configured; it lists the hidden import-path patterns so the model neither
 fetches their symbols nor reads their files. See
 gotools.TheoryOfHiddenPackages.
 
-ExtraSystemPrompt is also a prompt-only Component. The components carry no
-reminder text of their own; the late reminder role belongs to the system
-prompt restate (see TheoryOfComponents in the components package).
+ExtraSystemPrompt is also a prompt-only Component, and the Go-specific
+entries are gated on the session: the codes pipeline serves both
+auto-detected default commands, so the Go-only configuration
+(go.extra_system_prompt and go.family_extra_system_prompt) is appended
+only when the session's parts provider is gotools.PartsProvider; the
+non-Go any_text command, whose provider is anytexts.PartsProvider, never
+carries them. The provider is the same fact the default-command
+detection selects on, resolved from the scope the command forked, so it
+is the gate and no separate value must be kept in sync with it. The
+components carry no reminder text of their own; the late reminder role
+belongs to the system prompt restate (see TheoryOfComponents in the
+components package).
 
 The generation loop checks for the summary block to distinguish a normally
 ended attempt from truncated or non-conforming output: no other block kind
@@ -144,8 +154,10 @@ const TheoryOfFamilyExtraSystemPrompt = `
 Family-specific extra system prompts extend the generic extra_system_prompt
 mechanism with prompts keyed by the model family. The top-level
 family_extra_system_prompt applies to every generation command (codes, ai,
-next); the go.family_extra_system_prompt applies only when the codes
-generation pipeline is active (the auto-detected default commands),
+next); the go.family_extra_system_prompt applies only to Go sessions — the
+codes generation pipeline serves both auto-detected default commands, and
+the Go-only entries are appended only when the session's parts provider is
+gotools.PartsProvider, so the non-Go any_text command is excluded —
 mirroring the split between
 extra_system_prompt and go.extra_system_prompt. Prompts are selected by the
 family of the resolved default generator (generators.Spec.Family) and are
@@ -230,6 +242,7 @@ func NewIngestComponent(lspHandler blocks.LSPHandler) components.Component {
 }
 
 func (Module) CodesComponents(
+	partsProvider codetypes.PartsProvider,
 	extra flags.ExtraSystemPrompt,
 	goExtra gotools.ExtraSystemPrompt,
 	familyExtra flags.FamilyExtraSystemPrompt,
@@ -243,6 +256,18 @@ func (Module) CodesComponents(
 	hiddenPatterns gotools.HiddenPatterns,
 	lspHandler blocks.LSPHandler,
 ) CodesComponents {
+	// The Go-specific extra prompts apply only to Go sessions. The codes
+	// pipeline serves both auto-detected default commands: go_module
+	// forks the Go parts provider, any_text forks the anytexts provider.
+	// The session's provider is the gate — it is the same fact the
+	// default-command detection selects on, resolved from the scope the
+	// command forked, so no separate value must be kept in sync with it.
+	// See TheoryOfCodesComponents.
+	isGoSession := false
+	if _, ok := partsProvider.(gotools.PartsProvider); ok {
+		isGoSession = true
+	}
+
 	var comps components.ComponentSet
 
 	// The unified block format prompt is the first prompt-only component:
@@ -434,23 +459,24 @@ func (Module) CodesComponents(
 
 	// Go-specific extra system prompt from configuration
 	// (go.extra_system_prompt): prompt-only Component, appended after the
-	// top-level extra prompts so the go project context is introduced
-	// whenever the codes generation pipeline is active (go, any, goal
-	// commands). The ai command uses AIComponents and is unaffected.
+	// top-level extra prompts, and gated on the Go session: the non-Go
+	// any_text command's session never carries Go-specific instructions.
 	// See gotools.ExtraSystemPrompt.
-	for _, prompt := range goExtra {
-		if prompt != "" {
-			comps = append(comps, components.Component{
-				PromptSection: prompt,
-			})
+	if isGoSession {
+		for _, prompt := range goExtra {
+			if prompt != "" {
+				comps = append(comps, components.Component{
+					PromptSection: prompt,
+				})
+			}
 		}
 	}
 
-	// Family-specific extra system prompts: top-level and go-specific
-	// prompts keyed by the model family. The family is resolved from the
-	// scope via generators.ModelFamily; when the family matches a key, the
-	// corresponding prompts are appended as prompt-only components
-	// after the generic extra prompts. See
+	// Family-specific extra system prompts: top-level prompts keyed by
+	// the model family; when the family matches a key, the corresponding
+	// prompts are appended as prompt-only components after the generic
+	// extra prompts. The Go-specific family prompts are gated on the Go
+	// session like the go extra prompts above. See
 	// TheoryOfFamilyExtraSystemPrompt.
 	for _, prompt := range familyExtra[string(modelFamily)] {
 		if prompt != "" {
@@ -459,11 +485,13 @@ func (Module) CodesComponents(
 			})
 		}
 	}
-	for _, prompt := range goFamilyExtra[string(modelFamily)] {
-		if prompt != "" {
-			comps = append(comps, components.Component{
-				PromptSection: prompt,
-			})
+	if isGoSession {
+		for _, prompt := range goFamilyExtra[string(modelFamily)] {
+			if prompt != "" {
+				comps = append(comps, components.Component{
+					PromptSection: prompt,
+				})
+			}
 		}
 	}
 

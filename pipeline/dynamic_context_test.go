@@ -97,6 +97,26 @@ func TestSystemPromptSkeletonFiles(t *testing.T) {
 }
 
 func TestSystemPromptGoExtraSystemPrompt(t *testing.T) {
+	// go.extra_system_prompt enters only Go sessions: the codes pipeline
+	// gates the Go-specific prompts on the session's parts provider being
+	// gotools.PartsProvider, so the any_text default command (a non-Go
+	// project) never carries them.
+	dscope.New(
+		modes.ForTest(t),
+		new(Module),
+	).Fork(
+		func() codetypes.PartsProvider { return gotools.PartsProvider{} },
+		func() gotools.ExtraSystemPrompt {
+			return gotools.ExtraSystemPrompt{"go-specific system prompt"}
+		},
+	).Call(func(
+		prompt SystemPrompt,
+	) {
+		if !strings.Contains(string(prompt), "go-specific system prompt") {
+			t.Fatal("go session must include go.extra_system_prompt content")
+		}
+	})
+
 	dscope.New(
 		modes.ForTest(t),
 		new(Module),
@@ -108,8 +128,8 @@ func TestSystemPromptGoExtraSystemPrompt(t *testing.T) {
 	).Call(func(
 		prompt SystemPrompt,
 	) {
-		if !strings.Contains(string(prompt), "go-specific system prompt") {
-			t.Fatal("system prompt must include go.extra_system_prompt content")
+		if strings.Contains(string(prompt), "go-specific system prompt") {
+			t.Fatal("non-go session must not include go.extra_system_prompt content")
 		}
 	})
 }

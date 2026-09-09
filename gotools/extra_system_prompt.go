@@ -19,6 +19,10 @@ var _ configs.Config = FamilyExtraSystemPrompt(nil)
 // generator's family are appended after the generic go extra prompts.
 // Each config value may be a single string or a list of strings; values
 // from multiple config files are aggregated additively per family.
+// pipeline.CodesComponents injects them only in Go sessions — when the
+// session's parts provider is gotools.PartsProvider — so the non-Go
+// any_text command never carries them. See
+// pipeline.TheoryOfFamilyExtraSystemPrompt.
 type FamilyExtraSystemPrompt map[string][]string
 
 func (Module) FamilyExtraSystemPrompt() FamilyExtraSystemPrompt {
@@ -41,10 +45,11 @@ func (f FamilyExtraSystemPrompt) HandleConfig(path string, values []*cue.Value) 
 // ExtraSystemPrompt configs.Config implementation for the gotools module.
 // The go.extra_system_prompt config path provides Go-specific additional
 // system prompt sections. pipeline.CodesComponents injects this type and
-// appends each entry as a prompt-only Component, so the prompts are
-// introduced whenever the codes generation pipeline is active (the
-// auto-detected default commands). The ai command uses AIComponents and is
-// unaffected. See flags.TheoryOfConfigFlagParity.
+// appends each entry as a prompt-only Component only in Go sessions — when
+// the session's parts provider is gotools.PartsProvider — so the prompts
+// reach the go_module default command and never the non-Go any_text
+// command. The ai command uses AIComponents and is unaffected. See
+// flags.TheoryOfConfigFlagParity.
 type ExtraSystemPrompt []string
 
 func (Module) ExtraSystemPrompt() ExtraSystemPrompt {

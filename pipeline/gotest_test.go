@@ -119,7 +119,7 @@ func TestCodesComponentsIncludesFamilyExtraSystemPrompt(t *testing.T) {
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
-		func() codetypes.PartsProvider { return mockPartsProvider{} },
+		func() codetypes.PartsProvider { return gotools.PartsProvider{} },
 		func() generators.ModelFamily { return "gemini" },
 		func() flags.FamilyExtraSystemPrompt {
 			return flags.FamilyExtraSystemPrompt{"gemini": {"gemini family prompt"}}
@@ -182,6 +182,33 @@ func TestCodesComponentsExcludesNonMatchingFamilyPrompt(t *testing.T) {
 	).Call(func(comps CodesComponents) {
 		if strings.Contains(comps.PromptSections(), "gemini family prompt") {
 			t.Fatal("non-matching family prompt must not be included")
+		}
+	})
+}
+
+func TestCodesComponentsExcludesGoFamilyPromptForNonGoProvider(t *testing.T) {
+	// The Go-specific family prompt is gated on the Go session: a mock
+	// (non-Go) parts provider must exclude it while the top-level family
+	// prompt still applies.
+	dscope.New(
+		modes.ForTest(t),
+		new(Module),
+	).Fork(
+		func() codetypes.PartsProvider { return mockPartsProvider{} },
+		func() generators.ModelFamily { return "gemini" },
+		func() flags.FamilyExtraSystemPrompt {
+			return flags.FamilyExtraSystemPrompt{"gemini": {"gemini family prompt"}}
+		},
+		func() gotools.FamilyExtraSystemPrompt {
+			return gotools.FamilyExtraSystemPrompt{"gemini": {"go gemini family prompt"}}
+		},
+	).Call(func(comps CodesComponents) {
+		prompt := comps.PromptSections()
+		if !strings.Contains(prompt, "gemini family prompt") {
+			t.Fatal("top-level family prompt must apply to non-go sessions too")
+		}
+		if strings.Contains(prompt, "go gemini family prompt") {
+			t.Fatal("non-go session must not include go-specific family prompt")
 		}
 	})
 }
