@@ -13,21 +13,25 @@ Menu bar and mouse-complete interaction theory (cmd/tai):
 - The top screen row is a text menu bar in the style of a desktop
   menu bar: the Sections, View, and Help categories group the
   keyboard actions that had no pointer path, and Quit is a top-level
-  entry. A press on a category title opens its dropdown, pressing it
-  again closes it, a press on another title switches menus, an item
-  press runs the action and closes, and a press anywhere else closes
-  the menu and runs the ordinary press handling. While a dropdown is
-  open, pointer motion over another category title pops up that
-  title's menu, like a desktop menu bar; motion elsewhere keeps the
-  open menu, the top-level quit entry is never triggered by hover,
-  and closing stays press-driven. With the menus, all TUI
-  interactions are reachable by mouse alone.
+  entry. A press on a category title opens its dropdown and arms the
+  menu bar, pressing the open title again closes it and disarms, a
+  press on another title switches menus, an item press runs the
+  action and closes and disarms, a press on a top-level entry closes
+  and disarms, and a press anywhere else closes the menu, disarms,
+  and runs the ordinary press handling. While armed, pointer motion
+  over a category title pops up that title's menu, motion over a
+  top-level entry such as Quit hides the open dropdown without
+  disarming, and motion elsewhere keeps it, like a desktop menu bar;
+  hiding by hover never disarms, so hovering back to a category
+  title re-pops its menu. The top-level quit entry is never
+  triggered by hover, and closing otherwise stays press-driven. With
+  the menus, all TUI interactions are reachable by mouse alone.
 - Pointer hover is affordance only: the category title and the open
   dropdown's item under the pointer render reversed, so the pointer
   target is visible before any press. The highlight runs no action
-  and opens no menu by itself; the motion-driven menu switch while a
-  dropdown is open, the press-driven closing, and the quit entry's
-  hover inertness are unchanged.
+  and opens no menu by itself; the motion-driven menu switch and
+  close while the menu bar is armed, the press-driven closing, and
+  the quit entry's hover inertness are unchanged.
 - The menu bar exists only while Tabs.TopInset reserves a row: the
   tab layout starts below the inset, the bar draws over the reserved
   row, and no coordinate is remapped. Every Boxes consumer, hit test,
@@ -347,8 +351,9 @@ func (t *TUI) helpPressLocked(x, y int) bool {
 // menuDropdownPressLocked handles a left press while a menu is open: a
 // press on an item reports its action, a press on the dropdown's side
 // padding closes the menu without an action, and a press outside the
-// dropdown is not consumed. A consumed press closes the menu. The
-// caller holds t.mu. See TheoryOfControlBar.
+// dropdown is not consumed. A consumed press closes the menu and
+// disarms the hover mode. The caller holds t.mu. See
+// TheoryOfControlBar.
 func (t *TUI) menuDropdownPressLocked(x, y int) (action controlBarAction, consumed bool) {
 	open := t.openMenu
 	if open < 0 || open >= len(menuBarEntries) {
@@ -359,6 +364,7 @@ func (t *TUI) menuDropdownPressLocked(x, y int) (action controlBarAction, consum
 		return "", false
 	}
 	t.openMenu = -1
+	t.menuArmed = false
 	consumed = true
 	row := y - box.Top
 	if row >= 0 && row < len(menuBarEntries[open].items) &&
@@ -409,20 +415,25 @@ func (t *TUI) menuHoverTitleLocked() int {
 }
 
 // menuHoverLocked pops up the menu of the category title under the
-// pointer while a menu is open: motion over another category title
-// switches the open dropdown to that title, like a desktop menu bar;
-// motion elsewhere keeps the open menu, and the top-level quit entry
-// is never triggered by hover. The caller holds t.mu. See
-// TheoryOfControlBar.
+// pointer while the menu bar is armed: motion over another category
+// title switches the open dropdown to that title, motion over a
+// top-level entry hides the open dropdown without disarming, and
+// motion elsewhere keeps it. Hovering back to a category title
+// re-pops its menu. No hover runs an action. The caller holds t.mu.
+// See TheoryOfControlBar.
 func (t *TUI) menuHoverLocked(x, y int) {
-	if t.openMenu < 0 {
+	if !t.menuArmed {
 		return
 	}
 	index, ok := menuBarHit(t.tabs.TopInset, t.width, x, y)
 	if !ok {
 		return
 	}
-	if entry := menuBarEntries[index]; entry.isTopLevel() || index == t.openMenu {
+	if index == t.openMenu {
+		return
+	}
+	if menuBarEntries[index].isTopLevel() {
+		t.openMenu = -1
 		return
 	}
 	t.openMenu = index

@@ -636,6 +636,14 @@ type TUI struct {
 	// runs its action, and a press outside closes it. Guarded by mu.
 	// See TheoryOfControlBar.
 	openMenu int
+	// menuArmed records whether the menu bar's hover mode is armed:
+	// armed by the press that opens a dropdown, released by a
+	// terminating press (the open title again, an item, a top-level
+	// entry, or outside the bar). While armed, hovering a category
+	// title pops up its menu even when a previous hover over a
+	// top-level entry hid the open dropdown. Guarded by mu. See
+	// TheoryOfControlBar.
+	menuArmed bool
 
 	// interactive reports whether this session's app supports
 	// multi-turn conversation (see apps.Interactive): only
@@ -1441,9 +1449,9 @@ func (t *TUI) handleMouseKey(key string) bool {
 	case "motion":
 		// No-button motion (mode 1003) drives the control column's
 		// hover strip: the tracked pointer position decides whether a
-		// control row lays its controls out horizontally. While a
-		// menu is open, motion over another category title pops up
-		// that title's menu. See TheoryOfOutputControls and
+		// control row lays its controls out horizontally. While the
+		// menu bar is armed, motion over another category title pops
+		// up that title's menu. See TheoryOfOutputControls and
 		// TheoryOfControlBar.
 		t.setControlHoverLocked(x, y)
 		t.menuHoverLocked(x, y)
@@ -1461,18 +1469,25 @@ func (t *TUI) handleMouseKey(key string) bool {
 				if entry.action != controlQuit {
 					t.quit.Cancel()
 				}
-				// The action runs after the lock is released: the
-				// dispatched actions take t.mu themselves. See
-				// TheoryOfControlBar.
+				// A top-level entry press closes the menu and disarms
+				// the hover mode. The action runs after the lock is
+				// released: the dispatched actions take t.mu themselves.
+				// See TheoryOfControlBar.
+				t.openMenu = -1
+				t.menuArmed = false
 				action, dispatchBar = entry.action, true
 			} else {
 				// A category title press opens, switches, or closes the
-				// dropdown. See TheoryOfControlBar.
+				// dropdown. Pressing the open title again closes it and
+				// disarms; any other title press opens or switches and
+				// arms. See TheoryOfControlBar.
 				t.quit.Cancel()
 				if t.openMenu == index {
 					t.openMenu = -1
+					t.menuArmed = false
 				} else {
 					t.openMenu = index
+					t.menuArmed = true
 				}
 			}
 		} else if itemAction, consumed := t.menuDropdownPressLocked(x, y); consumed {
@@ -1484,11 +1499,12 @@ func (t *TUI) handleMouseKey(key string) bool {
 			}
 		} else {
 			// A press that is not on the menu bar or the open dropdown
-			// cancels a pending quit confirmation, closes the menu, and
-			// runs the ordinary press handling, like any other key. See
-			// TheoryOfTUI.
+			// cancels a pending quit confirmation, closes the menu,
+			// disarms the hover mode, and runs the ordinary press
+			// handling, like any other key. See TheoryOfTUI.
 			t.quit.Cancel()
 			t.openMenu = -1
+			t.menuArmed = false
 			switch {
 			case t.helpPressLocked(x, y):
 				// A press inside the help overlay closes it. See

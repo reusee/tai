@@ -183,9 +183,6 @@ func TestTUIHelpClickCloses(t *testing.T) {
 	}
 }
 
-// TestTUIMenuBarClicks drives the menu bar through handleMouseKey, the
-// path the session's key loop takes: opening, hover switching, item
-// actions, closing, and the two-press quit. See TheoryOfControlBar.
 func TestTUIMenuBarClicks(t *testing.T) {
 	newBar := func() *TUI {
 		tui := newTUIForTest()
@@ -229,9 +226,32 @@ func TestTUIMenuBarClicks(t *testing.T) {
 		if tui.openMenu != 1 {
 			t.Fatal("motion off the menu bar must keep the open menu")
 		}
+		tui.handleMouseKey("mouse-motion@20,0")
+		if tui.openMenu != 2 {
+			t.Fatal("motion over the Help title must pop up its menu, one item or not")
+		}
 		tui.handleMouseKey("mouse-motion@27,0")
-		if tui.openMenu != 1 {
-			t.Fatal("motion over the quit entry must not switch or trigger it")
+		if tui.openMenu != -1 {
+			t.Fatal("motion over the quit entry must hide the open menu")
+		}
+		if tui.quit.Pending() {
+			t.Fatal("motion over the quit entry must not trigger the quit action")
+		}
+	})
+
+	t.Run("HoverReopensAfterQuitHides", func(t *testing.T) {
+		tui := newBar()
+		tui.handleMouseKey("mouse-left@20,0")
+		if tui.openMenu != 2 {
+			t.Fatalf("the Help title must open its menu, got %d", tui.openMenu)
+		}
+		tui.handleMouseKey("mouse-motion@27,0")
+		if tui.openMenu != -1 {
+			t.Fatal("motion over the quit entry must hide the menu")
+		}
+		tui.handleMouseKey("mouse-motion@20,0")
+		if tui.openMenu != 2 {
+			t.Fatal("motion back to the Help title must re-pop its menu")
 		}
 	})
 
@@ -244,6 +264,10 @@ func TestTUIMenuBarClicks(t *testing.T) {
 		}
 		if tui.openMenu != -1 {
 			t.Fatal("an item press must close the menu")
+		}
+		tui.handleMouseKey("mouse-motion@2,0")
+		if tui.openMenu != -1 {
+			t.Fatal("an item press must end the hover mode: motion must not pop up a menu")
 		}
 	})
 
