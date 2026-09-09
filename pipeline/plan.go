@@ -51,17 +51,19 @@ Plan-driven flow theory:
   add under a done or deleted node is rejected, so a done subtree never
   hides pending work.
 - While the plan carries entries, the program drives the flow: every
-  round's feedback ends with the plan feedback — the next pending entry
+  round's feedback ends with the plan feedback — every pending entry,
   found by depth-first search (descent stops at done, deleted, or
   aborted nodes; a node all of whose children are resolved surfaces
-  itself for the model to mark or refine). A resolved root yields the
-  root prompt; a done root yields the completion notice exactly once
+  itself for the model to mark or refine). The model decides how much
+  to complete per round: batching several entries into one response
+  reduces the number of rounds. A resolved root yields the root
+  prompt; a done root yields the completion notice exactly once
   (loopState.planCompletionNotified, reset when the plan reopens),
   closing the session. A model that does not update the plan is
-  re-provided the same entry — not updating the plan means the work is
-  not done. An entry may span multiple rounds: the same entry is
-  re-provided each round until the plan is updated, and no round
-  demands that the entry's work completes in that response.
+  re-provided the same entries — not updating the plan means the work
+  is not done. Entries may span multiple rounds: the remaining entries
+  are re-provided each round until the plan is updated, and no round
+  demands that every entry completes in that response.
 - The loop's plan root is exempt from new-plan revision:
   writeNamedTreeNodes never aborts it, because it is program-managed
   scaffolding, not a model-authored plan.
@@ -107,11 +109,13 @@ that fits this response — needs no plan, do the work directly; a
 non-simple task — multi-step analysis, implementation, or refactoring
 spanning several rounds — needs a plan: decompose it into entries with
 plan-op add blocks before executing work. When the plan carries
-entries, the program provides the next pending entry each round as
-user content; work on the entry and update the plan with plan-op
-blocks when its work completes. An entry may span several rounds: when
-you do not update the plan, the same entry is provided again next
-round — updating the plan is how completed work is recorded.
+entries, the program provides every pending entry each round as user
+content; work on as many as fit in the response — batching entries
+into one round reduces the number of rounds — and update the plan
+with plan-op blocks as entries complete. Entries may span several
+rounds: when you do not update the plan, the remaining entries are
+provided again next round — updating the plan is how completed work
+is recorded.
 
 **Operations** (parameters in the opening header; the body carries the text):
 - add: create an entry. name=<unique-name> is required; parent=<node-name>
@@ -133,12 +137,13 @@ round — updating the plan is how completed work is recorded.
 **Rules:**
 - The batch is atomic: one invalid operation discards the whole batch
   and no plan change takes effect; the errors are fed back.
-- When the plan carries a pending entry, work on the provided entry in
-  this response (change blocks, tests, and other blocks as needed). An
-  entry may span several rounds: when a response cannot finish it, use
-  a continue block and the program provides the same entry again next
-  round. When the entry's work completes, update the plan: mark the
-  entry done, or refine it into subtasks when it needs splitting.
+- When the plan carries pending entries, work on as many as fit in
+  this response (change blocks, tests, and other blocks as needed) and
+  mark each completed entry done. An entry may span several rounds:
+  when a response cannot finish every entry, use a continue block and
+  the program provides the remaining entries again next round. When an
+  entry's work completes, update the plan: mark the entry done, or
+  refine it into subtasks when it needs splitting.
 - When every subtask of a node is done, the node itself surfaces: mark
   it done or refine it. Mark the plan root done when the whole task is
   complete; the flow then ends.
@@ -149,20 +154,21 @@ round — updating the plan is how completed work is recorded.
 
 const planCompleteNotice = `[Plan] The plan is complete. Close the session: emit the done block when this run's protocol requires one; otherwise end with the summary block. If feedback above shows unfinished work, reopen or restructure the plan with plan-op blocks first.`
 
-const planRootNotice = `[Plan] Every entry of the plan is done. Mark the plan root %q done with a plan-op done block to end the flow, or refine the plan with plan-op add blocks if work remains. End the response with the summary block.`
-
-const planEntryNotice = `[Plan] Current entry: %s
+const planEntriesNotice = `[Plan] Pending plan entries:
 %s
 
-Work on this entry in this response (change blocks, tests, and other
-blocks as needed). An entry may span several rounds: when a response
-cannot finish it, use a continue block and the program provides the
-same entry again next round. When the entry's work completes, update
-the plan: emit a plan-op done block for %s with a completion note, or
-refine %s into subtasks with plan-op add blocks when it needs
-splitting. End the response with the summary block.`
+Work on as many entries as fit in this response (change blocks, tests,
+and other blocks as needed): batching entries into one round reduces
+the number of rounds. When an entry's work completes, update the plan:
+emit a plan-op done block for it with a completion note, or refine it
+into subtasks with plan-op add blocks when it needs splitting. When
+the response cannot finish every entry, use a continue block and the
+remaining entries are provided next round. End the response with the
+summary block.`
 
-const goalPlanModeNote = `[Plan] The plan tree is available in this loop: for a non-simple task, decompose it into plan entries with plan-op add blocks and work through the entries — the program provides the next pending entry each round; a simple task needs no plan, do the work directly. Each loop maintains its own plan under its loop node; plans do not carry across loops — cross-loop context arrives through the summaries and feedback. Continue blocks remain available for chaining rounds as the goal protocol above describes. Marking the plan root done completes the plan flow; while the plan still carries pending entries, a done block does not end the run — complete every plan entry (done or deleted) before emitting the done block; the run still ends only per the goal protocol above.`
+const planRootNotice = `[Plan] Every entry of the plan is done. Mark the plan root %q done with a plan-op done block to end the flow, or refine the plan with plan-op add blocks if work remains. End the response with the summary block.`
+
+const goalPlanModeNote = `[Plan] The plan tree is available in this loop: for a non-simple task, decompose it into plan entries with plan-op add blocks and work through the entries — the program provides every pending entry each round, so batch as many entries as fit into each response to minimize rounds; a simple task needs no plan, do the work directly. Each loop maintains its own plan under its loop node; plans do not carry across loops — cross-loop context arrives through the summaries and feedback. Continue blocks remain available for chaining rounds as the goal protocol above describes. Marking the plan root done completes the plan flow; while the plan still carries pending entries, a done block does not end the run — complete every plan entry (done or deleted) before emitting the done block; the run still ends only per the goal protocol above.`
 
 const goalDonePendingPlanPrompt = `[System note: The previous goal loop emitted a done block while its own plan still carried pending entries; the done block was ignored because the declared completion was premature. This loop starts with its own plan: assess the remaining work against the goal, plan it with plan-op add blocks when non-trivial, complete it, and only then emit the done block.]`
 
@@ -240,42 +246,49 @@ func rejectDeletedPlanEntry(n *tree.Node, name string) error {
 	return nil
 }
 
-// nextPendingPlanEntry returns the plan node the model works on next:
-// the first node in depth-first order that carries no done or deleted
-// mark while every plan-entry child of it is resolved. A done root
-// reports complete; a root without entries reports empty. See
-// TheoryOfPlan.
-func nextPendingPlanEntry(tr *tree.Tree, root string) (name, content string, complete, empty bool) {
+// pendingPlanEntries returns every plan node the model can work on:
+// depth-first, in insertion order, the nodes carrying no done,
+// deleted, or abort mark whose every plan-entry child is resolved. A
+// done root reports complete; a root without entries reports empty.
+// See TheoryOfPlan.
+func pendingPlanEntries(tr *tree.Tree, root string) (entries []*tree.Node, complete, empty bool) {
 	rootNode, ok := tr.Node(root)
 	if !ok || rootNode.Type != tree.TypePlan {
-		return "", "", false, true
+		return nil, false, true
 	}
 	if planDoneChild(rootNode) != nil {
-		return "", "", true, false
+		return nil, true, false
+	}
+	if planDeletedChild(rootNode) != nil {
+		return nil, false, true
 	}
 	if len(planEntries(rootNode)) == 0 {
-		return "", "", false, true
+		return nil, false, true
 	}
-	var visit func(n *tree.Node) (string, string)
-	visit = func(n *tree.Node) (string, string) {
+	var visit func(n *tree.Node)
+	visit = func(n *tree.Node) {
 		if planDoneChild(n) != nil || planDeletedChild(n) != nil || n.IsAborted() {
-			return "", ""
+			return
 		}
+		surfacedChild := false
 		for _, c := range planEntries(n) {
-			if entryName, entryContent := visit(c); entryName != "" {
-				return entryName, entryContent
+			before := len(entries)
+			visit(c)
+			if len(entries) > before {
+				surfacedChild = true
 			}
 		}
-		return n.Name, n.Content
+		if !surfacedChild {
+			entries = append(entries, n)
+		}
 	}
-	name, content = visit(rootNode)
-	if name == "" {
-		// The root subtree resolved without a done mark (for example an
-		// aborted root): the root surfaces for the model to mark or
-		// refine.
-		return root, rootNode.Content, false, false
+	visit(rootNode)
+	if len(entries) == 0 {
+		// The root subtree resolved or was aborted without a done mark:
+		// the root surfaces for the model to mark or refine.
+		return []*tree.Node{rootNode}, false, false
 	}
-	return name, content, false, false
+	return entries, false, false
 }
 
 // planHasPendingWork reports whether the given loop's plan tree
@@ -288,19 +301,19 @@ func planHasPendingWork(tr *tree.Tree, planRoot string) bool {
 	if tr == nil {
 		return false
 	}
-	_, _, complete, empty := nextPendingPlanEntry(tr, planRoot)
+	_, complete, empty := pendingPlanEntries(tr, planRoot)
 	if empty {
 		return false
 	}
 	return !complete
 }
 
-// planFeedback renders the plan-driven round feedback: the next pending
+// planFeedback renders the plan-driven round feedback: every pending
 // entry, the surfaced-root prompt, or — exactly once — the completion
 // notice of a resolved plan. An empty plan yields no feedback: the
 // model decides whether to plan. See TheoryOfPlan.
 func planFeedback(tr *tree.Tree, root string, completionNotified bool) (parts []generators.Part, complete bool) {
-	name, content, complete, empty := nextPendingPlanEntry(tr, root)
+	entries, complete, empty := pendingPlanEntries(tr, root)
 	if complete {
 		if completionNotified {
 			return nil, true
@@ -310,10 +323,14 @@ func planFeedback(tr *tree.Tree, root string, completionNotified bool) (parts []
 	switch {
 	case empty:
 		return nil, false
-	case name == root:
+	case len(entries) == 1 && entries[0].Name == root:
 		return []generators.Part{generators.Text(fmt.Sprintf(planRootNotice+"\n\n", root))}, false
 	default:
-		return []generators.Part{generators.Text(fmt.Sprintf(planEntryNotice+"\n\n", name, content, name, name))}, false
+		var list strings.Builder
+		for _, e := range entries {
+			fmt.Fprintf(&list, "- %s: %s\n", e.Name, e.Content)
+		}
+		return []generators.Part{generators.Text(fmt.Sprintf(planEntriesNotice+"\n\n", strings.TrimRight(list.String(), "\n")))}, false
 	}
 }
 

@@ -38,7 +38,13 @@ func TestSystemPromptPlan(t *testing.T) {
 	})
 }
 
-func TestNextPendingPlanEntry(t *testing.T) {
+// TestPendingPlanEntries verifies the pending-entry collector behind
+// the plan feedback: every pending entry is returned in depth-first
+// insertion order, done, deleted, and aborted entries are skipped, a
+// parent surfaces when all its plan-entry children are resolved, a
+// done root reports complete, and a root without entries reports
+// empty. See TheoryOfPlan.
+func TestPendingPlanEntries(t *testing.T) {
 	build := func(t *testing.T) (*tree.Tree, string) {
 		tr, err := tree.New().Write("root", planRootNameOf("root"), tree.TypePlan, tree.AuthorProgram, "objective")
 		if err != nil {
@@ -53,6 +59,13 @@ func TestNextPendingPlanEntry(t *testing.T) {
 		}
 		return next
 	}
+	names := func(entries []*tree.Node) []string {
+		var out []string
+		for _, e := range entries {
+			out = append(out, e.Name)
+		}
+		return out
+	}
 
 	tr, root := build(t)
 	next, err := tr.Write(root, "e1", tree.TypePlan, tree.AuthorModel, "first")
@@ -66,57 +79,82 @@ func TestNextPendingPlanEntry(t *testing.T) {
 	}
 	tr = next
 
-	// Depth-first order picks the first pending entry.
-	name, _, complete, empty := nextPendingPlanEntry(tr, root)
-	if complete || empty || name != "e1" {
-		t.Fatalf("expected e1 first, got %q complete=%v empty=%v", name, complete, empty)
+	// Every pending entry is returned in insertion order.
+	entries, complete, empty := pendingPlanEntries(tr, root)
+	if complete || empty {
+		t.Fatalf("expected pending entries, got complete=%v empty=%v", complete, empty)
+	}
+	if got := names(entries); len(got) != 2 || got[0] != "e1" || got[1] != "e2" {
+		t.Fatalf("expected [e1 e2], got %v", got)
 	}
 
-	// A done entry is skipped.
+	// A done entry is skipped; the remaining entry still surfaces.
 	tr = markDone(tr, "e1")
-	name, _, _, _ = nextPendingPlanEntry(tr, root)
-	if name != "e2" {
-		t.Fatalf("expected e2 after e1 done, got %q", name)
+	entries, _, _ = pendingPlanEntries(tr, root)
+	if got := names(entries); len(got) != 1 || got[0] != "e2" {
+		t.Fatalf("expected [e2] after e1 done, got %v", got)
 	}
 
-	// A pending descendant is selected before its parent surfaces.
+	// A pending descendant surfaces before its parent.
 	next, err = tr.Write("e2", "c1", tree.TypePlan, tree.AuthorModel, "child")
 	if err != nil {
 		t.Fatal(err)
 	}
 	tr = next
-	name, _, _, _ = nextPendingPlanEntry(tr, root)
-	if name != "c1" {
-		t.Fatalf("expected descendant c1, got %q", name)
+	entries, _, _ = pendingPlanEntries(tr, root)
+	if got := names(entries); len(got) != 1 || got[0] != "c1" {
+		t.Fatalf("expected descendant c1, got %v", got)
 	}
 
 	// With every child resolved, the parent surfaces for the model to
 	// mark or refine.
 	tr = markDone(tr, "c1")
-	name, _, _, _ = nextPendingPlanEntry(tr, root)
-	if name != "e2" {
-		t.Fatalf("expected surfaced parent e2, got %q", name)
+	entries, _, _ = pendingPlanEntries(tr, root)
+	if got := names(entries); len(got) != 1 || got[0] != "e2" {
+		t.Fatalf("expected surfaced parent e2, got %v", got)
 	}
 
 	// The root surfaces when every entry is resolved but not done.
 	tr = markDone(tr, "e2")
-	name, _, _, _ = nextPendingPlanEntry(tr, root)
-	if name != root {
-		t.Fatalf("expected surfaced root, got %q", name)
+	entries, _, _ = pendingPlanEntries(tr, root)
+	if got := names(entries); len(got) != 1 || got[0] != root {
+		t.Fatalf("expected surfaced root, got %v", got)
 	}
 
 	// A done root reports complete.
 	tr = markDone(tr, root)
-	_, _, complete, _ = nextPendingPlanEntry(tr, root)
+	_, complete, _ = pendingPlanEntries(tr, root)
 	if !complete {
 		t.Fatal("expected complete after the root is done")
 	}
 
 	// A plan root without entries reports empty so the model decomposes.
 	fresh, freshRoot := build(t)
-	_, _, _, empty = nextPendingPlanEntry(fresh, freshRoot)
+	_, _, empty = pendingPlanEntries(fresh, freshRoot)
 	if !empty {
 		t.Fatal("expected empty for a plan root without entries")
+	}
+
+	// An aborted entry is skipped.
+	aborted, abortRoot := build(t)
+	next, err = aborted.Write(abortRoot, "a1", tree.TypePlan, tree.AuthorModel, "aborted")
+	if err != nil {
+		t.Fatal(err)
+	}
+	aborted = next
+	next, err = aborted.Write(abortRoot, "a2", tree.TypePlan, tree.AuthorModel, "kept")
+	if err != nil {
+		t.Fatal(err)
+	}
+	aborted = next
+	next, err = aborted.Abort("a1", tree.AuthorProgram, "wrong direction")
+	if err != nil {
+		t.Fatal(err)
+	}
+	aborted = next
+	entries, _, _ = pendingPlanEntries(aborted, abortRoot)
+	if got := names(entries); len(got) != 1 || got[0] != "a2" {
+		t.Fatalf("expected [a2] with a1 aborted, got %v", got)
 	}
 }
 
@@ -250,6 +288,28 @@ func TestPlanFeedbackNotices(t *testing.T) {
 		t.Fatal("expected the surfaced-root notice")
 	}
 
+	// Several pending entries render as one multi-entry notice listing
+	// every one of them.
+	next, err = tr.Write(root, "e2", tree.TypePlan, tree.AuthorModel, "second")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr = next
+	next, err = tr.Write(root, "e3", tree.TypePlan, tree.AuthorModel, "third")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr = next
+	parts, complete = planFeedback(tr, root, false)
+	if complete || len(parts) != 1 {
+		t.Fatalf("expected one multi-entry part, got %d complete=%v", len(parts), complete)
+	}
+	text := string(parts[0].(generators.Text))
+	if !strings.Contains(text, "Pending plan entries") ||
+		!strings.Contains(text, "- e2:") || !strings.Contains(text, "- e3:") {
+		t.Fatal("expected the multi-entry notice to list every pending entry")
+	}
+
 	// The completion notice fires exactly once: the second call with
 	// notified=true returns no parts.
 	done, _, err := tr.WriteAuto(root, "done", tree.TypeDone, tree.AuthorProgram, "ok")
@@ -362,9 +422,9 @@ func TestPlanSoftDelete(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	name, _, _, _ := nextPendingPlanEntry(tr, planRootNameOf("root"))
-	if name != "e2" {
-		t.Fatalf("expected the deleted subtask to be skipped and e2 to surface, got %q", name)
+	entries, _, _ := pendingPlanEntries(tr, planRootNameOf("root"))
+	if len(entries) != 1 || entries[0].Name != "e2" {
+		t.Fatalf("expected the deleted subtask to be skipped and e2 to surface, got %v", entries)
 	}
 
 	tr, _, err = applyOnePlanOp(tr, blocks.Block{
@@ -376,9 +436,9 @@ func TestPlanSoftDelete(t *testing.T) {
 		t.Fatalf("a deleted subtask must count as resolved for done: %v", err)
 	}
 
-	name, _, _, _ = nextPendingPlanEntry(tr, planRootNameOf("root"))
-	if name != planRootNameOf("root") {
-		t.Fatalf("expected the surfaced root, got %q", name)
+	entries, _, _ = pendingPlanEntries(tr, planRootNameOf("root"))
+	if len(entries) != 1 || entries[0].Name != planRootNameOf("root") {
+		t.Fatalf("expected the surfaced root, got %v", entries)
 	}
 }
 
@@ -416,6 +476,8 @@ func TestRunPlanDrivenRounds(t *testing.T) {
 		}
 		// Four generations: decompose, first entry, second entry plus the
 		// root mark, then the closing round after the completion notice.
+		// The feedback lists every pending entry each round, so the model
+		// could batch several entries into one round.
 		if callCount != 4 {
 			t.Fatalf("expected 4 generations, got %d", callCount)
 		}
@@ -429,7 +491,8 @@ func TestRunPlanDrivenRounds(t *testing.T) {
 			}
 		}
 		s := stateText.String()
-		if !strings.Contains(s, "Current entry: e1") || !strings.Contains(s, "Current entry: e2") {
+		if !strings.Contains(s, "Pending plan entries") ||
+			!strings.Contains(s, "- e1:") || !strings.Contains(s, "- e2:") {
 			t.Fatal("the plan feedback must provide the pending entries across rounds")
 		}
 		if !strings.Contains(s, "The plan is complete") {
