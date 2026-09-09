@@ -230,8 +230,8 @@ no row is reserved.
 const TheoryOfTUIHandoff = `
 The Output tab title reflects the handoff process: while a handoff
 request is being generated (see pipeline.TheoryOfHandoff), the title shows
-"Output (handoff...)" with the active highlight, taking precedence over
-the "generating..." hint. The handoff request's contents reach the Output
+"Output (handoff...)", taking precedence over the "generating..." hint.
+The handoff request's contents reach the Output
 tab through the forked pipeline.HandoffStateDecorator, which observes
 every content part with its role and thinking state, so text and
 reasoning thoughts are highlighted per part and per thought, the same as
@@ -1710,8 +1710,6 @@ func (t *TUI) render() {
 
 var (
 	tabNames = [...]string{"Output", "Tree", "Logs"}
-
-	tabActiveLabelFg int32 = 10
 )
 
 // withTUIOutputObserver connects a pipeline.Run to the TUI: it wraps

@@ -42,7 +42,6 @@ type UIStyle struct {
 	TabFocusedBG     string `json:"tab_focused_bg"`
 	LabelFG          string `json:"label_fg"`
 	FocusLabelFG     string `json:"focus_label_fg"`
-	ActiveLabelFG    string `json:"active_label_fg"`
 	UnseenDotColor   string `json:"unseen_dot_color"`
 	UserColor        string `json:"user_color"`
 	ToolColor        string `json:"tool_color"`
@@ -89,9 +88,6 @@ func (s UIStyle) fillFrom(parsed UIStyle) UIStyle {
 	}
 	if s.FocusLabelFG == "" {
 		s.FocusLabelFG = parsed.FocusLabelFG
-	}
-	if s.ActiveLabelFG == "" {
-		s.ActiveLabelFG = parsed.ActiveLabelFG
 	}
 	if s.UnseenDotColor == "" {
 		s.UnseenDotColor = parsed.UnseenDotColor
@@ -142,7 +138,6 @@ func (s UIStyle) panelStyleOf() taiui.PanelStyle {
 		FocusBG:        parseBGColor(s.TabFocusedBG),
 		LabelFG:        parseFGColor(s.LabelFG, color.PaletteColor(8)),
 		FocusLabelFG:   parseFGColor(s.FocusLabelFG, color.PaletteColor(15)),
-		ActiveLabelFG:  parseFGColor(s.ActiveLabelFG, color.PaletteColor(int(tabActiveLabelFg))),
 		UnseenDotColor: parseFGColor(s.UnseenDotColor, taiui.HexColor(0xd23b3b)),
 	}
 }

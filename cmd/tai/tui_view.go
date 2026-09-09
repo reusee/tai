@@ -11,17 +11,15 @@ import (
 // render() holds the lock while computing the displays and building the
 // root. See TheoryOfTUI.
 
-func outputTabLabel(finished bool, generating bool, handoff bool) (label string, highlight bool) {
+func outputTabLabel(finished bool, generating bool, handoff bool) (label string) {
 	label = tabNames[0]
 	switch {
 	case finished:
 		label = "Output (done)"
 	case handoff:
 		label = "Output (handoff...)"
-		highlight = true
 	case generating:
 		label = "Output (generating...)"
-		highlight = true
 	}
 	return
 }
@@ -139,9 +137,9 @@ func buildRoot(t *TUI, width, height int, displays [3][]taiui.Line) taiui.Elemen
 	boxes := t.tabs.Boxes(width, height)
 	var elements []any
 	for i := range tabNames {
-		label, highlight := tabNames[i], false
+		label := tabNames[i]
 		if i == 0 {
-			label, highlight = outputTabLabel(t.finished, t.generating, t.handoff)
+			label = outputTabLabel(t.finished, t.generating, t.handoff)
 		} else if i == 1 {
 			// The Tree tab's label states the current projection: the
 			// v key cycles it. See TheoryOfTreeTab.
@@ -175,10 +173,10 @@ func buildRoot(t *TUI, width, height int, displays [3][]taiui.Line) taiui.Elemen
 		if i == 0 && t.tabs.Expanded[0] && box.Width() > controlColumnWidth && box.Height() > 0 {
 			// The expanded Output tab reserves its leftmost column for
 			// the section controls. See TheoryOfOutputControls.
-			panel = t.outputPanelView(box, displays[0], label, highlight)
+			panel = t.outputPanelView(box, displays[0], label)
 		} else {
 			panel = taiui.TabPanel(
-				box, tabNames[i], label, highlight,
+				box, tabNames[i], label,
 				t.tabs.Expanded[i], t.tabs.Focus == i, t.tabs.Unseen[i],
 				displays[i], t.scrolls[i], panelStyle,
 			)
@@ -247,8 +245,8 @@ func buildRoot(t *TUI, width, height int, displays [3][]taiui.Line) taiui.Elemen
 // control glyph per visible section. The title row spans the full box
 // width and is not part of the column. The caller holds t.mu. See
 // TheoryOfOutputControls.
-func (t *TUI) outputPanelView(box taiui.Box, display []taiui.Line, label string, highlight bool) taiui.Element {
-	panel := taiui.TabPanel(box, tabNames[0], label, highlight,
+func (t *TUI) outputPanelView(box taiui.Box, display []taiui.Line, label string) taiui.Element {
+	panel := taiui.TabPanel(box, tabNames[0], label,
 		t.tabs.Expanded[0], t.tabs.Focus == 0, t.tabs.Unseen[0], display, t.scrolls[0], panelStyle,
 		taiui.ContentIndent(controlColumnWidth))
 	base := panelStyle.BaseBG

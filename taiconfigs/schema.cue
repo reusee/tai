@@ -271,8 +271,6 @@ tui?: {
 	label_fg?: string
 	// focus_label_fg is the label color of the focused tab.
 	focus_label_fg?: string
-	// active_label_fg highlights a label with an active request.
-	active_label_fg?: string
 	// unseen_dot_color colors the unseen dot on a collapsed strip.
 	unseen_dot_color?: string
 	// user_color colors user input lines.

@@ -125,7 +125,6 @@ func BenchmarkRenderPanelLargeOutput(b *testing.B) {
 	element := Panel(
 		Box{Top: 0, Left: 0, Bottom: 25, Right: 80},
 		"Output",
-		false,
 		lines,
 		50000,
 		false,

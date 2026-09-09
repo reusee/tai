@@ -4,7 +4,7 @@ const TheoryOfTabPanel = `
 taiui tab panel theory:
 - TabPanel builds the element of one tab in a tabbed panel layout: a
   collapsed tab renders its CollapsedPanel strip with the tab title,
-  an expanded tab renders its Panel with the current label, highlight,
+  an expanded tab renders its Panel with the current label,
   content lines, and scroll view. The title/label pair decouples the
   persistent strip label from the dynamic panel label, which may carry
   status suffixes such as "(generating...)".
@@ -35,7 +35,7 @@ taiui tab panel theory:
 // the red-circle unseen emoji on the collapsed strip. The specs apply
 // to the expanded panel; a collapsed strip ignores them. It returns
 // nil for a degenerate box, which layouts skip. See TheoryOfTabPanel.
-func TabPanel(box Box, title, label string, highlight, expanded, focus, unseen bool, lines []Line, scroll ScrollState, style PanelStyle, specs ...any) Element {
+func TabPanel(box Box, title, label string, expanded, focus, unseen bool, lines []Line, scroll ScrollState, style PanelStyle, specs ...any) Element {
 	if box.Width() <= 0 || box.Height() <= 0 {
 		return nil
 	}
@@ -51,7 +51,6 @@ func TabPanel(box Box, title, label string, highlight, expanded, focus, unseen b
 	return Panel(
 		box,
 		label,
-		highlight,
 		lines,
 		scroll.Offset,
 		focus,

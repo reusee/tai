@@ -349,17 +349,14 @@ func (t *Tabs) expandedSizes(extent int, expandedIndices []int, totalWeight int)
 
 // PanelStyle styles the tab panels. BaseBG is the background of every
 // unfocused tab, FocusBG of the focused tab. LabelFG is the label color
-// of an unfocused tab, FocusLabelFG of the focused tab, and ActiveLabelFG
-// highlights a label whose tab carries an active state (e.g., an
-// in-flight generation request). UnseenDotColor colors the unseen dot
-// glyph on a horizontal strip and paints the fallback background cell
-// on a one-column vertical strip.
+// of an unfocused tab, FocusLabelFG of the focused tab. UnseenDotColor
+// colors the unseen dot glyph on a horizontal strip and paints the
+// fallback background cell on a one-column vertical strip.
 type PanelStyle struct {
 	BaseBG         Color
 	FocusBG        Color
 	LabelFG        Color
 	FocusLabelFG   Color
-	ActiveLabelFG  Color
 	UnseenDotColor Color
 }
 
@@ -367,14 +364,13 @@ var _ Element = _Panel{}
 
 // _Panel is an expanded tab panel rendered in O(window) time.
 type _Panel struct {
-	box       Box
-	label     string
-	highlight bool
-	lines     []Line
-	offset    int
-	focus     bool
-	follow    bool
-	style     PanelStyle
+	box    Box
+	label  string
+	lines  []Line
+	offset int
+	focus  bool
+	follow bool
+	style  PanelStyle
 	// contentIndent shifts the content rows' left edge from the box's
 	// left edge; the title row spans the full box width. See
 	// ContentIndent.
@@ -395,16 +391,15 @@ func (ContentIndent) spec() {}
 // top and a scroll view spanning the remaining rows. It renders visible
 // items directly in O(window) time. The specs configure the panel; see
 // ContentIndent. See TheoryOfTabs.
-func Panel(box Box, label string, highlight bool, lines []Line, offset int, focus, follow bool, style PanelStyle, specs ...any) _Panel {
+func Panel(box Box, label string, lines []Line, offset int, focus, follow bool, style PanelStyle, specs ...any) _Panel {
 	p := _Panel{
-		box:       box,
-		label:     label,
-		highlight: highlight,
-		lines:     lines,
-		offset:    offset,
-		focus:     focus,
-		follow:    follow,
-		style:     style,
+		box:    box,
+		label:  label,
+		lines:  lines,
+		offset: offset,
+		focus:  focus,
+		follow: follow,
+		style:  style,
 	}
 	for _, spec := range specs {
 		p.applySpec(spec)
@@ -443,9 +438,7 @@ func renderPanel(p _Panel, box Box, style Style, draw drawFunc, cursor cursorFun
 		base = p.style.FocusBG
 	}
 	labelFg := p.style.LabelFG
-	if p.highlight {
-		labelFg = p.style.ActiveLabelFG
-	} else if p.focus {
+	if p.focus {
 		labelFg = p.style.FocusLabelFG
 	}
 

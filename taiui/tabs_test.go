@@ -380,7 +380,6 @@ func testPanelStyle() PanelStyle {
 		FocusBG:        HexColor(0x2e2e2e),
 		LabelFG:        color.PaletteColor(8),
 		FocusLabelFG:   color.PaletteColor(15),
-		ActiveLabelFG:  color.PaletteColor(10),
 		UnseenDotColor: color.Red,
 	}
 }
@@ -389,7 +388,6 @@ func TestPanelRenders(t *testing.T) {
 	element := Panel(
 		Box{Top: 0, Left: 0, Bottom: 4, Right: 12},
 		"Output",
-		false,
 		[]Line{{Text: "content"}},
 		0,
 		false,
@@ -427,7 +425,6 @@ func TestPanelContentIndent(t *testing.T) {
 	element := Panel(
 		Box{Top: 0, Left: 0, Bottom: 4, Right: 10},
 		"Output",
-		false,
 		[]Line{{Text: "hi"}},
 		0, false, true, testPanelStyle(),
 		ContentIndent(2),
@@ -503,7 +500,6 @@ func TestPanelLargeOutput(t *testing.T) {
 	element := Panel(
 		Box{Top: 0, Left: 0, Bottom: 10, Right: 40},
 		"Output",
-		false,
 		lines,
 		50000,
 		false,
@@ -535,7 +531,6 @@ func TestPanelDegenerateBoxRendersNothing(t *testing.T) {
 	element := Panel(
 		Box{Top: 2, Left: 2, Bottom: 2, Right: 8},
 		"Output",
-		false,
 		[]Line{{Text: "content"}},
 		0,
 		false,

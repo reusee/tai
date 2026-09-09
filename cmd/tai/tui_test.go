@@ -365,26 +365,26 @@ func TestTuiStateWriteLogs(t *testing.T) {
 
 func TestTuiStateRequesting(t *testing.T) {
 	tui := newTUIForTest()
-	if label, highlight := outputTabLabel(tui.finished, tui.generating, tui.handoff); label != "Output" || highlight {
-		t.Fatalf("expected plain Output label before any activity, got label %q highlight %v", label, highlight)
+	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff); label != "Output" {
+		t.Fatalf("expected plain Output label before any activity, got label %q", label)
 	}
 	tui.writeLogs([]byte("level=INFO msg=generating name=model\n"))
 	if !tui.generating {
 		t.Fatal("expected generating after the generating log")
 	}
-	if label, highlight := outputTabLabel(tui.finished, tui.generating, tui.handoff); label != "Output (generating...)" || !highlight {
-		t.Fatalf("expected generating hint with highlight, got label %q highlight %v", label, highlight)
+	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff); label != "Output (generating...)" {
+		t.Fatalf("expected generating hint, got label %q", label)
 	}
 	tui.setTree(treeWithFinishNode(t))
 	if tui.generating {
 		t.Fatal("expected not generating after the finish node")
 	}
-	if label, highlight := outputTabLabel(tui.finished, tui.generating, tui.handoff); label != "Output" || highlight {
-		t.Fatalf("expected plain Output label after the finish node, got label %q highlight %v", label, highlight)
+	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff); label != "Output" {
+		t.Fatalf("expected plain Output label after the finish node, got label %q", label)
 	}
 	tui.finished = true
-	if label, highlight := outputTabLabel(tui.finished, tui.generating, tui.handoff); label != "Output (done)" || highlight {
-		t.Fatalf("expected done hint without highlight, got label %q highlight %v", label, highlight)
+	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff); label != "Output (done)" {
+		t.Fatalf("expected done hint, got label %q", label)
 	}
 }
 
@@ -394,8 +394,8 @@ func TestTuiStateRequestingLogsWrite(t *testing.T) {
 	if !tui.generating {
 		t.Fatal("expected generating after log write")
 	}
-	if label, highlight := outputTabLabel(tui.finished, tui.generating, tui.handoff); label != "Output (generating...)" || !highlight {
-		t.Fatalf("expected generating hint with highlight, got label %q highlight %v", label, highlight)
+	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff); label != "Output (generating...)" {
+		t.Fatalf("expected generating hint, got label %q", label)
 	}
 }
 
@@ -428,34 +428,38 @@ func TestTuiStateRequestingClearedByFinish(t *testing.T) {
 	if tui.generating {
 		t.Fatal("expected not generating after the finish node")
 	}
-	if label, _ := outputTabLabel(tui.finished, tui.generating, tui.handoff); label != "Output" {
+	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff); label != "Output" {
 		t.Fatalf("expected plain Output label after the finish node, got %q", label)
 	}
 }
 
 func TestTUIOutputTabLabel(t *testing.T) {
 	tui := newTUIForTest()
-	if label, highlight := outputTabLabel(tui.finished, tui.generating, tui.handoff); label != "Output" || highlight {
-		t.Fatalf("expected plain Output label, got label %q highlight %v", label, highlight)
+	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff); label != "Output" {
+		t.Fatalf("expected plain Output label, got label %q", label)
 	}
 	tui.writeLogs([]byte("level=INFO msg=generating name=model\n"))
-	if label, highlight := outputTabLabel(tui.finished, tui.generating, tui.handoff); label != "Output (generating...)" || !highlight {
-		t.Fatalf("expected generating hint with highlight, got label %q highlight %v", label, highlight)
+	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff); label != "Output (generating...)" {
+		t.Fatalf("expected generating hint, got label %q", label)
 	}
 	tui.finished = true
-	if label, highlight := outputTabLabel(tui.finished, tui.generating, tui.handoff); label != "Output (done)" || highlight {
-		t.Fatalf("expected done hint without highlight, got label %q highlight %v", label, highlight)
+	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff); label != "Output (done)" {
+		t.Fatalf("expected done hint, got label %q", label)
 	}
 }
 
-func TestTUIPanelTitleHighlightedDuringRequest(t *testing.T) {
-	renderTitle := func(tui *TUI, focus bool) taiui.Frame {
-		label, highlight := outputTabLabel(tui.finished, tui.generating, tui.handoff)
+// TestTUIPanelTitleUsesOrdinaryLabelColor verifies the title carries no
+// special color: the generating and idle labels are colored like every
+// other tab's label, and the wider generating label still clips at the
+// box edge.
+func TestTUIPanelTitleUsesOrdinaryLabelColor(t *testing.T) {
+	renderTitle := func(generating bool) taiui.Frame {
+		label := outputTabLabel(false, generating, false)
 		element := taiui.Panel(
 			taiui.Box{Top: 0, Left: 0, Bottom: 2, Right: 12},
-			label, highlight,
+			label,
 			[]taiui.Line{{Text: "content"}},
-			0, focus, true, panelStyle,
+			0, false, true, panelStyle,
 		)
 		screen := &panelTestScreen{width: 12, height: 2}
 		taiui.Render(element, screen)
@@ -465,53 +469,49 @@ func TestTUIPanelTitleHighlightedDuringRequest(t *testing.T) {
 		return screen.frames[len(screen.frames)-1]
 	}
 
-	tui := newTUIForTest()
-	tui.writeLogs([]byte("level=INFO msg=generating name=model\n"))
-	frame := renderTitle(tui, false)
 	// The generating label is wider than the 12-wide box: centering
 	// clamps to the left edge and the label clips at the box's right.
-	cell := frame.Cells[0]
-	if cell.Rune != 'O' {
+	generating := renderTitle(true)
+	if cell := generating.Cells[0]; cell.Rune != 'O' {
 		t.Fatalf("expected the clipped generating title to start at (0,0), got %v", cell.Rune)
 	}
-	wantR, wantG, wantB := color.PaletteColor(int(tabActiveLabelFg)).RGB()
-	if r, g, b := cell.Style.Fg().RGB(); r != wantR || g != wantG || b != wantB {
-		t.Fatalf("expected highlighted title foreground %#x %#x %#x, got %#x %#x %#x", wantR, wantG, wantB, r, g, b)
+	wantR, wantG, wantB := panelStyle.LabelFG.RGB()
+	if r, g, b := generating.Cells[0].Style.Fg().RGB(); r != wantR || g != wantG || b != wantB {
+		t.Fatalf("expected the generating title to use the ordinary label color %#x %#x %#x, got %#x %#x %#x",
+			wantR, wantG, wantB, r, g, b)
 	}
 
-	idle := newTUIForTest()
-	idleFrame := renderTitle(idle, false)
 	// The plain 6-wide "Output" label centers in the 12-wide box: column 3.
-	idleCell := idleFrame.Cells[3]
-	if idleCell.Rune != 'O' {
-		t.Fatalf("expected centered title 'O' at (3,0), got %v", idleCell.Rune)
+	idle := renderTitle(false)
+	if idle.Cells[3].Rune != 'O' {
+		t.Fatalf("expected centered title 'O' at (3,0), got %v", idle.Cells[3].Rune)
 	}
-	if r, g, b := idleCell.Style.Fg().RGB(); r == wantR && g == wantG && b == wantB {
-		t.Fatal("expected the idle title to keep the ordinary foreground color")
+	if r, g, b := idle.Cells[3].Style.Fg().RGB(); r != wantR || g != wantG || b != wantB {
+		t.Fatalf("expected the idle title to use the same label color, got %#x %#x %#x", r, g, b)
 	}
 }
 
 func TestTUIHandoffState(t *testing.T) {
 	tui := newTUIForTest()
-	if label, highlight := outputTabLabel(tui.finished, tui.generating, tui.handoff); label != "Output" || highlight {
-		t.Fatalf("expected plain Output label, got label %q highlight %v", label, highlight)
+	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff); label != "Output" {
+		t.Fatalf("expected plain Output label, got label %q", label)
 	}
 	tui.handoff = true
-	if label, highlight := outputTabLabel(tui.finished, tui.generating, tui.handoff); label != "Output (handoff...)" || !highlight {
-		t.Fatalf("expected handoff label with highlight, got label %q highlight %v", label, highlight)
+	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff); label != "Output (handoff...)" {
+		t.Fatalf("expected handoff label, got label %q", label)
 	}
 	// Handoff takes precedence over generating.
 	tui.generating = true
-	if label, highlight := outputTabLabel(tui.finished, tui.generating, tui.handoff); label != "Output (handoff...)" || !highlight {
-		t.Fatalf("expected handoff label to take precedence over generating, got label %q highlight %v", label, highlight)
+	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff); label != "Output (handoff...)" {
+		t.Fatalf("expected handoff label to take precedence over generating, got label %q", label)
 	}
 	tui.handoff = false
-	if label, highlight := outputTabLabel(tui.finished, tui.generating, tui.handoff); label != "Output (generating...)" || !highlight {
-		t.Fatalf("expected generating label after handoff cleared, got label %q highlight %v", label, highlight)
+	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff); label != "Output (generating...)" {
+		t.Fatalf("expected generating label after handoff cleared, got label %q", label)
 	}
 	tui.generating = false
-	if label, highlight := outputTabLabel(tui.finished, tui.generating, tui.handoff); label != "Output" || highlight {
-		t.Fatalf("expected plain Output label after handoff, got label %q highlight %v", label, highlight)
+	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff); label != "Output" {
+		t.Fatalf("expected plain Output label after handoff, got label %q", label)
 	}
 }
 
@@ -763,7 +763,7 @@ func TestTUIPanelShowsTailOfWrappedContent(t *testing.T) {
 	paneHeight := 9
 	element := taiui.Panel(
 		taiui.Box{Top: 0, Left: 0, Bottom: 10, Right: 12},
-		"Output", false, display,
+		"Output", display,
 		taiui.ClampOffset(1<<30, len(display), paneHeight),
 		false, true, panelStyle,
 	)
@@ -1073,7 +1073,7 @@ func TestTUIPanelWrapsLongLines(t *testing.T) {
 	lines := plainLines(taiui.WrapLines([]string{src, src, src}, 11))
 	element := taiui.Panel(
 		taiui.Box{Top: 0, Left: 0, Bottom: 6, Right: 12},
-		"Output", false, lines, 0, false, true, panelStyle,
+		"Output", lines, 0, false, true, panelStyle,
 	)
 
 	screen := &panelTestScreen{width: 12, height: 6}
@@ -1103,7 +1103,7 @@ func TestTUIPanelScrollbarHiddenWhenFollowing(t *testing.T) {
 	renderPanel := func(follow bool) taiui.Frame {
 		element := taiui.Panel(
 			taiui.Box{Top: 0, Left: 0, Bottom: 10, Right: 80},
-			"Output", false, plainLines(lines), 0, false, follow, panelStyle,
+			"Output", plainLines(lines), 0, false, follow, panelStyle,
 		)
 		screen := &panelTestScreen{width: 80, height: 10}
 		taiui.Render(element, screen)
@@ -1996,7 +1996,7 @@ func TestTUIPanelNoBackgroundByDefault(t *testing.T) {
 	renderPanel := func(focus bool) taiui.Frame {
 		element := taiui.Panel(
 			taiui.Box{Top: 0, Left: 0, Bottom: 4, Right: 12},
-			"Output", false,
+			"Output",
 			[]taiui.Line{{Text: "content"}},
 			0, focus, true, panelStyle,
 		)
@@ -2028,7 +2028,7 @@ func TestTUIPanelColorsContent(t *testing.T) {
 	}
 	element := taiui.Panel(
 		taiui.Box{Top: 0, Left: 0, Bottom: 3, Right: 10},
-		"Output", false, lines, 0, false, true, panelStyle,
+		"Output", lines, 0, false, true, panelStyle,
 	)
 	screen := &panelTestScreen{width: 10, height: 3}
 	taiui.Render(element, screen)
