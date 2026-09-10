@@ -162,3 +162,40 @@ func TestSkeletonSupported(t *testing.T) {
 		}
 	}
 }
+
+// TestSkeletonExtensionlessDetection verifies that extensionless files
+// reach a skeleton instead of full text: detection is gotreesitter's
+// linguist exact-filename match, so Makefile and Dockerfile are
+// skeleton-supported at any path shape, and their tags queries are
+// empty, so the skeleton is the parse tree's top-level structure. See
+// TheoryOfContextSkeleton.
+func TestSkeletonExtensionlessDetection(t *testing.T) {
+	for _, path := range []string{
+		"Makefile", "sub/Makefile", "/abs/dir/Makefile", "GNUmakefile",
+		"Dockerfile", "sub/Dockerfile",
+	} {
+		if !SkeletonSupported(path) {
+			t.Errorf("expected %q to be skeleton-supported", path)
+		}
+	}
+
+	makeContent := []byte("all: build test\n\t@echo all\n\nbuild:\n\t@echo build\n")
+	skel, ok := Skeleton("Makefile", makeContent)
+	if !ok {
+		t.Fatal("Makefile must produce a skeleton instead of full text")
+	}
+	if want := "all: build test\nbuild:"; skel != want {
+		t.Errorf("Makefile skeleton must be the top-level rules, got:\n%s", skel)
+	}
+
+	dockerContent := []byte("FROM alpine\nRUN echo hi\n\nCMD [\"/bin/sh\"]\n")
+	skel, ok = Skeleton("Dockerfile", dockerContent)
+	if !ok {
+		t.Fatal("Dockerfile must produce a skeleton instead of full text")
+	}
+	for _, want := range []string{"FROM alpine", "RUN echo hi", `CMD ["/bin/sh"]`} {
+		if !strings.Contains(skel, want) {
+			t.Errorf("Dockerfile skeleton must contain %q, got:\n%s", want, skel)
+		}
+	}
+}

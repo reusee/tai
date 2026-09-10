@@ -1,6 +1,7 @@
 package anytexts
 
 import (
+	"path"
 	"strings"
 
 	"github.com/odvcencio/gotreesitter"
@@ -23,6 +24,16 @@ Truncation is by nesting depth, never by line count: the depth limit bounds
 the outline while every top-level branch stays visible, so the summary keeps
 its global shape even when deep detail is dropped; a line limit would cut
 the outline mid-structure and lose that view.
+
+Extensionless files — Makefile, Dockerfile, and the like — detect through
+gotreesitter's linguist exact-filename match and parse cleanly, but their
+grammars carry no tags query, so the definition outline is declined by
+construction. When the outline is declined and the file's basename carries
+no extension, the skeleton falls back to the parse tree's top-level
+structure: one line per named root child, truncated to its first line and
+capped by length, and only from an error-free parse. The extensionless gate
+preserves the conservative contract for suffixed data formats (JSON and the
+like), which stay name-only when their tags query yields nothing.
 
 Skeletons are summaries by construction: the model must treat them as
 an index, not the source. Signaling lives in the block markers, not in
@@ -54,6 +65,11 @@ keep full text.
 // skeleton: headings deeper than this level are omitted so a deep
 // outline cannot crowd the context budget.
 const skeletonMaxHeadingDepth = 3
+
+// skeletonMaxLineRunes caps one top-level structure line of the skeleton
+// fallback, keeping each line an index entry rather than a source
+// excerpt. See TheoryOfContextSkeleton.
+const skeletonMaxLineRunes = 120
 
 // skeletonMaxDefinitionDepth is the nesting-depth limit of a generic
 // skeleton: definitions nested deeper than this level are omitted, so a
@@ -87,9 +103,12 @@ func SkeletonSupported(path string) bool {
 // genericSkeleton parses content as the language registered for the file
 // path and renders the definition outline: one line per definition the
 // grammar's tags query captures, nested definitions indented one level.
-// Languages without tags data, parse failures, and files with no captured
-// definitions yield no skeleton, so the caller falls back to the
-// name-only listing. See TheoryOfContextSkeleton.
+// When the outline is declined and the file is extensionless — the shape
+// of Makefile and Dockerfile, which detect through linguist exact
+// filenames and whose grammars carry no tags query — the skeleton falls
+// back to the parse tree's top-level structure. Parse failures and files
+// with no extractable structure yield no skeleton, so the caller falls
+// back to the name-only listing. See TheoryOfContextSkeleton.
 func genericSkeleton(path string, content []byte) (string, bool) {
 	entry := grammars.DetectLanguage(path)
 	if entry == nil {
@@ -100,17 +119,7 @@ func genericSkeleton(path string, content []byte) (string, bool) {
 		return "", false
 	}
 
-	parser := gotreesitter.NewParser(language)
-	var tree *gotreesitter.Tree
-	var err error
-	if entry.TokenSourceFactory != nil {
-		// Languages bridged to a host lexer (e.g., Go via go/scanner) cannot
-		// be lexed by the DFA path; build their token source first.
-		tokenSource := entry.TokenSourceFactory(content, language)
-		tree, err = parser.ParseWithTokenSource(content, tokenSource)
-	} else {
-		tree, err = parser.Parse(content)
-	}
+	tree, err := parseSkeletonTree(entry, language, content)
 	if err != nil || tree == nil || tree.RootNode() == nil {
 		return "", false
 	}
@@ -125,16 +134,86 @@ func genericSkeleton(path string, content []byte) (string, bool) {
 		return "", false
 	}
 	symbols, report := outliner.OutlineTree(tree)
-	if report.Declined() || len(symbols) == 0 {
+	if !report.Declined() && len(symbols) > 0 {
+		var lines []string
+		renderOutlineSymbols(symbols, 0, &lines)
+		if len(lines) > 0 {
+			return strings.Join(lines, "\n"), true
+		}
 		return "", false
 	}
+	if report.Declined() && isExtensionlessPath(path) {
+		return structureSkeleton(tree, content)
+	}
+	return "", false
+}
 
+// parseSkeletonTree parses content with the language's grammar, bridging
+// to the entry's host lexer when the language defines a token source
+// factory. It is the single parse path of the skeleton extraction.
+func parseSkeletonTree(
+	entry *grammars.LangEntry,
+	language *gotreesitter.Language,
+	content []byte,
+) (*gotreesitter.Tree, error) {
+	parser := gotreesitter.NewParser(language)
+	if entry.TokenSourceFactory != nil {
+		return parser.ParseWithTokenSource(content, entry.TokenSourceFactory(content, language))
+	}
+	return parser.Parse(content)
+}
+
+// structureSkeleton renders the parse tree's top-level structure as the
+// skeleton fallback for languages whose tags query is empty: one line
+// per named child of the root, truncated to its first line. Makefile
+// and Dockerfile detect through linguist exact filenames, parse cleanly,
+// and carry no tags query, so the outline is empty by construction and
+// the top level is the only projection the grammar offers. Blank and
+// anonymous nodes are skipped, and a tree holding a parse error yields
+// no skeleton: a recovered error tree's top level may swallow content,
+// so the caller keeps full text. See TheoryOfContextSkeleton.
+func structureSkeleton(tree *gotreesitter.Tree, content []byte) (string, bool) {
+	root := tree.RootNode()
+	if root == nil || root.HasError() {
+		return "", false
+	}
 	var lines []string
-	renderOutlineSymbols(symbols, 0, &lines)
+	for _, child := range root.Children() {
+		if !child.IsNamed() {
+			continue
+		}
+		line := truncateSkeletonLine(string(child.Text(content)))
+		if line == "" {
+			continue
+		}
+		lines = append(lines, line)
+	}
 	if len(lines) == 0 {
 		return "", false
 	}
 	return strings.Join(lines, "\n"), true
+}
+
+// isExtensionlessPath reports whether the file's basename carries no
+// extension. The top-level structure fallback applies only to these
+// files: they have no other structural signal, and suffixed data formats
+// whose tags query yields nothing keep the conservative name-only
+// contract. See TheoryOfContextSkeleton.
+func isExtensionlessPath(filePath string) bool {
+	return !strings.Contains(path.Base(filePath), ".")
+}
+
+// truncateSkeletonLine reduces one top-level structure line to its first
+// source line, trimmed, capped at skeletonMaxLineRunes so the skeleton
+// stays an index rather than a source excerpt.
+func truncateSkeletonLine(text string) string {
+	line, _, _ := strings.Cut(text, "\n")
+	line = strings.TrimSpace(line)
+	runes := []rune(line)
+	if len(runes) > skeletonMaxLineRunes {
+		line = string(runes[:skeletonMaxLineRunes]) + "…"
+	}
+	return line
 }
 
 // renderOutlineSymbols renders one line per definition, nested definitions
