@@ -26,7 +26,7 @@ type PartsProvider struct {
 	Envs            dscope.Inject[Envs]
 	Workspace       dscope.Inject[Workspace]
 	DocPatterns     dscope.Inject[DocPatterns]
-	ModuleRootFiles dscope.Inject[GetModuleRootFiles]
+	ModuleFiles     dscope.Inject[GetModuleFiles]
 	FileHashes      dscope.Inject[*changes.FileHashes]
 	TreeSink        dscope.Inject[*TreeEventSink]
 }
@@ -65,7 +65,7 @@ func (c PartsProvider) Parts(
 	// -file patterns, and package documentation from -doc patterns. The
 	// composition is logged at the end so the user can see where the
 	// context tokens are spent. See TheoryOfTokenComposition.
-	var focusTokens, contextTokens, extraTokens, docTokens, moduleRootTokens int
+	var focusTokens, contextTokens, extraTokens, docTokens, moduleFilesTokens int
 
 	files, err := c.GetFiles()()
 	if err != nil {
@@ -303,14 +303,18 @@ func (c PartsProvider) Parts(
 		}
 	}
 
-	// Module-root structural text listings follow the project files: the
-	// listing derives from the same project structure, so it belongs to
-	// the stable region of the prompt, before request-varying extras. A
-	// module root may carry no Go package, so its structural text files
-	// are not package files; the listing keeps them discoverable, each
-	// with its parsed skeleton as a summary, and their contents are
-	// fetched on demand with ingest blocks. See TheoryOfNonGoFiles.
-	listings, err := c.ModuleRootFiles()()
+	// Structural text listings of non-package directories follow the
+	// project files: the listing derives from the same project
+	// structure, so it belongs to the stable region of the prompt,
+	// before request-varying extras. A non-package directory anchors no
+	// package, so its structural text files are not package files; the
+	// listing keeps them discoverable, each with its parsed skeleton as
+	// a summary, and their contents are fetched on demand with ingest
+	// blocks. Like extras, listings are truncated from the end when the
+	// token budget is exhausted, so listings included in
+	// smaller-budget requests keep their positions in larger-budget
+	// requests. See TheoryOfNonGoFiles.
+	listings, err := c.ModuleFiles()()
 	if err != nil {
 		return nil, err
 	}
@@ -331,8 +335,8 @@ func (c PartsProvider) Parts(
 			continue
 		}
 		var b strings.Builder
-		b.WriteString("``` begin of module root files " + listing.Dir + "\n")
-		b.WriteString("Structural text files at this module root (the listing is summary form; to modify or fully understand a file, fetch the original with an ingest block first):\n")
+		b.WriteString("``` begin of module files " + listing.Dir + "\n")
+		b.WriteString("Structural text files of this non-package directory (the listing is summary form; to modify or fully understand a file, fetch the original with an ingest block first):\n")
 		for _, name := range names {
 			b.WriteString("- " + name + "\n")
 			if skeleton, ok := listing.Skeletons[name]; ok {
@@ -344,17 +348,20 @@ func (c PartsProvider) Parts(
 		// The listing ends with a blank line so consecutive units stay
 		// paragraph-separated. See
 		// generators.TheoryOfContentUnitSeparation.
-		b.WriteString("``` end of module root files " + listing.Dir + "\n\n")
+		b.WriteString("``` end of module files " + listing.Dir + "\n\n")
 		content := b.String()
 		tokens, err := countTokens(content)
 		if err != nil {
 			return nil, err
 		}
+		if maxTokens > 0 && totalTokens+tokens > maxTokens {
+			break
+		}
 		totalTokens += tokens
-		moduleRootTokens += tokens
+		moduleFilesTokens += tokens
 		parts = append(parts, generators.Text(content))
 		if c.ShowTokenCounts() {
-			c.Logger().Info("module root listing", "dir", listing.Dir, "files", len(names), "tokens", tokens)
+			c.Logger().Info("module files listing", "dir", listing.Dir, "files", len(names), "tokens", tokens)
 		}
 	}
 
@@ -432,7 +439,7 @@ func (c PartsProvider) Parts(
 		"context", contextTokens,
 		"extra", extraTokens,
 		"doc", docTokens,
-		"module_root", moduleRootTokens,
+		"module_files", moduleFilesTokens,
 		"total", totalTokens,
 	)
 
@@ -440,8 +447,8 @@ func (c PartsProvider) Parts(
 	// buffers it and Module.Run replays it as a context event node,
 	// because context assembly runs before the tree opens. See
 	// TheoryOfTokenComposition.
-	c.TreeSink().Record(fmt.Sprintf("assembled tokens: focus %d, context %d, extra %d, doc %d, module_root %d, total %d",
-		focusTokens, contextTokens, extraTokens, docTokens, moduleRootTokens, totalTokens))
+	c.TreeSink().Record(fmt.Sprintf("assembled tokens: focus %d, context %d, extra %d, doc %d, module_files %d, total %d",
+		focusTokens, contextTokens, extraTokens, docTokens, moduleFilesTokens, totalTokens))
 
 	// The working directory hint is appended after all file contents so
 	// the model can construct correct absolute paths for change block

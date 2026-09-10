@@ -40,8 +40,9 @@ use (
 	}
 
 	// mod2 keeps its Go package in a subdirectory so the module root has
-	// no direct .go files: the root contributes only to the module-root
-	// markdown listing, not to the package file set.
+	// no direct .go files: the root contributes only to the
+	// non-package-directory markdown listing, not to the package file
+	// set.
 	// See TheoryOfNonGoFiles in module_root.go.
 	mod2Dir := filepath.Join(root, "mod2")
 	if err := os.MkdirAll(filepath.Join(mod2Dir, "sub"), 0755); err != nil {
@@ -70,7 +71,7 @@ use (
 	).Call(func(
 		workspace Workspace,
 		getFiles GetFiles,
-		getModuleRootFiles GetModuleRootFiles,
+		getModuleFiles GetModuleFiles,
 	) {
 		if workspace == "" {
 			t.Fatal("workspace not detected")
@@ -105,23 +106,23 @@ use (
 		}
 
 		// The workspace module root's markdown is listed by
-		// GetModuleRootFiles; mod1Dir is itself a package directory
+		// GetModuleFiles; mod1Dir is itself a package directory
 		// (main.go at the root), so only mod2Dir produces a listing.
-		listings, err := getModuleRootFiles()
+		listings, err := getModuleFiles()
 		if err != nil {
 			t.Fatal(err)
 		}
-		var mod2Listing *ModuleRootFiles
+		var mod2Listing *ModuleFiles
 		for i, listing := range listings {
 			if filepath.Clean(listing.Dir) == filepath.Clean(mod1Dir) {
-				t.Fatalf("mod1Dir is a package directory and must not produce a module-root listing")
+				t.Fatalf("mod1Dir is a package directory and must not produce a listing")
 			}
 			if filepath.Clean(listing.Dir) == filepath.Clean(mod2Dir) {
 				mod2Listing = &listings[i]
 			}
 		}
 		if mod2Listing == nil {
-			t.Fatalf("mod2Dir module-root listing not found in %+v", listings)
+			t.Fatalf("mod2Dir listing not found in %+v", listings)
 		}
 		foundReadme := false
 		for _, path := range mod2Listing.Files {

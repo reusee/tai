@@ -487,11 +487,11 @@ func TestPartsTokenCompositionLog(t *testing.T) {
 	}
 }
 
-func TestModuleRootListingSummaryHint(t *testing.T) {
-	// The module-root listing must announce that its content is summary
-	// form: to modify or fully understand a listed file, the original
-	// must be fetched with an ingest block. The listing carries each
-	// listed file's parsed skeleton. See TheoryOfNonGoFiles in
+func TestModuleFilesListingSummaryHint(t *testing.T) {
+	// The non-package-directory listing must announce that its content
+	// is summary form: to modify or fully understand a listed file, the
+	// original must be fetched with an ingest block. The listing carries
+	// each listed file's parsed skeleton. See TheoryOfNonGoFiles in
 	// module_root.go and anytexts.TheoryOfContextSkeleton.
 	root := t.TempDir()
 	t.Setenv("GOWORK", "")
@@ -529,7 +529,7 @@ func TestModuleRootListingSummaryHint(t *testing.T) {
 				continue
 			}
 			s := string(text)
-			if !strings.Contains(s, "begin of module root files") {
+			if !strings.Contains(s, "begin of module files") {
 				continue
 			}
 			foundListing = true
@@ -544,7 +544,7 @@ func TestModuleRootListingSummaryHint(t *testing.T) {
 			}
 		}
 		if !foundListing {
-			t.Fatal("expected a module root listing part")
+			t.Fatal("expected a module files listing part")
 		}
 	})
 }
