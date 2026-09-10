@@ -17,12 +17,10 @@ import (
 )
 
 const TheoryOfDscopeProvidedApplyFunctions = `
-All apply functions are dscope-provided function types. Static dependencies
-are captured from the dscope scope at provider resolution time. This follows
-the core dscope principle: static dependencies (resolved once from the scope
-and unchanged during execution) are provided via dscope, not passed as
-parameters. Only dynamic parameters (runtime values like the target
-store/root and change block content) are passed as function arguments.
+The apply layer follows the dscope-bound-function principle (see
+pipeline.TheoryOfDscopeBoundFunctions): static dependencies are captured at
+provider resolution time, and only runtime values — the target store or
+root, and the change block content — are passed as function arguments.
 
 The public types (ApplyChangeBlock, ApplyChangeBlockStore, ApplyChangeBlocks,
 ApplyChangeBlocksStore, ApplyDiffFile, BuildChangeBlockHandler) are

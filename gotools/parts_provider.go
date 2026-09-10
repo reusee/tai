@@ -35,10 +35,8 @@ var _ codetypes.PartsProvider = PartsProvider{}
 
 const TheoryOfExtraFileContext = `
 Extra files requested via patterns are appended after project files to preserve
-the LLM prefix cache (project files form the stable prefix, extra files form the
-volatile suffix). Binary extra files are wrapped with begin/end markers matching
-the text file format, including the MIME type, so the model can identify the
-attachment boundary.
+the LLM prefix cache: project files form the stable prefix, extra files form the
+volatile suffix.
 `
 
 // pendingExtraPart holds an extra file part to be added after project files.

@@ -30,7 +30,6 @@ func TestPartsProviderRecordsFileHashes(t *testing.T) {
 	hashes := changes.NewFileHashes()
 	logger := logs.Logger{Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	provider := PartsProvider{
-		FileNameOK:       func() FileNameOK { return func(name string) bool { return true } },
 		NameMatch:        func() NameMatch { return func(string) bool { return true } },
 		Logger:           func() logs.Logger { return logger },
 		Debug:            func() Debug { return false },

@@ -311,104 +311,6 @@ func TestNextSystemPromptIsTextOnly(t *testing.T) {
 	})
 }
 
-func TestUserPromptEndsWithSystemPromptRestate(t *testing.T) {
-	dir := t.TempDir()
-	oldWd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(oldWd)
-	if err := os.Chdir(dir); err != nil {
-		t.Fatal(err)
-	}
-	// The restate appears only when the assembled user prompt exceeds the
-	// restate threshold; restateThresholdMockGenerator counts one token
-	// per byte, so a fixture of 1024 lines crosses it with margin for the
-	// file markers and the working directory hint.
-	if err := os.WriteFile("test.md", []byte(strings.Repeat("# data\n", 1024)), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	dscope.New(
-		new(Module),
-	).Fork(
-		modes.ForTest(t),
-		func() generators.GetDefaultGenerator {
-			return func() (generators.Generator, error) {
-				return restateThresholdMockGenerator{}, nil
-			}
-		},
-		func() flags.Files { return flags.Files{"test.md": true} },
-		func() flags.MaxTokens { return flags.MaxTokens(1 << 20) },
-	).Call(func(
-		userPrompt UserPrompt,
-		systemPrompt SystemPrompt,
-	) {
-		// The user prompt must end with the verbatim system prompt
-		// restate: the full system prompt repeated under a short re-read
-		// instruction, so the model re-reads every rule immediately
-		// before generating and the reminder can never drift out of sync
-		// with the instructions. See components.TheoryOfComponents.
-		if len(userPrompt) == 0 {
-			t.Fatal("user prompt must have parts")
-		}
-		last := userPrompt[len(userPrompt)-1]
-		text, ok := last.(generators.Text)
-		if !ok {
-			t.Fatalf("last user prompt part must be a text part, got %T", last)
-		}
-		if want := components.SystemPromptRestate(string(systemPrompt)); text != want {
-			t.Fatal("user prompt must end with the verbatim system prompt restate")
-		}
-	})
-}
-
-// TestUserPromptBelowThresholdOmitsRestate verifies the short-prompt regime
-// of the restate threshold: a user prompt within
-// components.SystemPromptRestateThreshold tokens omits the verbatim restate,
-// because the system prompt is still close to the generation point.
-// userPromptMockGenerator counts zero tokens, so the assembled prompt stays
-// far below the threshold. See components.TheoryOfComponents.
-func TestUserPromptBelowThresholdOmitsRestate(t *testing.T) {
-	dir := t.TempDir()
-	oldWd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(oldWd)
-	if err := os.Chdir(dir); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile("test.md", []byte("# Title\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	dscope.New(
-		new(Module),
-	).Fork(
-		modes.ForTest(t),
-		func() generators.GetDefaultGenerator {
-			return func() (generators.Generator, error) {
-				return userPromptMockGenerator{}, nil
-			}
-		},
-		func() flags.Files { return flags.Files{"test.md": true} },
-		func() flags.MaxTokens { return flags.MaxTokens(1 << 20) },
-	).Call(func(
-		userPrompt UserPrompt,
-		systemPrompt SystemPrompt,
-	) {
-		if len(userPrompt) == 0 {
-			t.Fatal("user prompt must have the file context parts")
-		}
-		for _, part := range userPrompt {
-			if text, ok := part.(generators.Text); ok && text == components.SystemPromptRestate(string(systemPrompt)) {
-				t.Fatal("restate must be omitted for a user prompt within the threshold")
-			}
-		}
-	})
-}
-
 // TestUserPromptFilePatternsDeterministic verifies that the file patterns
 // passed to the parts provider are sorted: flags.Files is a map, and Go
 // map iteration order is randomized per range. IterFiles deduplicates
@@ -494,6 +396,85 @@ func TestUserPromptFilePatternsDeterministic(t *testing.T) {
 		}
 		if got != want {
 			t.Fatalf("user prompt differs across resolutions with equal configuration;\nfirst:\n%s\nlater:\n%s", want, got)
+		}
+	}
+}
+
+// TestUserPromptRestateThreshold covers both regimes of the restate
+// threshold in one place: a user prompt within
+// components.SystemPromptRestateThreshold tokens omits the verbatim
+// restate, because the system prompt is still close to the generation
+// point; a longer prompt ends with it, so the model re-reads every rule
+// immediately before generating. See components.TheoryOfComponents.
+func TestUserPromptRestateThreshold(t *testing.T) {
+	dir := t.TempDir()
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(oldWd)
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	assemble := func(fixture string, getDefaultGenerator func() (generators.Generator, error)) (userPrompt UserPrompt, systemPrompt SystemPrompt) {
+		if err := os.WriteFile("test.md", []byte(fixture), 0644); err != nil {
+			t.Fatal(err)
+		}
+		dscope.New(
+			new(Module),
+		).Fork(
+			modes.ForTest(t),
+			func() generators.GetDefaultGenerator {
+				return getDefaultGenerator
+			},
+			func() flags.Files { return flags.Files{"test.md": true} },
+			func() flags.MaxTokens { return flags.MaxTokens(1 << 20) },
+		).Call(func(
+			up UserPrompt,
+			sp SystemPrompt,
+		) {
+			userPrompt = up
+			systemPrompt = sp
+		})
+		return
+	}
+
+	// Below the threshold: userPromptMockGenerator counts zero tokens, so
+	// the assembled prompt stays far below the threshold and the restate
+	// is omitted.
+	{
+		userPrompt, systemPrompt := assemble("# Title\n", func() (generators.Generator, error) {
+			return userPromptMockGenerator{}, nil
+		})
+		if len(userPrompt) == 0 {
+			t.Fatal("user prompt must have the file context parts")
+		}
+		for _, part := range userPrompt {
+			if text, ok := part.(generators.Text); ok && text == components.SystemPromptRestate(string(systemPrompt)) {
+				t.Fatal("restate must be omitted for a user prompt within the threshold")
+			}
+		}
+	}
+
+	// Above the threshold: restateThresholdMockGenerator counts one token
+	// per byte, so the 1024-line fixture crosses it with margin for the
+	// file markers and the working directory hint, and the verbatim
+	// restate closes the user prompt.
+	{
+		userPrompt, systemPrompt := assemble(strings.Repeat("# data\n", 1024), func() (generators.Generator, error) {
+			return restateThresholdMockGenerator{}, nil
+		})
+		if len(userPrompt) == 0 {
+			t.Fatal("user prompt must have parts")
+		}
+		last := userPrompt[len(userPrompt)-1]
+		text, ok := last.(generators.Text)
+		if !ok {
+			t.Fatalf("last user prompt part must be a text part, got %T", last)
+		}
+		if want := components.SystemPromptRestate(string(systemPrompt)); text != want {
+			t.Fatal("user prompt must end with the verbatim system prompt restate")
 		}
 	}
 }

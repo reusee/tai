@@ -62,14 +62,8 @@ every user prompt part is assembled through the same unified mechanism.
 `
 
 const TheoryOfReadOnlyPrefetch = `
-Parse-time prefetch runs the side-effect-free part of a block's
-processing in a background goroutine as soon as the block is parsed
-during streaming, so read-only fetches — go-src symbol resolution,
-ingest file and network fetches — overlap the remainder of the
-generation instead of starting after it ends. The latency between the
-generation's end and the next round shrinks; the model-visible contract
-is unchanged: results still arrive only as user content in the next
-round (see blocks.TheoryOfDeferredExecution).
+Parse-time prefetch is the deferred-execution carve-out: the mechanism
+behind a contract that blocks.TheoryOfDeferredExecution owns.
 
 A component declares prefetchability with Compute: a function that turns
 ONE block into its user-content parts without side effects. Processing
@@ -355,11 +349,7 @@ func (c ComponentSet) UserPromptParts() []generators.Part {
 const systemPromptRestateHeader = "[System note: The system instructions are restated verbatim below. Re-read them carefully now — every rule in them applies in full to the response you are about to generate.]\n\n"
 
 // SystemPromptRestateThreshold is the user prompt token count at or below
-// which the verbatim system prompt restate is omitted. The restate buys
-// renewed attention to the rules across long intervening user content; a
-// user prompt within the threshold leaves the system prompt close to the
-// generation point, so repeating it verbatim would spend tokens without
-// effect. See TheoryOfComponents.
+// which the verbatim system prompt restate is omitted. See TheoryOfComponents.
 const SystemPromptRestateThreshold = 4 << 10
 
 // SystemPromptRestate returns the user prompt part that repeats the full

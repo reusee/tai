@@ -63,9 +63,7 @@ func (Module) Logger(
 		handlers = append(handlers, journalHandler)
 	}
 
-	return Logger{slog.New(&Handler{
-		Handler: slogmulti.Fanout(handlers...),
-	})}
+	return Logger{slog.New(slogmulti.Fanout(handlers...))}
 }
 
 func toJournalKey(str string) string {

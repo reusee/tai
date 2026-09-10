@@ -64,70 +64,59 @@ func TestAISystemPromptAssemblesSections(t *testing.T) {
 	})
 }
 
-func TestAIPromptSectionsIncludeShellWhenEnabled(t *testing.T) {
-	dscope.New(
-		new(Module),
-	).Fork(
-		modes.ForTest(t),
-		func() generators.GetDefaultGenerator {
-			return func() (generators.Generator, error) {
-				return aiMockGenerator{}, nil
-			}
+func TestAIPromptSectionsGating(t *testing.T) {
+	cases := []struct {
+		name       string
+		defs       []any
+		wantSubstr []string
+		notSubstr  []string
+	}{
+		{
+			name:       "shell enabled includes the shell section",
+			defs:       []any{func() flags.Shell { return flags.Shell(true) }},
+			wantSubstr: []string{"Shell Block Kind"},
 		},
-		func() flags.Shell { return flags.Shell(true) },
-	).Call(func(
-		comps AIComponents,
-	) {
-		sections := comps.PromptSections()
-		if !strings.Contains(sections, "Shell Block Kind") {
-			t.Fatal("prompt sections must include the shell block prompt when shell is enabled")
-		}
-	})
-}
-
-func TestAIPromptSectionsExcludeShellWhenDisabled(t *testing.T) {
-	dscope.New(
-		new(Module),
-	).Fork(
-		modes.ForTest(t),
-		func() generators.GetDefaultGenerator {
-			return func() (generators.Generator, error) {
-				return aiMockGenerator{}, nil
-			}
+		{
+			name:      "shell disabled omits the shell section",
+			notSubstr: []string{"Shell Block Kind"},
 		},
-	).Call(func(
-		comps AIComponents,
-	) {
-		sections := comps.PromptSections()
-		if strings.Contains(sections, "Shell Block Kind") {
-			t.Fatal("prompt sections must not include the shell block prompt when shell is disabled")
-		}
-	})
-}
-
-func TestAIPromptSectionsExcludeMemoryWhenNoMemory(t *testing.T) {
-	dscope.New(
-		new(Module),
-	).Fork(
-		modes.ForTest(t),
-		func() generators.GetDefaultGenerator {
-			return func() (generators.Generator, error) {
-				return aiMockGenerator{}, nil
-			}
+		{
+			name:       "memory disabled keeps the block format section and omits the memory section",
+			defs:       []any{func() NoMemory { return NoMemory(true) }},
+			wantSubstr: []string{"Structured Output Format"},
+			notSubstr:  []string{"memory-delete"},
 		},
-		func() NoMemory { return NoMemory(true) },
-	).Call(func(
-		comps AIComponents,
-	) {
-		sections := comps.PromptSections()
-		if strings.Contains(sections, "memory-delete") {
-			t.Fatal("prompt sections must not include the memory section when noMemory is true")
-		}
-		// The block format section is still present.
-		if !strings.Contains(sections, "Structured Output Format") {
-			t.Fatal("prompt sections must still include the block format section when noMemory is true")
-		}
-	})
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			defs := []any{
+				modes.ForTest(t),
+				func() generators.GetDefaultGenerator {
+					return func() (generators.Generator, error) {
+						return aiMockGenerator{}, nil
+					}
+				},
+			}
+			defs = append(defs, tc.defs...)
+			dscope.New(
+				new(Module),
+			).Fork(defs...).Call(func(
+				comps AIComponents,
+			) {
+				sections := comps.PromptSections()
+				for _, want := range tc.wantSubstr {
+					if !strings.Contains(sections, want) {
+						t.Fatalf("prompt sections must include %q", want)
+					}
+				}
+				for _, not := range tc.notSubstr {
+					if strings.Contains(sections, not) {
+						t.Fatalf("prompt sections must not include %q", not)
+					}
+				}
+			})
+		})
+	}
 }
 
 func TestMemoryPromptsUseUncommonChineseDelimiter(t *testing.T) {

@@ -140,7 +140,6 @@ during directory traversal are not.
 `
 
 type PartsProvider struct {
-	FileNameOK       dscope.Inject[FileNameOK]
 	NameMatch        dscope.Inject[NameMatch]
 	Logger           dscope.Inject[logs.Logger]
 	Debug            dscope.Inject[Debug]
@@ -326,9 +325,6 @@ func (c PartsProvider) IterFiles(patterns []string) iter.Seq2[FileInfo, error] {
 			}
 
 			// plain file
-			if !c.FileNameOK()(path) {
-				continue
-			}
 			if !c.NameMatch()(path) {
 				continue
 			}

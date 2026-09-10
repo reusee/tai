@@ -54,17 +54,9 @@ consumer sees the request in progress rather than waiting for its result.
 The nodes carry the attempt attribution but no retry-budget figures:
 handoff generation's retry policy is not the generation attempt budget
 (unbounded in attended sessions, bounded only in goal mode), so a budget
-display such as "attempt x/y" would misrepresent it. Handoff
-generation also applies the HandoffStateDecorator provider to its state
-when one is configured: the decorator observes every content part as it is
-appended, so a display front-end receives the model's text and
-reasoning thoughts carrying their roles and thinking state, and can
-highlight the handoff request per part and per thought. The captured
+display such as "attempt x/y" would misrepresent it. The captured
 handoff text is read from an inner buffer that excludes thoughts, so the
-returned summary contains only the model's final text. The
-HandoffObserver provider reports the handoff lifecycle — HandoffStart
-before the first attempt and HandoffEnd after the last — so a TUI can
-reflect the handoff state in its output tab title.
+returned summary contains only the model's final text.
 
 The fixed instructional prompt (HandoffSystemPrompt) is placed in the
 system prompt; the user content carries only the dynamic incomplete

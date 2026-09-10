@@ -21,14 +21,6 @@ globbed -file results. go-src symbol resolution reads the unfiltered file
 set: -match governs context inclusion, not the symbol lookup source.
 `
 
-type FileNameOK func(name string) bool
-
-func (Module) FileNameOK() FileNameOK {
-	return func(name string) bool {
-		return true
-	}
-}
-
 type NameMatch func(string) bool
 
 func (Module) NameMatch(

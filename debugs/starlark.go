@@ -8,60 +8,18 @@ import (
 	"go.starlark.net/starlark"
 )
 
+// toStarlarkValue converts a Go value to its Starlark counterpart.
+// Only nil and []byte need a dedicated case: every other supported type
+// is dispatched by kind in the reflect fallback below, which produces
+// the same value the concrete cases would.
 func toStarlarkValue(v any) starlark.Value {
 	switch v := v.(type) {
 
 	case nil:
 		return starlark.None
 
-	case bool:
-		return starlark.Bool(v)
-
 	case []byte:
 		return starlark.Bytes(v)
-	case string:
-		return starlark.String(v)
-
-	case int:
-		return starlark.MakeInt(v)
-	case int8:
-		return starlark.MakeInt(int(v))
-	case int16:
-		return starlark.MakeInt(int(v))
-	case int32:
-		return starlark.MakeInt(int(v))
-	case int64:
-		return starlark.MakeInt64(v)
-
-	case uint:
-		return starlark.MakeUint(v)
-	case uint8:
-		return starlark.MakeUint(uint(v))
-	case uint16:
-		return starlark.MakeUint(uint(v))
-	case uint32:
-		return starlark.MakeUint(uint(v))
-	case uint64:
-		return starlark.MakeUint64(v)
-
-	case float32:
-		return starlark.Float(v)
-	case float64:
-		return starlark.Float(v)
-
-	case []any:
-		elems := make([]starlark.Value, len(v))
-		for i, e := range v {
-			elems[i] = toStarlarkValue(e)
-		}
-		return starlark.NewList(elems)
-
-	case map[string]any:
-		d := starlark.NewDict(len(v))
-		for k, val := range v {
-			d.SetKey(starlark.String(k), toStarlarkValue(val))
-		}
-		return d
 
 	}
 

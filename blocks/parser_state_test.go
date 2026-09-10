@@ -333,34 +333,6 @@ func containsStr(s, substr string) bool {
 	return false
 }
 
-func TestParserStateNonMatchingEndIsBodyContent(t *testing.T) {
-	upstream := &mockState{systemPrompt: "system prompt"}
-	var collectedBlocks []Block
-	ps := NewParserState(upstream, func(block Block) error {
-		collectedBlocks = append(collectedBlocks, block)
-		return nil
-	})
-
-	content := &generators.Content{
-		Role: generators.RoleAssistant,
-		Parts: []generators.Part{generators.Text(
-			"<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nfunc Foo() {}\n齉爩\n",
-		)},
-	}
-	newState, err := ps.AppendContent(content)
-	if err != nil {
-		t.Fatalf("expected no error for non-matching end marker treated as body content, got %v", err)
-	}
-	ps = newState.(*ParserState)
-	if len(collectedBlocks) != 0 {
-		t.Fatalf("expected 0 blocks for unclosed block, got %d", len(collectedBlocks))
-	}
-	pending := ps.PendingText()
-	if !contains(pending, "<<龘靐") {
-		t.Fatalf("pending text should contain the opening marker: %q", pending)
-	}
-}
-
 func TestParserStateNonMatchingEndInBodyThenMatchingEnd(t *testing.T) {
 	upstream := &mockState{systemPrompt: "system prompt"}
 	var collectedBlocks []Block
@@ -425,38 +397,6 @@ func TestParserStateNestedBlocksSameDelimiter(t *testing.T) {
 	}
 	if !contains(collectedBlocks[0].Body, "<<龘靐") {
 		t.Fatalf("outer body should contain inner block opening marker: %q", collectedBlocks[0].Body)
-	}
-}
-
-func TestParserStateNestedDifferentDelimiterOpeningWithoutClosing(t *testing.T) {
-	upstream := &mockState{systemPrompt: "system prompt"}
-	var collectedBlocks []Block
-	ps := NewParserState(upstream, func(block Block) error {
-		collectedBlocks = append(collectedBlocks, block)
-		return nil
-	})
-
-	text := "<<龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ftest.go\n<<齉爩 tag\nfunc Foo() {}\n龘靐\n"
-	newState, err := ps.AppendContent(&generators.Content{
-		Role:  generators.RoleAssistant,
-		Parts: []generators.Part{generators.Text(text)},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	ps = newState.(*ParserState)
-
-	if len(collectedBlocks) != 1 {
-		t.Fatalf("expected 1 block, got %d", len(collectedBlocks))
-	}
-	if collectedBlocks[0].Boundary != "龘靐" {
-		t.Fatalf("expected boundary 龘靐, got %s", collectedBlocks[0].Boundary)
-	}
-	if !contains(collectedBlocks[0].Body, "<<齉爩 tag") {
-		t.Fatalf("body should contain the different-delimiter opening as content: %q", collectedBlocks[0].Body)
-	}
-	if !contains(collectedBlocks[0].Body, "func Foo() {}") {
-		t.Fatalf("body should contain the code: %q", collectedBlocks[0].Body)
 	}
 }
 

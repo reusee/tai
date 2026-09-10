@@ -12,9 +12,10 @@ import (
 
 const TheoryOfSimplification = `
 Simplification uses package-level visibility levels instead of
-file-level transforms. Each package is assigned a visibility level based
-on its priority (category, distance, path) and the dynamic context budget
-(see TheoryOfVisibilityAllocation in visibility.go).
+file-level transforms. Each non-focus package is assigned a visibility
+level based on its priority (category, distance, path) and the dynamic
+context budget; focus packages are pinned, so they do not count against
+it (see TheoryOfVisibilityAllocation in visibility.go).
 Level VisibilityInvisible: invisible (deleted). Level VisibilityShortDoc:
 a short package overview via go doc without -all (per-package; the
 package comment and the top-level symbol index, a fraction of the full
@@ -26,29 +27,6 @@ complete surface of the packages it edits, alongside the package's
 test-function names and file names). Level VisibilityCode: full Go code
 without test files (raw file content). Level VisibilityAll: all files
 including tests, non-Go files, and embed files (raw file content).
-
-The water-filling algorithm upgrades packages from their minimum visibility
-to higher levels as the budget allows, processing packages in priority order.
-See TheoryOfVisibilityAllocation in visibility.go.
-
-Focus packages are pinned at full documentation (documentation plus
-test-function names and file names) and do not count against the budget;
-the model fetches focus implementation source on demand with go-src
-blocks. When the pinned focus tokens exceed the generator token budget,
-the focus pin downgrades to short doc and the budget re-derives from the
-downgraded tokens (see TheoryOfVisibilityAllocation in visibility.go).
-The -all-src flag pins focus at full source instead
-(VisibilityAll): every focus file including tests is emitted at full
-content, no focus documentation block is produced, and the overflow
-downgrade does not apply — the full-source pin is never downgraded to a
-documentation level. Focus files
-explicitly requested via -file are still emitted at full content; every
-other focus file — Go source and non-Go files alike — is present by name
-only, in the focus documentation block's file list (see
-TheoryOfNonGoFiles in module_root.go). File ordering (see
-TheoryOfFileOrdering in files.go) places stable context files first and
-volatile focus files last, maximizing the common prefix between
-consecutive requests for LLM prefix caching.
 `
 
 const TheoryOfTokenComposition = `

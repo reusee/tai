@@ -42,11 +42,6 @@ in a boundary-delimited summary block and parses the block body via
 blocks.ParseFirstBlock, ensuring the returned text contains only the clean
 summary without model preamble or trailing prose; if no block is found the raw
 text is returned as a fallback.
-
-Thought summarization serves user readability, not context compression.
-Summaries go to the output writer and the session tree for the human reader;
-they are never fed back into the model. The system does not compress dialogue
-history. See TheoryOfContextPhilosophy.
 `
 
 const SummarizeSystemPrompt = `Condense the model's internal reasoning into an extremely concise summary that helps the user quickly assess whether the model's thinking is on the right track.

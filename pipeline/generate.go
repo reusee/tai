@@ -456,8 +456,7 @@ in generators/state.go) keeps the retry on a clean snapshot. Change
 blocks from a failed attempt are not applied: the MemoryStore reset on
 retry is covered by TheoryOfStreamingApply. This retry handles
 successful-but-incomplete or non-conforming output; the generator-level
-retry (see TheoryOfRetry in generators/gemini.go and
-TheoryOfGenerateRetry in generators/generate.go) handles transient API
+retry (see TheoryOfRetry in generators) handles transient API
 errors.
 
 Completion is detected by checking the externally collected blocks for
@@ -481,13 +480,7 @@ preserves context while freeing budget, and changes the input so the retry produ
 a different response. All generation-phase errors — including missing completion
 and change-block apply errors — are routed through the same OnPhaseError retry path
 with handoff, ensuring consistent retry behavior regardless of the error type.
-
-The handoff extracts the valuable content of the partial output — the
-discoveries, decisions, facts, and attempted changes the model had already
-established — and presents them to the retry attempt with guidance on task
-partitioning. The retry therefore continues from the model's conclusions and
-completes a manageable subset of changes first, using continue blocks for
-remaining work to prevent exceeding output limits again. See TheoryOfHandoff.
+See TheoryOfHandoff.
 `
 
 // GenerateWithResult wraps GenerateWithResultWithStats, discarding the

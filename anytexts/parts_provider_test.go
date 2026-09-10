@@ -19,7 +19,7 @@ func TestContextPrompt(t *testing.T) {
 		new(Module),
 		modes.ForTest(t),
 	).Fork(
-		func() FileNameOK {
+		func() NameMatch {
 			return func(name string) bool {
 				return strings.HasSuffix(strings.ToLower(name), ".py")
 			}
