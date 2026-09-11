@@ -51,10 +51,10 @@ LIMIT ?`, limit)
 }
 
 // Transcript renders a session as readable text: the session metadata
-// followed by the session tree reconstructed from the recorded operation
-// stream (tree.Replay), every node rendered with its identity and its
-// full content. Used for display and as the input to the analysis pass.
-// See TheoryOfInteractionRecording.
+// followed by the recorded operation stream rendered as an event stream —
+// one event per applied operation in application order, each carrying
+// its metadata and the node content it wrote. Used for display and as
+// the input to the analysis pass. See TheoryOfInteractionRecording.
 func Transcript(recorder *Recorder, sessionID int64) (string, error) {
 	if recorder == nil || recorder.db == nil {
 		return "", fmt.Errorf("session database not available")
@@ -89,13 +89,10 @@ func Transcript(recorder *Recorder, sessionID int64) (string, error) {
 	}
 	fmt.Fprintf(&b, "operations=%d\n", len(ops))
 
-	tr, err := tree.Replay(ops)
-	if err != nil {
-		fmt.Fprintf(&b, "\n[tree replay failed after the recorded operations: %v]\n", err)
-		return b.String(), nil
+	b.WriteString("\nevents:\n")
+	for _, op := range ops {
+		writeEventText(&b, op)
 	}
-	b.WriteString("\ntree:\n")
-	writeTreeText(&b, tr.Root(), 0)
 	return b.String(), nil
 }
 
@@ -128,23 +125,27 @@ func loadOps(recorder *Recorder, sessionID int64) ([]tree.Op, error) {
 	return ops, rows.Err()
 }
 
-// writeTreeText renders a node and its subtree as an indented outline:
-// every line carries the node's complete metadata as key=value pairs —
-// type, author, parent, and insert time — after the node name, and the
-// node's full content follows as indented lines, so a transcript loses
-// none of the recorded material.
-func writeTreeText(b *strings.Builder, n *tree.Node, depth int) {
-	indent := strings.Repeat("  ", depth)
-	timeText := n.InsertTime.Format(time.RFC3339Nano)
-	fmt.Fprintf(b, "%s%s type=%s author=%s parent=%s time=%s\n",
-		indent, n.Name, n.Type, n.Author, n.Parent, timeText)
-	if n.Content != "" {
-		for _, line := range strings.Split(n.Content, "\n") {
-			fmt.Fprintf(b, "%s| %s\n", indent, line)
-		}
+// writeEventText renders one recorded operation as an event line: the
+// operation's target node name followed by its metadata as key=value
+// pairs — kind, type, author, parent, and time, empty fields omitted —
+// with the content the operation wrote following as indented lines, so
+// the transcript keeps the applied history with every node's content.
+func writeEventText(b *strings.Builder, op tree.Op) {
+	fmt.Fprintf(b, "%s kind=%s", op.Name, op.Kind)
+	if op.Type != "" {
+		fmt.Fprintf(b, " type=%s", op.Type)
 	}
-	for _, child := range n.Children() {
-		writeTreeText(b, child, depth+1)
+	if op.Author != "" {
+		fmt.Fprintf(b, " author=%s", op.Author)
+	}
+	if op.Parent != "" {
+		fmt.Fprintf(b, " parent=%s", op.Parent)
+	}
+	fmt.Fprintf(b, " time=%s\n", op.Time.Format(time.RFC3339Nano))
+	if op.Content != "" {
+		for _, line := range strings.Split(op.Content, "\n") {
+			fmt.Fprintf(b, "| %s\n", line)
+		}
 	}
 }
 

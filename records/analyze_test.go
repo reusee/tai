@@ -105,8 +105,8 @@ func TestAnalysisSystemPromptContent(t *testing.T) {
 		"改进建议",
 		"尝试",
 		"循环",
-		"会话树",
-		"节点",
+		"事件流",
+		"kind=delete",
 	} {
 		if !strings.Contains(analysisSystemPrompt, want) {
 			t.Fatalf("analysisSystemPrompt missing %q", want)

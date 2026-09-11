@@ -139,11 +139,11 @@ func TestTreeNodeCollapsedByDefault(t *testing.T) {
 }
 
 // TestTreeProjectionCycle verifies the projection cycling: the modes
-// walk all, events, summary, model, program, user; each projection
-// keeps the shown nodes' ancestors so the outline stays readable; and
-// the tab label states the current projection. The collapsed rows hide
-// node names, so the assertions read the content previews. See
-// TheoryOfTreeTab.
+// walk all, events, summary, model, program, user, stream; the
+// ancestor-based projections keep the shown nodes' ancestors so the
+// outline stays readable; and the tab label states the current
+// projection. The collapsed rows hide node names, so the assertions
+// read the content previews. See TheoryOfTreeTab.
 func TestTreeProjectionCycle(t *testing.T) {
 	tui := newTUIForTest()
 	tr, err := tree.New().WriteAll(
@@ -213,6 +213,15 @@ func TestTreeProjectionCycle(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected the user's input node in the user projection, got %v", display)
+	}
+
+	// The stream projection comes before the wrap to all.
+	tui.cycleTreeView()
+	if tui.treeTab.mode != treeViewStream {
+		t.Fatalf("expected the stream projection, got %d", tui.treeTab.mode)
+	}
+	if tui.treeTabLabel() != "Tree (stream)" {
+		t.Fatalf("unexpected projection label: %q", tui.treeTabLabel())
 	}
 
 	// The projection wraps around to all.
@@ -1217,6 +1226,8 @@ func TestTreeViewMenuActions(t *testing.T) {
 			mode = treeViewProgram
 		case controlTreeViewUser:
 			mode = treeViewUser
+		case controlTreeViewStream:
+			mode = treeViewStream
 		default:
 			continue
 		}
@@ -1228,6 +1239,54 @@ func TestTreeViewMenuActions(t *testing.T) {
 	}
 	if treeItems != int(treeViewModeCount) {
 		t.Fatalf("expected %d tree view menu items, got %d", treeViewModeCount, treeItems)
+	}
+}
+
+// TestTreeStreamView verifies the stream projection: one flat row per
+// node ordered by insert time, the attempt node's row carrying the
+// jump marker, no indentation on any row, and the tab label stating
+// the projection. See TheoryOfTreeTab.
+func TestTreeStreamView(t *testing.T) {
+	tui := newTUIForTest()
+	base := time.Now()
+	tr, err := tree.New().WriteAll(
+		tree.WriteOp{Parent: "root", Name: "user-1", Type: tree.TypeUser, Author: tree.AuthorUser, Content: "task", InsertTime: base.Add(3 * time.Second)},
+		tree.WriteOp{Parent: "root", Name: "attempt-1", Type: tree.TypeAttempt, Author: tree.AuthorProgram, Content: "attempt 1 (1/3)", InsertTime: base},
+		tree.WriteOp{Parent: "user-1", Name: "model-1", Type: tree.TypeModel, Author: tree.AuthorModel, Content: "resp", InsertTime: base.Add(time.Second)},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tui.treeView = tr
+	tui.setTreeView(treeViewStream)
+	tui.mu.Lock()
+	display := tui.treeDisplay(120, panelStyle.BaseBG)
+	tui.mu.Unlock()
+	if len(display) != 3 {
+		t.Fatalf("expected one flat row per node, got %d: %v", len(display), displayTexts(display))
+	}
+	// Chronological order by insert time.
+	if !strings.Contains(display[0].Text, "attempt 1") {
+		t.Fatalf("expected the earliest node first, got %v", displayTexts(display))
+	}
+	if !strings.Contains(display[1].Text, "resp") {
+		t.Fatalf("expected the model node second, got %v", displayTexts(display))
+	}
+	if !strings.Contains(display[2].Text, "task") {
+		t.Fatalf("expected the latest node last, got %v", displayTexts(display))
+	}
+	// The attempt row carries the jump marker.
+	if !strings.Contains(display[0].Text, eventJumpMarker) {
+		t.Fatalf("expected the jump marker on the attempt row, got %q", display[0].Text)
+	}
+	// No tree indentation on any row.
+	for i, line := range display {
+		if strings.HasPrefix(line.Text, " ") {
+			t.Fatalf("stream rows must carry no indentation, row %d: %q", i, line.Text)
+		}
+	}
+	if tui.treeTabLabel() != "Tree (stream)" {
+		t.Fatalf("unexpected projection label: %q", tui.treeTabLabel())
 	}
 }
 

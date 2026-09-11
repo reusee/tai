@@ -88,9 +88,9 @@ func TestRecorderWritesTreeOperations(t *testing.T) {
 		for _, want := range []string{
 			"=== Session", "command=test-command", "status=success",
 			"operations=3",
-			"root type=root author= parent= time=",
-			"user-1 type=user author=user parent=root time=", "| hello again",
-			"model-1 type=model author=model parent=user-1 time=", "| the answer",
+			"user-1 kind=write type=user author=user parent=root time=", "| hello again",
+			"user-1 kind=modify",
+			"model-1 kind=write type=model author=model parent=user-1 time=", "| the answer",
 		} {
 			if !strings.Contains(text, want) {
 				t.Fatalf("transcript missing %q:\n%s", want, text)
@@ -247,46 +247,10 @@ func TestSessionNotFound(t *testing.T) {
 	})
 }
 
-func TestTranscriptRendersDeletedSubtrees(t *testing.T) {
-	withRecorder(t, true, func(recorder *Recorder) {
-		recorder.StartSession("test")
-		tr := tree.New().WithOpSink(recorder.Sink())
-		var err error
-		tr, err = tr.Write("root", "user-1", tree.TypeUser, tree.AuthorUser, "kept")
-		if err != nil {
-			t.Fatal(err)
-		}
-		tr, err = tr.Write("root", "user-2", tree.TypeUser, tree.AuthorUser, "removed")
-		if err != nil {
-			t.Fatal(err)
-		}
-		tr, err = tr.Delete("user-2")
-		if err != nil {
-			t.Fatal(err)
-		}
-		recorder.EndSession(nil)
-
-		var id int64
-		if err := recorder.db.QueryRow(`SELECT id FROM sessions LIMIT 1`).Scan(&id); err != nil {
-			t.Fatal(err)
-		}
-		text, err := Transcript(recorder, id)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !strings.Contains(text, "user-1 type=user author=user") || !strings.Contains(text, "| kept") {
-			t.Fatalf("transcript must carry the surviving node, got:\n%s", text)
-		}
-		if strings.Contains(text, "user-2 ") || strings.Contains(text, "| removed") {
-			t.Fatalf("the deleted subtree must not appear in the replayed tree, got:\n%s", text)
-		}
-	})
-}
-
 // TestTranscriptCarriesNodeMetadata verifies that the transcript renders
-// each node's complete metadata: the write's insert time survives the
-// record-replay round trip and appears on the node line alongside the
-// parent, type, and author.
+// each write event's complete metadata: the write's insert time survives
+// the record-render round trip and appears on the event line alongside
+// the parent, type, and author.
 func TestTranscriptCarriesNodeMetadata(t *testing.T) {
 	withRecorder(t, true, func(recorder *Recorder) {
 		recorder.StartSession("test")
@@ -313,9 +277,99 @@ func TestTranscriptCarriesNodeMetadata(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := "user-1 type=user author=user parent=root time=" + insertTime.Format(time.RFC3339Nano)
+		want := "user-1 kind=write type=user author=user parent=root time=" + insertTime.Format(time.RFC3339Nano)
 		if !strings.Contains(text, want) {
-			t.Fatalf("transcript must carry the node's complete metadata, got:\n%s", text)
+			t.Fatalf("transcript must carry the event's complete metadata, got:\n%s", text)
+		}
+	})
+}
+
+// TestTranscriptRendersDeleteEvents verifies that a delete operation
+// appears as its own event in the transcript: the surviving node's
+// write event carries its content, the deleted node's write event
+// carries the content it had when written, and the delete itself
+// renders as a delete event, so the transcript shows the applied
+// history rather than the tree's final state.
+func TestTranscriptRendersDeleteEvents(t *testing.T) {
+	withRecorder(t, true, func(recorder *Recorder) {
+		recorder.StartSession("test")
+		tr := tree.New().WithOpSink(recorder.Sink())
+		var err error
+		tr, err = tr.Write("root", "user-1", tree.TypeUser, tree.AuthorUser, "kept")
+		if err != nil {
+			t.Fatal(err)
+		}
+		tr, err = tr.Write("root", "user-2", tree.TypeUser, tree.AuthorUser, "removed")
+		if err != nil {
+			t.Fatal(err)
+		}
+		tr, err = tr.Delete("user-2")
+		if err != nil {
+			t.Fatal(err)
+		}
+		recorder.EndSession(nil)
+
+		var id int64
+		if err := recorder.db.QueryRow(`SELECT id FROM sessions LIMIT 1`).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		text, err := Transcript(recorder, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(text, "user-1 kind=write type=user author=user parent=root") || !strings.Contains(text, "| kept") {
+			t.Fatalf("the surviving node's write event must carry its content, got:\n%s", text)
+		}
+		if !strings.Contains(text, "user-2 kind=write") || !strings.Contains(text, "| removed") {
+			t.Fatalf("the deleted node's write event must carry the content it had when written, got:\n%s", text)
+		}
+		if !strings.Contains(text, "user-2 kind=delete") {
+			t.Fatalf("the delete must appear as its own event, got:\n%s", text)
+		}
+	})
+}
+
+// TestTranscriptEventStreamOrder verifies that transcript events appear
+// in application order: one write event per node, each followed by the
+// content it wrote, ordered as the operations were recorded.
+func TestTranscriptEventStreamOrder(t *testing.T) {
+	withRecorder(t, true, func(recorder *Recorder) {
+		recorder.StartSession("test")
+		tr := tree.New().WithOpSink(recorder.Sink())
+		_, err := tr.WriteAll(
+			tree.WriteOp{Parent: "root", Name: "user-1", Type: tree.TypeUser, Author: tree.AuthorUser, Content: "first"},
+			tree.WriteOp{Parent: "root", Name: "attempt-1", Type: tree.TypeAttempt, Author: tree.AuthorProgram, Content: "attempt 1"},
+			tree.WriteOp{Parent: "root", Name: "model-1", Type: tree.TypeModel, Author: tree.AuthorModel, Content: "second"},
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		recorder.EndSession(nil)
+
+		var id int64
+		if err := recorder.db.QueryRow(`SELECT id FROM sessions LIMIT 1`).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		text, err := Transcript(recorder, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantOrder := []string{"user-1 kind=write", "attempt-1 kind=write", "model-1 kind=write"}
+		prev := -1
+		for _, want := range wantOrder {
+			idx := strings.Index(text, want)
+			if idx < 0 {
+				t.Fatalf("transcript must carry the event %q, got:\n%s", want, text)
+			}
+			if idx < prev {
+				t.Fatalf("transcript events must appear in application order, %q appears out of order:\n%s", want, text)
+			}
+			prev = idx
+		}
+		for _, want := range []string{"| first", "| attempt 1", "| second"} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("transcript must carry the content line %q, got:\n%s", want, text)
+			}
 		}
 	})
 }

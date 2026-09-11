@@ -27,14 +27,18 @@ Recording is the tree itself. Every mutation of the session tree — every
 node the generation loop, the goal runner, and the model's block
 components write — is one operation (tree.TheoryOfOperationLog), and the
 recorder persists the operations in application order into one sqlite
-database file. A transcript is the reconstruction of the tree from the
-operation stream (tree.Replay), rendered node by node with its full
-content: the whole session is recoverable from what was recorded —
-system prompt, user inputs, model output and reasoning thoughts,
-generated blocks, their processing results, loop and attempt structure,
-event nodes, and errors — with no second, parallel transcript. The
-session listing, the transcript header, and every tree node line render
-metadata uniformly as key=value pairs.
+database file. A transcript renders the recorded operation stream as an
+event stream: one line per applied operation in application order —
+kind, type, author, parent, and time as key=value pairs, empty fields
+omitted — with the content the operation wrote following as indented
+lines, and deletes appearing as their own events (kind=delete), so the
+transcript shows the applied history instead of a tree rebuilt from it
+(no tree.Replay rendering). The whole session is recoverable from what
+was recorded — system prompt, user inputs, model output and reasoning
+thoughts, generated blocks, their processing results, loop and attempt
+structure, event nodes, and errors — with no second, parallel
+transcript. The session listing, the transcript header, and every event
+line render metadata uniformly as key=value pairs.
 
 A session is one recording lifetime: one generation run, or one goal run
 spanning its loops. The recorder is attached to the tree with
@@ -54,12 +58,12 @@ and disabled by -no-record. When disabled, the recorder still opens the
 database so the record subcommand can query sessions, but no operations
 are written.
 
-The analysis pass (records.RunAnalysis) renders a session's tree and
-sends it to the configured model with a purpose-built system prompt
-asking for an assessment of what went well, what went wrong, root
-causes, and concrete improvements. This closes the self-improvement
-loop: interactions are recorded, analyzed, and the findings inform
-prompt and tool changes.
+The analysis pass (records.RunAnalysis) renders a session's transcript —
+the event stream of its recorded operations — and sends it to the
+configured model with a purpose-built system prompt asking for an
+assessment of what went well, what went wrong, root causes, and concrete
+improvements. This closes the self-improvement loop: interactions are
+recorded, analyzed, and the findings inform prompt and tool changes.
 
 Recording is best-effort: database errors are ignored so recording never
 interferes with the generation pipeline. Node content is recorded in

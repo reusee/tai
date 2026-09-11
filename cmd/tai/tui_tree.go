@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -41,8 +42,17 @@ Tree tab theory (cmd/tai):
   selectable through the View menu's Tree view items: all shows every
   node; events shows the event category (tree.CategoryEvent); summary
   the summary nodes; model, program, and user the nodes of that
-  author. The projection keeps each shown node's ancestors
+  author; stream flattens the whole tree chronologically. The
+  ancestor-based projections keep each shown node's ancestors
   (tree.Extract), so the outline stays readable.
+- The stream projection renders every node as one flat line, ordered
+  by insert time — the chronological order the nodes were written —
+  with no indentation, no fold column, and no expansion: the type
+  fragment, the content's first non-blank line as the preview, the
+  attempt node's jump marker, and the right-aligned elapsed timer,
+  colored by role. Stream rows record expandable false, so the fold
+  controls and double-click toggles are inert, while the click and
+  title-status paths still map presses onto nodes.
 - Every node renders one line by default: "{category emoji} {category}
   {type emoji} {type} {fold slot} first content line". The node name
   and author are secondary to the user, so the collapsed row hides
@@ -149,10 +159,11 @@ const (
 	treeViewModel
 	treeViewProgram
 	treeViewUser
+	treeViewStream
 	treeViewModeCount
 )
 
-var treeViewLabels = [...]string{"all", "events", "summary", "model", "program", "user"}
+var treeViewLabels = [...]string{"all", "events", "summary", "model", "program", "user", "stream"}
 
 // label renders the mode's display label. See TheoryOfTreeTab.
 func (m treeViewMode) label() string {
@@ -599,6 +610,11 @@ func (t *TUI) treeDisplay(contentWidth int, base taiui.Color) []taiui.Line {
 	if tr == nil {
 		return nil
 	}
+	// The stream projection bypasses the walk: every node renders as
+	// one flat chronological line.
+	if t.treeTab.mode == treeViewStream {
+		return t.treeStreamDisplay(contentWidth, base)
+	}
 	if t.treeTab.mode != treeViewAll {
 		tr = tr.Extract(t.treeTab.mode.predicate())
 	}
@@ -630,6 +646,91 @@ func (t *TUI) treeDisplay(contentWidth int, base taiui.Color) []taiui.Line {
 		walk(c, 0)
 	}
 	return out
+}
+
+// treeStreamDisplay renders the stream projection: every node of the
+// session tree as one flat line, ordered by insert time — the
+// chronological order the nodes were written — with no indentation,
+// no fold column, and no expansion. Each node's row range records
+// expandable false, so the fold controls stay inert while the click
+// and title-status paths keep mapping presses onto nodes. See
+// TheoryOfTreeTab.
+func (t *TUI) treeStreamDisplay(contentWidth int, base taiui.Color) []taiui.Line {
+	tr := t.treeView
+	if tr == nil {
+		return nil
+	}
+	alt := taiui.AltBG(base)
+	options := taiui.DisplayWidthOptions()
+	var nodes []*tree.Node
+	var walk func(n *tree.Node)
+	walk = func(n *tree.Node) {
+		if n.Type != tree.TypeRoot {
+			nodes = append(nodes, n)
+		}
+		for _, c := range n.Children() {
+			walk(c)
+		}
+	}
+	walk(tr.Root())
+	slices.SortStableFunc(nodes, func(a, b *tree.Node) int {
+		return a.InsertTime.Compare(b.InsertTime)
+	})
+	var out []taiui.Line
+	t.treeTab.rows = t.treeTab.rows[:0]
+	for i, n := range nodes {
+		shade := base
+		if i%2 == 1 {
+			shade = alt
+		}
+		elapsed := time.Duration(0)
+		if n.InsertTime.After(t.startTime) {
+			elapsed = n.InsertTime.Sub(t.startTime)
+		}
+		lines := treeStreamNodeLines(n, elapsed, shade, contentWidth, options)
+		start := len(out)
+		out = append(out, lines...)
+		t.treeTab.rows = append(t.treeTab.rows, treeRowRange{
+			name: n.Name, startRow: start, endRow: len(out), expandable: false,
+		})
+	}
+	return out
+}
+
+// treeStreamNodeLines renders one stream row: the type fragment, the
+// content's first non-blank line as the preview, and the attempt
+// node's jump marker, truncated to the pane width with the elapsed
+// timer right-aligned — the same timer layout the tree rows render.
+// The row keeps the node's role color, so the stream reads by role.
+// See TheoryOfTreeTab.
+func treeStreamNodeLines(n *tree.Node, elapsed time.Duration, shade taiui.Color, contentWidth int, options displaywidth.Options) []taiui.Line {
+	text := treeNodeTypeText(n)
+	if first := treeFirstLine(n); first != "" {
+		text += " " + first
+	}
+	if n.Type == tree.TypeAttempt {
+		text += " " + eventJumpMarker
+	}
+	timerText := formatTreeElapsed(elapsed)
+	timerWidth := options.String(timerText)
+	timerZone := timerWidth + 1
+	wrapWidth := max(contentWidth, 1)
+	if wrapWidth > timerZone {
+		avail := wrapWidth - timerZone
+		text = displaywidth.TruncateString(text, avail, "…")
+		pad := wrapWidth - timerWidth - options.String(text)
+		if pad < 1 {
+			pad = 1
+		}
+		text += strings.Repeat(" ", pad) + timerText
+	} else {
+		text = displaywidth.TruncateString(text, wrapWidth, "…")
+	}
+	return []taiui.Line{{
+		Text:    text,
+		Color:   treeLineColor(n),
+		BGColor: shade,
+	}}
 }
 
 func (t *TUI) treeNodeLines(n *tree.Node, depth int, shade taiui.Color, contentWidth int, options displaywidth.Options, align treeAlignments) ([]taiui.Line, bool) {
@@ -756,11 +857,15 @@ func (t *TUI) treeNodeAtRow(row int) *tree.Node {
 // whose row range contains row: any row of a collapsed node expands
 // it, and the header row of an expanded node collapses it, so
 // clicking inside a long expanded body never collapses it by
-// accident. See TheoryOfTreeTab.
+// accident. A non-expandable row — a stream row, or a single-line
+// node fitting the pane — is inert. See TheoryOfTreeTab.
 func (t *TUI) toggleTreeNodeAtRow(row int) {
 	for _, r := range t.treeTab.rows {
 		if row < r.startRow || row >= r.endRow {
 			continue
+		}
+		if !r.expandable {
+			return
 		}
 		if t.treeTab.expanded[r.name] && row > r.startRow {
 			// A body row of an expanded node: inert, so reading inside
@@ -795,11 +900,12 @@ func (t *TUI) toggleTreeNodeByName(name string) {
 // handoff or completion summary — so Enter works on the most recent
 // collapsed body without a cursor. The flip routes through
 // toggleTreeNodeByName, so expanding scrolls the view to the node's
-// first display row. See TheoryOfTreeTab.
+// first display row. The stream projection carries no expansion, so
+// Enter is inert there. See TheoryOfTreeTab.
 func (t *TUI) toggleLastTreeExpandable() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.treeView == nil {
+	if t.treeView == nil || t.treeTab.mode == treeViewStream {
 		return
 	}
 	var last string
@@ -829,11 +935,12 @@ func (t *TUI) toggleLastTreeExpandable() {
 // the last fold had expanded. Nodes that arrive after the snapshot
 // keep the default collapsed form on restore. A manual expand breaks
 // the all-collapsed state, so the next press folds and re-snapshots
-// rather than restoring. See TheoryOfTreeTab and TheoryOfOutputControls.
+// rather than restoring. The stream projection carries no fold, so
+// the key is inert there. See TheoryOfTreeTab and TheoryOfOutputControls.
 func (t *TUI) collapseAllTreeNodes() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.treeView == nil {
+	if t.treeView == nil || t.treeTab.mode == treeViewStream {
 		return
 	}
 	expanded := make(map[string]bool)

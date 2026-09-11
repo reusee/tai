@@ -46,9 +46,10 @@ func TestRunRecordsFreshSession(t *testing.T) {
 	// A fresh run owns its recording session: it opens the session
 	// through the resolved recorder, attaches the sink to the run's
 	// tree, and ends the session with the run's outcome. The recorded
-	// stream is the run's tree operations, so the transcript is the
-	// replayed tree with each node rendered in full, its metadata as
-	// key=value pairs. See records.TheoryOfInteractionRecording.
+	// stream is the run's tree operations, so the transcript renders
+	// them as an event stream: one line per applied operation, its
+	// metadata as key=value pairs, the content it wrote below. See
+	// records.TheoryOfInteractionRecording.
 	withRecorderRun(t, nil, func(run Run, recorder *records.Recorder) {
 		result, err := runOnce(run, RunOptions{
 			Generator: nil,
@@ -76,14 +77,13 @@ func TestRunRecordsFreshSession(t *testing.T) {
 			"command=test-command",
 			"command_line=",
 			"status=success",
-			"root type=root",
-			"system-1 type=system author=program",
+			"system-1 kind=write type=system author=program",
 			"| sys prompt",
-			"attempt-1 type=attempt author=program",
-			"user-1 type=user author=user",
+			"attempt-1 kind=write type=attempt author=program",
+			"user-1 kind=write type=user author=user",
 			"| task",
-			"model-1 type=model author=model",
-			"summary-1 type=summary author=model",
+			"model-1 kind=write type=model author=model",
+			"summary-1 kind=write type=summary author=model",
 			"| Done.",
 		} {
 			if !strings.Contains(text, want) {

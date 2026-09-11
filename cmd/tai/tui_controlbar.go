@@ -98,6 +98,7 @@ var menuBarEntries = []menuEntry{
 		{label: "Tree view: model", action: controlTreeViewModel},
 		{label: "Tree view: program", action: controlTreeViewProgram},
 		{label: "Tree view: user", action: controlTreeViewUser},
+		{label: "Tree view: stream", action: controlTreeViewStream},
 	}},
 	{title: "Help", items: []menuItem{
 		{label: "Keyboard help", action: controlHelpToggle},
@@ -246,16 +247,17 @@ func menuDropdownElement(width, height, openMenu, hoverItem int) taiui.Element {
 	return taiui.Overlay(children...)
 }
 
-// The Tree tab's projection actions: one View menu item per
-// projection, so the pointer selects the Tree tab's view the way the
-// v key cycles it. See TheoryOfTreeTab.
+// The Tree tab's projection actions: one View menu item per projection,
+// so the pointer selects the Tree tab's view the way the v key cycles it.
+// See TheoryOfTreeTab.
 const (
+	controlTreeViewUser    controlBarAction = "tree-view-user"
 	controlTreeViewAll     controlBarAction = "tree-view-all"
 	controlTreeViewEvents  controlBarAction = "tree-view-events"
 	controlTreeViewSummary controlBarAction = "tree-view-summary"
 	controlTreeViewModel   controlBarAction = "tree-view-model"
 	controlTreeViewProgram controlBarAction = "tree-view-program"
-	controlTreeViewUser    controlBarAction = "tree-view-user"
+	controlTreeViewStream  controlBarAction = "tree-view-stream"
 )
 
 const (
@@ -303,6 +305,8 @@ func (t *TUI) dispatchControlBar(action controlBarAction) bool {
 		t.setTreeView(treeViewProgram)
 	case controlTreeViewUser:
 		t.setTreeView(treeViewUser)
+	case controlTreeViewStream:
+		t.setTreeView(treeViewStream)
 	case controlTreeViewCycle:
 		t.cycleTreeView()
 	case controlCollapseTree:
