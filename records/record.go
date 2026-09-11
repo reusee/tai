@@ -36,11 +36,15 @@ operation wrote as the block body, so a program parses the transcript
 with the standard block parser. Deletes appear as their own events
 (kind=delete), so the transcript shows the applied history instead of a
 tree rebuilt from it (no tree.Replay rendering). The block delimiter is
-chosen from a preset list of uncommon Chinese era names in selection
-order: the first delimiter the event's content does not contain, so the
-body never collides with its own opening or closing marker; when every
-preset collides, the event cannot be rendered unambiguously and the
-transcript fails instead of emitting a corrupt block. The whole session
+drawn at random per event — two characters from the Han range — and
+redrawn while the event's content contains it, so the body never
+collides with its own opening or closing marker. Randomness replaces a
+fixed preset because recorded content is arbitrary: program code and
+model-emitted blocks may contain any given pair, so no fixed list can be
+guaranteed absent, while two independently drawn Han characters make a
+coincidental match vanishingly rare. When a bounded number of draws all
+collide, the event cannot be rendered unambiguously and the transcript
+fails instead of emitting a corrupt block. The whole session
 is recoverable from what was recorded — system prompt, user inputs,
 model output and reasoning thoughts, generated blocks, their processing
 results, loop and attempt structure, event nodes, and errors — with no

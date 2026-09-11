@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode"
 
 	"github.com/reusee/dscope"
 	"github.com/reusee/tai/blocks"
@@ -89,11 +90,13 @@ func TestRecorderWritesTreeOperations(t *testing.T) {
 		// Each event renders as a boundary-delimited block of kind
 		// "event": the operation's metadata is the URI query of the
 		// opening header, the content the operation wrote is the block
-		// body. See TheoryOfInteractionRecording.
+		// body. The delimiter is drawn at random per event, so the
+		// assertions match the header from its kind onward. See
+		// TheoryOfInteractionRecording.
 		for _, want := range []string{
 			"=== Session", "command=test-command", "status=success",
 			"operations=3",
-			"<<貞觀 event:?name=user-1&kind=write&type=user&author=user&parent=root&time=",
+			"event:?name=user-1&kind=write&type=user&author=user&parent=root&time=",
 			"\nhello\nworld\n",
 			"name=user-1&kind=modify",
 			"\nhello again\n",
@@ -285,7 +288,9 @@ func TestTranscriptCarriesNodeMetadata(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := "<<貞觀 event:?name=user-1&kind=write&type=user&author=user&parent=root&time=" +
+		// The delimiter is drawn at random per event, so the assertion
+		// matches the header from its kind onward.
+		want := "event:?name=user-1&kind=write&type=user&author=user&parent=root&time=" +
 			percentEncodeEventValue(insertTime.Format(time.RFC3339Nano))
 		if !strings.Contains(text, want) {
 			t.Fatalf("transcript must carry the event's complete metadata, got:\n%s", text)
@@ -326,7 +331,7 @@ func TestTranscriptRendersDeleteEvents(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(text, "<<貞觀 event:?name=user-1&kind=write&type=user&author=user&parent=root") || !strings.Contains(text, "\nkept\n") {
+		if !strings.Contains(text, "event:?name=user-1&kind=write&type=user&author=user&parent=root") || !strings.Contains(text, "\nkept\n") {
 			t.Fatalf("the surviving node's write event must carry its content, got:\n%s", text)
 		}
 		if !strings.Contains(text, "name=user-2&kind=write") || !strings.Contains(text, "\nremoved\n") {
@@ -387,9 +392,9 @@ func TestTranscriptEventStreamOrder(t *testing.T) {
 // stream is machine-parseable: each event renders as a block of kind
 // "event" with its metadata percent-encoded into the URI query, and
 // blocks.ParseBlocks recovers every event's metadata and content in
-// application order. An event whose content carries a preset delimiter
-// moves to the next delimiter in the list, so the body never collides
-// with its own closing marker. See TheoryOfInteractionRecording.
+// application order. Every event's delimiter is a Han pair absent from
+// its body, so Han-heavy content never collides with its own closing
+// marker. See TheoryOfInteractionRecording.
 func TestTranscriptEventsParseAsBlocks(t *testing.T) {
 	withRecorder(t, true, func(recorder *Recorder) {
 		recorder.StartSession("test")
@@ -397,7 +402,7 @@ func TestTranscriptEventsParseAsBlocks(t *testing.T) {
 		if _, err := tr.Write("root", "user-1", tree.TypeUser, tree.AuthorUser, "plain content"); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := tr.Write("root", "user-2", tree.TypeUser, tree.AuthorUser, "carries 貞觀 inside"); err != nil {
+		if _, err := tr.Write("root", "user-2", tree.TypeUser, tree.AuthorUser, "carries 漢字 pairs inside"); err != nil {
 			t.Fatal(err)
 		}
 		recorder.EndSession(nil)
@@ -421,11 +426,10 @@ func TestTranscriptEventsParseAsBlocks(t *testing.T) {
 		if first.Kind != "event" || second.Kind != "event" {
 			t.Fatalf("blocks must be events, got %q and %q", first.Kind, second.Kind)
 		}
-		if first.Boundary != eventBlockDelimiters[0] {
-			t.Fatalf("first block must use the first preset delimiter, got %q", first.Boundary)
-		}
-		if second.Boundary != eventBlockDelimiters[1] {
-			t.Fatalf("content carrying a preset delimiter must move to the next delimiter, got %q", second.Boundary)
+		for _, event := range parsed {
+			if strings.Contains(event.Body, event.Boundary) {
+				t.Fatalf("the delimiter %q must not occur in the body %q", event.Boundary, event.Body)
+			}
 		}
 		if first.Attributes["name"] != "user-1" || first.Attributes["kind"] != "write" ||
 			first.Attributes["type"] != "user" || first.Attributes["author"] != "user" ||
@@ -436,8 +440,36 @@ func TestTranscriptEventsParseAsBlocks(t *testing.T) {
 			t.Fatalf("first block body must carry the node content, got %q", first.Body)
 		}
 		if second.Attributes["name"] != "user-2" || second.Attributes["kind"] != "write" ||
-			second.Body != "carries 貞觀 inside" {
+			second.Body != "carries 漢字 pairs inside" {
 			t.Fatalf("second block mismatch: %v %q", second.Attributes, second.Body)
 		}
 	})
+}
+
+// TestSelectEventDelimiterDrawsFreshPairs verifies the delimiter's two
+// guarantees: every draw is a fresh pair of Han characters — a fixed
+// pair could collide with arbitrary recorded content — and the drawn
+// delimiter never occurs in the content it delimits, so a block body
+// cannot collide with its own closing marker. See
+// TheoryOfInteractionRecording.
+func TestSelectEventDelimiterDrawsFreshPairs(t *testing.T) {
+	content := "carries 漢字 and 中文 pairs inside"
+	seen := make(map[string]bool)
+	for range 5 {
+		delimiter, err := selectEventDelimiter(content)
+		if err != nil {
+			t.Fatal(err)
+		}
+		runes := []rune(delimiter)
+		if len(runes) != 2 || !unicode.Is(unicode.Han, runes[0]) || !unicode.Is(unicode.Han, runes[1]) {
+			t.Fatalf("the delimiter must be two Han characters, got %q", delimiter)
+		}
+		if strings.Contains(content, delimiter) {
+			t.Fatalf("the delimiter %q must not occur in the content", delimiter)
+		}
+		seen[delimiter] = true
+	}
+	if len(seen) < 2 {
+		t.Fatalf("the delimiter must be drawn at random, got %v", seen)
+	}
 }

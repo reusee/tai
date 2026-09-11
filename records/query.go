@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"strings"
 	"time"
 
@@ -128,29 +129,40 @@ func loadOps(recorder *Recorder, sessionID int64) ([]tree.Op, error) {
 	return ops, rows.Err()
 }
 
-// eventBlockDelimiters lists the preset delimiters of transcript event
-// blocks, in selection order: the first delimiter an event's content
-// does not contain is chosen, so a body never collides with its own
-// opening or closing marker. The names are uncommon Chinese era names,
-// each exactly two Han characters, so the standard block parser accepts
-// them. See TheoryOfInteractionRecording.
-var eventBlockDelimiters = [...]string{
-	"貞觀", "開元", "洪武", "永樂", "弘治", "嘉靖",
-	"萬曆", "順治", "康熙", "雍正", "乾隆", "嘉慶",
-	"道光", "咸豐", "同治", "宣統",
-}
-
-// selectEventDelimiter returns the first preset delimiter the content
-// does not contain. When every preset collides, the event cannot be
-// rendered unambiguously and an error is returned instead of a corrupt
-// block. See TheoryOfInteractionRecording.
+// selectEventDelimiter draws a random delimiter that the content does
+// not contain. Randomness is the guarantee: recorded content is
+// arbitrary — program code, model output carrying its own blocks — so
+// no fixed pair can be known absent, while two independently drawn Han
+// characters make a coincidental match vanishingly rare. When a bounded
+// number of draws all collide, the event cannot be rendered
+// unambiguously and an error is returned instead of a corrupt block.
+// See TheoryOfInteractionRecording.
 func selectEventDelimiter(content string) (string, error) {
-	for _, delimiter := range eventBlockDelimiters {
+	const maxAttempts = 100
+	for range maxAttempts {
+		delimiter := randomEventDelimiter()
 		if !strings.Contains(content, delimiter) {
 			return delimiter, nil
 		}
 	}
-	return "", fmt.Errorf("no preset delimiter is absent from the event content")
+	return "", fmt.Errorf("no random delimiter is absent from the event content after %d draws", maxAttempts)
+}
+
+// randomEventDelimiter returns a delimiter of two independently drawn
+// characters from the CJK Unified Ideographs block: every code point in
+// the block is a Han character, so the pair satisfies the block
+// parser's two-Han-character delimiter rule (see
+// blocks.TheoryOfBoundaryUniqueness). See TheoryOfInteractionRecording.
+func randomEventDelimiter() string {
+	const (
+		hanMin = 0x4E00
+		hanMax = 0x9FFF
+	)
+	span := hanMax - hanMin + 1
+	return string([]rune{
+		rune(hanMin + rand.IntN(span)),
+		rune(hanMin + rand.IntN(span)),
+	})
 }
 
 // percentEncodeEventValue encodes one URI query value: every byte
@@ -199,9 +211,9 @@ func eventMetadataQuery(op tree.Op) string {
 // writeEventBlock renders one recorded operation as a boundary-delimited
 // event block: the block kind is "event", the operation's metadata is
 // percent-encoded into the opening header's URI query, and the content
-// the operation wrote is the block body. The delimiter is the first
-// preset the content does not contain, so the body never collides with
-// its own closing marker. See TheoryOfInteractionRecording.
+// the operation wrote is the block body. The delimiter is drawn at
+// random and never occurs in the content, so the body never collides
+// with its own closing marker. See TheoryOfInteractionRecording.
 func writeEventBlock(b *strings.Builder, op tree.Op) error {
 	delimiter, err := selectEventDelimiter(op.Content)
 	if err != nil {

@@ -49,7 +49,9 @@ func TestRunRecordsFreshSession(t *testing.T) {
 	// stream is the run's tree operations, so the transcript renders
 	// them as an event stream: one boundary-delimited event block per
 	// applied operation, its metadata percent-encoded into the opening
-	// header's URI query, the content it wrote as the block body. See
+	// header's URI query, the content it wrote as the block body. The
+	// delimiter is drawn at random per event, so the assertions match
+	// the header from its kind onward. See
 	// records.TheoryOfInteractionRecording.
 	withRecorderRun(t, nil, func(run Run, recorder *records.Recorder) {
 		result, err := runOnce(run, RunOptions{
@@ -78,7 +80,7 @@ func TestRunRecordsFreshSession(t *testing.T) {
 			"command=test-command",
 			"command_line=",
 			"status=success",
-			"<<貞觀 event:?name=system-1&kind=write&type=system&author=program",
+			"event:?name=system-1&kind=write&type=system&author=program",
 			"\nsys prompt\n",
 			"name=attempt-1&kind=write&type=attempt&author=program",
 			"name=user-1&kind=write&type=user&author=user",
