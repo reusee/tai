@@ -84,7 +84,10 @@ run's end, becoming event nodes of the same type under the attempt
 that served the request. The attempt's reasoning thoughts are
 recorded as one thought event node alongside the attempt's model node,
 so the trace stays in the record without entering any model-facing
-outline.
+outline. A failed attempt records the same two nodes before its retry
+feedback or handoff request: one thought event node for the reasoning
+trace and one model node for the body text, so the tree carries every
+attempt's already-generated content, not only the successful ones.
 
 Thought summaries join the same tree: the ThoughtsSummarize state
 layer forwards through an emitter installed by Module.Run, which

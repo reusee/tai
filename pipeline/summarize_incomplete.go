@@ -59,7 +59,10 @@ retry policy is not the generation attempt budget (unbounded in attended
 sessions, bounded only in goal mode), so a budget display such as
 "attempt x/y" would misrepresent it. The captured handoff text is read
 from an inner buffer that excludes thoughts, so the returned summary
-contains only the model's final text.
+contains only the model's final text. The failed attempt's own thoughts
+and body text join the tree beside the handoff nodes, recorded before the
+handoff request is sent, so the record keeps what the interrupted attempt
+had already generated.
 
 The fixed instructional prompt (HandoffSystemPrompt) is placed in the
 system prompt; the user content carries only the dynamic incomplete

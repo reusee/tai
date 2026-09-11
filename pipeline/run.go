@@ -612,9 +612,17 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 					ls.state = phaseState
 
 					// Record the retry decision as an event node,
-					// immediately. See TheoryOfLoopEvents.
+					// immediately, and record the failed attempt's
+					// produced content as its own nodes before the
+					// handoff request: the record keeps the attempt's
+					// reasoning trace and body text, not only the
+					// handoff's condensation of them. The recording is
+					// idempotent, so a later terminal error does not
+					// duplicate it. See TheoryOfLoopEvents and
+					// TheoryOfSessionTree.
 					ls.writeEventNode("retry", fmt.Sprintf("retry attempt %d/%d: %v",
 						retry+1, ls.maxRetries, generationErr))
+					ls.recordFailedAttemptTree(phaseState, attemptBase)
 
 					var retryParts []generators.Part
 					retryParts = append(retryParts, generators.Text(
@@ -766,14 +774,19 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 			break
 		}
 
-		// Record the truncation as an event node, immediately, before
-		// the handoff request. See TheoryOfLoopEvents.
+		// Record the truncation as an event node, immediately, and
+		// record the truncated attempt's produced content as its own
+		// nodes before the handoff request: the record keeps the
+		// attempt's reasoning trace and body text, not only the
+		// handoff's condensation of them. See TheoryOfLoopEvents and
+		// TheoryOfSessionTree.
 		truncatedDetail := "missing completion (no summary block)"
 		if isAbnormalFinish {
 			truncatedDetail = fmt.Sprintf("abnormal finish reason %q", finishReason)
 		}
 		ls.writeEventNode("truncated", fmt.Sprintf("attempt %d truncated (%d/%d): %s",
 			ls.attempt, ls.attemptInGeneration, ls.maxRetries, truncatedDetail))
+		ls.recordFailedAttemptTree(phaseState, attemptBase)
 
 		// Perform handoff summary on incomplete output if threshold met.
 		// attemptBase is both the incomplete-output window and the
@@ -858,6 +871,13 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 		if ls.opts.OnPhaseError != nil {
 			phaseState = ls.opts.OnPhaseError(phaseState, generationErr)
 		}
+		// The failed attempt's produced content joins the tree as its
+		// own nodes before the terminal error ends the run: every
+		// failure path records the attempt's material, not only the
+		// successful attempts'. The recording is idempotent, so an
+		// attempt already recorded by its retry path is skipped. See
+		// TheoryOfSessionTree.
+		ls.recordFailedAttemptTree(phaseState, attemptBase)
 		ls.recordAttemptUsage(phaseState, attemptBase, "error")
 		return generationResult{state: phaseState}, generationErr
 	}
@@ -896,6 +916,10 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 					if ls.opts.OnPhaseError != nil {
 						phaseState = ls.opts.OnPhaseError(phaseState, appendErr)
 					}
+					// The exhausted attempt's produced content joins
+					// the tree before the error ends the run. See
+					// TheoryOfSessionTree.
+					ls.recordFailedAttemptTree(phaseState, attemptBase)
 					ls.recordAttemptUsage(phaseState, attemptBase, "error")
 					return generationResult{state: phaseState}, appendErr
 				}
@@ -915,6 +939,12 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 			if errors.As(serr, &flushDiskChanged) {
 				return generationResult{state: phaseState}, ls.endOnDiskChange(serr, phaseState, attemptBase)
 			}
+			// The hook's failure ends the run, but the attempt's
+			// produced content joins the tree first: every failure
+			// path records the attempt's material. The recording is
+			// idempotent, so an attempt already recorded by its retry
+			// path is skipped. See TheoryOfSessionTree.
+			ls.recordFailedAttemptTree(phaseState, attemptBase)
 			ls.recordAttemptUsage(phaseState, attemptBase, "error")
 			return generationResult{state: phaseState}, serr
 		}
@@ -1287,6 +1317,11 @@ func (ls *loopState) recordAttemptUsage(state generators.State, attemptBaseCount
 // exceeded), so both carry identical bookkeeping. See
 // TheoryOfDiskChangeHandoff and TheoryOfContextExceededHandoff.
 func (ls *loopState) endWithHandoff(err error, phaseState generators.State, attemptBase int) *Handoff {
+	// The terminated attempt's produced content joins the tree before
+	// the handoff request is sent, so the record keeps the attempt's
+	// thoughts and body text beside its handoff. See
+	// TheoryOfSessionTree.
+	ls.recordFailedAttemptTree(phaseState, attemptBase)
 	var handoff *Handoff
 	if ls.opts.Handoff != nil {
 		incompleteText := ExtractIncompleteOutput(phaseState, attemptBase)

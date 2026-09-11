@@ -61,6 +61,16 @@ immutable tree, and one run owns exactly one tree.
   (model author, content = the attempt's model-role Text parts;
   thought parts never enter the tree) and one summary node per
   summary body under it.
+- A failed attempt records the same material: every failure path —
+  the truncated retry, the error retry, the handoff terminations
+  (disk change, context exceeded), and the terminal errors — writes
+  one thought event node for the attempt's reasoning trace and one
+  model node for its body text, so the tree carries every attempt's
+  produced content, not only the successful ones. The recording is
+  idempotent: an attempt node that already carries a thought or
+  model node is skipped, because one attempt can reach the recording
+  through two paths and a thoughts-only attempt carries no model node
+  for a model-only check to detect.
 - Block nodes are written in one validated batch before the components
   process the blocks: a block's header may carry a parent parameter
   (default: the current response node); new-plan and response blocks
@@ -786,6 +796,44 @@ func (ls *loopState) recordAttemptTree(
 	ls.sessionTree = blockTree
 	ls.emitTree()
 	return names, deferred
+}
+
+// recordFailedAttemptTree writes a failed attempt's produced content to
+// the session tree: one thought event node carrying the reasoning trace
+// and one model node carrying the body text, both under the attempt
+// node. Every failure path records here — the truncated retry, the
+// error retry, the handoff terminations (disk change, context
+// exceeded), and the terminal errors — so the tree keeps every
+// attempt's material, not only the successful ones. The recording is
+// idempotent: an attempt node that already carries a thought or model
+// node is skipped. One attempt can reach the recording through two
+// paths (its own retry feedback and a later terminal error) without
+// its content changing, and a thoughts-only attempt carries no model
+// node for a model-only check to detect the first recording. See
+// TheoryOfSessionTree.
+func (ls *loopState) recordFailedAttemptTree(phaseState generators.State, attemptBase int) {
+	if ls.sessionTree == nil {
+		return
+	}
+	if attempt, ok := ls.sessionTree.Node(ls.currentAttempt); ok {
+		for _, child := range attempt.Children() {
+			if child.Type == tree.TypeModel || child.Type == tree.TypeThought {
+				return
+			}
+		}
+	}
+	if thoughts := extractThoughtsSince(phaseState, attemptBase); thoughts != "" {
+		ls.writeEventNode("thought", thoughts)
+	}
+	if content := renderModelContent(phaseState, attemptBase); content != "" {
+		next, _, err := ls.sessionTree.WriteAuto(ls.attemptParent(), "model", tree.TypeModel, tree.AuthorModel, content)
+		if err != nil {
+			ls.writeEventNode("run-error", fmt.Sprintf("session tree: failed attempt response node not written: %v", err))
+			return
+		}
+		ls.sessionTree = next
+		ls.emitTree()
+	}
 }
 
 // pendingUserInput is one queued user-prompt node: an input a future

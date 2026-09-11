@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -595,6 +596,203 @@ func TestRunErrorNodesRecorded(t *testing.T) {
 				}
 			}
 		})
+	})
+}
+
+// TestRunFailedAttemptsRecordProducedContent verifies that a failed
+// attempt's produced reasoning and body join the tree as its own
+// nodes — one thought event node and one model node — on the
+// truncated retry, the error retry, the terminal error, and the
+// attempt-success-hook error paths, so the tree carries every
+// attempt's material, not only the successful attempts'. See
+// TheoryOfSessionTree.
+func TestRunFailedAttemptsRecordProducedContent(t *testing.T) {
+	const thought = "weighing the options"
+	const body = "partial answer body"
+
+	// failingPhase appends one attempt's thought and body parts; with
+	// fail set it then returns an error, so the attempt takes the
+	// error path instead of the truncation path.
+	failingPhase := func(fail bool) generators.Phase {
+		return func(ctx context.Context, state generators.State) (generators.Phase, generators.State, error) {
+			newState, err := state.AppendContent(&generators.Content{
+				Role: generators.RoleAssistant,
+				Parts: []generators.Part{
+					generators.Thought(thought),
+					generators.Text(body),
+				},
+			})
+			if err != nil {
+				return nil, state, err
+			}
+			if fail {
+				return nil, newState, errors.New("generation failed")
+			}
+			return nil, newState, nil
+		}
+	}
+	// completePhase appends a summary block, completing the attempt.
+	completePhase := func() generators.Phase {
+		return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
+	}
+	// assertFailedAttemptContent asserts the first attempt carries the
+	// failed attempt's thought and body as its own nodes.
+	assertFailedAttemptContent := func(t *testing.T, tr *tree.Tree) {
+		t.Helper()
+		if tr == nil {
+			t.Fatal("expected a session tree")
+		}
+		attempts := tr.ByType(tree.TypeAttempt)
+		if len(attempts) == 0 {
+			t.Fatal("expected an attempt node")
+		}
+		var thoughtNode, modelNode *tree.Node
+		for _, child := range attempts[0].Children() {
+			switch child.Type {
+			case tree.TypeThought:
+				thoughtNode = child
+			case tree.TypeModel:
+				modelNode = child
+			}
+		}
+		if thoughtNode == nil || thoughtNode.Content != thought {
+			t.Fatalf("expected the failed attempt's thought event node, got %+v", thoughtNode)
+		}
+		if modelNode == nil || !strings.Contains(modelNode.Content, body) {
+			t.Fatalf("expected the failed attempt's model node, got %+v", modelNode)
+		}
+	}
+
+	withRun(t, func(run Run) {
+		t.Run("truncated retry", func(t *testing.T) {
+			callCount := 0
+			result, err := runOnce(run, RunOptions{
+				Generator:    nil,
+				InitialState: generators.NewPrompts("", nil),
+				PhaseBuilder: func(g generators.Generator) generators.Phase {
+					callCount++
+					if callCount == 1 {
+						return failingPhase(false)
+					}
+					return completePhase()
+				},
+				RetryOnMissingCompletion: true,
+				MaxRetries:               1,
+				Handoff: func(string) (*Handoff, error) {
+					return &Handoff{Summary: "handoff summary", Prompt: "retry prompt"}, nil
+				},
+			})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			assertFailedAttemptContent(t, result.SessionTree)
+		})
+		t.Run("error retry", func(t *testing.T) {
+			callCount := 0
+			result, err := runOnce(run, RunOptions{
+				Generator:    nil,
+				InitialState: generators.NewPrompts("", nil),
+				PhaseBuilder: func(g generators.Generator) generators.Phase {
+					callCount++
+					if callCount == 1 {
+						return failingPhase(true)
+					}
+					return completePhase()
+				},
+				RetryOnError: true,
+				MaxRetries:   1,
+				Handoff: func(string) (*Handoff, error) {
+					return &Handoff{Summary: "handoff summary", Prompt: "retry prompt"}, nil
+				},
+			})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			assertFailedAttemptContent(t, result.SessionTree)
+		})
+		t.Run("terminal error", func(t *testing.T) {
+			opts := RunOptions{
+				Generator:    nil,
+				InitialState: generators.NewPrompts("", nil),
+				PhaseBuilder: func(g generators.Generator) generators.Phase {
+					return failingPhase(true)
+				},
+			}
+			var result Result
+			var lastTree *tree.Tree
+			var terminalErr error
+			for tr, err := range run(context.Background(), opts, &result) {
+				if err != nil {
+					terminalErr = err
+				}
+				lastTree = tr
+			}
+			if terminalErr == nil {
+				t.Fatal("expected the terminal error")
+			}
+			assertFailedAttemptContent(t, lastTree)
+		})
+		t.Run("on attempt success error", func(t *testing.T) {
+			expectedErr := errors.New("flush failed")
+			result, err := runOnce(run, RunOptions{
+				Generator:    nil,
+				InitialState: generators.NewPrompts("", nil),
+				PhaseBuilder: func(g generators.Generator) generators.Phase {
+					return failingPhase(false)
+				},
+				OnAttemptSuccess: func(state generators.State, summaries []string) error {
+					return expectedErr
+				},
+			})
+			if !errors.Is(err, expectedErr) {
+				t.Fatalf("expected the hook error, got %v", err)
+			}
+			assertFailedAttemptContent(t, result.SessionTree)
+		})
+	})
+}
+
+// TestRunFailedAttemptRecordingIsIdempotent verifies the failed-attempt
+// recording's idempotency guard: a thoughts-only attempt reaches the
+// recording twice — its truncated path records it, and the terminal
+// path records it again when the truncation callback fails — so the
+// attempt must carry exactly one thought node. A model-node-only guard
+// would miss the first recording and duplicate the thought node. See
+// TheoryOfSessionTree.
+func TestRunFailedAttemptRecordingIsIdempotent(t *testing.T) {
+	withRun(t, func(run Run) {
+		result, err := runOnce(run, RunOptions{
+			Generator:    nil,
+			InitialState: generators.NewPrompts("", nil),
+			PhaseBuilder: func(g generators.Generator) generators.Phase {
+				return func(ctx context.Context, state generators.State) (generators.Phase, generators.State, error) {
+					newState, aerr := state.AppendContent(&generators.Content{
+						Role: generators.RoleAssistant,
+						Parts: []generators.Part{
+							generators.Thought("reasoning only, no body text"),
+						},
+					})
+					if aerr != nil {
+						return nil, state, aerr
+					}
+					return nil, newState, nil
+				}
+			},
+			RetryOnMissingCompletion: true,
+			MaxRetries:               1,
+			OnAttemptTruncated: func(generators.State, generators.State, string) error {
+				return errors.New("truncation record failed")
+			},
+		})
+		if err == nil {
+			t.Fatal("expected the truncation callback's error")
+		}
+		if result.SessionTree == nil {
+			t.Fatal("expected a session tree")
+		}
+		if got := len(result.SessionTree.ByType(tree.TypeThought)); got != 1 {
+			t.Fatalf("expected exactly one thought node, got %d", got)
+		}
 	})
 }
 
