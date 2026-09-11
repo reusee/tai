@@ -3,153 +3,50 @@ package security
 import (
 	"fmt"
 	"path/filepath"
-	"slices"
 	"strings"
 
 	"mvdan.cc/sh/v3/syntax"
 )
 
 const TheoryOfShellSecurity = `
-Shell command execution is protected by a command allowlist policy enforced
-through AST-level parsing with mvdan.cc/sh/v3. The shell parser produces a
-syntax tree that is walked to validate each command, providing accurate
-detection of redirections, command substitutions, and complex shell constructs.
-Only CallExpr (simple commands) and BinaryCmd (pipelines, &&, ||) are permitted;
-all other shell constructs (if, while, for, case, subshell, block, function
-definitions, arithmetic commands, test clauses, declarations) are rejected as
-unnecessary for read-only diagnostic operations.
+Shell command execution runs any program: a program allowlist is hard to keep
+correct and unnecessary, because the process already runs inside the container
+sandbox, where the filesystem is read-only except for the working directory,
+the Go and config directories, /tmp, and /dev/shm (see
+TheoryOfContainerIsolation). The validator parses the command with
+mvdan.cc/sh/v3 and walks the syntax tree.
 
-The validator checks each statement's redirections for output operators (>,
->>, <>, >&, >|, >>|, >&|, >>&, >>&|). Input-only redirections
-(<, <<, <&) are permitted.
+Structural rules: only simple commands (CallExpr) and binary commands
+(pipelines, &&, ||) are accepted; every other shell construct (if, while,
+for, case, subshell, block, function definition, arithmetic command, test
+clause, declaration) is rejected, so the walk stays total. Output
+redirections (>, >>, <>, >&, >|, >>|, >&|, >>&, >>&|) are rejected because
+they write files outside the change-block flow; input-only redirections
+(<, <<, <&) are permitted. Background execution, coprocesses, and disown
+are rejected because their output and lifetime cannot be captured.
 
-Command substitutions ($(cmd) and <(cmd)/>(cmd)) are recursively validated: the
-nested statements are subject to the same allowlist and redirection checks.
-The recursive validation extends into double-quoted strings ("$(cmd)") since
-command substitution is active inside double quotes.
+Command substitutions, process substitutions, heredoc bodies, arithmetic
+expansion, parameter expansion, and brace expansion are recursively
+validated by the same rules, so a destructive command nested in another
+command's argument is caught in the same walk.
 
-The find command's -exec, -execdir, -ok, and -okdir flags are explicitly
-forbidden to prevent arbitrary command execution through find. Commands with
-absolute paths (e.g., /usr/bin/ls) are normalized via filepath.Base before
-allowlist lookup. Commands that can execute arbitrary code (awk, sed) are
-excluded from the allowlist entirely.
-
-Additional security checks: background processes (cmd &) and coprocesses
-(coproc cmd) are rejected. Heredoc bodies (redir.Hdoc) are validated for
-command substitutions. Arithmetic expansion, parameter expansion, and brace
-expansion are recursively validated for nested command and process
-substitutions.
-
-Interpreter inline execution flags are blocked for scripting languages that
-can execute arbitrary code from command-line arguments: python and python3
-with -c or -m; node with -e/--eval, -p/--print, or -r/--require. The go
--exec flag is blocked. The cargo subcommand list is restricted to read and
-diagnostic operations. The java command is restricted to version-only flags.
-
-The env command is restricted to environment variable inspection only.
-Arguments to env that are not flags (starting with -) and not VAR=value
-assignments are rejected as potential command execution.
+Destructive-pattern filter: an rm command whose target is the filesystem root
+(/ or /*), a top-level system directory (an absolute path of a single
+component, such as /usr, /etc, or /home), the whole current directory (*, .,
+.., ./*, ../*), or the home directory (~, $HOME, and their /* forms) is
+rejected. Targets are matched on the argument's literal text after path
+cleaning; a dynamic target such as an unexpanded variable passes. The filter
+stays deliberately small — it catches the common catastrophic shapes and lets
+every other command through — because enumerating dangerous commands is the
+same error-prone exercise as the allowlist; the container sandbox remains the
+real containment.
 `
-
-// allowedCommands defines the set of commands permitted for shell block
-// execution and their optional subcommand constraints. When the subcommand
-// list is nil, all subcommands are allowed. When non-empty, only the listed
-// subcommands are permitted.
-// See TheoryOfShellSecurity.
-var allowedCommands = map[string][]string{
-	// File viewing (read-only)
-	"ls":   nil,
-	"cat":  nil,
-	"head": nil,
-	"tail": nil,
-	"wc":   nil,
-	"file": nil,
-	"stat": nil,
-	"tree": nil,
-	"du":   nil,
-	"df":   nil,
-
-	// Search (read-only)
-	"grep":    nil,
-	"rg":      nil,
-	"find":    nil, // -exec is checked separately
-	"which":   nil,
-	"whereis": nil,
-
-	// Text processing (read-only)
-	"sort":   nil,
-	"uniq":   nil,
-	"cut":    nil,
-	"tr":     nil,
-	"diff":   nil,
-	"comm":   nil,
-	"paste":  nil,
-	"column": nil,
-
-	// System information (read-only)
-	"pwd":      nil,
-	"echo":     nil,
-	"printf":   nil,
-	"env":      nil,
-	"printenv": nil,
-	"date":     nil,
-	"uname":    nil,
-	"hostname": nil,
-	"whoami":   nil,
-	"uptime":   nil,
-	"free":     nil,
-	"ps":       nil,
-
-	// Git read-only subcommands
-	"git": {"status", "diff", "log", "show", "blame", "ls-files", "ls-tree",
-		"describe", "rev-parse", "help", "version"},
-
-	// Go toolchain (read-only/diagnostic subcommands)
-	"go": {"test", "build", "vet", "list", "doc", "version", "env", "help"},
-
-	// Package managers (read-only subcommands)
-	"npm":  {"list", "view", "info", "outdated", "audit", "ls"},
-	"yarn": {"list", "info", "outdated"},
-	"pnpm": {"list", "info", "outdated"},
-
-	// Version information
-	"node":    nil,
-	"python":  nil,
-	"python3": nil,
-	"java":    {"--version", "-version"},
-	"rustc":   nil,
-	"cargo":   {"build", "test", "check", "vet", "metadata", "tree", "info", "search", "clean", "doc", "fetch", "--version", "-V"},
-	"gcc":     nil,
-	"make":    nil,
-	"cmake":   nil,
-}
-
-// dangerousFindFlags are find command flags that allow arbitrary command
-// execution and must be explicitly forbidden.
-// See TheoryOfShellSecurity.
-var dangerousFindFlags = map[string]bool{
-	"-exec":    true,
-	"-execdir": true,
-	"-ok":      true,
-	"-okdir":   true,
-}
-
-// dangerousCommandFlags defines flags that enable inline code execution for
-// interpreters and tools. When a command in the allowlist has these flags in
-// its arguments, the command is rejected to prevent arbitrary code execution
-// through command-line flags. See TheoryOfShellSecurity.
-var dangerousCommandFlags = map[string]map[string]bool{
-	"python":  {"-c": true, "-m": true},
-	"python3": {"-c": true, "-m": true},
-	"node":    {"-e": true, "--eval": true, "-p": true, "--print": true, "-r": true, "--require": true},
-	"go":      {"-exec": true},
-}
 
 // ValidateShellCommand checks whether a command string is safe to execute.
 // It uses mvdan.cc/sh/v3 to parse the command into an AST and walks the tree
-// to enforce the allowlist, redirection, and command substitution policies.
-// Returns nil if the command passes all security checks, or an error
-// describing why the command was rejected.
+// to enforce the destructive-pattern, redirection, and command substitution
+// rules. Returns nil if the command passes all checks, or an error describing
+// why the command was rejected.
 // See TheoryOfShellSecurity.
 func ValidateShellCommand(cmdStr string) error {
 	cmdStr = strings.TrimSpace(cmdStr)
@@ -223,10 +120,9 @@ func validateCmd(cmd syntax.Command) error {
 	}
 }
 
-// validateCallExpr validates a simple command (CallExpr) against the allowlist.
-// It checks the command name, subcommand constraints, dangerous find flags,
-// dangerous interpreter flags, env command bypass, and recursively validates
-// command/process substitutions in arguments and assignments.
+// validateCallExpr validates a simple command (CallExpr): it recursively
+// validates command and process substitutions in assignments and arguments,
+// then applies the destructive-pattern filter. Any program may run.
 // See TheoryOfShellSecurity.
 func validateCallExpr(call *syntax.CallExpr) error {
 	// Validate command/process substitutions in assignment values.
@@ -252,58 +148,50 @@ func validateCallExpr(call *syntax.CallExpr) error {
 		}
 	}
 
-	cmdName := filepath.Base(wordString(call.Args[0]))
-	allowedSubs, ok := allowedCommands[cmdName]
-	if !ok {
-		return fmt.Errorf("command %q is not in the allowed list", cmdName)
-	}
+	return checkDangerousCommand(call)
+}
 
-	if allowedSubs != nil {
-		if len(call.Args) < 2 {
-			return fmt.Errorf("command %q requires a subcommand from: %s", cmdName, strings.Join(allowedSubs, ", "))
-		}
-		subcommand := wordString(call.Args[1])
-		if !slices.Contains(allowedSubs, subcommand) {
-			return fmt.Errorf("subcommand %q is not allowed for %q; allowed: %s", subcommand, cmdName, strings.Join(allowedSubs, ", "))
-		}
+// checkDangerousCommand applies the destructive-pattern filter to a simple
+// command. Only rm is filtered: an rm whose target is the filesystem root, a
+// top-level system directory, the whole current directory, or the home
+// directory is rejected. Every other program passes untouched; see
+// TheoryOfShellSecurity for why the filter stays this small.
+func checkDangerousCommand(call *syntax.CallExpr) error {
+	if len(call.Args) == 0 || filepath.Base(wordString(call.Args[0])) != "rm" {
+		return nil
 	}
-
-	// Check for dangerous find flags that allow arbitrary command execution.
-	if cmdName == "find" {
-		for _, arg := range call.Args[1:] {
-			argStr := wordString(arg)
-			if dangerousFindFlags[argStr] {
-				return fmt.Errorf("find %s is not allowed for security reasons", argStr)
-			}
+	for _, arg := range call.Args[1:] {
+		target := wordString(arg)
+		// A flag, or the empty rendering of a fully dynamic argument, is
+		// not a target.
+		if target == "" || strings.HasPrefix(target, "-") {
+			continue
+		}
+		if isDangerousRMTarget(target) {
+			return fmt.Errorf("deleting %q is not allowed: it would remove the filesystem root, a top-level system directory, the whole current directory, or the home directory", target)
 		}
 	}
-
-	// Check for dangerous interpreter flags that allow inline code
-	// execution (e.g., python -c, node -e, go test -exec).
-	// See TheoryOfShellSecurity.
-	if containsDangerousFlag(cmdName, call.Args[1:]) {
-		return fmt.Errorf("command %q with inline execution flag is not allowed for security reasons", cmdName)
-	}
-
-	// env can be used to run commands (env VAR=value command), bypassing
-	// the allowlist because the command name appears as an argument to
-	// env rather than as the command itself. Reject any argument that is
-	// not a flag or VAR=value assignment.
-	// See TheoryOfShellSecurity.
-	if cmdName == "env" {
-		for _, arg := range call.Args[1:] {
-			argStr := wordString(arg)
-			if argStr == "" || strings.HasPrefix(argStr, "-") {
-				continue
-			}
-			if idx := strings.Index(argStr, "="); idx > 0 {
-				continue
-			}
-			return fmt.Errorf("env must not be used to execute commands")
-		}
-	}
-
 	return nil
+}
+
+// isDangerousRMTarget reports whether a deletion target names something that
+// must not be removed wholesale: the filesystem root, a top-level system
+// directory, the whole contents of the current directory, or the home
+// directory. The target is path-cleaned first, so "//" and "../." resolve to
+// their canonical forms; a non-matching target passes.
+func isDangerousRMTarget(target string) bool {
+	clean := filepath.Clean(target)
+	switch clean {
+	case "/", "*", ".", "..", "./*", "../*", "~", "~/*", "$HOME", "$HOME/*", "${HOME}", "${HOME}/*":
+		return true
+	}
+	if rest, ok := strings.CutPrefix(clean, "/"); ok {
+		rest = strings.TrimSuffix(rest, "/*")
+		// A single-component absolute path is a top-level system
+		// directory such as /usr, /etc, or /home.
+		return rest != "" && !strings.Contains(rest, "/")
+	}
+	return false
 }
 
 // validateWord recursively validates a shell word for command/process
@@ -395,11 +283,12 @@ func validateArithmExpr(expr syntax.ArithmExpr) error {
 	return nil
 }
 
-// wordString extracts the literal string value from a shell word by
-// concatenating Lit, SglQuoted, and DblQuoted parts. Non-literal parts
-// (parameter expansion, command substitution, brace expansion, etc.) produce
-// empty contributions, which causes the resulting string to not match any
-// allowlist entry — a conservative rejection for dynamic command names.
+// wordString extracts the literal text of a shell word: Lit, SglQuoted, and
+// DblQuoted parts are concatenated, and a plain parameter expansion ($name or
+// ${name}) renders as its source text so the destructive-pattern filter can
+// recognize targets such as $HOME. Every other part (command substitution,
+// brace expansion, parameter expansion with modifiers) contributes nothing,
+// so a dynamic word cannot accidentally match a dangerous target.
 func wordString(w *syntax.Word) string {
 	if w == nil {
 		return ""
@@ -411,9 +300,10 @@ func wordString(w *syntax.Word) string {
 	return sb.String()
 }
 
-// writeWordPartString writes the literal string value of a word part to the
-// builder. It handles Lit, SglQuoted, and DblQuoted parts; other part types
-// (ParamExp, CmdSubst, BraceExp, etc.) produce no output.
+// writeWordPartString writes the literal text of a word part to the builder.
+// It handles Lit, SglQuoted, and DblQuoted parts, and renders a plain
+// parameter expansion as its source text: "$NAME" or "${NAME}". Every other
+// part type produces no output.
 func writeWordPartString(sb *strings.Builder, part syntax.WordPart) {
 	switch p := part.(type) {
 	case *syntax.Lit:
@@ -423,6 +313,18 @@ func writeWordPartString(sb *strings.Builder, part syntax.WordPart) {
 	case *syntax.DblQuoted:
 		for _, dp := range p.Parts {
 			writeWordPartString(sb, dp)
+		}
+	case *syntax.ParamExp:
+		if p.Param == nil {
+			return
+		}
+		if p.Short {
+			sb.WriteString("$")
+			sb.WriteString(p.Param.Value)
+		} else {
+			sb.WriteString("${")
+			sb.WriteString(p.Param.Value)
+			sb.WriteString("}")
 		}
 	}
 }
@@ -484,34 +386,6 @@ func isOutputRedirOp(op syntax.RedirOperator) bool {
 		syntax.RdrClob, syntax.AppClob, syntax.RdrAll, syntax.RdrAllClob,
 		syntax.AppAll, syntax.AppAllClob:
 		return true
-	}
-	return false
-}
-
-// containsDangerousFlag checks if any argument matches a dangerous flag for
-// the given command. Flags can appear as standalone (e.g., -c), combined with
-// a value (e.g., -ccode for -c code), or in --flag=value form.
-// See TheoryOfShellSecurity.
-func containsDangerousFlag(cmdName string, args []*syntax.Word) bool {
-	dangerousFlags, ok := dangerousCommandFlags[cmdName]
-	if !ok {
-		return false
-	}
-	for _, arg := range args {
-		argStr := wordString(arg)
-		for flag := range dangerousFlags {
-			if argStr == flag {
-				return true
-			}
-			if strings.HasPrefix(argStr, flag+"=") {
-				return true
-			}
-			// Combined short flag with value (e.g., -ccode for -c code).
-			// Only applies to single-dash flags, not --long flags.
-			if !strings.HasPrefix(flag, "--") && len(argStr) > len(flag) && strings.HasPrefix(argStr, flag) {
-				return true
-			}
-		}
 	}
 	return false
 }

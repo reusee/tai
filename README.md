@@ -14,7 +14,7 @@ This is the opposite of the mainstream agentic pattern where context grows throu
 
 **In-memory apply with filesystem consistency.** Change blocks are applied to an in-memory store during streaming, not directly to disk. If a change block fails — invalid target, malformed code — generation stops immediately and the in-memory store is discarded. Only after a generation succeeds are changes flushed to disk in a single batch. The disk is never left in a partially modified state by an interrupted round.
 
-**Security by isolation.** On Linux, the tool re-executes itself in a user namespace with read-only-everything filesystem hardening. Only the current working directory, Go toolchain directories, the user config directory, `/tmp`, and `/dev/shm` are writable. Shell block execution is governed by an AST-level command allowlist. Focus files outside writable directories are marked read-only at collection time.
+**Security by isolation.** On Linux, the tool re-executes itself in a user namespace with read-only-everything filesystem hardening. Only the current working directory, Go toolchain directories, the user config directory, `/tmp`, and `/dev/shm` are writable. Shell block execution permits any program; AST-level parsing filters only common destructive patterns such as `rm -rf /`. Focus files outside writable directories are marked read-only at collection time.
 
 ## What It Is
 

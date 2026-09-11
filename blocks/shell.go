@@ -30,9 +30,9 @@ prohibition on change or ingest content that depends on the output, and the
 summary-first stop rule — and they are not repeated here.
 
 Shell command validation is handled by the security package
-(security.ValidateShellCommand), which enforces a command allowlist via
-AST-level parsing. See security.TheoryOfShellSecurity for the security
-model.
+(security.ValidateShellCommand), which runs any program and filters only
+common destructive patterns via AST-level parsing. See
+security.TheoryOfShellSecurity for the security model.
 `
 
 const ShellBlockSystemPrompt = `
@@ -51,28 +51,10 @@ Use the "shell" kind to execute shell commands and receive the output as part of
 - After the last shell block's closing line, emit the summary block IMMEDIATELY, then end the response and wait for the results.
 - Never end a response on a shell block, and never stop at its closing line: stopping there omits the mandatory summary block, the response is treated as incomplete, and it is discarded and retried — its blocks are discarded, so the commands are never executed unless re-emitted.
 - When the results arrive as user content in the next round (formatted as "Shell command: <command>" followed by the output), read them before emitting anything else. If another command is needed, emit a new shell block in that round and wait for its results in the following round.
-**Security policy**: Only commands in the allowed list are executed. Allowed command categories:
-  - File viewing: ls, cat, head, tail, wc, file, stat, tree, du, df
-  - Search: grep, rg, find (without -exec), which, whereis
-  - Text processing: sort, uniq, cut, tr, diff, comm, paste, column
-  - System info: pwd, echo, printf, env, printenv, date, uname, hostname, whoami, uptime, free, ps
-  - Git (read-only): git status, git diff, git log, git show, git blame, git ls-files, git ls-tree, git describe, git rev-parse, git help, git version
-  - Go toolchain: go test, go build, go vet, go list, go doc, go version, go env, go help
-  - Package managers (read-only): npm list/view/info/outdated/audit, yarn list/info/outdated, pnpm list/info/outdated
-- Version info: node, python, python3, java (--version/-version only), rustc, cargo (build/test/check/vet/metadata/tree/info/search/clean/doc/fetch only), gcc, make, cmake
-- **Forbidden operations**:
+**Security policy**: Any program may run. Only common destructive patterns are rejected:
   - Output redirection (>, >>) is not allowed.
-  - find -exec / -execdir / -ok / -okdir is not allowed.
-  - Commands not in the allowed list are rejected (e.g., rm, mv, cp, chmod, chown, kill, dd, shutdown, reboot, sed, awk).
-  - Git write operations are rejected (e.g., git commit, push, pull, merge, rebase, reset, checkout, add, rm, branch, tag, config, stash).
-- Go modifying operations are rejected (e.g., go fmt, go mod, go install, go get, go run, go generate).
-  - Background execution (&) and coprocesses are not allowed.
-  - Inline code execution via interpreter flags is not allowed (e.g., python -c, python3 -c, python -m, node -e, node --eval, node -p, node -r).
-  - env must not be used to execute commands (e.g., env rm -rf / is rejected).
-  - cargo run is not allowed; cargo is restricted to build, test, check, vet, metadata, tree, info, search, clean, doc, fetch.
-  - java is restricted to --version and -version only (java -jar and java ClassName execute arbitrary code).
-  - go test -exec is not allowed.
-  - Heredoc bodies, arithmetic expansion, and parameter expansion are recursively validated for command substitutions.
+  - Deleting the filesystem root, a top-level system directory (e.g. /usr, /etc, /home), the whole current directory, or the home directory is rejected, e.g. rm -rf /, rm -rf /*, rm -rf *, rm -rf ~, rm -rf $HOME. Delete named files or directories instead.
+  - Background execution (&) and coprocesses are rejected: their output cannot be captured.
 - If a command is rejected, the error message will be returned as user content. Adjust the command and try again.
 - Shell output triggers a new generation round so the model can act on the results.
 `
@@ -100,10 +82,10 @@ func executeShellCommand(ctx context.Context, cmdStr string) string {
 
 // ProcessShellBlocks executes all shell blocks and returns the outputs as
 // generator parts. Only blocks with Kind "shell" are processed; blocks of
-// other kinds are skipped. Each command is validated against the security
-// allowlist before execution; rejected commands return an error message as
-// user content instead of being executed. Each output part ends with a
-// blank line so consecutive parts in the same round stay
+// other kinds are skipped. Each command is validated against the
+// destructive-pattern filter before execution; rejected commands return an
+// error message as user content instead of being executed. Each output part
+// ends with a blank line so consecutive parts in the same round stay
 // paragraph-separated after verbatim part concatenation; see
 // generators.TheoryOfContentUnitSeparation. The provided context allows
 // callers to cancel long-running commands. See security.TheoryOfShellSecurity.

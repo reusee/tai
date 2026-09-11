@@ -78,26 +78,6 @@ func TestProcessShellBlocksEmpty(t *testing.T) {
 	}
 }
 
-func TestProcessShellBlocksRejectsForbiddenCommand(t *testing.T) {
-	blocks := []Block{
-		{Kind: "shell", Body: "rm -rf /tmp/test"},
-	}
-	parts, err := ProcessShellBlocks(blocks, context.Background())
-	if err != nil {
-		t.Fatalf("ProcessShellBlocks failed: %v", err)
-	}
-	if len(parts) == 0 {
-		t.Fatal("expected at least one part")
-	}
-	output := string(parts[0].(generators.Text))
-	if !strings.Contains(output, "Shell command rejected") {
-		t.Fatalf("expected output to contain 'Shell command rejected', got: %s", output)
-	}
-	if !strings.Contains(output, "rm") {
-		t.Fatalf("expected output to mention the rejected command, got: %s", output)
-	}
-}
-
 func TestProcessShellBlocksRejectsRedirection(t *testing.T) {
 	blocks := []Block{
 		{Kind: "shell", Body: "echo hello > /tmp/test"},
@@ -135,6 +115,31 @@ func TestProcessShellBlocksAllowsGitStatus(t *testing.T) {
 	}
 }
 
+func TestProcessShellBlocksRejectsDangerousCommand(t *testing.T) {
+	// A dangerous target is rejected before execution. The target is a
+	// nonexistent top-level path, so a filter regression cannot damage the
+	// machine; the rejection itself is what this test guards. The classic
+	// targets (rm -rf /, rm -rf *) are covered by the security package's
+	// validator tests, which never execute anything.
+	blocks := []Block{
+		{Kind: "shell", Body: "rm -rf /nonexistent-top-level-dir"},
+	}
+	parts, err := ProcessShellBlocks(blocks, context.Background())
+	if err != nil {
+		t.Fatalf("ProcessShellBlocks failed: %v", err)
+	}
+	if len(parts) == 0 {
+		t.Fatal("expected at least one part")
+	}
+	output := string(parts[0].(generators.Text))
+	if !strings.Contains(output, "Shell command rejected") {
+		t.Fatalf("expected output to contain 'Shell command rejected', got: %s", output)
+	}
+	if !strings.Contains(output, "rm") {
+		t.Fatalf("expected output to mention the rejected command, got: %s", output)
+	}
+}
+
 func TestProcessShellBlocksFiltersByKind(t *testing.T) {
 	blocks := []Block{
 		{Kind: "summary", Body: "echo hello"},
@@ -150,6 +155,29 @@ func TestProcessShellBlocksFiltersByKind(t *testing.T) {
 	output := string(parts[0].(generators.Text))
 	if !strings.Contains(output, "hello world") {
 		t.Fatalf("expected output to contain 'hello world', got: %s", output)
+	}
+}
+
+func TestProcessShellBlocksAllowsAnyProgram(t *testing.T) {
+	// The program allowlist is gone: kill was not in the old list and now
+	// runs normally. `kill -l` only lists signal names, so the test cannot
+	// signal any process.
+	blocks := []Block{
+		{Kind: "shell", Body: "kill -l"},
+	}
+	parts, err := ProcessShellBlocks(blocks, context.Background())
+	if err != nil {
+		t.Fatalf("ProcessShellBlocks failed: %v", err)
+	}
+	if len(parts) == 0 {
+		t.Fatal("expected at least one part")
+	}
+	output := string(parts[0].(generators.Text))
+	if strings.Contains(output, "Shell command rejected") {
+		t.Fatalf("kill should be allowed now, got: %s", output)
+	}
+	if !strings.Contains(output, "Command succeeded") {
+		t.Fatalf("expected the command to run, got: %s", output)
 	}
 }
 
@@ -184,5 +212,25 @@ func TestShellPromptsWaitForResults(t *testing.T) {
 	}
 	if !strings.Contains(prompt, "Never end a response on a shell block") {
 		t.Fatal("ShellBlockSystemPrompt must state the sequence rule: the block after the last shell block must be the summary block")
+	}
+}
+
+func TestShellPromptSecurityPolicy(t *testing.T) {
+	// The prompt teaches the destructive-pattern filter, not a program
+	// allowlist: any program may run, so the prompt must not carry a
+	// program list and must name the patterns that are rejected. See
+	// TheoryOfShellBlocks and security.TheoryOfShellSecurity.
+	prompt := ShellBlockSystemPrompt
+	if !strings.Contains(prompt, "Any program may run") {
+		t.Fatal("ShellBlockSystemPrompt must state that any program may run")
+	}
+	if !strings.Contains(prompt, "rm -rf /") {
+		t.Fatal("ShellBlockSystemPrompt must name the rejected destructive patterns")
+	}
+	if !strings.Contains(prompt, "Output redirection") {
+		t.Fatal("ShellBlockSystemPrompt must state that output redirection is rejected")
+	}
+	if strings.Contains(prompt, "Allowed command categories") || strings.Contains(prompt, "allowed list") {
+		t.Fatal("ShellBlockSystemPrompt must not carry a program allowlist")
 	}
 }

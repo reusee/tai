@@ -10,128 +10,83 @@ func TestValidateShellCommand(t *testing.T) {
 		cmd     string
 		wantErr bool
 	}{
-		// Allowed commands
+		// Any program may run: the allowlist is gone.
 		{"ls", "ls -la", false},
 		{"cat", "cat file.txt", false},
 		{"grep", "grep -r pattern .", false},
-		{"go test", "go test ./...", false},
-		{"go build", "go build ./...", false},
-		{"git status", "git status", false},
-		{"git log", "git log --oneline", false},
-		{"echo", "echo hello", false},
-		{"pwd", "pwd", false},
-		{"find", "find . -name *.go", false},
-		{"pipe", "ls -la | grep go", false},
-		{"semicolon", "echo hello; echo world", false},
-		{"and", "go test ./... && echo done", false},
+		{"sed", "sed -i 's/a/b/g' file", false},
+		{"awk", "awk '{print $1}' file", false},
+		{"cp", "cp a b", false},
+		{"mv", "mv a b", false},
+		{"chmod", "chmod 777 file", false},
+		{"chown", "chown user file", false},
+		{"dd", "dd if=/dev/zero of=file", false},
+		{"kill", "kill -9 1234", false},
+		{"python -c", "python -c 'print(1)'", false},
+		{"node -e", "node -e 'console.log(1)'", false},
+		{"find exec", "find . -exec rm {} \\;", false},
+		{"env command", "env rm -rf /tmp/work", false},
+		{"cargo run", "cargo run", false},
+		{"java -jar", "java -jar file.jar", false},
+		{"git commit", "git commit -m msg", false},
+		{"git push", "git push origin main", false},
+		{"bare git", "git", false},
+		{"go mod", "go mod tidy", false},
+		{"go run", "go run main.go", false},
+		{"bare go", "go", false},
+		{"cd", "cd /tmp && ls", false},
 		{"absolute path", "/usr/bin/ls -la", false},
-		{"npm list", "npm list", false},
-		{"node version", "node --version", false},
+		{"pipe", "ls -la | grep go", false},
+		{"and", "go test ./... && echo done", false},
 
-		// Forbidden commands
-		{"rm", "rm -rf /", true},
-		{"kill", "kill -9 1234", true},
-		{"mv", "mv a b", true},
-		{"cp", "cp a b", true},
-		{"chmod", "chmod 777 file", true},
-		{"chown", "chown user file", true},
-		{"shutdown", "shutdown -h now", true},
-		{"dd", "dd if=/dev/zero of=file", true},
-		{"sed", "sed -i 's/a/b/g' file", true},
-		{"awk", "awk '{print $1}' file", true},
+		// Destructive rm targets are rejected.
+		{"rm root", "rm -rf /", true},
+		{"rm root glob", "rm -rf /*", true},
+		{"rm all", "rm -rf *", true},
+		{"rm current dir", "rm -rf .", true},
+		{"rm current dir glob", "rm -rf ./*", true},
+		{"rm parent dir", "rm -rf ..", true},
+		{"rm parent glob", "rm -rf ../*", true},
+		{"rm home tilde", "rm -rf ~", true},
+		{"rm home tilde glob", "rm -rf ~/*", true},
+		{"rm home variable", "rm -rf $HOME", true},
+		{"rm home braced", "rm -rf ${HOME}", true},
+		{"rm home variable glob", "rm -rf $HOME/*", true},
+		{"rm top level dir", "rm -rf /usr", true},
+		{"rm top level dir glob", "rm -rf /etc/*", true},
+		{"rm resolved top level", "rm -rf /tmp/../etc", true},
 
-		// Output redirection
+		// Named targets pass.
+		{"rm named dir", "rm -rf build", false},
+		{"rm relative path", "rm -rf ./build/cache", false},
+		{"rm absolute named path", "rm -rf /tmp/work", false},
+		{"rm file", "rm -f file.txt", false},
+		{"rm dynamic target", "rm -rf $GOCACHE", false},
+
+		// Output redirection.
 		{"redirect", "echo hello > file.txt", true},
 		{"append", "echo hello >> file.txt", true},
+		{"input redirect ok", "cat < file.txt", false},
+		{"quoted redirection", "echo \"a > b\"", false},
 
-		// find -exec
-		{"find exec", "find . -exec rm {} \\;", true},
-		{"find execdir", "find . -execdir rm {}", true},
-
-		// Git write operations
-		{"git commit", "git commit -m msg", true},
-		{"git push", "git push origin main", true},
-		{"git pull", "git pull", true},
-		{"git merge", "git merge feature", true},
-		{"git checkout", "git checkout main", true},
-		{"git add", "git add .", true},
-		{"git branch", "git branch -D feature", true},
-		{"git config", "git config user.name foo", true},
-		{"git stash", "git stash", true},
-
-		// Go modifying operations
-		{"go fmt", "go fmt ./...", true},
-		{"go mod", "go mod tidy", true},
-		{"go install", "go install", true},
-		{"go run", "go run main.go", true},
-		{"go get", "go get example.com/pkg", true},
-
-		// Empty command
+		// Empty command.
 		{"empty", "", true},
 		{"whitespace", "   ", true},
 
-		// Pipe with forbidden command
-		{"pipe with rm", "ls | rm", true},
-		{"and with kill", "echo hi && kill 1234", true},
-
-		// Background execution
+		// Background execution.
 		{"background", "ls &", true},
 
-		// Interpreter inline execution flags
-		{"python -c", "python -c 'print(1)'", true},
-		{"python3 -c", "python3 -c 'print(1)'", true},
-		{"python -m", "python -m http.server", true},
-		{"node -e", "node -e 'console.log(1)'", true},
-		{"node --eval", "node --eval 'console.log(1)'", true},
-		{"node -p", "node -p '1+1'", true},
-		{"node -r", "node -r ./module", true},
-		{"go test -exec", "go test -exec /bin/true ./...", true},
-
-		// Interpreter without dangerous flags (allowed)
-		{"python --version", "python --version", false},
-		{"python3 --version", "python3 --version", false},
-		{"node --version", "node --version", false},
-		{"node -v", "node -v", false},
-
-		// env bypass prevention
-		{"env command", "env rm -rf /", true},
-		{"env no command", "env", false},
-		{"env with var", "env VAR=value", false},
-		{"env with pipe", "env | grep PATH", false},
-
-		// cargo run prevention
-		{"cargo run", "cargo run", true},
-		{"cargo build", "cargo build", false},
-		{"cargo test", "cargo test", false},
-		{"cargo check", "cargo check", false},
-
-		// java restriction
-		{"java -jar", "java -jar file.jar", true},
-		{"java class", "java MyClass", true},
-		{"java --version", "java --version", false},
-		{"java -version", "java -version", false},
-
-		// Heredoc with command substitution
-		{"heredoc cmd subst", "cat <<EOF\n$(rm -rf /)\nEOF", true},
-
-		// Arithmetic expansion with command substitution
-		{"arithm cmd subst", "echo $(( $(rm -rf /) ))", true},
-
-		// Parameter expansion with command substitution
-		{"param exp cmd subst", "echo ${var/$(rm)/x}", true},
-
-		// Brace expansion with command substitution
-		{"brace exp cmd subst", "echo {a,$(rm -rf /)}", true},
-
-		// Command without required subcommand
-		{"git no subcommand", "git", true},
-		{"go no subcommand", "go", true}, // AST-based validation: > inside quotes is not a redirection
-		{"gt inside quotes", `echo "a > b"`, false},
-		// AST-based validation: command substitution is recursively validated
+		// Nested commands are recursively validated.
 		{"cmd subst allowed", "echo $(whoami)", false},
-		{"cmd subst forbidden", "echo $(rm -rf /)", true},
-		// AST-based validation: process substitution is recursively validated
+		{"cmd subst dangerous", "echo $(rm -rf /)", true},
+		{"pipe with dangerous rm", "ls | rm -rf /", true},
+		{"and with dangerous rm", "echo hi && rm -rf *", true},
 		{"proc subst allowed", "diff <(ls) <(ls)", false},
+		{"proc subst dangerous", "diff <(rm -rf /) <(ls)", true},
+		{"heredoc cmd subst", "cat <<EOF\n$(rm -rf /)\nEOF", true},
+		{"arithm cmd subst", "echo $(( $(rm -rf /) ))", true},
+		{"param exp cmd subst", "echo ${var/$(rm -rf /)/x}", true},
+		{"brace exp cmd subst", "echo {a,$(rm -rf /)}", true},
 	}
 
 	for _, tt := range tests {
