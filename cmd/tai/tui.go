@@ -444,7 +444,14 @@ func (s tuiOutputState) AppendContent(content *generators.Content) (generators.S
 	s.tui.captureContent(content)
 	newUpstream, err := s.upstream.AppendContent(content)
 	if err != nil {
-		return nil, err
+		// The error path never returns nil: the returned state carries
+		// the partial upstream chain, so the generation loop's retry
+		// gate can read the content increase from it. See
+		// generators.TheoryOfStateImmutability.
+		if newUpstream == nil {
+			newUpstream = s.upstream
+		}
+		return tuiOutputState{upstream: newUpstream, tui: s.tui}, err
 	}
 	return tuiOutputState{upstream: newUpstream, tui: s.tui}, nil
 }
@@ -464,7 +471,13 @@ func (s tuiOutputState) SystemPrompt() string {
 func (s tuiOutputState) Flush() (generators.State, error) {
 	newUpstream, err := s.upstream.Flush()
 	if err != nil {
-		return nil, err
+		// The error path never returns nil: the returned state carries
+		// the partial upstream chain, so the generation loop keeps a
+		// usable state. See generators.TheoryOfStateImmutability.
+		if newUpstream == nil {
+			newUpstream = s.upstream
+		}
+		return tuiOutputState{upstream: newUpstream, tui: s.tui}, err
 	}
 	// Streamed model output often ends without a trailing newline.
 	// Terminating the last output line here ensures that any subsequent

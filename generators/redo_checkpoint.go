@@ -20,7 +20,18 @@ var _ State = RedoCheckpoint{}
 func (r RedoCheckpoint) AppendContent(content *Content) (State, error) {
 	upstream, err := r.upstream.AppendContent(content)
 	if err != nil {
-		return nil, err
+		// The error path still returns a checkpoint: the state carries
+		// the partial upstream result and the checkpoint fields, so the
+		// caller's retry gate can read the content increase. A nil state
+		// would discard the session. See TheoryOfStateImmutability.
+		if upstream == nil {
+			upstream = r.upstream
+		}
+		return RedoCheckpoint{
+			upstream:  upstream,
+			State0:    r.State0,
+			Generator: r.Generator,
+		}, err
 	}
 	return RedoCheckpoint{
 		upstream:  upstream,
@@ -36,7 +47,18 @@ func (r RedoCheckpoint) Contents() iter.Seq[*Content] {
 func (r RedoCheckpoint) Flush() (State, error) {
 	upstream, err := r.upstream.Flush()
 	if err != nil {
-		return nil, err
+		// The error path still returns a checkpoint: the state carries
+		// the partial upstream result and the checkpoint fields, so the
+		// caller never loses the session to an upstream failure. A nil
+		// state would discard it. See TheoryOfStateImmutability.
+		if upstream == nil {
+			upstream = r.upstream
+		}
+		return RedoCheckpoint{
+			upstream:  upstream,
+			State0:    r.State0,
+			Generator: r.Generator,
+		}, err
 	}
 	return RedoCheckpoint{
 		upstream:  upstream,

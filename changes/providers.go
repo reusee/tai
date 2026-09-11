@@ -374,7 +374,12 @@ func (Module) ApplyGoModification(
 // change block to a FileStore. Path resolution, file-level ops, text-level
 // ops, tree-structured ops on grammar-registered non-Go files, non-Go
 // handling, and Go modification are delegated to focused dscope-provided
-// functions.
+// functions. The operation is validated here rather than only in
+// ValidateChangeBlock, because the streaming handler
+// (BuildChangeBlockHandler) parses blocks without passing through the diff
+// file's validator: an unknown op would otherwise fall through the edit
+// switch and silently delete the target declaration. See
+// TheoryOfChangeBlockApplication.
 func (Module) ApplyChangeBlockStore(
 	applyFileLevelOp ApplyFileLevelOp,
 	applyTextLevelOp ApplyTextLevelOp,
@@ -382,6 +387,9 @@ func (Module) ApplyChangeBlockStore(
 	applyGoModification ApplyGoModification,
 ) ApplyChangeBlockStore {
 	return func(store FileStore, h ChangeBlock) error {
+		if !isKnownOperation(h.Op) {
+			return fmt.Errorf("unknown change operation %q; the supported operations are MODIFY, ADD_BEFORE, ADD_AFTER, DELETE, RENAME, WRITE, REPLACE, INSERT_BEFORE, INSERT_AFTER", h.Op)
+		}
 		path := h.FilePath
 		if filepath.IsAbs(path) {
 			cwd, err := os.Getwd()
@@ -434,8 +442,12 @@ func (Module) ApplyChangeBlockStore(
 		// Non-Go file handling
 		if !strings.HasSuffix(path, ".go") {
 			if os.IsNotExist(err) && h.Op == "ADD_BEFORE" && h.Target == "BEGIN" {
-				body := h.Body
-				return store.WriteFile(path, []byte(body), 0644)
+				// Every written file is normalized to exactly one
+				// trailing newline, matching the other write paths;
+				// writing the block body raw would leave the new file
+				// without a final newline.
+				body := []byte(h.Body)
+				return store.WriteFile(path, finalizeContent(body), 0644)
 			}
 			return fmt.Errorf("only .go files are supported for modification: %s", path)
 		}

@@ -506,6 +506,18 @@ func TestValidateChangeBlockNonGoFileTextLevelOpsAllowed(t *testing.T) {
 	}
 }
 
+func TestValidateChangeBlockRejectsUnknownOp(t *testing.T) {
+	h := ChangeBlock{
+		Op:       "REPLACEE",
+		Target:   "Foo",
+		FilePath: "test.go",
+		Body:     "func Foo() {}",
+	}
+	if err := ValidateChangeBlock(h); err == nil {
+		t.Fatal("an unknown operation must be rejected")
+	}
+}
+
 func TestChangeBlockPromptsUseUncommonChineseDelimiter(t *testing.T) {
 	// The delimiter policy lives only in blocks.BlockFormatSystemPrompt.
 	// The change block prompt references the general format and must not

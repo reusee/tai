@@ -117,8 +117,27 @@ func isTextLevelOperation(op string) bool {
 	}
 }
 
+// isKnownOperation reports whether op is one of the change block
+// operations. The set is closed: the change block prompt teaches exactly
+// these operations, and an unrecognized op must be rejected before any
+// edit — an unknown op matches no branch of the edit switch and would
+// otherwise silently delete the target declaration.
+// See TheoryOfChangeBlockApplication.
+func isKnownOperation(op string) bool {
+	switch op {
+	case "MODIFY", "ADD_BEFORE", "ADD_AFTER", "DELETE", "RENAME", "WRITE",
+		"REPLACE", "INSERT_BEFORE", "INSERT_AFTER":
+		return true
+	default:
+		return false
+	}
+}
+
 // ValidateChangeBlock validates that the change block's operation is valid
-// for the target file type. Non-Go files support file-level operations
+// for the target file type. Every operation must be one of the taught
+// change block operations: an unknown op matches no branch of the edit
+// switch and would otherwise silently delete the target declaration.
+// Non-Go files support file-level operations
 // (WRITE, RENAME, DELETE with target=*) and text-level operations (REPLACE,
 // INSERT_BEFORE, INSERT_AFTER). Non-Go files backed by a gotreesitter grammar
 // additionally support tree-structured operations (MODIFY, ADD_BEFORE,
@@ -130,6 +149,9 @@ func isTextLevelOperation(op string) bool {
 // "package" and "import" are special Go-only targets that support only MODIFY.
 // See TheoryOfSpecialGoTargets.
 func ValidateChangeBlock(h ChangeBlock) error {
+	if !isKnownOperation(h.Op) {
+		return fmt.Errorf("unknown change operation %q; the supported operations are MODIFY, ADD_BEFORE, ADD_AFTER, DELETE, RENAME, WRITE, REPLACE, INSERT_BEFORE, INSERT_AFTER", h.Op)
+	}
 	if !isGoFile(h.FilePath) && !isFileLevelOperation(h.Op, h.Target) && !isTextLevelOperation(h.Op) {
 		// Grammar-registered non-Go files also support tree-structured
 		// operations addressed by outline path. See

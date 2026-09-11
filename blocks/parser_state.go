@@ -126,7 +126,20 @@ var _ generators.State = (*ParserState)(nil)
 func (s *ParserState) AppendContent(content *generators.Content) (generators.State, error) {
 	newUpstream, err := s.upstream.AppendContent(content)
 	if err != nil {
-		return nil, err
+		// The error path never returns nil: the returned ParserState
+		// carries the partial upstream state and the unparsed buffer,
+		// so the generation loop's retry gate can read the content
+		// increase from it. A nil state would discard the session.
+		// See TheoryOfParserState and TheoryOfGenerateRetry.
+		if newUpstream == nil {
+			newUpstream = s.upstream
+		}
+		return &ParserState{
+			upstream:    newUpstream,
+			buf:         s.buf,
+			handler:     s.handler,
+			parseErrors: s.parseErrors,
+		}, err
 	}
 
 	// Only parse blocks from model-generated content, not from user or system input.
@@ -220,7 +233,19 @@ func (s *ParserState) Functions() iter.Seq[*generators.Function] {
 func (s *ParserState) Flush() (generators.State, error) {
 	newUpstream, err := s.upstream.Flush()
 	if err != nil {
-		return nil, err
+		// The error path never returns nil: the returned ParserState
+		// carries the partial upstream state and the unparsed buffer,
+		// mirroring the handler-error path below. See
+		// TheoryOfParserState.
+		if newUpstream == nil {
+			newUpstream = s.upstream
+		}
+		return &ParserState{
+			upstream:    newUpstream,
+			buf:         s.buf,
+			handler:     s.handler,
+			parseErrors: s.parseErrors,
+		}, err
 	}
 
 	// During Flush, a malformed block (an unclosed block with no matching

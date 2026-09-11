@@ -3,6 +3,7 @@ package generators
 import (
 	"bytes"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -238,6 +239,41 @@ func TestOutput(t *testing.T) {
 			t.Fatalf("got %q", buf.String())
 		}
 	})
+}
+
+func TestOutputNeverReturnsNilStateOnError(t *testing.T) {
+	// A closed file makes the display write fail. The state returned with
+	// the error must still be usable — never nil — because the streaming
+	// generators assign the return value before checking the error and the
+	// retry gate reads the content increase from it. See
+	// TheoryOfStateImmutability and TheoryOfGenerateRetry.
+	f, err := os.CreateTemp(t.TempDir(), "output")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	output := NewOutput(NewPrompts("", nil), f, true)
+	state, err := output.AppendContent(&Content{
+		Role:  RoleUser,
+		Parts: []Part{Text("hello")},
+	})
+	if err == nil {
+		t.Fatal("expected the write to the closed file to fail")
+	}
+	if state == nil {
+		t.Fatal("AppendContent must never return a nil state on error")
+	}
+
+	state, err = output.Flush()
+	if err == nil {
+		t.Fatal("expected the write to the closed file to fail")
+	}
+	if state == nil {
+		t.Fatal("Flush must never return a nil state on error")
+	}
 }
 
 func TestOutputUsage(t *testing.T) {

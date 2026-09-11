@@ -102,18 +102,33 @@ func (f FuncMap) AppendContent(content *Content) (State, error) {
 	var err error
 	ret.upstream, err = f.upstream.AppendContent(clonedContent)
 	if err != nil {
+		// The error path never leaves a nil upstream: a state without
+		// its chain would panic on the next operation, and the caller's
+		// retry gate reads the content increase from the returned state.
+		// See TheoryOfStateImmutability.
+		if ret.upstream == nil {
+			ret.upstream = f.upstream
+		}
 		return ret, err
 	}
 
 	// Append results after upstream has recorded the call.
 	if len(results) > 0 {
-		ret.upstream, err = ret.upstream.AppendContent(&Content{
+		recorded := ret.upstream
+		next, appendErr := recorded.AppendContent(&Content{
 			Role:  RoleTool,
 			Parts: results,
 		})
-		if err != nil {
-			return ret, err
+		if appendErr != nil {
+			// The upstream recorded the call before the failure, so the
+			// partial chain must survive: keep the recorded state when
+			// the failed append returned nothing.
+			if next != nil {
+				ret.upstream = next
+			}
+			return ret, appendErr
 		}
+		ret.upstream = next
 	}
 
 	return ret, nil
@@ -163,6 +178,12 @@ func (f FuncMap) Flush() (State, error) {
 	var err error
 	ret.upstream, err = f.upstream.Flush()
 	if err != nil {
+		// The error path never leaves a nil upstream: a state without
+		// its chain would panic on the next operation. See
+		// TheoryOfStateImmutability.
+		if ret.upstream == nil {
+			ret.upstream = f.upstream
+		}
 		return ret, err
 	}
 	return ret, nil

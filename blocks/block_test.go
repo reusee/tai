@@ -1,9 +1,12 @@
 package blocks
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/reusee/tai/generators"
 )
 
 func TestParseFirstBlockRejectsNonHanDelimiter(t *testing.T) {
@@ -453,6 +456,33 @@ func TestExtractDelimiter(t *testing.T) {
 		if got != tc.expected {
 			t.Errorf("extractDelimiter(%q) = %q, want %q", tc.input, got, tc.expected)
 		}
+	}
+}
+
+func TestParserStateNeverReturnsNilOnUpstreamError(t *testing.T) {
+	// A closed file makes the upstream output layer fail. The returned
+	// state must still be usable — never nil — because the generation
+	// loop's retry gate reads the content increase from it. See
+	// TheoryOfParserState and TheoryOfGenerateRetry.
+	f, err := os.CreateTemp(t.TempDir(), "output")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	upstream := generators.NewOutput(generators.NewPrompts("", nil), f, true)
+	state := NewParserState(upstream)
+	newState, err := state.AppendContent(&generators.Content{
+		Role:  generators.RoleModel,
+		Parts: []generators.Part{generators.Text("hello")},
+	})
+	if err == nil {
+		t.Fatal("expected the upstream write to fail")
+	}
+	if newState == nil {
+		t.Fatal("AppendContent must never return a nil state on error")
 	}
 }
 

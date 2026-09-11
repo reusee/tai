@@ -68,6 +68,12 @@ func (s ThoughtsSummarize) AppendContent(content *generators.Content) (generator
 		var err error
 		ret.upstream, err = s.upstream.AppendContent(content)
 		if err != nil {
+			// The error path never leaves a nil upstream: a state
+			// without its chain would panic on the next operation.
+			// See generators.TheoryOfStateImmutability.
+			if ret.upstream == nil {
+				ret.upstream = s.upstream
+			}
 			return ret, err
 		}
 		return ret, nil
@@ -135,6 +141,11 @@ func (s ThoughtsSummarize) AppendContent(content *generators.Content) (generator
 	var err error
 	ret.upstream, err = s.upstream.AppendContent(content)
 	if err != nil {
+		// See the nil-summarizer path above: the chain must survive the
+		// error so the caller's retry gate keeps a usable state.
+		if ret.upstream == nil {
+			ret.upstream = s.upstream
+		}
 		return ret, err
 	}
 
@@ -159,6 +170,12 @@ func (s ThoughtsSummarize) Flush() (generators.State, error) {
 		var err error
 		ret.upstream, err = s.upstream.Flush()
 		if err != nil {
+			// The error path never leaves a nil upstream: a state
+			// without its chain would panic on the next operation.
+			// See generators.TheoryOfStateImmutability.
+			if ret.upstream == nil {
+				ret.upstream = s.upstream
+			}
 			return ret, err
 		}
 		return ret, nil
@@ -186,6 +203,11 @@ func (s ThoughtsSummarize) Flush() (generators.State, error) {
 	var err error
 	ret.upstream, err = s.upstream.Flush()
 	if err != nil {
+		// See the nil-summarizer path above: the chain must survive the
+		// error so the caller keeps a usable state.
+		if ret.upstream == nil {
+			ret.upstream = s.upstream
+		}
 		return ret, err
 	}
 

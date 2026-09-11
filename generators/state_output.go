@@ -60,6 +60,19 @@ var _ State = Output{}
 func (s Output) AppendContent(content *Content) (_ State, err error) {
 	ret := s // copy
 
+	// fail preserves the state chain on error: the state returned with
+	// the error carries the chain and any content recorded before the
+	// failure, because the streaming generators assign the return value
+	// before checking the error and the retry gate reads the content
+	// increase from that state. Returning nil would discard the chain.
+	// See TheoryOfGenerateRetry and TheoryOfStateImmutability.
+	fail := func(err error) (State, error) {
+		if ret.upstream == nil {
+			ret.upstream = s.upstream
+		}
+		return ret, err
+	}
+
 	// color
 	var roleColor string
 	if s.isTerminal {
@@ -135,37 +148,37 @@ func (s Output) AppendContent(content *Content) (_ State, err error) {
 
 		case Text:
 			if err := print(false, string(part)); err != nil {
-				return nil, err
+				return fail(err)
 			}
 
 		case Thought:
 			if ret.showThoughts && !ret.disableThoughts {
 				if err := print(true, string(part)); err != nil {
-					return nil, err
+					return fail(err)
 				}
 			}
 
 		case FileURL:
 			if err := print(false, fmt.Sprintf("[File: %s]", part)); err != nil {
-				return nil, err
+				return fail(err)
 			}
 
 		case FileContent:
 			if err := print(false, fmt.Sprintf("[File Content: %s]", part.MimeType)); err != nil {
-				return nil, err
+				return fail(err)
 			}
 
 		case FuncCall:
 			if !ret.disableTools {
 				if err := print(false, fmt.Sprintf("[Function Call: %s(%v)]", part.Name, part.Arguments)); err != nil {
-					return nil, err
+					return fail(err)
 				}
 			}
 
 		case CallResult:
 			if !ret.disableTools {
 				if err := print(false, fmt.Sprintf("[Call Result: %s(%v)]", part.Name, part.Results)); err != nil {
-					return nil, err
+					return fail(err)
 				}
 			}
 
@@ -174,14 +187,14 @@ func (s Output) AppendContent(content *Content) (_ State, err error) {
 
 		case FinishReason:
 			if err := print(false, fmt.Sprintf("[Finish: %s]", part)); err != nil {
-				return nil, err
+				return fail(err)
 			}
 			if ret.lastUsage.Prompt.TokenCount != 0 ||
 				ret.lastUsage.Prompt.TokenCountCached != 0 ||
 				ret.lastUsage.Candidates.TokenCount != 0 ||
 				ret.lastUsage.Thoughts.TokenCount != 0 {
 				if _, err := fmt.Fprint(s.w, "\n"); err != nil {
-					return nil, err
+					return fail(err)
 				}
 				// SpeedSuffix appends the streaming speed measurements
 				// when present, and is empty otherwise, keeping the
@@ -196,13 +209,13 @@ func (s Output) AppendContent(content *Content) (_ State, err error) {
 				)
 				usageLine += ret.lastUsage.SpeedSuffix() + "]"
 				if err := print(false, usageLine); err != nil {
-					return nil, err
+					return fail(err)
 				}
 			}
 
 		case Error:
 			if err := print(false, fmt.Sprintf("[Error: %v]", part.Error)); err != nil {
-				return nil, err
+				return fail(err)
 			}
 
 		}
@@ -210,7 +223,7 @@ func (s Output) AppendContent(content *Content) (_ State, err error) {
 
 	ret.upstream, err = s.upstream.AppendContent(content)
 	if err != nil {
-		return nil, err
+		return fail(err)
 	}
 
 	return ret, nil
@@ -230,6 +243,18 @@ func (s Output) SystemPrompt() string {
 
 func (s Output) Flush() (State, error) {
 	ret := s // copy
+
+	// fail preserves the state chain on error: the state returned with
+	// the error carries the chain and any partial upstream flush, so a
+	// display or upstream failure never discards the session state.
+	// See TheoryOfStateImmutability.
+	fail := func(err error) (State, error) {
+		if ret.upstream == nil {
+			ret.upstream = s.upstream
+		}
+		return ret, err
+	}
+
 	// Close any open thought tag before flushing. If a turn ends with
 	// an open thought tag (the last printed part was a Thought), the
 	// closing tag must be emitted here. Without this, the unclosed tag
@@ -242,17 +267,17 @@ func (s Output) Flush() (State, error) {
 	// "</think>" so the pair is always matched.
 	if s.lastOutputIsThought {
 		if _, err := fmt.Fprint(s.w, "\n</think>\n"); err != nil {
-			return nil, err
+			return fail(err)
 		}
 		ret.lastOutputIsThought = false
 	}
 	if _, err := io.WriteString(s.w, "\n\n"); err != nil {
-		return nil, err
+		return fail(err)
 	}
 	var err error
 	ret.upstream, err = s.upstream.Flush()
 	if err != nil {
-		return nil, err
+		return fail(err)
 	}
 	ret.lastOutputRole = ""
 	ret.lastUsage = Usage{}

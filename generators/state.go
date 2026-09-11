@@ -16,7 +16,11 @@ map or slice references. Content objects referenced by pointer (*Content) are
 treated as copy-on-write: any modification (e.g., Merge) produces a new
 *Content rather than mutating the original. Shared maps (FuncMap.m) are safe
 to share across State instances because they are never mutated after
-construction.
+construction. An error path never returns a nil State: the state returned with
+the error carries the chain and any content recorded before the failure,
+because the streaming generators assign the return value before checking the
+error and the retry gate reads the content increase from that state. See
+TheoryOfGenerateRetry.
 `
 
 type State interface {

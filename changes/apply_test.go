@@ -593,6 +593,43 @@ func TestApplyChangeBlockNoBlankLinesInBody(t *testing.T) {
 	})
 }
 
+func TestApplyChangeBlockRejectsUnknownOp(t *testing.T) {
+	newTestScope(t).Call(func(applyChangeBlock ApplyChangeBlock) {
+		dir := t.TempDir()
+		root, err := os.OpenRoot(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer root.Close()
+
+		original := "package x\n\nfunc Keep() {}\n"
+		if err := root.WriteFile("test.go", []byte(original), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		// An unrecognized operation must be rejected: it matches no branch
+		// of the edit switch, so applying it would silently delete the
+		// target declaration and discard the body.
+		h := ChangeBlock{
+			Op:       "MODIFYY",
+			Target:   "Keep",
+			FilePath: "test.go",
+			Body:     "func Keep() { println(1) }",
+		}
+		if err := applyChangeBlock(root, h); err == nil {
+			t.Fatal("an unknown operation must be rejected")
+		}
+
+		result, err := root.ReadFile("test.go")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(result) != original {
+			t.Fatalf("the file must be unchanged after a rejected operation:\n%s", string(result))
+		}
+	})
+}
+
 func TestApplyChangeBlockWrite(t *testing.T) {
 	newTestScope(t).Call(func(applyChangeBlock ApplyChangeBlock) {
 		t.Run("ReplaceGoFile", func(t *testing.T) {
@@ -1413,6 +1450,39 @@ func TestApplyChangeBlockInsertKeepsLinesSeparated(t *testing.T) {
 			}
 		})
 
+	})
+}
+
+func TestApplyChangeBlockNewFileEndsWithNewline(t *testing.T) {
+	newTestScope(t).Call(func(applyChangeBlock ApplyChangeBlock) {
+		dir := t.TempDir()
+		root, err := os.OpenRoot(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer root.Close()
+
+		// Creating a non-Go file with ADD_BEFORE BEGIN must normalize the
+		// trailing newline like every other write path: block bodies are
+		// trimmed during parsing, so writing the body raw would leave the
+		// new file without a final newline.
+		h := ChangeBlock{
+			Op:       "ADD_BEFORE",
+			Target:   "BEGIN",
+			FilePath: "notes.md",
+			Body:     "# Notes",
+		}
+		if err := applyChangeBlock(root, h); err != nil {
+			t.Fatalf("ApplyChangeBlock failed: %v", err)
+		}
+
+		result, err := root.ReadFile("notes.md")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(result) != "# Notes\n" {
+			t.Fatalf("expected %q, got %q", "# Notes\n", string(result))
+		}
 	})
 }
 

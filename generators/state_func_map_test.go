@@ -1,6 +1,7 @@
 package generators
 
 import (
+	"errors"
 	"testing"
 )
 
@@ -70,5 +71,46 @@ func TestFuncMap(t *testing.T) {
 	}
 	if len(names) != 2 {
 		t.Fatalf("functions lost after Flush: %v", names)
+	}
+}
+
+func TestFuncMapNeverReturnsNilUpstreamOnError(t *testing.T) {
+	testErr := errors.New("append error")
+	fm := NewFuncMap(&checkpointMockState{appendErr: testErr})
+	state, err := fm.AppendContent(&Content{
+		Role:  RoleModel,
+		Parts: []Part{Text("hello")},
+	})
+	if !errors.Is(err, testErr) {
+		t.Fatalf("expected error %v, got %v", testErr, err)
+	}
+	if state == nil {
+		t.Fatal("AppendContent must never return a nil state on error")
+	}
+	newFuncMap, ok := state.(FuncMap)
+	if !ok {
+		t.Fatalf("expected a FuncMap state, got %T", state)
+	}
+	if newFuncMap.upstream == nil {
+		t.Fatal("the upstream chain must survive the error path")
+	}
+}
+
+func TestFuncMapFlushNeverReturnsNilUpstreamOnError(t *testing.T) {
+	testErr := errors.New("flush error")
+	fm := NewFuncMap(&checkpointMockState{flushErr: testErr})
+	state, err := fm.Flush()
+	if !errors.Is(err, testErr) {
+		t.Fatalf("expected error %v, got %v", testErr, err)
+	}
+	if state == nil {
+		t.Fatal("Flush must never return a nil state on error")
+	}
+	newFuncMap, ok := state.(FuncMap)
+	if !ok {
+		t.Fatalf("expected a FuncMap state, got %T", state)
+	}
+	if newFuncMap.upstream == nil {
+		t.Fatal("the upstream chain must survive the error path")
 	}
 }

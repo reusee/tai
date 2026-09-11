@@ -203,3 +203,51 @@ func TestRedoCheckpoint(t *testing.T) {
 	})
 
 }
+
+func TestRedoCheckpointNeverReturnsNilStateOnError(t *testing.T) {
+	testErr := errors.New("append error")
+	state0 := &checkpointMockState{contents: []*Content{{Role: "user"}}}
+	checkpoint := RedoCheckpoint{
+		upstream: &checkpointMockState{appendErr: testErr},
+		State0:   state0,
+	}
+
+	state, err := checkpoint.AppendContent(&Content{Role: "model"})
+	if !errors.Is(err, testErr) {
+		t.Fatalf("expected error %v, got %v", testErr, err)
+	}
+	if state == nil {
+		t.Fatal("AppendContent must never return a nil state on error")
+	}
+	newCheckpoint, ok := state.(RedoCheckpoint)
+	if !ok {
+		t.Fatalf("expected a RedoCheckpoint state, got %T", state)
+	}
+	if newCheckpoint.State0 != state0 {
+		t.Fatal("State0 must survive the error path")
+	}
+}
+
+func TestRedoCheckpointFlushNeverReturnsNilState(t *testing.T) {
+	testErr := errors.New("flush error")
+	state0 := &checkpointMockState{contents: []*Content{{Role: "user"}}}
+	checkpoint := RedoCheckpoint{
+		upstream: &checkpointMockState{flushErr: testErr},
+		State0:   state0,
+	}
+
+	state, err := checkpoint.Flush()
+	if !errors.Is(err, testErr) {
+		t.Fatalf("expected error %v, got %v", testErr, err)
+	}
+	if state == nil {
+		t.Fatal("Flush must never return a nil state on error")
+	}
+	newCheckpoint, ok := state.(RedoCheckpoint)
+	if !ok {
+		t.Fatalf("expected a RedoCheckpoint state, got %T", state)
+	}
+	if newCheckpoint.State0 != state0 {
+		t.Fatal("State0 must survive the error path")
+	}
+}

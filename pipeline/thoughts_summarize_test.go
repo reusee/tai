@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -131,6 +133,43 @@ func TestThoughtsSummarizeFlushRemaining(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "flush summary") {
 		t.Fatalf("expected flush summary in buffer, got %q", buf.String())
+	}
+}
+
+func TestThoughtsSummarizeNeverReturnsNilUpstreamOnError(t *testing.T) {
+	// A closed file makes the upstream output layer fail. The returned
+	// state must still carry its chain — a state whose upstream is nil
+	// panics on the next operation — and the caller's retry gate reads
+	// the content increase from it.
+	// See generators.TheoryOfStateImmutability.
+	f, err := os.CreateTemp(t.TempDir(), "output")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	upstream := generators.NewOutput(generators.NewPrompts("", nil), f, true)
+	var state generators.State = NewThoughtsSummarize(context.Background(), upstream, nil, io.Discard)
+
+	newState, err := state.AppendContent(&generators.Content{
+		Role:  generators.RoleModel,
+		Parts: []generators.Part{generators.Text("hello")},
+	})
+	if err == nil {
+		t.Fatal("expected the upstream write to fail")
+	}
+	if newState == nil {
+		t.Fatal("AppendContent must never return a nil state on error")
+	}
+
+	newState, err = newState.Flush()
+	if err == nil {
+		t.Fatal("expected the upstream write to fail")
+	}
+	if newState == nil {
+		t.Fatal("Flush must never return a nil state on error")
 	}
 }
 
