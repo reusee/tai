@@ -10,7 +10,7 @@ import (
 	"github.com/reusee/tai/tree"
 )
 
-// treeWithFinishNode builds a tree whose only event node is a finish
+// treeWithFinishNode builds a tree whose only message node is a finish
 // node, the minimal tree a setTree call consumes to clear the
 // generating hint. See TheoryOfTreeTab.
 func treeWithFinishNode(t *testing.T) *tree.Tree {
@@ -149,7 +149,7 @@ func TestTreeProjectionCycle(t *testing.T) {
 	tr, err := tree.New().WriteAll(
 		tree.WriteOp{Parent: "root", Name: "user-1", Type: tree.TypeUser, Author: tree.AuthorUser, Content: "task"},
 		tree.WriteOp{Parent: "root", Name: "attempt-1", Type: tree.TypeAttempt, Author: tree.AuthorProgram, Content: "attempt 1 (1/3)"},
-		tree.WriteOp{Parent: "root", Name: "completed-1", Type: tree.TypeCompleted, Author: tree.AuthorProgram, Content: "attempt 1 complete"},
+		tree.WriteOp{Parent: "root", Name: "synth-1", Type: tree.TypeSynthesizedSummary, Author: tree.AuthorProgram, Content: "attempt 1 complete"},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -180,7 +180,7 @@ func TestTreeProjectionCycle(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatalf("expected the completed node in the events projection, got %v", display)
+		t.Fatalf("expected the synthesized-summary node in the events projection, got %v", display)
 	}
 	for _, line := range display {
 		if strings.Contains(line.Text, "attempt 1 (1/3)") {
@@ -256,7 +256,7 @@ func TestTreeCollapseAllToggle(t *testing.T) {
 	tui := newTUIForTest()
 	tr, err := tree.New().WriteAll(
 		tree.WriteOp{Parent: "root", Name: "wide-1", Type: tree.TypeHandoff, Author: tree.AuthorProgram, Content: "head\nbody"},
-		tree.WriteOp{Parent: "root", Name: "plain-1", Type: tree.TypeCompleted, Author: tree.AuthorProgram, Content: "one line"},
+		tree.WriteOp{Parent: "root", Name: "plain-1", Type: tree.TypeSynthesizedSummary, Author: tree.AuthorProgram, Content: "one line"},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -315,7 +315,7 @@ func TestTreeCollapseAllToggle(t *testing.T) {
 	// on restore: the snapshot carries only the nodes it captured.
 	tr2, err := tree.New().WriteAll(
 		tree.WriteOp{Parent: "root", Name: "wide-1", Type: tree.TypeHandoff, Author: tree.AuthorProgram, Content: "head\nbody"},
-		tree.WriteOp{Parent: "root", Name: "late-1", Type: tree.TypeCompleted, Author: tree.AuthorProgram, Content: "late\nbody"},
+		tree.WriteOp{Parent: "root", Name: "late-1", Type: tree.TypeSynthesizedSummary, Author: tree.AuthorProgram, Content: "late\nbody"},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -405,7 +405,7 @@ func TestTreeCollapseAllTruncatedHeaderExpanded(t *testing.T) {
 	tui := newTUIForTest()
 	tr, err := tree.New().WriteAll(
 		tree.WriteOp{Parent: "root", Name: "wide-1", Type: tree.TypeHandoff, Author: tree.AuthorProgram, Content: "head\nbody"},
-		tree.WriteOp{Parent: "root", Name: "long-1", Type: tree.TypeCompleted, Author: tree.AuthorProgram, Content: strings.Repeat("x", 200)},
+		tree.WriteOp{Parent: "root", Name: "long-1", Type: tree.TypeSynthesizedSummary, Author: tree.AuthorProgram, Content: strings.Repeat("x", 200)},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -460,11 +460,11 @@ func TestTreeExpandScrollsToNodeStart(t *testing.T) {
 	tui := newTUIForTest()
 	wideContent := "wide header\n" + strings.TrimRight(strings.Repeat("wide body\n", 30), "\n")
 	tr, err := tree.New().WriteAll(
-		tree.WriteOp{Parent: "root", Name: "plain-1", Type: tree.TypeCompleted, Author: tree.AuthorProgram, Content: "one"},
-		tree.WriteOp{Parent: "root", Name: "plain-2", Type: tree.TypeCompleted, Author: tree.AuthorProgram, Content: "two"},
-		tree.WriteOp{Parent: "root", Name: "plain-3", Type: tree.TypeCompleted, Author: tree.AuthorProgram, Content: "three"},
-		tree.WriteOp{Parent: "root", Name: "plain-4", Type: tree.TypeCompleted, Author: tree.AuthorProgram, Content: "four"},
-		tree.WriteOp{Parent: "root", Name: "plain-5", Type: tree.TypeCompleted, Author: tree.AuthorProgram, Content: "five"},
+		tree.WriteOp{Parent: "root", Name: "plain-1", Type: tree.TypeSynthesizedSummary, Author: tree.AuthorProgram, Content: "one"},
+		tree.WriteOp{Parent: "root", Name: "plain-2", Type: tree.TypeSynthesizedSummary, Author: tree.AuthorProgram, Content: "two"},
+		tree.WriteOp{Parent: "root", Name: "plain-3", Type: tree.TypeSynthesizedSummary, Author: tree.AuthorProgram, Content: "three"},
+		tree.WriteOp{Parent: "root", Name: "plain-4", Type: tree.TypeSynthesizedSummary, Author: tree.AuthorProgram, Content: "four"},
+		tree.WriteOp{Parent: "root", Name: "plain-5", Type: tree.TypeSynthesizedSummary, Author: tree.AuthorProgram, Content: "five"},
 		tree.WriteOp{Parent: "root", Name: "wide-1", Type: tree.TypeHandoff, Author: tree.AuthorProgram, Content: wideContent},
 	)
 	if err != nil {
@@ -897,7 +897,7 @@ func TestTreeFoldColumnToggles(t *testing.T) {
 	tui := newTUIForTest()
 	tr, err := tree.New().WriteAll(
 		tree.WriteOp{Parent: "root", Name: "wide-1", Type: tree.TypeHandoff, Author: tree.AuthorProgram, Content: "head\nbody"},
-		tree.WriteOp{Parent: "root", Name: "plain-1", Type: tree.TypeCompleted, Author: tree.AuthorProgram, Content: "one line"},
+		tree.WriteOp{Parent: "root", Name: "plain-1", Type: tree.TypeSynthesizedSummary, Author: tree.AuthorProgram, Content: "one line"},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -1096,13 +1096,16 @@ func TestCollapseAllKeyDispatchesByFocus(t *testing.T) {
 // pane width carries the fold column's glyph, and pressing the fold
 // column's cells on its header row expands the node to reveal the
 // full line wrapped; a single-line node whose header fits carries a
-// blank slot. See TheoryOfTreeTab.
+// blank slot. The single-line fixture carries the usage type, whose
+// type fragment holds no 'z': the assertion counts every z of the
+// long node's content across the display rows after the header, and
+// a fragment letter would pollute the count. See TheoryOfTreeTab.
 func TestTreeSingleLineTruncatedExpands(t *testing.T) {
 	tui := newTUIForTest()
 	tr, err := tree.New().WriteAll(
 		tree.WriteOp{Parent: "root", Name: "long-1", Type: tree.TypeUser, Author: tree.AuthorUser,
 			Content: strings.Repeat("z", 120)},
-		tree.WriteOp{Parent: "root", Name: "short-1", Type: tree.TypeCompleted, Author: tree.AuthorProgram,
+		tree.WriteOp{Parent: "root", Name: "short-1", Type: tree.TypeUsage, Author: tree.AuthorProgram,
 			Content: "brief"},
 	)
 	if err != nil {

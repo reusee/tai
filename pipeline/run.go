@@ -284,12 +284,11 @@ type loopState struct {
 	// recorder records nothing. See
 	// records.TheoryOfInteractionRecording.
 	recorder *records.Recorder
-	// eventSink buffers the generator-level events (api_call,
-	// api_error) written by the generators of the run's scope. The loop
-	// drains it after each attempt's phase chain and at the run's end,
-	// recording every buffered event as a session-tree event node of
-	// the same type. A nil sink drains nothing. See
-	// generators.TheoryOfEventRecorder.
+	// eventSink buffers the generator-level api_error events written by
+	// the generators of the run's scope. The loop drains it after each
+	// attempt's phase chain and at the run's end, recording every
+	// buffered event as a session-tree event node of the same type. A
+	// nil sink drains nothing. See generators.TheoryOfEventRecorder.
 	eventSink *generators.EventSink
 
 	// attempt is the session-wide 1-based attempt number of the attempt
@@ -557,18 +556,19 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 			ls.writeAttemptUserInput(text)
 		}
 
-		// The attempt's finish reason feeds both the session tree —
-		// every attempt's completion signal, including attempts that
-		// later fail — and the completion check below. Recorded
-		// immediately when known. See TheoryOfLoopEvents.
+		// The attempt's finish reason is the model output's completion
+		// signal: it joins the session tree as a finish message node —
+		// every attempt's, including attempts that later fail — and
+		// feeds the completion check below. Recorded immediately when
+		// known. See TheoryOfLoopEvents.
 		finishReason := extractFinishReason(phaseState, attemptBase)
 		if finishReason != "" {
-			ls.writeEventNode("finish", "finish: "+finishReason)
+			ls.writeEventNode(tree.TypeFinish, "finish: "+finishReason)
 		}
 
 		// Generator-level events buffered during the attempt's phase
-		// chain (api_call, api_error) join the tree as event nodes of
-		// the same type, immediately after the attempt's other facts.
+		// chain (api_error) join the tree as event nodes of the same
+		// type, immediately after the attempt's other facts.
 		// See generators.TheoryOfEventRecorder.
 		ls.drainEventSink()
 
@@ -677,8 +677,8 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 								phaseState = appendHandoffUsage(phaseState, prevCount, handoff.Usage)
 							}
 							// The handoff request's own generator
-							// events (api_call, api_error) join the
-							// tree before the retry attempt opens.
+							// events (api_error) join the tree
+							// before the retry attempt opens.
 							// See generators.TheoryOfEventRecorder.
 							ls.drainEventSink()
 						}
@@ -950,18 +950,9 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 		}
 	}
 
-	// Record the attempt's token usage and write the attempt's
-	// completion event node. See TheoryOfUsageLogging and
+	// Record the attempt's token usage. See TheoryOfUsageLogging and
 	// TheoryOfLoopEvents.
 	ls.recordAttemptUsage(phaseState, attemptBase, "")
-	// The completed node carries the attempt's summary bodies, so the
-	// Tree tab shows the completion with its summary collapsed by
-	// default. See TheoryOfLoopEvents.
-	completedContent := fmt.Sprintf("attempt %d complete", ls.attempt)
-	if len(generationSummaries) > 0 {
-		completedContent += ":\n" + strings.Join(generationSummaries, "\n")
-	}
-	ls.writeEventNode("completed", completedContent)
 
 	// The successful attempt joins the session tree: the response
 	// node, one summary node per summary body, and the block batch
@@ -1192,8 +1183,8 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 // drainEventSink records the generator-level events buffered in the
 // scope's sink as session-tree event nodes of the same type, in
 // occurrence order, and empties the sink. The events are written under
-// the current attempt node, so an API call or API error lands in the
-// attempt it served. A nil sink drains nothing. See
+// the current attempt node, so an API error lands in the attempt it
+// served. A nil sink drains nothing. See
 // generators.TheoryOfEventRecorder.
 func (ls *loopState) drainEventSink() {
 	if ls.eventSink == nil || ls.sessionTree == nil {

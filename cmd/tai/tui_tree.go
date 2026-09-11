@@ -505,8 +505,10 @@ func formatTreeElapsed(d time.Duration) string {
 // setTree stores the latest session tree and consumes its new nodes:
 // an attempt node opens the output section the attempt's streamed
 // content will fill, and a finish node ends the request's generating
-// hint. The tab auto-expands on the first consumed node. See
-// TheoryOfTreeTab and TheoryOfTUIOutputSections.
+// hint. Finish nodes are message-category nodes carrying the model
+// output's finish reason, so they are consumed by type, outside the
+// event-category loop. The tab auto-expands on the first consumed
+// node. See TheoryOfTreeTab and TheoryOfTUIOutputSections.
 func (t *TUI) setTree(tr *tree.Tree) {
 	if tr == nil {
 		return
@@ -525,9 +527,16 @@ func (t *TUI) setTree(tr *tree.Tree) {
 		}
 		t.treeTab.seen[n.Name] = true
 		consumed++
-		if n.Type == tree.TypeFinish {
-			t.generating = false
+	}
+	// Finish nodes carry the model output's finish reason: each new
+	// one ends the request's generating hint. See TheoryOfTreeTab.
+	for _, n := range tr.ByType(tree.TypeFinish) {
+		if t.treeTab.seen[n.Name] {
+			continue
 		}
+		t.treeTab.seen[n.Name] = true
+		consumed++
+		t.generating = false
 	}
 	// Attempt nodes are structure nodes, outside the event category:
 	// each new one opens the output section its attempt's streamed

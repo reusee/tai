@@ -44,7 +44,7 @@ func (o *OpenAI) Spec() Spec {
 	return o.spec
 }
 
-// recordEvent records an API-level event (api_call, api_error) in the
+// recordEvent records an API-level event (api_error) in the
 // scope's generators.EventSink: the per-scope EventSink is the default
 // EventRecorder, injected as a dscope dependency when the generator is
 // constructed, and the generation loop drains the sink after each round,
@@ -201,8 +201,6 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 			req.Reasoning.MaxTokens = *o.spec.MaxThinkingTokens
 		}
 	}
-
-	o.recordEvent("api_call", fmt.Sprintf("openai-compatible chat completion: model=%s effort=%s non_streaming=%v", o.spec.Model, reasoningEffort, nonStreaming))
 
 	if options != nil && options.ResponseSchema != nil {
 		req.ResponseFormat = &ResponseFormat{

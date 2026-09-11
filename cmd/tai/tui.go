@@ -50,15 +50,17 @@ The TUI interface replaces stdout with a three-tab terminal UI: the
 Output tab streams the model output, the Tree tab renders the session
 tree the pipeline writes — every node the run records: user inputs,
 responses and their summaries, blocks and their results, the attempt
-structure nodes, the loop's own event nodes (generator specs, finish
-reasons, per-attempt usage, truncations, retries, handoffs,
-completions, component and idle continuations, thought summaries, and
-the terminal error), and the goal runner's verdict nodes in goal mode —
+structure nodes, the loop's own event nodes (generator specs,
+per-attempt usage, truncations, retries, handoffs, synthesized
+completions, component and idle continuations, thought summaries, API
+errors, and the terminal error), the finish and thoughts message
+nodes carrying the model output's finish reason and reasoning trace,
+and the goal runner's verdict nodes in goal mode —
 and the Logs tab collects log records. The Tree tab renders the SAME
 tree the pipeline writes and cycles projections with the v key; the
 walk, the projection modes, and the jump marker live in TheoryOfTreeTab
 (see also pipeline.TheoryOfLoopEvents). A
-finish event node clears the Output tab's "generating..." hint. The
+finish message node clears the Output tab's "generating..." hint. The
 Logs tab renders consecutive lines with alternating background shades
 (taiui.TheoryOfLines owns the alternation and its inert default); the
 two shades derive from whatever backgrounds the
@@ -90,8 +92,9 @@ imperfectly parsed. The one exception is the user's chat input: runWithTUI
 writes the flags.Chats content to the Output tab in the user role color
 before the command starts, so the user sees what the model was asked even
 though the chat lives in the initial state. Attempt summaries render
-from the tree's completed, truncated, and synthesized-summary event
-nodes, so the TUI never parses streamed text for blocks, never scans
+from the tree's summary nodes, and the synthesized-summary event node
+carries the completion summary of an exhausted generation, so the TUI
+never parses streamed text for blocks, never scans
 rendered text for completion markers, and never captures model output
 through a stdout pipe; retry feedback cannot duplicate summary content
 because the session tree is the single authority. The goal-mode verdicts
@@ -418,7 +421,7 @@ var (
 // thoughts stream to the Output tab (thoughts wrapped in the
 // thinking/response markers the terminal Output layer uses), function
 // calls and results render as markers, and errors are shown inline.
-// Finish reasons are not captured here: they arrive as finish event
+// Finish reasons are not captured here: they arrive as finish message
 // nodes in the session tree that withTUIOutputObserver forwards to
 // setTree, and a finish node clears the Output tab's "generating..."
 // hint. See TheoryOfTUI and pipeline.TheoryOfLoopEvents.

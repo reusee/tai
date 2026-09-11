@@ -473,6 +473,19 @@ func TestCategoryAndEmoji(t *testing.T) {
 	}
 }
 
+// TestFinishAndThoughtsAreMessage verifies the reclassification of the
+// model-output node types: the finish reason and the reasoning trace
+// derive to the message category, so they join the session's messages
+// and the model-facing outline. See TheoryOfTree.
+func TestFinishAndThoughtsAreMessage(t *testing.T) {
+	if got := TypeFinish.Category(); got != CategoryMessage {
+		t.Fatalf("finish category = %v, want message", got)
+	}
+	if got := TypeThoughts.Category(); got != CategoryMessage {
+		t.Fatalf("thoughts category = %v, want message", got)
+	}
+}
+
 func TestExtract(t *testing.T) {
 	insertTime := time.Date(2024, 5, 6, 7, 8, 9, 0, time.UTC)
 	tr, err := New().WriteAll(

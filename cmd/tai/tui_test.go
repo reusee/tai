@@ -209,8 +209,8 @@ func TestTuiLogsHasNoLineLimit(t *testing.T) {
 
 func TestTuiSignalsHasNoLimit(t *testing.T) {
 	// The Tree tab renders the session tree the pipeline yields; the
-	// tree is immutable and complete, so a huge event body or a storm
-	// of event nodes is never truncated. See TheoryOfTUINoTruncation.
+	// tree is immutable and complete, so a huge node body or a storm
+	// of nodes is never truncated. See TheoryOfTUINoTruncation.
 	tui := newTUIForTest()
 	const lines = 20000
 	var body strings.Builder
@@ -221,14 +221,14 @@ func TestTuiSignalsHasNoLimit(t *testing.T) {
 		fmt.Fprintf(&body, "- line %d", i)
 	}
 	content := "attempt 1 complete:\n" + body.String()
-	tr, err := tree.New().Write("root", "completed-1", tree.TypeCompleted, tree.AuthorProgram, content)
+	tr, err := tree.New().Write("root", "synth-1", tree.TypeSynthesizedSummary, tree.AuthorProgram, content)
 	if err != nil {
 		t.Fatal(err)
 	}
 	tui.setTree(tr)
-	node, ok := tui.treeView.Node("completed-1")
+	node, ok := tui.treeView.Node("synth-1")
 	if !ok {
-		t.Fatal("expected the completed event node in the TUI's tree")
+		t.Fatal("expected the synthesized-summary event node in the TUI's tree")
 	}
 	got := strings.Split(strings.TrimRight(node.Content, "\n"), "\n")
 	if len(got) != lines+1 {
@@ -244,7 +244,9 @@ func TestTuiSignalsHasNoLimit(t *testing.T) {
 		t.Fatalf("expected the last summary line retained, got %q", got[lines])
 	}
 
-	// A storm of event nodes is retained whole.
+	// A storm of finish nodes is retained whole; the finish reason is
+	// the model output's completion signal, so the nodes are message
+	// nodes consumed by type.
 	tui2 := newTUIForTest()
 	const finishes = 3000
 	ops := make([]tree.WriteOp, 0, finishes)
@@ -259,7 +261,7 @@ func TestTuiSignalsHasNoLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 	tui2.setTree(tr2)
-	if got := len(tui2.treeView.ByCategory(tree.CategoryEvent)); got != finishes {
+	if got := len(tui2.treeView.ByType(tree.TypeFinish)); got != finishes {
 		t.Fatalf("expected %d finish nodes, got %d", finishes, got)
 	}
 }
@@ -1562,7 +1564,7 @@ func TestTuiStateAutoExpandTabs(t *testing.T) {
 		t.Fatalf("auto-expand must not change an established focus, got %d", tui.tabs.Focus)
 	}
 
-	tr, err := tree.New().Write("root", "completed-1", tree.TypeCompleted, tree.AuthorProgram,
+	tr, err := tree.New().Write("root", "synth-1", tree.TypeSynthesizedSummary, tree.AuthorProgram,
 		"attempt 1 complete:\n- done")
 	if err != nil {
 		t.Fatal(err)
@@ -1574,9 +1576,9 @@ func TestTuiStateAutoExpandTabs(t *testing.T) {
 	if tui.tabs.Focus != 0 {
 		t.Fatalf("auto-expand must not change an established focus, got %d", tui.tabs.Focus)
 	}
-	node, ok := tui.treeView.Node("completed-1")
+	node, ok := tui.treeView.Node("synth-1")
 	if !ok || !strings.Contains(node.Content, "- done") {
-		t.Fatalf("expected the completed node with its summary, got %+v", node)
+		t.Fatalf("expected the synthesized-summary node with its summary, got %+v", node)
 	}
 
 	tui2 := newTUIForTest()
@@ -1685,8 +1687,8 @@ func TestWithTUIOutputObserver(t *testing.T) {
 		gotOpts = opts
 		return func(yield func(*tree.Tree, error) bool) {
 			// The run yields the finish node's tree and then the tree
-			// carrying the attempt completion; the wrapper's tap must
-			// forward both to the TUI.
+			// carrying the attempt's synthesized completion; the
+			// wrapper's tap must forward both to the TUI.
 			finishTree, err := tree.New().Write("root", "finish-1", tree.TypeFinish, tree.AuthorProgram, "finish: stop")
 			if err != nil {
 				return
@@ -1694,7 +1696,7 @@ func TestWithTUIOutputObserver(t *testing.T) {
 			if !yield(finishTree, nil) {
 				return
 			}
-			next, err := finishTree.Write("root", "completed-1", tree.TypeCompleted, tree.AuthorProgram,
+			next, err := finishTree.Write("root", "synth-1", tree.TypeSynthesizedSummary, tree.AuthorProgram,
 				"attempt 1 complete:\n- done")
 			if err != nil {
 				return
@@ -1762,14 +1764,14 @@ func TestWithTUIOutputObserver(t *testing.T) {
 	if tui.generating {
 		t.Fatal("expected the finish node to clear the generating hint")
 	}
-	// The Tree tab holds the same tree the run yielded, with both event
+	// The Tree tab holds the same tree the run yielded, with both
 	// nodes present.
 	if tui.treeView == nil {
 		t.Fatal("expected the TUI to hold the run's tree")
 	}
-	for _, name := range []string{"finish-1", "completed-1"} {
+	for _, name := range []string{"finish-1", "synth-1"} {
 		if _, ok := tui.treeView.Node(name); !ok {
-			t.Fatalf("expected the %s event node in the TUI's tree", name)
+			t.Fatalf("expected the %s node in the TUI's tree", name)
 		}
 	}
 }

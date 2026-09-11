@@ -51,8 +51,10 @@ func TestWriteInitialSystemNode(t *testing.T) {
 // attempt structure: each attempt opens an attempt node under the
 // session parent, the attempt's events, response, and summaries hang
 // under it, the initial user node hangs under the attempt node, and
-// the session's system node stays the attempt node's sibling. See
-// TheoryOfSessionTree.
+// the session's system node stays the attempt node's sibling. No
+// completed event node is written: a generation completes with a
+// summary block, and the summary nodes under the response carry the
+// completion. See TheoryOfSessionTree.
 func TestRunAttemptNodesUnderAttemptNode(t *testing.T) {
 	withRun(t, func(run Run) {
 		result, err := runOnce(run, RunOptions{
@@ -81,8 +83,8 @@ func TestRunAttemptNodesUnderAttemptNode(t *testing.T) {
 		for _, child := range attempt.Children() {
 			kinds[child.Type]++
 		}
-		if kinds[tree.TypeCompleted] != 1 || kinds[tree.TypeModel] != 1 || kinds[tree.TypeUser] != 1 {
-			t.Fatalf("the attempt node must carry the attempt's events, input, and response, got %+v", kinds)
+		if kinds[tree.TypeModel] != 1 || kinds[tree.TypeUser] != 1 {
+			t.Fatalf("the attempt node must carry the attempt's input and response, got %+v", kinds)
 		}
 		model, ok := tr.Node("model-1")
 		if !ok || model.Parent != attempt.Name {
@@ -601,7 +603,7 @@ func TestRunErrorNodesRecorded(t *testing.T) {
 
 // TestRunFailedAttemptsRecordProducedContent verifies that a failed
 // attempt's produced reasoning and body join the tree as its own
-// nodes — one thought event node and one model node — on the
+// nodes — one thoughts message node and one model node — on the
 // truncated retry, the error retry, the terminal error, and the
 // attempt-success-hook error paths, so the tree carries every
 // attempt's material, not only the successful attempts'. See
@@ -636,7 +638,7 @@ func TestRunFailedAttemptsRecordProducedContent(t *testing.T) {
 		return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
 	}
 	// assertFailedAttemptContent asserts the first attempt carries the
-	// failed attempt's thought and body as its own nodes.
+	// failed attempt's thoughts and body as its own nodes.
 	assertFailedAttemptContent := func(t *testing.T, tr *tree.Tree) {
 		t.Helper()
 		if tr == nil {
@@ -646,17 +648,17 @@ func TestRunFailedAttemptsRecordProducedContent(t *testing.T) {
 		if len(attempts) == 0 {
 			t.Fatal("expected an attempt node")
 		}
-		var thoughtNode, modelNode *tree.Node
+		var thoughtsNode, modelNode *tree.Node
 		for _, child := range attempts[0].Children() {
 			switch child.Type {
-			case tree.TypeThought:
-				thoughtNode = child
+			case tree.TypeThoughts:
+				thoughtsNode = child
 			case tree.TypeModel:
 				modelNode = child
 			}
 		}
-		if thoughtNode == nil || thoughtNode.Content != thought {
-			t.Fatalf("expected the failed attempt's thought event node, got %+v", thoughtNode)
+		if thoughtsNode == nil || thoughtsNode.Content != thought {
+			t.Fatalf("expected the failed attempt's thoughts message node, got %+v", thoughtsNode)
 		}
 		if modelNode == nil || !strings.Contains(modelNode.Content, body) {
 			t.Fatalf("expected the failed attempt's model node, got %+v", modelNode)
@@ -756,8 +758,8 @@ func TestRunFailedAttemptsRecordProducedContent(t *testing.T) {
 // recording's idempotency guard: a thoughts-only attempt reaches the
 // recording twice — its truncated path records it, and the terminal
 // path records it again when the truncation callback fails — so the
-// attempt must carry exactly one thought node. A model-node-only guard
-// would miss the first recording and duplicate the thought node. See
+// attempt must carry exactly one thoughts node. A model-node-only guard
+// would miss the first recording and duplicate the thoughts node. See
 // TheoryOfSessionTree.
 func TestRunFailedAttemptRecordingIsIdempotent(t *testing.T) {
 	withRun(t, func(run Run) {
@@ -790,8 +792,8 @@ func TestRunFailedAttemptRecordingIsIdempotent(t *testing.T) {
 		if result.SessionTree == nil {
 			t.Fatal("expected a session tree")
 		}
-		if got := len(result.SessionTree.ByType(tree.TypeThought)); got != 1 {
-			t.Fatalf("expected exactly one thought node, got %d", got)
+		if got := len(result.SessionTree.ByType(tree.TypeThoughts)); got != 1 {
+			t.Fatalf("expected exactly one thoughts node, got %d", got)
 		}
 	})
 }

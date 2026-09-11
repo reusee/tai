@@ -15,7 +15,11 @@ import (
 // TestForkTUIDisplayForwardsTreesToTUI verifies that the run's tree
 // iterator reaches the TUI through the tap fork: every yielded tree is
 // stored by setTree, so the Tree tab renders the same tree the pipeline
-// writes. See TheoryOfTUIDisplayFork and pipeline.TheoryOfLoopEvents.
+// writes. The run's phase appends no finish reason, summary block, or
+// usage, so the tree carries the attempt's response alone: no
+// completed event node is written, because a generation completes with
+// a summary block. See TheoryOfTUIDisplayFork and
+// pipeline.TheoryOfLoopEvents.
 func TestForkTUIDisplayForwardsTreesToTUI(t *testing.T) {
 	tui := newTUIForTest()
 	scope := forkTUIDisplay(
@@ -52,9 +56,6 @@ func TestForkTUIDisplayForwardsTreesToTUI(t *testing.T) {
 	defer tui.mu.Unlock()
 	if tui.treeView == nil {
 		t.Fatal("expected the TUI to hold the run's tree")
-	}
-	if len(tui.treeView.ByCategory(tree.CategoryEvent)) == 0 {
-		t.Fatal("expected event nodes in the TUI's tree")
 	}
 	// The tree is the pipeline's own session tree: the attempt's
 	// response node is present.

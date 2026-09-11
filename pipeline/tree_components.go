@@ -50,24 +50,26 @@ immutable tree, and one run owns exactly one tree.
   before any attempt and stays the attempt nodes' sibling.
 - The loop's own bookkeeping joins the same tree as event nodes
   (event-subtype types in Category event, program author) under the
-  current attempt node: attempt lifecycle, the generator spec, finish
-  reasons, token usage, truncations, retries, handoffs, completions,
-  continuations, thought summaries, and the terminal error. Every
-  event write yields the full tree to the run's consumer (see
+  current attempt node: attempt lifecycle, the generator spec, token
+  usage, truncations, retries, handoffs, continuations, thought
+  summaries, and the terminal error. The attempt's finish reason and
+  reasoning thoughts join as message-category nodes of types finish
+  and thoughts — model output recorded by the loop. Every event
+  write yields the full tree to the run's consumer (see
   TheoryOfLoopEvents). Event nodes are program bookkeeping: every
   model-facing outline excludes them by category, so the model never
   sees the loop's own bookkeeping.
 - A successful attempt writes a model node under the attempt node
-  (model author, content = the attempt's model-role Text parts;
-  thought parts never enter the tree) and one summary node per
-  summary body under it.
+  (model author, content = the attempt's model-role Text parts) and
+  one summary node per summary body under it; the attempt's
+  reasoning thoughts join as their own thoughts message node.
 - A failed attempt records the same material: every failure path —
   the truncated retry, the error retry, the handoff terminations
   (disk change, context exceeded), and the terminal errors — writes
-  one thought event node for the attempt's reasoning trace and one
+  one thoughts message node for the attempt's reasoning trace and one
   model node for its body text, so the tree carries every attempt's
   produced content, not only the successful ones. The recording is
-  idempotent: an attempt node that already carries a thought or
+  idempotent: an attempt node that already carries a thoughts or
   model node is skipped, because one attempt can reach the recording
   through two paths and a thoughts-only attempt carries no model node
   for a model-only check to detect.
@@ -745,13 +747,13 @@ func renderModelContent(state generators.State, sinceCount int) string {
 	return strings.Join(texts, "")
 }
 
-// recordAttemptTree writes the successful attempt's nodes: the thought
-// node carrying the attempt's reasoning trace (when any), the model
-// node under the current attempt node (the attempt's model-role content
-// with every part kind rendered), one summary node per summary body,
-// and the block batch (handled plus collected). Blocks whose parent
-// names a node an earlier block of the batch creates are deferred:
-// their collected indexes return to the caller, and
+// recordAttemptTree writes the successful attempt's nodes: the thoughts
+// message node carrying the attempt's reasoning trace (when any), the
+// model node under the current attempt node (the attempt's model-role
+// content with every part kind rendered), one summary node per summary
+// body, and the block batch (handled plus collected). Blocks whose
+// parent names a node an earlier block of the batch creates are
+// deferred: their collected indexes return to the caller, and
 // writeDeferredBlockNodes writes their nodes after the components have
 // run. On a naming fault the batch is discarded, the error node
 // recorded, the errors stored for the shared correction decision, and
@@ -767,12 +769,11 @@ func (ls *loopState) recordAttemptTree(
 	if ls.sessionTree == nil {
 		return nil, nil
 	}
-	// The attempt's reasoning trace is its own event node: the model
-	// node carries answer content, and the trace stays in the record
-	// without entering any model-facing outline. See
-	// TheoryOfLoopEvents.
+	// The attempt's reasoning trace is its own thoughts message node:
+	// the model node carries answer content, and the trace joins the
+	// model output in the record. See TheoryOfLoopEvents.
 	if thoughts := extractThoughtsSince(phaseState, attemptBase); thoughts != "" {
-		ls.writeEventNode("thought", thoughts)
+		ls.writeEventNode(tree.TypeThoughts, thoughts)
 	}
 	next, responseName, err := ls.sessionTree.WriteAuto(ls.attemptParent(), "model", tree.TypeModel, tree.AuthorModel, renderModelContent(phaseState, attemptBase))
 	if err != nil {
@@ -799,31 +800,31 @@ func (ls *loopState) recordAttemptTree(
 }
 
 // recordFailedAttemptTree writes a failed attempt's produced content to
-// the session tree: one thought event node carrying the reasoning trace
-// and one model node carrying the body text, both under the attempt
-// node. Every failure path records here — the truncated retry, the
-// error retry, the handoff terminations (disk change, context
-// exceeded), and the terminal errors — so the tree keeps every
-// attempt's material, not only the successful ones. The recording is
-// idempotent: an attempt node that already carries a thought or model
-// node is skipped. One attempt can reach the recording through two
-// paths (its own retry feedback and a later terminal error) without
-// its content changing, and a thoughts-only attempt carries no model
-// node for a model-only check to detect the first recording. See
-// TheoryOfSessionTree.
+// the session tree: one thoughts message node carrying the reasoning
+// trace and one model node carrying the body text, both under the
+// attempt node. Every failure path records here — the truncated
+// retry, the error retry, the handoff terminations (disk change,
+// context exceeded), and the terminal errors — so the tree keeps
+// every attempt's material, not only the successful ones. The
+// recording is idempotent: an attempt node that already carries a
+// thoughts or model node is skipped. One attempt can reach the
+// recording through two paths (its own retry feedback and a later
+// terminal error) without its content changing, and a thoughts-only
+// attempt carries no model node for a model-only check to detect the
+// first recording. See TheoryOfSessionTree.
 func (ls *loopState) recordFailedAttemptTree(phaseState generators.State, attemptBase int) {
 	if ls.sessionTree == nil {
 		return
 	}
 	if attempt, ok := ls.sessionTree.Node(ls.currentAttempt); ok {
 		for _, child := range attempt.Children() {
-			if child.Type == tree.TypeModel || child.Type == tree.TypeThought {
+			if child.Type == tree.TypeModel || child.Type == tree.TypeThoughts {
 				return
 			}
 		}
 	}
 	if thoughts := extractThoughtsSince(phaseState, attemptBase); thoughts != "" {
-		ls.writeEventNode("thought", thoughts)
+		ls.writeEventNode(tree.TypeThoughts, thoughts)
 	}
 	if content := renderModelContent(phaseState, attemptBase); content != "" {
 		next, _, err := ls.sessionTree.WriteAuto(ls.attemptParent(), "model", tree.TypeModel, tree.AuthorModel, content)

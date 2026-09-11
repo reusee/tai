@@ -3,12 +3,12 @@ package generators
 import "sync"
 
 const TheoryOfEventRecorder = `
-The event recorder carries generator-level events (api_call, api_error)
-from generator implementations into the session tree. Generators hold
-the recorder as a dscope.Inject[EventRecorder] field, filled by
-dscope.InjectStruct when the generator is constructed, so they never
-receive a recorder object and never depend on the pipeline or records
-packages, which would create an import cycle.
+The event recorder carries generator-level API error events
+(api_error) from generator implementations into the session tree.
+Generators hold the recorder as a dscope.Inject[EventRecorder] field,
+filled by dscope.InjectStruct when the generator is constructed, so
+they never receive a recorder object and never depend on the pipeline
+or records packages, which would create an import cycle.
 
 The recorder is a sink: the generator writes an event (type plus
 free-form detail) and the sink buffers it. The per-scope EventSink is
@@ -17,13 +17,13 @@ dscope caches the provider, so every generator in one scope writes into
 the same sink, and a goal loop's scope Reset installs a fresh sink per
 loop. The generation loop drains the sink after every round and records
 each buffered event as a session-tree node of the same type, so
-API-level occurrences join the same operation stream as the rest of the
+API-level failures join the same operation stream as the rest of the
 session — the recorder persists the tree, and the tree carries the
 events.
 `
 
-// Event is one recorded generator-level event: a type (e.g., api_call,
-// api_error) and a free-form detail. See TheoryOfEventRecorder.
+// Event is one recorded generator-level event: a type (api_error)
+// and a free-form detail. See TheoryOfEventRecorder.
 type Event struct {
 	Type   string
 	Detail string

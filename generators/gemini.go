@@ -50,7 +50,7 @@ func (g Gemini) Spec() Spec {
 	return g.spec
 }
 
-// recordEvent records an API-level event (api_call, api_error) in the
+// recordEvent records an API-level event (api_error) in the
 // scope's generators.EventSink: the per-scope EventSink is the default
 // EventRecorder, injected as a dscope dependency when the generator is
 // constructed, and the generation loop drains the sink after each round,
@@ -276,7 +276,6 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 			"effort", g.spec.ReasoningEffort,
 			"non_streaming", nonStreaming,
 		)
-		g.recordEvent("api_call", fmt.Sprintf("gemini generate content: model=%s effort=%s non_streaming=%v", g.spec.Model, g.spec.ReasoningEffort, nonStreaming))
 
 		// Streaming speed measurements: TimeToFirstToken spans from the
 		// attempt start to the arrival of the first output content part

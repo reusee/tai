@@ -17,7 +17,9 @@ import (
 // test asserts the ordered event nodes under the session root, the
 // attempt structure nodes carrying the session-wide numbers, and that
 // the handoff node carries the handoff summary as its multi-line body.
-// See TheoryOfLoopEvents.
+// No completed event node is written: a generation completes with a
+// summary block, and the summary nodes under its response carry the
+// completion. See TheoryOfLoopEvents.
 func TestRunRecordsEventNodes(t *testing.T) {
 	withRun(t, func(run Run) {
 		usage := generators.Usage{}
@@ -65,7 +67,7 @@ func TestRunRecordsEventNodes(t *testing.T) {
 		nodes := lastTree.ByCategory(tree.CategoryEvent)
 		wantPrefixes := []string{
 			"truncated", "handoff-start", "handoff",
-			"usage", "completed",
+			"usage",
 		}
 		if len(nodes) != len(wantPrefixes) {
 			t.Fatalf("expected %d event nodes, got %v", len(wantPrefixes), nodeNames(nodes))
@@ -87,10 +89,6 @@ func TestRunRecordsEventNodes(t *testing.T) {
 		// The second attempt's usage node carries the counters.
 		if got := nodes[3].Content; !strings.Contains(got, "prompt 42") || !strings.Contains(got, "completion 7") {
 			t.Fatalf("unexpected usage node: %q", got)
-		}
-		// The completed node carries the attempt's summary body.
-		if !strings.Contains(nodes[4].Content, "Done.") {
-			t.Fatalf("unexpected completed node: %q", nodes[4].Content)
 		}
 		// The attempt structure nodes carry the session-wide attempt
 		// numbers.
@@ -295,8 +293,9 @@ func (eventSummaryGenerator) Generate(ctx context.Context, state generators.Stat
 }
 
 // TestRunFinishNodeContent verifies that each generation attempt's finish
-// reason is recorded as a finish event node, emitted immediately after
-// the attempt's finish reason is known, before the attempt completes.
+// reason is recorded as a finish message node — the finish reason is the
+// model output's completion signal — emitted immediately after the
+// attempt's finish reason is known, before the attempt completes.
 // See TheoryOfLoopEvents.
 func TestRunFinishNodeContent(t *testing.T) {
 	withRun(t, func(run Run) {
@@ -333,13 +332,14 @@ func TestRunFinishNodeContent(t *testing.T) {
 			t.Fatalf("unexpected terminal error: %v", terminalErr)
 		}
 		var finishNode *tree.Node
-		for _, n := range lastTree.ByCategory(tree.CategoryEvent) {
-			if strings.HasPrefix(n.Name, "finish") {
-				finishNode = n
-			}
+		for _, n := range lastTree.ByType(tree.TypeFinish) {
+			finishNode = n
 		}
 		if finishNode == nil {
-			t.Fatal("expected a finish event node")
+			t.Fatal("expected a finish message node")
+		}
+		if got := finishNode.Category(); got != tree.CategoryMessage {
+			t.Fatalf("the finish node must be a message node, got %v", got)
 		}
 		if got := finishNode.Content; got != "finish: stop" {
 			t.Fatalf("unexpected finish node: %q", got)

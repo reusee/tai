@@ -9,12 +9,15 @@ Run is the loop's single tree iterator: every notable occurrence during
 a generation run — attempt lifecycle, the generator spec of each
 attempt, retry decisions, handoffs, synthesized completion summaries,
 attempt finish reasons, per-attempt token usage, periodic thought
-summaries, generator-level API events, component-triggered
+summaries, generator-level API errors, component-triggered
 continuations, idle-handler input, and the context-assembly
-diagnostics replayed at startup — is recorded as one event node (an
-event-subtype type in Category event, program author) in the session
+diagnostics replayed at startup — is recorded as a node in the session
 tree, and then the FULL tree is yielded to the consumer
-(iter.Seq2[*tree.Tree, error]). There is no separate event stream: the
+(iter.Seq2[*tree.Tree, error]). The finish reason and the reasoning
+thoughts are the model's output, so they join the session's messages
+as message-category nodes of types finish and thoughts; the rest are
+the loop's own bookkeeping, recorded as event nodes (event-subtype
+types, program author). There is no separate event stream: the
 events mechanism is fully merged into the tree, so the display
 front-end renders — and projects — the same tree the pipeline writes,
 never a separately maintained copy. Occurrences are recorded and
@@ -35,19 +38,19 @@ node for a continued one) when the attempt opens, with the user
 prompts the attempt consumes written right after it — so the tree
 position attributes every occurrence to its attempt and, through it,
 to its goal loop; no attempt or loop number is stamped onto the node.
-The node type IS the event kind — one of the event subtypes
-(generator, finish, usage, truncated, retry, handoff-start, handoff,
-completed, synthesized-summary, thought-summary, thought, api_call,
-api_error, continue, idle, run-error, context), and the goal runner
-writes goal verdicts as tree.TypeGoal structure nodes — while the node
-name carries the subtype as a prefix, made unique by AutoName, so
-typed event nodes carry their kind in their names. The node content is
-the human-readable description; multi-line content (handoff and
-completion summaries) collapses by default in the display front-end's
-Tree tab. Change blocks and their results are block nodes, not event
-nodes; the thought, api_call, and api_error subtypes are the loop's
-own record of the attempt's reasoning and its generator-level API
-facts. Event nodes are program bookkeeping: every model-facing outline
+The loop's event nodes carry an event-subtype type — one of the event
+subtypes (generator, usage, truncated, retry, handoff-start, handoff,
+synthesized-summary, thought-summary, api_error, continue, idle,
+run-error, context) — and the goal runner writes goal verdicts as
+tree.TypeGoal structure nodes, while the node name carries the subtype
+as a prefix, made unique by AutoName, so typed event nodes carry
+their kind in their names. The node content is the human-readable
+description; multi-line content (handoff summaries) collapses by
+default in the display front-end's Tree tab. Change blocks and their
+results are block nodes, not event nodes; api_error is the loop's own
+record of the generator's API-level failures, and the finish and
+thoughts nodes are the loop's record of the attempt's model output.
+Event nodes are program bookkeeping: every model-facing outline
 excludes them by category (treeOutlinePart, handoffOutlinePart), so
 the model never sees the loop's own bookkeeping.
 
@@ -64,9 +67,8 @@ component-triggered generations and idle-handler inputs continue the
 sequence instead of restarting at 1 — and the attempt number appears
 in the attempt node's content and the event node contents. A
 generation completes when an attempt finishes with a summary block
-and a normal finish reason; the completed node carries the summary.
-Retries re-execute the phase chain as a new attempt, up to the retry
-budget.
+and a normal finish reason. Retries re-execute the phase chain as a
+new attempt, up to the retry budget.
 
 The generator node precedes each attempt's request: its content is
 the generator spec the attempt runs on — the resolved spec path, the
@@ -78,16 +80,16 @@ precedence). The node is the loop-level view: retries internal to the
 generator's Retrier are separate API calls not visible here, so one
 loop attempt may cover several requests. Generator-level events the
 generator writes through the scope's generators.EventRecorder — API
-calls and API errors — are buffered in the scope's generators.EventSink
-and drained by the loop after each attempt's phase chain and at the
-run's end, becoming event nodes of the same type under the attempt
-that served the request. The attempt's reasoning thoughts are
-recorded as one thought event node alongside the attempt's model node,
-so the trace stays in the record without entering any model-facing
-outline. A failed attempt records the same two nodes before its retry
-feedback or handoff request: one thought event node for the reasoning
-trace and one model node for the body text, so the tree carries every
-attempt's already-generated content, not only the successful ones.
+errors — are buffered in the scope's generators.EventSink and drained
+by the loop after each attempt's phase chain and at the run's end,
+becoming event nodes of the same type under the attempt that served
+the request. The attempt's reasoning thoughts are recorded as one
+thoughts message node alongside the attempt's model node, so the
+trace joins the model output in the record. A failed attempt records
+the same two nodes before its retry feedback or handoff request: one
+thoughts message node for the reasoning trace and one model node for
+the body text, so the tree carries every attempt's already-generated
+content, not only the successful ones.
 
 Thought summaries join the same tree: the ThoughtsSummarize state
 layer forwards through an emitter installed by Module.Run, which
@@ -125,14 +127,14 @@ the session before the loop. The tree is therefore both the record and
 the in-band channel a live consumer observes during the run.
 `
 
-// writeEventNode records one loop occurrence as an event node of the
-// given event subtype in the session tree and yields the full tree to
-// the consumer. The node name carries the subtype as a prefix, made
-// unique by AutoName, so typed event nodes keep their kind in their
-// names. The node hangs under the current attempt node: the attempt's
-// occurrences are its record. The node is written even after the
-// consumer has stopped — the tree is the run's record — while the
-// yield is dropped. See TheoryOfLoopEvents.
+// writeEventNode records one loop occurrence as a session-tree node
+// of the given type and yields the full tree to the consumer. The
+// node name carries the type as a prefix, made unique by AutoName, so
+// the node keeps its kind in its name. The node hangs under the
+// current attempt node: the attempt's occurrences are its record.
+// The node is written even after the consumer has stopped — the tree
+// is the run's record — while the yield is dropped. See
+// TheoryOfLoopEvents.
 func (ls *loopState) writeEventNode(typ tree.Type, content string) {
 	if ls.sessionTree == nil {
 		return
