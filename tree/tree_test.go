@@ -397,8 +397,8 @@ func TestByTypeByAuthor(t *testing.T) {
 // the family, and every type and category carries a non-empty emoji.
 // A block node's type is its block kind: an unknown kind derives to
 // the block category and the fallback emoji, and a built-in kind
-// carries its predefined emoji. Summary is a block kind; attempt and
-// goal are structure kinds. Context is an event kind carrying the
+// carries its predefined emoji. Summary is a block kind; attempt, goal,
+// and plan are structure kinds. Context is an event kind carrying the
 // context glyph. See TheoryOfTree.
 func TestCategoryAndEmoji(t *testing.T) {
 	tr, err := New().WriteAll(
@@ -410,6 +410,7 @@ func TestCategoryAndEmoji(t *testing.T) {
 		WriteOp{Parent: "root", Name: "f", Type: TypeSummary, Author: AuthorModel, Content: "s"},
 		WriteOp{Parent: "root", Name: "g", Type: TypeAttempt, Author: AuthorProgram, Content: "a"},
 		WriteOp{Parent: "root", Name: "h", Type: TypeGoal, Author: AuthorProgram, Content: "v"},
+		WriteOp{Parent: "root", Name: "i", Type: TypePlan, Author: AuthorModel, Content: "p"},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -434,6 +435,11 @@ func TestCategoryAndEmoji(t *testing.T) {
 	}
 	if got := mustNode(t, tr, "h").Category(); got != CategoryStructure {
 		t.Fatalf("goal category = %v, want structure", got)
+	}
+	// A plan node is structure: the plan tree is the flow definition of
+	// a loop, not a message. See TheoryOfTree.
+	if got := mustNode(t, tr, "i").Category(); got != CategoryStructure {
+		t.Fatalf("plan category = %v, want structure", got)
 	}
 	if got := len(tr.ByCategory(CategoryEvent)); got != 2 {
 		t.Fatalf("ByCategory(event) = %d, want 2", got)

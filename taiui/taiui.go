@@ -88,9 +88,11 @@ taiui TUI support theory:
 - The TUI content mechanisms (colored line buffers, wrapped colored
   lines, alternating log backgrounds, and grouped colored text
   elements), the tab state machine (auto-expansion, focus order,
-  weighted panel layout, and collapsed strips), and the single-line
+  weighted panel layout, and collapsed strips), the single-line
   input bar (prompt, line editing, and bar rendering; see
-  TheoryOfInputBar) live in this library so any project can build a
+  TheoryOfInputBar), and the desktop-style menu bar (categories,
+  dropdowns, and the press and armed-hover state machine; see
+  TheoryOfMenu) live in this library so any project can build a
   terminal UI on top of taiui's rendering. They are pure state and
   rendering: they do not depend on generators, blocks, or any
   application-specific model.

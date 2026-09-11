@@ -589,7 +589,8 @@ func TestControlStripText(t *testing.T) {
 // TestTabTitleButtons verifies the per-tab button sets: the Output tab
 // carries the section navigation and the sections collapse-all, the
 // Tree tab the view cycling and the nodes collapse-all, and the Logs
-// tab none. See TheoryOfTitleButtons.
+// tab the session-level controls — split, mouse reporting, help, and
+// quit. See TheoryOfToolbars.
 func TestTabTitleButtons(t *testing.T) {
 	if got := tabTitleButtons(0); len(got) != 3 {
 		t.Fatalf("expected 3 Output buttons, got %+v", got)
@@ -597,8 +598,11 @@ func TestTabTitleButtons(t *testing.T) {
 	if got := tabTitleButtons(1); len(got) != 2 {
 		t.Fatalf("expected 2 Tree buttons, got %+v", got)
 	}
-	if got := tabTitleButtons(2); len(got) != 0 {
-		t.Fatalf("expected no Logs buttons, got %+v", got)
+	if got := tabTitleButtons(2); len(got) != 4 {
+		t.Fatalf("expected 4 Logs buttons, got %+v", got)
+	}
+	if got := tabTitleButtons(2)[3].Action; got != controlQuit {
+		t.Fatalf("the rightmost Logs button must run the quit action, got %q", got)
 	}
 }
 
@@ -606,7 +610,7 @@ func TestTabTitleButtons(t *testing.T) {
 // row's buttons: the two rightmost cells stay reserved, each button
 // occupies its two-cell label, adjacent buttons carry no separator
 // cells, and a box too narrow drops the buttons that do not fit. See
-// TheoryOfTitleButtons.
+// TheoryOfToolbars.
 func TestTitleButtonLayout(t *testing.T) {
 	buttons := tabTitleButtons(0)
 	slots := titleButtonLayout(taiui.Box{Top: 0, Left: 0, Bottom: 1, Right: 40},
@@ -639,7 +643,7 @@ func TestTitleButtonLayout(t *testing.T) {
 // TestTitleButtonsRendering verifies the rendered labels and the two
 // reserved cells: the buttons draw right-aligned and adjacent — no
 // separator cells — before the reserved stretch, and hovering a
-// button renders it reversed. See TheoryOfTitleButtons.
+// button renders it reversed. See TheoryOfToolbars.
 func TestTitleButtonsRendering(t *testing.T) {
 	tui := newTUIForTest()
 	tui.interactive = false
@@ -686,7 +690,7 @@ func TestTitleButtonsRendering(t *testing.T) {
 // title button runs its action through the shared dispatch and
 // preempts the ordinary press handling, so the tab itself is not
 // toggled; a press outside the buttons keeps the strip semantics.
-// See TheoryOfTitleButtons.
+// See TheoryOfToolbars.
 func TestTUITitleButtonClicks(t *testing.T) {
 	t.Run("OutputCollapseAll", func(t *testing.T) {
 		tui := newTUIForTest()

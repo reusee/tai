@@ -1238,8 +1238,10 @@ func TestTreeShowsAllLoops(t *testing.T) {
 			t.Fatalf("expected %q in the all projection, got %v", want, displayTexts(display))
 		}
 	}
-	tui.setTreeView(treeViewUser)
+	// The projection is set directly: the toolbar's cycle button is
+	// the only production way to change it. See TheoryOfToolbars.
 	tui.mu.Lock()
+	tui.treeTab.mode = treeViewUser
 	display = tui.treeDisplay(120, panelStyle.BaseBG)
 	tui.mu.Unlock()
 	for _, want := range []string{"task one", "task two"} {
@@ -1252,47 +1254,6 @@ func TestTreeShowsAllLoops(t *testing.T) {
 		if !found {
 			t.Fatalf("expected %q in the user projection, got %v", want, displayTexts(display))
 		}
-	}
-}
-
-// TestTreeViewMenuActions verifies that the View menu carries one
-// item per Tree projection and that dispatching an action selects it,
-// mirroring the v key's cycling. See TheoryOfTreeTab.
-func TestTreeViewMenuActions(t *testing.T) {
-	tui := newTUIForTest()
-	viewEntry := menuBarEntries[1]
-	if viewEntry.title != "View" {
-		t.Fatalf("expected the View category, got %q", viewEntry.title)
-	}
-	treeItems := 0
-	for _, item := range viewEntry.items {
-		var mode treeViewMode
-		switch item.action {
-		case controlTreeViewAll:
-			mode = treeViewAll
-		case controlTreeViewEvents:
-			mode = treeViewEvents
-		case controlTreeViewSummary:
-			mode = treeViewSummary
-		case controlTreeViewModel:
-			mode = treeViewModel
-		case controlTreeViewProgram:
-			mode = treeViewProgram
-		case controlTreeViewUser:
-			mode = treeViewUser
-		case controlTreeViewStream:
-			mode = treeViewStream
-		default:
-			continue
-		}
-		treeItems++
-		tui.dispatchControlBar(item.action)
-		if tui.treeTab.mode != mode {
-			t.Fatalf("dispatching %q should select the projection, got %d", item.action, tui.treeTab.mode)
-		}
-	}
-	if treeItems != int(treeViewModeCount) {
-		t.Fatalf("expected %d tree view menu items, got %d", treeViewModeCount, treeItems)
 	}
 }
 
@@ -1314,8 +1275,11 @@ func TestTreeStreamView(t *testing.T) {
 		t.Fatal(err)
 	}
 	tui.treeView = tr
-	tui.setTreeView(treeViewStream)
+	// The projection is set directly: the toolbar's cycle button is
+	// the only production way to change it, and it advances one step
+	// at a time. See TheoryOfToolbars.
 	tui.mu.Lock()
+	tui.treeTab.mode = treeViewStream
 	display := tui.treeDisplay(120, panelStyle.BaseBG)
 	tui.mu.Unlock()
 	if len(display) != 3 {

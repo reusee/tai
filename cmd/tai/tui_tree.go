@@ -38,13 +38,13 @@ Tree tab theory (cmd/tai):
   walk always starts at the tree root, so every loop's state is
   displayed: projections filter by category, type, and author, never
   by loop, and no display path reduces the view to the current loop.
-- The tab renders a projection of the tree, cycled with the v key and
-  selectable through the View menu's Tree view items: all shows every
-  node; events shows the event category (tree.CategoryEvent); summary
-  the summary nodes; model, program, and user the nodes of that
-  author; stream flattens the whole tree chronologically. The
-  ancestor-based projections keep each shown node's ancestors
-  (tree.Extract), so the outline stays readable.
+- The tab renders a projection of the tree, cycled with the v key or
+  the Tree tab's toolbar button: all shows every node; events shows
+  the event category (tree.CategoryEvent); summary the summary nodes;
+  model, program, and user the nodes of that author; stream flattens
+  the whole tree chronologically. The ancestor-based projections keep
+  each shown node's ancestors (tree.Extract), so the outline stays
+  readable.
 - The stream projection renders every node as one flat line, ordered
   by insert time — the chronological order the nodes were written —
   with no indentation, no fold column, and no expansion: the category
@@ -586,15 +586,6 @@ func (t *TUI) cycleTreeView() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.treeTab.mode = (t.treeTab.mode + 1) % treeViewModeCount
-}
-
-// setTreeView selects the Tree tab's projection; the View menu's Tree
-// view items dispatch here, mirroring the v key's cycling. See
-// TheoryOfTreeTab.
-func (t *TUI) setTreeView(mode treeViewMode) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.treeTab.mode = mode
 }
 
 // treeTabLabel renders the Tree tab's label with the current

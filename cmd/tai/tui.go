@@ -208,9 +208,9 @@ compares it after, so a key that changes nothing (a page-up already at
 the top) keeps the bar focused. After any loss the cursor hides and
 ONLY a click on the bar's row regains the focus.
 
-The submit glyph ↵ at the bar's right end delivers the typed line by
+The submit glyph at the bar's right end delivers the typed line by
 click, by the same delivery rule and without requiring focus; see
-TheoryOfControlBar.
+TheoryOfSessionActions.
 
 The terminal cursor is shown while the bar is focused — the focused
 bar renders an Input element whose CursorAt records the editing
@@ -290,11 +290,11 @@ both preempt the ordinary press handling (see TheoryOfOutputControls).
 A press on the Tree tab's fold column toggles the node under it,
 preempting ordinary handling like the control column (see
 TheoryOfTreeTab). A press on an expanded tab's title button runs the
-button's action, preempting ordinary handling (see
-TheoryOfTitleButtons). Presses outside every panel, and middle and
-right presses, are ignored; no-button motion (mode 1003) drives the
-control column's hover strip and the menu bar's pointer hover (see
-TheoryOfControlBar).
+button's action, preempting ordinary handling (see TheoryOfToolbars).
+Presses outside every panel, and middle and right presses, are ignored;
+no-button motion (mode 1003) drives the control column's hover strip
+and the tab title buttons' hover highlight (see TheoryOfOutputControls
+and TheoryOfToolbars).
 
 In interactive sessions, the Output tab's input row is the one press
 target with its own semantics: a left press on the chat input bar's row
@@ -309,12 +309,13 @@ TheoryOfTUIChatInput.
 Mouse reporting is enabled on start and disabled on every exit path by
 the taiui.Session that drives the TUI loop, so the terminal returns to
 ordinary input handling when the TUI stops. Mouse reporting is
-runtime-switchable: the m key toggles it via toggleMouse, which flips
-the recorded state and calls taiui.Session.SetMouse. While reporting
-is off, the terminal performs its own text selection and copy; most
-terminals also offer Shift+drag as a selection bypass while reporting
-is on. Pressing m again restores the TUI's pointer interaction. Each
-toggle records the new state as a log line in the Logs tab.
+runtime-switchable: the m key, or the Logs toolbar's mouse button,
+toggles it via toggleMouse, which flips the recorded state and calls
+taiui.Session.SetMouse. While reporting is off, the terminal performs
+its own text selection and copy; most terminals also offer Shift+drag
+as a selection bypass while reporting is on. Pressing m again restores
+the TUI's pointer interaction. Each toggle records the new state as a
+log line in the Logs tab.
 `
 
 // Tui controls the terminal UI mode. The default is the TUI when stdout
@@ -598,25 +599,10 @@ type TUI struct {
 	// See pipeline.TheoryOfHandoff and TheoryOfTUIHandoff.
 	handoff bool
 	// showHelp reports whether the operation help overlay is visible.
-	// The ? key toggles it. The overlay is derived from state like the
-	// quit confirmation bar: toggling showHelp re-renders the overlay.
-	// See TheoryOfTUI.
+	// The ? key, or the Logs toolbar's help button, toggles it. The
+	// overlay is derived from state like the quit confirmation bar:
+	// toggling showHelp re-renders the overlay. See TheoryOfTUI.
 	showHelp bool
-
-	// openMenu is the index of the open menu bar dropdown in
-	// menuBarEntries, or -1 when none is open. A press on a category
-	// title opens, switches, or closes the dropdown, an item press
-	// runs its action, and a press outside closes it. Guarded by mu.
-	// See TheoryOfControlBar.
-	openMenu int
-	// menuArmed records whether the menu bar's hover mode is armed:
-	// armed by the press that opens a dropdown, released by a
-	// terminating press (the open title again, an item, a top-level
-	// entry, or outside the bar). While armed, hovering a category
-	// title pops up its menu even when a previous hover over a
-	// top-level entry hid the open dropdown. Guarded by mu. See
-	// TheoryOfControlBar.
-	menuArmed bool
 
 	// interactive reports whether this session's app supports
 	// multi-turn conversation (see apps.Interactive): only
@@ -711,9 +697,8 @@ type TUI struct {
 
 	// ctlHover records the pointer position from the latest no-button
 	// motion event (mode 1003), driving pointer hover rendering: the
-	// Output tab's control-column hover strip and the menu bar's
-	// hovered title and dropdown item. See TheoryOfOutputControls and
-	// TheoryOfControlBar.
+	// Output tab's control-column hover strip and the tab title buttons'
+	// hover highlight. See TheoryOfOutputControls and TheoryOfToolbars.
 	ctlHover  bool
 	ctlHoverX int
 	ctlHoverY int
@@ -771,10 +756,9 @@ func newTUI() (*TUI, error) {
 	// the pane the user watches, so it is open from the first frame.
 	// See TheoryOfTUI.
 	tabs.FocusTab(0)
-	// The control bar reserves the top row: every keyboard action
-	// without a pointer path renders there as a clickable glyph. See
-	// TheoryOfControlBar.
-	tabs.TopInset = 1
+	// No screen row is reserved: every action is reachable through the
+	// tab toolbars, so the panels keep the full height. See
+	// TheoryOfToolbars.
 	return &TUI{
 		// Every display buffer is unbounded: the Output tab retains each
 		// streamed line, the Logs tab each log record, and the Tree tab
@@ -784,9 +768,6 @@ func newTUI() (*TUI, error) {
 		output: taiui.NewLineBuffer(0),
 		logs:   taiui.NewStringBuffer(0),
 		tabs:   tabs,
-		// No menu is open when the session starts. See
-		// TheoryOfControlBar.
-		openMenu: -1,
 		// The Output tab starts expanded, focused, and following the
 		// tail; the other tabs stay collapsed and expand automatically
 		// the first time content for them arrives. The scroll offsets
@@ -1183,9 +1164,9 @@ func (t *TUI) handleKey(key string) bool {
 	// focuses it; a press elsewhere releases it). See
 	// TheoryOfTUIChatInput and TheoryOfMouseSupport.
 	if strings.HasPrefix(key, taiui.MouseKeyPrefix) {
-		// The pointer path can confirm a quit through the control
-		// bar's ✕ glyph, so its result ends the session like the quit
-		// key. See TheoryOfControlBar.
+		// The pointer path can confirm a quit through the Logs
+		// toolbar's quit button, so its result ends the session like the
+		// quit key. See TheoryOfToolbars.
 		return t.handleMouseKey(key)
 	}
 	// While the chat input bar is focused, editing keys edit the
@@ -1265,7 +1246,8 @@ func (t *TUI) handleKey(key string) bool {
 	case key == "quit":
 		// The first quit key press shows a confirmation bar; a second
 		// press confirms the quit. The exit path is shared with the
-		// control bar's ✕ glyph. See TheoryOfTUI and TheoryOfControlBar.
+		// Logs toolbar's quit button. See TheoryOfTUI and
+		// TheoryOfToolbars.
 		if t.finishQuit() {
 			return true
 		}
@@ -1408,116 +1390,76 @@ func (t *TUI) handleMouseKey(key string) bool {
 	switch event {
 	case "motion":
 		// No-button motion (mode 1003) drives the control column's
-		// hover strip: the tracked pointer position decides whether a
-		// control row lays its controls out horizontally. While the
-		// menu bar is armed, motion over another category title pops
-		// up that title's menu. See TheoryOfOutputControls and
-		// TheoryOfControlBar.
+		// hover strip and the tab title buttons' hover highlight. See
+		// TheoryOfOutputControls and TheoryOfToolbars.
 		t.setControlHoverLocked(x, y)
-		t.menuHoverLocked(x, y)
 	case "wheel-up":
 		t.mouse.Wheel(t.tabs, t.scrolls[:], t.width, t.height, x, y, -1)
 	case "wheel-down":
 		t.mouse.Wheel(t.tabs, t.scrolls[:], t.width, t.height, x, y, 1)
 	case "left":
-		if index, hit := menuBarHit(t.tabs.TopInset, t.width, x, y); hit {
-			entry := menuBarEntries[index]
-			if entry.isTopLevel() {
-				// Any menu press other than the quit entry cancels a
-				// pending quit confirmation, like any non-quit key. See
-				// TheoryOfTUI.
-				if entry.action != controlQuit {
-					t.quit.Cancel()
-				}
-				// A top-level entry press closes the menu and disarms
-				// the hover mode. The action runs after the lock is
-				// released: the dispatched actions take t.mu themselves.
-				// See TheoryOfControlBar.
-				t.openMenu = -1
-				t.menuArmed = false
-				action, dispatchBar = entry.action, true
-			} else {
-				// A category title press opens, switches, or closes the
-				// dropdown. Pressing the open title again closes it and
-				// disarms; any other title press opens or switches and
-				// arms. See TheoryOfControlBar.
-				t.quit.Cancel()
-				if t.openMenu == index {
-					t.openMenu = -1
-					t.menuArmed = false
-				} else {
-					t.openMenu = index
-					t.menuArmed = true
-				}
+		// The Logs toolbar's quit button is the pointer path's quit
+		// key: it runs the two-press protocol and must not cancel a
+		// pending confirmation, so it resolves before the cancel.
+		// Every other press cancels the confirmation before its normal
+		// processing, like any non-quit key. See TheoryOfToolbars and
+		// TheoryOfSessionActions.
+		if btnAction, hit := t.titleButtonHitLocked(x, y); hit && btnAction == controlQuit {
+			action, dispatchBar = btnAction, true
+			break
+		}
+		t.quit.Cancel()
+		switch {
+		case t.helpPressLocked(x, y):
+			// A press inside the help overlay closes it. See
+			// TheoryOfSessionActions.
+		case t.submitGlyphHitLocked(x, y):
+			// A press on the submit glyph delivers the typed line by
+			// the Enter rule. See TheoryOfSessionActions.
+			t.submitInputLocked()
+		case t.inputRowHit(x, y):
+			// A press on the chat input bar's row focuses the bar
+			// instead of driving tab interaction, so the user can
+			// click the input and type. See TheoryOfTUIChatInput.
+			t.focusInputLocked()
+		default:
+			// A press anywhere else releases the input focus before
+			// the ordinary press handling runs, so clicking a pane
+			// hands the keyboard back to navigation. See
+			// TheoryOfTUIChatInput.
+			t.inputFocused = false
+			// A press on a tab title's operation button runs the
+			// button's action through the shared dispatch, preempting
+			// the ordinary press handling. See TheoryOfToolbars.
+			if btnAction, hit := t.titleButtonHitLocked(x, y); hit {
+				action, dispatchBar = btnAction, true
+				break
 			}
-		} else if itemAction, consumed := t.menuDropdownPressLocked(x, y); consumed {
-			// A press inside the open dropdown closes it; an item press
-			// runs its action. See TheoryOfControlBar.
-			t.quit.Cancel()
-			if itemAction != "" {
-				action, dispatchBar = itemAction, true
+			// A press on the Output tab's control column toggles
+			// the section under the control instead of driving tab
+			// interaction. See TheoryOfOutputControls.
+			if t.toggleControlAtClick(x, y) {
+				break
 			}
-		} else {
-			// A press that is not on the menu bar or the open dropdown
-			// cancels a pending quit confirmation, closes the menu,
-			// disarms the hover mode, and runs the ordinary press
-			// handling, like any other key. See TheoryOfTUI.
-			t.quit.Cancel()
-			t.openMenu = -1
-			t.menuArmed = false
-			switch {
-			case t.helpPressLocked(x, y):
-				// A press inside the help overlay closes it. See
-				// TheoryOfControlBar.
-			case t.submitGlyphHitLocked(x, y):
-				// A press on the submit glyph delivers the typed line
-				// by the Enter rule. See TheoryOfControlBar.
-				t.submitInputLocked()
-			case t.inputRowHit(x, y):
-				// A press on the chat input bar's row focuses the bar
-				// instead of driving tab interaction, so the user can
-				// click the input and type. See TheoryOfTUIChatInput.
-				t.focusInputLocked()
-			default:
-				// A press anywhere else releases the input focus before
-				// the ordinary press handling runs, so clicking a pane
-				// hands the keyboard back to navigation. See
-				// TheoryOfTUIChatInput.
-				t.inputFocused = false
-				// A press on a tab title's operation button runs the
-				// button's action through the shared dispatch,
-				// preempting the ordinary press handling. See
-				// TheoryOfTitleButtons.
-				if btnAction, hit := t.titleButtonHitLocked(x, y); hit {
-					action, dispatchBar = btnAction, true
-					break
-				}
-				// A press on the Output tab's control column toggles
-				// the section under the control instead of driving tab
-				// interaction. See TheoryOfOutputControls.
-				if t.toggleControlAtClick(x, y) {
-					break
-				}
-				// A press on a collapsed section's row expands it,
-				// replacing the removed preview's click-to-jump. See
-				// TheoryOfOutputControls.
-				if t.expandCollapsedSectionAtClick(x, y) {
-					break
-				}
-				// A press on the Tree tab's fold column toggles the
-				// node under the control. See TheoryOfTreeTab.
-				if t.toggleTreeControlAtClick(x, y) {
-					break
-				}
-				t.mouse.Press(t.tabs, t.scrolls[:], t.width, t.height, x, y)
-				// A press on the attempt-start node's jump marker jumps
-				// the Output tab to the section that attempt wrote; a
-				// double-click on a node's text toggles its expansion,
-				// and a single text press records itself only. The
-				// click maps rows of the last-rendered tree. See
-				// TheoryOfTUIOutputSections and TheoryOfTreeTab.
-				t.treeAtClick(x, y)
+			// A press on a collapsed section's row expands it,
+			// replacing the removed preview's click-to-jump. See
+			// TheoryOfOutputControls.
+			if t.expandCollapsedSectionAtClick(x, y) {
+				break
 			}
+			// A press on the Tree tab's fold column toggles the
+			// node under the control. See TheoryOfTreeTab.
+			if t.toggleTreeControlAtClick(x, y) {
+				break
+			}
+			t.mouse.Press(t.tabs, t.scrolls[:], t.width, t.height, x, y)
+			// A press on the attempt-start node's jump marker jumps
+			// the Output tab to the section that attempt wrote; a
+			// double-click on a node's text toggles its expansion,
+			// and a single text press records itself only. The
+			// click maps rows of the last-rendered tree. See
+			// TheoryOfTUIOutputSections and TheoryOfTreeTab.
+			t.treeAtClick(x, y)
 		}
 	case "release":
 		// The release refreshes the tracked pointer position, ending a

@@ -61,7 +61,7 @@ tree theory: writes and transforms on immutable path-copying trees.
   need no processing (done, summary). Block execution results are written
   as block-result child nodes by the program.
 - Node kinds form two layers. Type is the fine-grained kind: structure
-  nodes (root, loop, attempt, goal), message content (system, user, plan,
+  nodes (root, loop, attempt, goal, plan), message content (system, user,
   model, finish, thoughts, done, abort — finish and thoughts carry the
   model output's finish reason and reasoning trace), per-occurrence event
   subtypes (generator, usage, truncated, retry, handoff-start, handoff,
@@ -73,6 +73,8 @@ tree theory: writes and transforms on immutable path-copying trees.
   message, event, block, error. Category is never written — it is a pure
   function of Type — so the write surface, merge identity, and chronology
   stay type-only, and consumers select whole families with ByCategory.
+  A plan node is structure, not message: the plan tree is the flow
+  definition of a loop.
   Every event subtype's string equals the event node name prefix the
   pipeline writes, so typed event nodes carry their kind in their names.
   A block kind sharing a string with an event subtype (continue) derives
@@ -190,12 +192,14 @@ const (
 	CategoryError     Category = "error"
 )
 
-// Category returns the category the type belongs to. See TheoryOfTree.
+// Category returns the category the type belongs to. A plan node is
+// structure: the plan tree is the flow definition of a loop, not a
+// message. See TheoryOfTree.
 func (t Type) Category() Category {
 	switch t {
-	case TypeRoot, TypeLoop, TypeAttempt, TypeGoal:
+	case TypeRoot, TypeLoop, TypeAttempt, TypeGoal, TypePlan:
 		return CategoryStructure
-	case TypeSystem, TypeUser, TypeModel, TypePlan,
+	case TypeSystem, TypeUser, TypeModel,
 		TypeDone, TypeAbort, TypeFinish, TypeThoughts:
 		return CategoryMessage
 	case TypeContext, TypeGenerator, TypeUsage,

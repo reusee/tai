@@ -116,19 +116,17 @@ var tuiHelpLines = []string{
 	"[ / ]\tjump to previous / next section start or end",
 	"c\tfold every section (Output tab) or node (Tree tab) of the focused tab; press again to restore; click a collapsed row to expand it",
 	"v\tcycle the Tree tab's projection (all / events / summary / model / program / user / stream)",
-	"view menu\tpick the Tree tab's projection from the View menu",
 	"enter\tsend the input line when focused; toggle the latest tree node's expansion otherwise",
 	"click\tselect / toggle tab under cursor; click the input row to focus input",
 	"output column\tclick ▸ / ▾ at a section's first row to collapse / expand it",
 	"tree row\tclick 👉 on an attempt line to jump the Output tab to its output section; double-click a node to expand or collapse it",
 	"tree column\tclick ▸ / ▾ on an expandable node's first row (or its first visible row when scrolled) to collapse / expand it",
-	"title buttons\tclick the labels at an expanded tab title's right edge: Output 上下收, Tree 换收",
+	"title buttons\tclick the labels at an expanded tab title's right edge: Output 上下收, Tree 换收, Logs 分鼠帮退",
 	"wheel / drag\tscroll pane under cursor",
 	"m\ttoggle mouse reporting (off: select & copy in the terminal)",
 	"q / Ctrl-C\tquit (press again to confirm)",
 	"input bar\tclick the bottom row to focus and type; esc or view-changing keys release",
 	"?\ttoggle this help overlay",
-	"menu bar\tclick a category on the top row to open its menu; click an item to run it; Quit confirms on the second click",
 	"submit glyph\tclick ↵ at the input bar's right end to send the typed line",
 	"help close\tclick anywhere on the help overlay to close it",
 }
@@ -159,7 +157,7 @@ func buildRoot(t *TUI, width, height int, displays [3][]taiui.Line) taiui.Elemen
 			if box.Width() >= 2 {
 				// The submit glyph overlays the bar's right end: a press
 				// there sends the typed line, colored by whether a
-				// ChatInput call waits. See TheoryOfControlBar.
+				// ChatInput call waits. See TheoryOfSessionActions.
 				glyph, glyphColor := submitGlyph(t.inputResult != nil)
 				submitGlyphEl = taiui.Text(glyph,
 					taiui.Box{Top: box.Bottom - 1, Left: box.Right - 2, Bottom: box.Bottom, Right: box.Right},
@@ -196,7 +194,7 @@ func buildRoot(t *TUI, width, height int, displays [3][]taiui.Line) taiui.Elemen
 		if panel != nil && t.tabs.Expanded[i] {
 			// The title row's operation buttons draw over the panel,
 			// right-aligned before the two reserved cells. See
-			// TheoryOfTitleButtons.
+			// TheoryOfToolbars.
 			if el := t.titleButtonsElement(i, box); el != nil {
 				elements = append(elements, el)
 			}
@@ -209,26 +207,11 @@ func buildRoot(t *TUI, width, height int, displays [3][]taiui.Line) taiui.Elemen
 		}
 	}
 	root := taiui.Overlay(elements...)
-	if t.tabs.TopInset > 0 {
-		// The menu bar draws over the top row the inset reserves: every
-		// keyboard action without a pointer path is reachable through a
-		// category dropdown. The row carries only the category titles,
-		// so it keeps the terminal default background. See
-		// TheoryOfControlBar.
-		root = taiui.Overlay(root, menuBarElement(width, t.openMenu, t.menuHoverTitleLocked()))
-	}
 	if t.showHelp {
 		// The help overlay is centered over the tabs and lists the key
 		// bindings. It is derived from state like the quit confirmation
 		// bar: toggling showHelp re-renders the overlay.
 		root = taiui.Overlay(root, taiui.HelpOverlay(t.helpLines(), 16, width, height))
-	}
-	if t.openMenu >= 0 {
-		// The open menu's dropdown covers the tabs below its title. See
-		// TheoryOfControlBar.
-		if dropdown := menuDropdownElement(width, height, t.openMenu, t.menuHoverItemLocked()); dropdown != nil {
-			root = taiui.Overlay(root, dropdown)
-		}
 	}
 	if t.quit.Pending() {
 		// A pending quit confirmation draws a confirmation bar over the
