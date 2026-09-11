@@ -1244,8 +1244,10 @@ func TestTreeViewMenuActions(t *testing.T) {
 
 // TestTreeStreamView verifies the stream projection: one flat row per
 // node ordered by insert time, the attempt node's row carrying the
-// jump marker, no indentation on any row, and the tab label stating
-// the projection. See TheoryOfTreeTab.
+// jump marker, no indentation on any row, every row carrying the
+// complete classification (category and type together, because the
+// same type string may belong to different categories), and the tab
+// label stating the projection. See TheoryOfTreeTab.
 func TestTreeStreamView(t *testing.T) {
 	tui := newTUIForTest()
 	base := time.Now()
@@ -1278,6 +1280,17 @@ func TestTreeStreamView(t *testing.T) {
 	// The attempt row carries the jump marker.
 	if !strings.Contains(display[0].Text, eventJumpMarker) {
 		t.Fatalf("expected the jump marker on the attempt row, got %q", display[0].Text)
+	}
+	// Every row carries the complete classification: category and type
+	// together.
+	for i, want := range []struct{ cat, typ string }{
+		{"structure", "attempt"},
+		{"message", "model"},
+		{"message", "user"},
+	} {
+		if !strings.Contains(display[i].Text, want.cat) || !strings.Contains(display[i].Text, want.typ) {
+			t.Fatalf("row %d must carry category %q and type %q, got %q", i, want.cat, want.typ, display[i].Text)
+		}
 	}
 	// No tree indentation on any row.
 	for i, line := range display {

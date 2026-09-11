@@ -47,12 +47,14 @@ Tree tab theory (cmd/tai):
   (tree.Extract), so the outline stays readable.
 - The stream projection renders every node as one flat line, ordered
   by insert time — the chronological order the nodes were written —
-  with no indentation, no fold column, and no expansion: the type
-  fragment, the content's first non-blank line as the preview, the
-  attempt node's jump marker, and the right-aligned elapsed timer,
-  colored by role. Stream rows record expandable false, so the fold
-  controls and double-click toggles are inert, while the click and
-  title-status paths still map presses onto nodes.
+  with no indentation, no fold column, and no expansion: the category
+  and type fragments together (category+type is the complete
+  classification, so both appear on every row), the content's first
+  non-blank line as the preview, the attempt node's jump marker, and
+  the right-aligned elapsed timer, colored by role. Stream rows record
+  expandable false, so the fold controls and double-click toggles are
+  inert, while the click and title-status paths still map presses onto
+  nodes.
 - Every node renders one line by default: "{category emoji} {category}
   {type emoji} {type} {fold slot} first content line". The node name
   and author are secondary to the user, so the collapsed row hides
@@ -697,14 +699,15 @@ func (t *TUI) treeStreamDisplay(contentWidth int, base taiui.Color) []taiui.Line
 	return out
 }
 
-// treeStreamNodeLines renders one stream row: the type fragment, the
-// content's first non-blank line as the preview, and the attempt
-// node's jump marker, truncated to the pane width with the elapsed
-// timer right-aligned — the same timer layout the tree rows render.
-// The row keeps the node's role color, so the stream reads by role.
-// See TheoryOfTreeTab.
+// treeStreamNodeLines renders one stream row: the category and type
+// fragments — category+type together form the complete classification,
+// so both appear on every row — the content's first non-blank line as
+// the preview, and the attempt node's jump marker, truncated to the
+// pane width with the elapsed timer right-aligned — the same timer
+// layout the tree rows render. The row keeps the node's role color, so
+// the stream reads by role. See TheoryOfTreeTab.
 func treeStreamNodeLines(n *tree.Node, elapsed time.Duration, shade taiui.Color, contentWidth int, options displaywidth.Options) []taiui.Line {
-	text := treeNodeTypeText(n)
+	text := treeNodeCategoryText(n) + " " + treeNodeTypeText(n)
 	if first := treeFirstLine(n); first != "" {
 		text += " " + first
 	}
