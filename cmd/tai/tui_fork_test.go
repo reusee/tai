@@ -66,8 +66,8 @@ func TestForkTUIDisplayForwardsTreesToTUI(t *testing.T) {
 
 // TestForkTUIDisplayDecoratesHandoffState verifies that the handoff
 // decorator from the display scope observes content parts, so handoff
-// output is highlighted per part and per thinking state in the Output
-// tab. See TheoryOfTUIHandoff.
+// output reaches the Output tab as sections carrying their type
+// letters. See TheoryOfTUIHandoff and TheoryOfOutputControls.
 func TestForkTUIDisplayDecoratesHandoffState(t *testing.T) {
 	tui := newTUIForTest()
 	scope := forkTUIDisplay(
@@ -95,20 +95,33 @@ func TestForkTUIDisplayDecoratesHandoffState(t *testing.T) {
 	if len(lines) == 0 {
 		t.Fatal("expected lines in the output buffer")
 	}
-	if lines[0].Text != "handoff thinking" || lines[0].Color != outputColorThoughtLine {
-		t.Fatalf("expected the thought line in the thought color, got %+v", lines[0])
+	for i, line := range lines {
+		if line.Color != taiui.NoColor {
+			t.Fatalf("line %d must render in the default foreground, got %+v", i, line)
+		}
+	}
+	if lines[0].Text != "handoff thinking" {
+		t.Fatalf("expected the thought line first, got %+v", lines[0])
 	}
 	found := false
 	for _, line := range lines {
 		if line.Text == "handoff text" {
 			found = true
-			if line.Color != taiui.NoColor {
-				t.Fatalf("expected the text line in the default color, got %+v", lines)
-			}
 		}
 	}
 	if !found {
 		t.Fatalf("expected the handoff text line in the output buffer, got %v", lines)
+	}
+	// The thinking and body sections carry their own type letters: Ｔ
+	// for the reasoning trace and Ｍ for the model's body text.
+	wantLetters := []string{"Ｔ", "Ｍ"}
+	if len(tui.outputSections) != len(wantLetters) {
+		t.Fatalf("expected %d sections, got %d", len(wantLetters), len(tui.outputSections))
+	}
+	for i, letter := range wantLetters {
+		if got := tui.outputSections[i].letter; got != letter {
+			t.Fatalf("section %d letter %q, want %q", i, got, letter)
+		}
 	}
 }
 

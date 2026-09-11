@@ -241,10 +241,10 @@ func buildRoot(t *TUI, width, height int, displays [3][]taiui.Line) taiui.Elemen
 
 // outputPanelView builds the expanded Output tab: the full-width
 // content panel whose content rows are indented past the control
-// column, the column's background over the content rows, and one
-// control glyph per visible section. The title row spans the full box
-// width and is not part of the column. The caller holds t.mu. See
-// TheoryOfOutputControls.
+// column, the column's background over the content rows, and each
+// visible section's fold control with its content-type letter below.
+// The title row spans the full box width and is not part of the
+// column. The caller holds t.mu. See TheoryOfOutputControls.
 func (t *TUI) outputPanelView(box taiui.Box, display []taiui.Line, label string) taiui.Element {
 	panel := taiui.TabPanel(box, tabNames[0], label,
 		t.tabs.Expanded[0], t.tabs.Focus == 0, t.tabs.Unseen[0], display, t.scrolls[0], panelStyle,
@@ -253,6 +253,13 @@ func (t *TUI) outputPanelView(box taiui.Box, display []taiui.Line, label string)
 	if t.tabs.Focus == 0 {
 		base = panelStyle.FocusBG
 	}
+	// The box buildRoot hands over has already given up the label strip
+	// and, in interactive sessions, the chat input bar row, so the
+	// visible content rows are the box height minus the label strip
+	// alone. The control rows keep their own window. See
+	// TheoryOfOutputControls.
+	paneHeight := max(box.Height()-1, 1)
+	offset := taiui.ClampOffset(t.scrolls[0].Offset, len(display), paneHeight)
 	// The control column is part of the content area: it paints the
 	// content rows only, leaving the title row to the panel's centered
 	// label. See TheoryOfOutputControls.
@@ -261,7 +268,6 @@ func (t *TUI) outputPanelView(box taiui.Box, display []taiui.Line, label string)
 		taiui.Fill(true),
 		taiui.BGColor(base),
 	)}
-	offset := taiui.ClampOffset(t.scrolls[0].Offset, len(display), t.tuiPaneHeight(0, box))
 	for _, row := range t.outputControlRows(box, display, offset) {
 		controls := t.sectionControls(row.section)
 		if len(controls) == 0 {
@@ -283,6 +289,14 @@ func (t *TUI) outputPanelView(box taiui.Box, display []taiui.Line, label string)
 		children = append(children, taiui.Text(text, taiui.Box{
 			Top: row.row, Left: box.Left, Bottom: row.row + 1, Right: right,
 		}))
+		// The section's content-type letter renders below its fold
+		// glyph; a section with no second visible row shows only the
+		// glyph. See TheoryOfOutputControls.
+		if letterRow, ok := t.outputTypeRow(box, row, offset); ok {
+			children = append(children, taiui.Text(t.outputSections[row.section].letter, taiui.Box{
+				Top: letterRow, Left: box.Left, Bottom: letterRow + 1, Right: box.Left + controlColumnWidth,
+			}))
+		}
 	}
 	return taiui.Overlay(children...)
 }

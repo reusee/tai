@@ -37,10 +37,10 @@ func TestOutputSectionCollapseShowsFirstLine(t *testing.T) {
 	tui := newTUIForTest()
 	box := taiui.Box{Top: 0, Left: 0, Bottom: 20, Right: 40}
 
-	tui.writeOutputPart(generators.RoleUser, outputColorUserLine, false, "question\n")
-	tui.writeOutputPart(generators.RoleModel, outputColorThoughtLine, true,
+	tui.writeOutputPart(generators.RoleUser, false, "question\n")
+	tui.writeOutputPart(generators.RoleModel, true,
 		"thought line one\nthought line two\nthought line three\n")
-	tui.writeOutputPart(generators.RoleModel, taiui.NoColor, false, "answer\n")
+	tui.writeOutputPart(generators.RoleModel, false, "answer\n")
 
 	tui.mu.Lock()
 	tui.toggleOutputSectionLocked(1)
@@ -48,8 +48,10 @@ func TestOutputSectionCollapseShowsFirstLine(t *testing.T) {
 	tui.mu.Unlock()
 	assertTexts(t, displayTexts(display),
 		"question", "", "thought line one", "answer")
-	if display[2].Color != outputColorThoughtLine {
-		t.Fatalf("expected the thought color on the collapsed row, got %#x", display[2].Color)
+	// The body carries no role color: the section's type letter states
+	// its content type. See TheoryOfOutputControls.
+	if display[2].Color != taiui.NoColor {
+		t.Fatalf("expected the default foreground on the collapsed row, got %#x", display[2].Color)
 	}
 }
 
@@ -62,18 +64,18 @@ func TestOutputSectionCollapseStreaming(t *testing.T) {
 	box := taiui.Box{Top: 0, Left: 0, Bottom: 20, Right: 40}
 	tui.generating = true
 
-	tui.writeOutputPart(generators.RoleModel, outputColorThoughtLine, true, "thinking first\n")
+	tui.writeOutputPart(generators.RoleModel, true, "thinking first\n")
 	tui.mu.Lock()
 	tui.toggleOutputSectionLocked(0)
 	tui.mu.Unlock()
 	assertTexts(t, displayTexts(wrappedDisplay(tui, 0, box)), "thinking first")
 
 	// New output moves the collapsed row to the newest completed line.
-	tui.writeOutputPart(generators.RoleModel, outputColorThoughtLine, true, "thinking second\n")
+	tui.writeOutputPart(generators.RoleModel, true, "thinking second\n")
 	assertTexts(t, displayTexts(wrappedDisplay(tui, 0, box)), "thinking second")
 
 	// The trailing partial line is the newest output: the row shows it.
-	tui.writeOutputPart(generators.RoleModel, outputColorThoughtLine, true, "partial thi")
+	tui.writeOutputPart(generators.RoleModel, true, "partial thi")
 	assertTexts(t, displayTexts(wrappedDisplay(tui, 0, box)), "partial thi")
 }
 
@@ -85,10 +87,9 @@ func TestOutputSectionTogglePreservesContent(t *testing.T) {
 	tui := newTUIForTest()
 	box := taiui.Box{Top: 0, Left: 0, Bottom: 20, Right: 40}
 
-	tui.writeOutputPart(generators.RoleUser, outputColorUserLine, false, "question\n")
-	tui.writeOutputPart(generators.RoleModel, outputColorThoughtLine, true,
-		"thought one\nthought two\n")
-	tui.writeOutputPart(generators.RoleModel, taiui.NoColor, false, "answer\n")
+	tui.writeOutputPart(generators.RoleUser, false, "question\n")
+	tui.writeOutputPart(generators.RoleModel, true, "thought one\nthought two\n")
+	tui.writeOutputPart(generators.RoleModel, false, "answer\n")
 
 	tui.mu.Lock()
 	tui.toggleOutputSectionLocked(1)
@@ -111,8 +112,8 @@ func TestOutputSectionTogglePreservesContent(t *testing.T) {
 func TestOutputSectionWidthChangeRewraps(t *testing.T) {
 	tui := newTUIForTest()
 
-	tui.writeOutputPart(generators.RoleModel, outputColorThoughtLine, true, "thought\n")
-	tui.writeOutputPart(generators.RoleModel, taiui.NoColor, false, "answer\n")
+	tui.writeOutputPart(generators.RoleModel, true, "thought\n")
+	tui.writeOutputPart(generators.RoleModel, false, "answer\n")
 	tui.mu.Lock()
 	tui.toggleOutputSectionLocked(0)
 	narrow := displayTexts(wrappedDisplay(tui, 0, taiui.Box{Top: 0, Left: 0, Bottom: 20, Right: 40}))
@@ -130,8 +131,7 @@ func TestOutputSectionCollapsedRowTruncatedToWidth(t *testing.T) {
 	tui := newTUIForTest()
 	box := taiui.Box{Top: 0, Left: 0, Bottom: 20, Right: 40}
 
-	tui.writeOutputPart(generators.RoleModel, outputColorThoughtLine, true,
-		strings.Repeat("x", 100)+"\n")
+	tui.writeOutputPart(generators.RoleModel, true, strings.Repeat("x", 100)+"\n")
 	tui.mu.Lock()
 	tui.toggleOutputSectionLocked(0)
 	display := wrappedDisplay(tui, 0, box)
@@ -153,7 +153,7 @@ func TestOutputSectionCollapsedRowTruncatedToWidth(t *testing.T) {
 // follows the section's collapsed state. See TheoryOfOutputControls.
 func TestSectionControlsGlyph(t *testing.T) {
 	tui := newTUIForTest()
-	tui.writeOutputPart(generators.RoleModel, taiui.NoColor, false, "x\n")
+	tui.writeOutputPart(generators.RoleModel, false, "x\n")
 	tui.mu.Lock()
 	defer tui.mu.Unlock()
 	if got := tui.sectionControls(0)[0].Glyph; got != sectionGlyphExpanded {
@@ -175,10 +175,9 @@ func TestCollapseAllSections(t *testing.T) {
 	tui := newTUIForTest()
 	box := taiui.Box{Top: 0, Left: 0, Bottom: 20, Right: 40}
 
-	tui.writeOutputPart(generators.RoleUser, outputColorUserLine, false, "question\n")
-	tui.writeOutputPart(generators.RoleModel, outputColorThoughtLine, true,
-		"thought one\nthought two\nthought three\n")
-	tui.writeOutputPart(generators.RoleModel, taiui.NoColor, false, "answer\n")
+	tui.writeOutputPart(generators.RoleUser, false, "question\n")
+	tui.writeOutputPart(generators.RoleModel, true, "thought one\nthought two\nthought three\n")
+	tui.writeOutputPart(generators.RoleModel, false, "answer\n")
 
 	tui.collapseAllSections()
 	tui.mu.Lock()
@@ -204,7 +203,7 @@ func TestCollapseAllSections(t *testing.T) {
 
 	// New output into the collapsed section moves its row to the
 	// newest line.
-	tui.writeOutputPart(generators.RoleModel, taiui.NoColor, false, "answer two\n")
+	tui.writeOutputPart(generators.RoleModel, false, "answer two\n")
 	tui.mu.Lock()
 	display = wrappedDisplay(tui, 0, box)
 	tui.mu.Unlock()
@@ -220,10 +219,9 @@ func TestCollapseAllSectionsRestore(t *testing.T) {
 	tui := newTUIForTest()
 	box := taiui.Box{Top: 0, Left: 0, Bottom: 20, Right: 40}
 
-	tui.writeOutputPart(generators.RoleUser, outputColorUserLine, false, "question\n")
-	tui.writeOutputPart(generators.RoleModel, outputColorThoughtLine, true,
-		"thought one\nthought two\nthought three\n")
-	tui.writeOutputPart(generators.RoleModel, taiui.NoColor, false, "answer\n")
+	tui.writeOutputPart(generators.RoleUser, false, "question\n")
+	tui.writeOutputPart(generators.RoleModel, true, "thought one\nthought two\nthought three\n")
+	tui.writeOutputPart(generators.RoleModel, false, "answer\n")
 
 	// First press folds everything to one row per section.
 	tui.collapseAllSections()
@@ -266,13 +264,13 @@ func TestOutputControlRowsPinned(t *testing.T) {
 	tui := newTUIForTest()
 	box := taiui.Box{Top: 0, Left: 0, Bottom: 10, Right: 40}
 
-	tui.writeOutputPart(generators.RoleUser, outputColorUserLine, false, "q\n")
+	tui.writeOutputPart(generators.RoleUser, false, "q\n")
 	var b strings.Builder
 	for i := 0; i < 30; i++ {
 		fmt.Fprintf(&b, "thought %02d\n", i)
 	}
-	tui.writeOutputPart(generators.RoleModel, outputColorThoughtLine, true, b.String())
-	tui.writeOutputPart(generators.RoleModel, taiui.NoColor, false, "answer\n")
+	tui.writeOutputPart(generators.RoleModel, true, b.String())
+	tui.writeOutputPart(generators.RoleModel, false, "answer\n")
 
 	tui.mu.Lock()
 	defer tui.mu.Unlock()
@@ -307,9 +305,9 @@ func TestToggleControlAtClick(t *testing.T) {
 	tui := newTUIForTest()
 	tui.width, tui.height = 40, 10
 
-	tui.writeOutputPart(generators.RoleUser, outputColorUserLine, false, "q\n")
-	tui.writeOutputPart(generators.RoleModel, outputColorThoughtLine, true, "t1\nt2\n")
-	tui.writeOutputPart(generators.RoleModel, taiui.NoColor, false, "answer\n")
+	tui.writeOutputPart(generators.RoleUser, false, "q\n")
+	tui.writeOutputPart(generators.RoleModel, true, "t1\nt2\n")
+	tui.writeOutputPart(generators.RoleModel, false, "answer\n")
 
 	box := tui.tabs.Boxes(40, 10)[0]
 	tui.mu.Lock()
@@ -364,9 +362,9 @@ func TestClickExpandsCollapsedSection(t *testing.T) {
 	tui := newTUIForTest()
 	tui.width, tui.height = 40, 10
 
-	tui.writeOutputPart(generators.RoleUser, outputColorUserLine, false, "q\n")
-	tui.writeOutputPart(generators.RoleModel, outputColorThoughtLine, true, "t1\nt2\nt3\n")
-	tui.writeOutputPart(generators.RoleModel, taiui.NoColor, false, "answer\n")
+	tui.writeOutputPart(generators.RoleUser, false, "q\n")
+	tui.writeOutputPart(generators.RoleModel, true, "t1\nt2\nt3\n")
+	tui.writeOutputPart(generators.RoleModel, false, "answer\n")
 
 	box := tui.tabs.Boxes(40, 10)[0]
 	tui.mu.Lock()
@@ -403,11 +401,11 @@ func TestExpandSectionScrollsToItsStart(t *testing.T) {
 	tui := newTUIForTest()
 	tui.width, tui.height = 40, 10
 
-	tui.writeOutputPart(generators.RoleUser, outputColorUserLine, false,
+	tui.writeOutputPart(generators.RoleUser, false,
 		"question one\nquestion two\nquestion three\n")
-	tui.writeOutputPart(generators.RoleModel, outputColorThoughtLine, true,
+	tui.writeOutputPart(generators.RoleModel, true,
 		"thought one\nthought two\nthought three\n")
-	tui.writeOutputPart(generators.RoleModel, taiui.NoColor, false,
+	tui.writeOutputPart(generators.RoleModel, false,
 		"answer one\nanswer two\nanswer three\nanswer four\nanswer five\n"+
 			"answer six\nanswer seven\nanswer eight\nanswer nine\n"+
 			"answer ten\nanswer eleven\nanswer twelve\n")
@@ -496,9 +494,9 @@ func TestOutputControlColumnBesideContent(t *testing.T) {
 	tui.interactive = false
 	tui.width, tui.height = 40, 10
 
-	tui.writeOutputPart(generators.RoleUser, outputColorUserLine, false, "q\n")
-	tui.writeOutputPart(generators.RoleModel, outputColorThoughtLine, true, "t1\nt2\n")
-	tui.writeOutputPart(generators.RoleModel, taiui.NoColor, false, "answer\n")
+	tui.writeOutputPart(generators.RoleUser, false, "q\n")
+	tui.writeOutputPart(generators.RoleModel, true, "t1\nt2\n")
+	tui.writeOutputPart(generators.RoleModel, false, "answer\n")
 
 	box := tui.tabs.Boxes(40, 10)[0]
 	tui.mu.Lock()
@@ -530,6 +528,52 @@ func TestOutputControlColumnBesideContent(t *testing.T) {
 	// starts at column 2 on the row below the title.
 	if cell := frame.Cells[1*frame.Width+controlColumnWidth]; cell.Rune != 'q' {
 		t.Fatalf("expected indented content at (2,1), got %q", string(cell.Rune))
+	}
+}
+
+// TestOutputControlColumnShowsTypeLetters verifies that each section
+// states its content type with a full-width letter in the control
+// column, on the row below the section's fold glyph, and that a
+// section with no second visible row shows only the fold glyph. See
+// TheoryOfOutputControls.
+func TestOutputControlColumnShowsTypeLetters(t *testing.T) {
+	tui := newTUIForTest()
+	tui.interactive = false
+	tui.width, tui.height = 40, 10
+
+	tui.writeOutputPart(generators.RoleUser, false, "q\n")
+	tui.writeOutputPart(generators.RoleModel, true, "t1\nt2\n")
+	tui.writeOutputPart(generators.RoleModel, false, "answer\n")
+
+	box := tui.tabs.Boxes(40, 10)[0]
+	tui.mu.Lock()
+	display := wrappedDisplay(tui, 0, box)
+	rows := tui.outputControlRows(box, display, 0)
+	tui.mu.Unlock()
+	if len(rows) != 3 {
+		t.Fatalf("expected 3 control rows, got %+v", rows)
+	}
+
+	screen := &panelTestScreen{width: 40, height: 10}
+	taiui.Render(buildRoot(tui, 40, 10, [3][]taiui.Line{display, nil, nil}), screen)
+	frame := screen.frames[len(screen.frames)-1]
+
+	// The user and thoughts sections span two or more display rows, so
+	// their letters render on the row below their fold glyphs.
+	if cell := frame.Cells[(rows[0].row+1)*frame.Width+box.Left]; cell.Rune != 'Ｕ' {
+		t.Fatalf("expected the user letter below the fold glyph, got %q", string(cell.Rune))
+	}
+	if cell := frame.Cells[(rows[1].row+1)*frame.Width+box.Left]; cell.Rune != 'Ｔ' {
+		t.Fatalf("expected the thoughts letter below the fold glyph, got %q", string(cell.Rune))
+	}
+	// The answer section spans one display row: it shows only its fold
+	// glyph, so the letter never covers the next section's control.
+	if cell := frame.Cells[rows[2].row*frame.Width+box.Left]; cell.Rune != '▾' {
+		t.Fatalf("expected the fold glyph on the one-row section, got %q", string(cell.Rune))
+	}
+	switch frame.Cells[(rows[2].row+1)*frame.Width+box.Left].Rune {
+	case 'Ｕ', 'Ｍ', 'Ｔ', 'Ｓ', 'Ｃ', 'Ｌ':
+		t.Fatal("a one-row section must show only its fold glyph")
 	}
 }
 
@@ -648,9 +692,9 @@ func TestTUITitleButtonClicks(t *testing.T) {
 		tui := newTUIForTest()
 		tui.interactive = false
 		tui.width, tui.height = 40, 10
-		tui.writeOutputPart(generators.RoleUser, outputColorUserLine, false, "q\n")
-		tui.writeOutputPart(generators.RoleModel, outputColorThoughtLine, true, "t1\nt2\n")
-		tui.writeOutputPart(generators.RoleModel, taiui.NoColor, false, "answer\n")
+		tui.writeOutputPart(generators.RoleUser, false, "q\n")
+		tui.writeOutputPart(generators.RoleModel, true, "t1\nt2\n")
+		tui.writeOutputPart(generators.RoleModel, false, "answer\n")
 		box := tui.tabs.Boxes(40, 10)[0]
 		// The collapse-all button occupies [Right-4, Right-2).
 		tui.handleMouseKey(fmt.Sprintf("mouse-left@%d,%d", box.Right-3, box.Top))
@@ -679,10 +723,12 @@ func TestTUITitleButtonClicks(t *testing.T) {
 		tui := newTUIForTest()
 		tui.interactive = false
 		tui.width, tui.height = 80, 10
+		var b strings.Builder
 		for i := 0; i < 20; i++ {
-			tui.write([]byte(fmt.Sprintf("line %02d\n", i)))
+			fmt.Fprintf(&b, "line %02d\n", i)
 		}
-		tui.writeColored(outputColorThoughtLine, []byte("a thought\n"))
+		tui.writeOutputPart(generators.RoleModel, false, b.String())
+		tui.writeOutputPart(generators.RoleModel, true, "a thought\n")
 		tui.scrolls[0].Follow = true
 		box := tui.tabs.Boxes(80, 10)[0]
 		// The next-section button occupies [Right-6, Right-4).

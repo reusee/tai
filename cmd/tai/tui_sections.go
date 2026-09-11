@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/clipperhouse/displaywidth"
+	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/taiui"
 )
 
@@ -64,6 +65,15 @@ Output tab control column theory (cmd/tai):
   collapsed section scrolls the view so the section's first display
   row lands at the pane top and stops following the tail, so the
   expanded content opens at its beginning.
+- The column also states the section's content type: a full-width
+  letter renders on the row below the section's fold glyph — Ｔ the
+  model's reasoning thoughts, Ｍ its body text, Ｕ the user's input,
+  Ｓ system messages, Ｃ tool calls and results, Ｌ log records. A
+  full-width letter is two cells wide, matching the column, and
+  renders in the default foreground so it never competes with the
+  content. A section with no second visible row — a collapsed section,
+  or one whose span the viewport clips — shows only its fold glyph,
+  so the letter never covers the next section's control.
 - The c key toggles the whole structure: when not every section is
   collapsed, it snapshots the per-section collapsed state and folds
   every section to one row; when every section is collapsed, it
@@ -149,14 +159,43 @@ func (t *TUI) sectionControls(idx int) []outputControl {
 
 // outputSection is one section of the Output tab's content: the index
 // in the output line buffer at which the section's first source line
-// begins, whether the section is collapsed to one row, and the source
-// line the collapsed row displays — the header at collapse time, the
-// latest line once new output arrives. The section spans to the next
+// begins, whether the section is collapsed to one row, the source line
+// the collapsed row displays — the header at collapse time, the latest
+// line once new output arrives — and the content type stated by the
+// letter the control column draws. The section spans to the next
 // section's start.
 type outputSection struct {
 	startLine int
 	collapsed bool
 	showLine  int
+	// letter is the section's content type: the full-width letter the
+	// control column draws on the row below the section's fold glyph.
+	// See TheoryOfOutputControls.
+	letter string
+}
+
+// outputTypeLetterOf maps a content role and its thinking state to the
+// full-width letter the control column draws below the section's fold
+// glyph: Ｔ the model's reasoning thoughts, Ｍ its body text, Ｕ the
+// user's input, Ｓ system messages, Ｃ tool calls and results, Ｌ log
+// records. A full-width letter is two cells wide, matching the control
+// column. See TheoryOfOutputControls.
+func outputTypeLetterOf(role generators.Role, isThought bool) string {
+	if isThought {
+		return "Ｔ"
+	}
+	switch role {
+	case generators.RoleUser:
+		return "Ｕ"
+	case generators.RoleSystem:
+		return "Ｓ"
+	case generators.RoleTool:
+		return "Ｃ"
+	case generators.RoleLog:
+		return "Ｌ"
+	default:
+		return "Ｍ"
+	}
 }
 
 // outputSectionOwner identifies the attempt that owns a section: the
@@ -446,6 +485,23 @@ func (t *TUI) outputSectionOffset(idx int) int {
 	return top
 }
 
+// outputJumpStops returns the scroll offsets the [ and ] keys walk
+// through: one pair per section boundary, in section order — the exit
+// stop anchoring the previous section's last rows at the pane bottom
+// (the boundary minus the pane height, clamped to the content start)
+// and the entry stop anchoring the new section's first row at the pane
+// top (the boundary itself). The projection records each section's
+// row count, so the boundaries are the offsets the projection
+// rendered. See TheoryOfOutputControls.
+func (t *TUI) outputJumpStops(paneHeight int) []int {
+	var stops []int
+	for i := 1; i < len(t.outputSections); i++ {
+		boundary := t.outputSectionOffset(i)
+		stops = append(stops, max(boundary-paneHeight, 0), boundary)
+	}
+	return stops
+}
+
 // outputSectionAtOffset locates the section whose projected rows cover
 // the given display offset in the current projection: the prefix rows
 // clamp to the first section and the tail rows fall back to the last,
@@ -494,6 +550,31 @@ func (t *TUI) outputControlRows(box taiui.Box, display []taiui.Line, offset int)
 		})
 	}
 	return rows
+}
+
+// outputTypeRow returns the screen row of a section's content-type
+// letter in the current view: the row below the section's fold
+// control, when that row still belongs to the section's visible rows.
+// ok is false when the section has no second visible row — a
+// collapsed section, or one whose span the viewport or the pane
+// clips — so a one-row section shows only its fold glyph and the
+// letter never covers the next section's control. The projection must
+// have been computed for the current content width. The caller holds
+// t.mu. See TheoryOfOutputControls.
+func (t *TUI) outputTypeRow(box taiui.Box, row outputControlRow, offset int) (int, bool) {
+	count := 0
+	if row.section < len(t.projCounts) {
+		count = t.projCounts[row.section]
+	}
+	top := t.outputSectionOffset(row.section)
+	if max(top, offset)+1 >= top+count {
+		return 0, false
+	}
+	letterRow := row.row + 1
+	if letterRow >= box.Bottom {
+		return 0, false
+	}
+	return letterRow, true
 }
 
 // toggleControlAtClick toggles the section whose control the press hit:
@@ -618,12 +699,13 @@ func (t *TUI) expandCollapsedSectionAtClick(x, y int) bool {
 	return true
 }
 
-// beginOutputSection records a new section starting at the next source
-// line the output buffer will create — the line the caller is about to
-// write — and, when the section is owned by an attempt, binds the
-// attempt to it for the Tree tab's click-to-jump mapping (the attempt
-// node's 👉 marker). Guarded by mu.
-func (t *TUI) beginOutputSection(owner *outputSectionOwner) {
+// beginOutputSection records a new section of the given content type
+// letter, starting at the next source line the output buffer will
+// create — the line the caller is about to write — and, when the
+// section is owned by an attempt, binds the attempt to it for the Tree
+// tab's click-to-jump mapping (the attempt node's 👉 marker). Guarded
+// by mu. See TheoryOfOutputControls.
+func (t *TUI) beginOutputSection(owner *outputSectionOwner, letter string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.eventSections == nil {
@@ -646,6 +728,7 @@ func (t *TUI) beginOutputSection(owner *outputSectionOwner) {
 	t.outputSections = append(t.outputSections, outputSection{
 		startLine: start,
 		showLine:  start,
+		letter:    letter,
 	})
 	if owner != nil {
 		t.eventSections[*owner] = idx

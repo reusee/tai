@@ -10,7 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gdamore/tcell/v3/color"
 	"github.com/gdamore/tcell/v3/tty"
 	"github.com/reusee/dscope"
 	"github.com/reusee/tai/apps"
@@ -20,14 +19,6 @@ import (
 	"github.com/reusee/tai/pipeline"
 	"github.com/reusee/tai/taiui"
 	"github.com/reusee/tai/tree"
-)
-
-const (
-	outputColorUser    int32 = 12
-	outputColorTool    int32 = 11
-	outputColorSystem  int32 = 14
-	outputColorLog     int32 = 9
-	outputColorThought int32 = 13
 )
 
 const TheoryOfTUI = `
@@ -67,8 +58,8 @@ two shades derive from whatever backgrounds the
 tui config section sets. Model output is captured from the
 generation state by the tuiOutputState decorator, passed through
 RunOptions.StateDecorators by runWithTUI: text parts stream to the Output
-tab, thoughts are colored distinctly and separated from non-thought content
-by a blank line, tool calls render as markers, and errors are shown inline.
+tab, thoughts are separated from non-thought content by a blank line,
+tool calls render as markers, and errors are shown inline.
 Raw thoughts are suppressed
 from the Output tab only when -no-thoughts is set; when
 -summarize-thoughts is enabled, the raw stream keeps flowing to
@@ -89,8 +80,8 @@ termination also separates the output of consecutive generations. Only content a
 after the decorator wraps the state is displayed; initial contents are not
 re-parsed or re-displayed, because unstructured text must not be
 imperfectly parsed. The one exception is the user's chat input: runWithTUI
-writes the flags.Chats content to the Output tab in the user role color
-before the command starts, so the user sees what the model was asked even
+writes the flags.Chats content to the Output tab before the command
+starts, so the user sees what the model was asked even
 though the chat lives in the initial state. Attempt summaries render
 from the tree's summary nodes, and the synthesized-summary event node
 carries the completion summary of an exhausted generation, so the TUI
@@ -101,9 +92,11 @@ because the session tree is the single authority. The goal-mode verdicts
 and failure notes are goal structure nodes in the same tree (RunGoal
 records them through GoalTreeObserver), so they render in the Tree tab
 and never reach the Output tab. stdout is discarded in TUI mode, while
-stderr stays visible in the Output tab. Content is colored by role,
-matching generators.TheoryOfOutputColors; the palette defaults and the
-tui config section's configurability live in TheoryOfUIStyle. The keys
+stderr stays visible in the Output tab. The Output tab's content carries
+no role color: each section states its content type with the full-width
+letter its control column draws below the fold glyph (see
+TheoryOfOutputControls), so type never competes with the text for
+attention. The keys
 1, 2, and 3 select the corresponding tab (Output, Tree, Logs
 respectively); the number-key collapse/expand and focus-handoff semantics,
 first-content auto-expansion, the unseen dot on collapsed strips, and
@@ -123,10 +116,10 @@ restores the usual ratio. The s key switches between vertical splitting
 (tabs side by side, a vertical split line) and horizontal splitting (tabs
 stacked, one above the other). Tab cycles the focus among the expanded
 tabs; the [ and ] keys jump the Output tab's view
-through the section transitions — in the Output tab a transition is a role
-change or a thought/non-thought change, i.e., a color change between
-consecutive wrapped display lines — using the exit and entry jump stops of
-taiui.TheoryOfSectionNavigation. A forward jump with no later stop falls
+through the section transitions — a transition is a section boundary,
+i.e., a role or thinking-state change between consecutive sections —
+using each boundary's exit and entry jump stops (see
+TheoryOfOutputControls). A forward jump with no later stop falls
 back to the live tail, the symmetric endpoint of taiui's backward
 fallback to the beginning, so the ] key always moves the view to a
 defined position — without the fallback the key would silently do nothing
@@ -142,8 +135,9 @@ taiuidemo pattern: render() computes the wrapped display lines of each
 expanded tab (wrappedDisplay), updates the scroll offsets against the
 fresh display lengths, and builds the element tree with plain functions
 (one taiui.TabPanel per tab — the expanded Output tab through
-outputPanelView with its control column — plus buildRoot). The Output
-tab's content is its per-section projection (see TheoryOfOutputControls).
+outputPanelView with its control column — plus buildRoot). The
+Output tab's content is its per-section projection (see
+TheoryOfOutputControls).
 The Logs tab wraps through
 a taiui.WrapCache (taiui.TheoryOfWrapCache owns the mechanism);
 the Tree tab caches each node's wrapped lines instead (see TheoryOfTreeTab), so a frame re-wraps only
@@ -237,9 +231,10 @@ request is being generated (see pipeline.TheoryOfHandoff), the title shows
 The handoff request's contents reach the Output
 tab through the forked pipeline.HandoffStateDecorator, which observes
 every content part with its role and thinking state, so text and
-reasoning thoughts are highlighted per part and per thought, the same as
-regular generation output. The pipeline.HandoffObserver provider drives
-the title state: HandoffStart sets the handoff flag, HandoffEnd clears it.
+reasoning thoughts open their own sections with their own markers,
+the same as regular generation output. The pipeline.HandoffObserver
+provider drives the title state: HandoffStart sets the handoff flag,
+HandoffEnd clears it.
 `
 
 const TheoryOfTUIDisplayFork = `
@@ -406,14 +401,6 @@ func (t Tui) Keys() map[string]string {
 // shared by the panel rendering and the tests; UIStyle.apply
 // re-derives it from the resolved configuration at startup.
 var panelStyle = UIStyle{}.panelStyleOf()
-
-var (
-	outputColorUserLine    = color.PaletteColor(int(outputColorUser))
-	outputColorToolLine    = color.PaletteColor(int(outputColorTool))
-	outputColorSystemLine  = color.PaletteColor(int(outputColorSystem))
-	outputColorLogLine     = color.PaletteColor(int(outputColorLog))
-	outputColorThoughtLine = color.PaletteColor(int(outputColorThought))
-)
 
 // tuiOutputState is a State decorator that forwards the model's output
 // content to the TUI for display. It observes every content appended to
@@ -988,7 +975,7 @@ func (t *TUI) captureContent(content *generators.Content) {
 		switch p := part.(type) {
 		case generators.Text:
 			if len(p) > 0 {
-				t.writeOutputPart(role, roleColor(role), false, string(p))
+				t.writeOutputPart(role, false, string(p))
 			}
 		case generators.Thought:
 			if !t.showThoughts {
@@ -999,15 +986,15 @@ func (t *TUI) captureContent(content *generators.Content) {
 				continue
 			}
 			if len(p) > 0 {
-				t.writeOutputPart(role, outputColorThoughtLine, true, string(p))
+				t.writeOutputPart(role, true, string(p))
 			}
 		case generators.FuncCall:
-			t.writeOutputPart(role, roleColor(role), false, fmt.Sprintf("[Function Call: %s(%v)]", p.Name, p.Arguments))
+			t.writeOutputPart(role, false, fmt.Sprintf("[Function Call: %s(%v)]", p.Name, p.Arguments))
 		case generators.CallResult:
-			t.writeOutputPart(role, roleColor(role), false, fmt.Sprintf("[Call Result: %s(%v)]", p.Name, p.Results))
+			t.writeOutputPart(role, false, fmt.Sprintf("[Call Result: %s(%v)]", p.Name, p.Results))
 		case generators.Error:
 			if p.Error != nil {
-				t.writeOutputPart(role, roleColor(role), false, fmt.Sprintf("[Error: %v]", p.Error))
+				t.writeOutputPart(role, false, fmt.Sprintf("[Error: %v]", p.Error))
 			}
 		}
 	}
@@ -1020,7 +1007,7 @@ func (t *TUI) captureContent(content *generators.Content) {
 	t.notify()
 }
 
-func (t *TUI) writeOutputPart(role generators.Role, color taiui.Color, isThought bool, text string) {
+func (t *TUI) writeOutputPart(role generators.Role, isThought bool, text string) {
 	// Consume a pending attempt-start event even when the role does
 	// not switch: consecutive attempts sharing one role still open
 	// separate sections, so each attempt's output is addressable.
@@ -1047,9 +1034,15 @@ func (t *TUI) writeOutputPart(role generators.Role, color taiui.Color, isThought
 		newSection = true
 	}
 	if newSection {
-		t.beginOutputSection(owner)
+		// The section's content type decides the letter its control
+		// column draws: the letter states the type the role foreground
+		// colors used to carry. See TheoryOfOutputControls.
+		t.beginOutputSection(owner, outputTypeLetterOf(role, isThought))
 	}
-	t.writeColored(color, []byte(text))
+	// The body renders in the default foreground: the section's type
+	// letter carries the content type, so the text itself never
+	// competes with a role color. See TheoryOfOutputControls.
+	t.writeColored(taiui.NoColor, []byte(text))
 	// Record the sectioned high-water mark and the collapsed last
 	// section's show line; shared with the chat-input path.
 	// See TheoryOfTUIOutputSections and TheoryOfOutputControls.
@@ -1113,25 +1106,6 @@ func (t *TUI) ensureOutputNewline() {
 	}
 	t.mu.Unlock()
 	t.notify()
-}
-
-// roleColor maps a content role to the display color used in the TUI,
-// matching the non-TUI output colors in generators/colors.go. Model and
-// assistant content keep the default foreground; user input, tool calls
-// and results, system messages, and log records get their role colors.
-func roleColor(role generators.Role) taiui.Color {
-	switch role {
-	case generators.RoleUser:
-		return outputColorUserLine
-	case generators.RoleTool:
-		return outputColorToolLine
-	case generators.RoleSystem:
-		return outputColorSystemLine
-	case generators.RoleLog:
-		return outputColorLogLine
-	default:
-		return taiui.NoColor
-	}
 }
 
 func (t *TUI) notify() {
@@ -1635,19 +1609,19 @@ func (t *TUI) jumpToTransition(direction int) {
 	// TheoryOfTUIChatInput.
 	paneHeight := t.tuiPaneHeight(0, box)
 	offset := taiui.ClampOffset(t.scrolls[0].Offset, len(display), paneHeight)
-	// The stops come from taiui.TransitionJumpStops (each transition
-	// contributes the exit stop and the entry stop) and the selection —
-	// including the backward fallback to the very beginning of the
-	// content — from taiui.JumpStopOffset. See
-	// taiui.TheoryOfSectionNavigation.
-	stops := taiui.TransitionJumpStops(display, paneHeight)
+	// The stops derive from the section structure — each section
+	// boundary contributes the exit stop and the entry stop — and the
+	// selection, including the backward fallback to the very beginning
+	// of the content, comes from taiui.JumpStopOffset. See
+	// TheoryOfOutputControls.
+	stops := t.outputJumpStops(paneHeight)
 	target, ok := taiui.JumpStopOffset(stops, offset, direction)
 	if !ok {
 		if direction < 0 {
 			return
 		}
 		// No stop lies ahead: the view sits at or past the last section
-		// transition, or the output has a single uniform section. The
+		// boundary, or the output has a single uniform section. The
 		// forward key falls back to the live tail, mirroring the
 		// backward fallback to the content start, so it always moves
 		// the view to a well-defined endpoint instead of silently doing
@@ -1657,7 +1631,7 @@ func (t *TUI) jumpToTransition(direction int) {
 		target = 1 << 30
 	}
 	// The target is clamped to the content extent so the offset is valid
-	// immediately; a transition beyond the last view position shows at
+	// immediately; a boundary beyond the last view position shows at
 	// the bottom of the final view. The jump is a deliberate navigation
 	// away from the live tail: following resumes only when the view
 	// reaches the latest row (see ScrollState.Update).
@@ -1787,8 +1761,8 @@ func forkTUIDisplay(scope dscope.Scope, tui *TUI) dscope.Scope {
 		// and pipeline.TheoryOfChatInput.
 		func() pipeline.ChatInput { return pipeline.ChatInput(tui.ChatInput) },
 		// Handoff generation reaches the Output tab through the
-		// tuiOutputState decorator, so each part is displayed with its
-		// role color and thought coloring — the same path as regular
+		// tuiOutputState decorator, so each part opens its own section
+		// with the matching marker — the same path as regular
 		// generation output — and the lifecycle is reported through the
 		// HandoffObserver so the title shows "Output (handoff...)" while
 		// a handoff request is in flight. See pipeline.TheoryOfHandoff
@@ -1927,8 +1901,10 @@ func displayChatInput(tui *TUI, chats flags.Chats) {
 	// The chat input opens the Output tab's first section, so the
 	// initial input is collapsible like every other section: the
 	// section starts at the next line the buffer will create, before
-	// the write below. See TheoryOfOutputControls.
-	tui.beginOutputSection(nil)
-	tui.writeColored(outputColorUserLine, []byte(strings.Join(chats, "\n")+"\n"))
+	// the write below. Its letter states the user-input type, and the
+	// body renders in the default foreground. See
+	// TheoryOfOutputControls.
+	tui.beginOutputSection(nil, outputTypeLetterOf(generators.RoleUser, false))
+	tui.writeColored(taiui.NoColor, []byte(strings.Join(chats, "\n")+"\n"))
 	tui.coverOutputLines()
 }

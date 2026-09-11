@@ -14,16 +14,16 @@ func TestTUIOutputSectionsRecordAndMap(t *testing.T) {
 		output: taiui.NewLineBuffer(0),
 		tabs:   taiui.NewTabs(3),
 	}
-	tu.writeOutputPart(generators.RoleUser, taiui.NoColor, false, "hi\n")
+	tu.writeOutputPart(generators.RoleUser, false, "hi\n")
 	tu.mu.Lock()
 	tu.pendingOwner = &outputSectionOwner{attempt: 2}
 	tu.mu.Unlock()
-	tu.writeOutputPart(generators.RoleModel, taiui.NoColor, false, "model one\n")
-	tu.writeOutputPart(generators.RoleModel, taiui.NoColor, false, "more\n")
+	tu.writeOutputPart(generators.RoleModel, false, "model one\n")
+	tu.writeOutputPart(generators.RoleModel, false, "more\n")
 	tu.mu.Lock()
 	tu.pendingOwner = &outputSectionOwner{attempt: 5}
 	tu.mu.Unlock()
-	tu.writeOutputPart(generators.RoleModel, taiui.NoColor, false, "model two\n")
+	tu.writeOutputPart(generators.RoleModel, false, "model two\n")
 
 	if len(tu.outputSections) != 3 {
 		t.Fatalf("sections %d, want 3", len(tu.outputSections))
@@ -49,13 +49,13 @@ func TestTUIEventClickJumpsToOutputSection(t *testing.T) {
 	}
 	tu.tabs.FocusTab(0)
 	tu.tabs.Toggle(1)
-	tu.writeOutputPart(generators.RoleUser, taiui.NoColor, false, "hi\n")
+	tu.writeOutputPart(generators.RoleUser, false, "hi\n")
 	tu.mu.Lock()
 	tu.pendingOwner = &outputSectionOwner{attempt: 1}
 	tu.mu.Unlock()
-	tu.writeOutputPart(generators.RoleModel, taiui.NoColor, false, "attempt one\n")
+	tu.writeOutputPart(generators.RoleModel, false, "attempt one\n")
 	for i := 0; i < 40; i++ {
-		tu.writeOutputPart(generators.RoleModel, taiui.NoColor, false, "filler line\n")
+		tu.writeOutputPart(generators.RoleModel, false, "filler line\n")
 	}
 	// Build the tree the Tree tab renders: a loop branch carrying an
 	// attempt node whose content names attempt 1, a usage node,

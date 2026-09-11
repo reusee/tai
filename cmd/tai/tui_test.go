@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gdamore/tcell/v3/color"
 	"github.com/reusee/dscope"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
@@ -275,11 +274,16 @@ func TestDisplayChatInput(t *testing.T) {
 	if len(lines) != 2 {
 		t.Fatalf("expected 2 lines, got %d: %v", len(lines), lines)
 	}
-	if lines[0].Text != "hello" || lines[0].Color != outputColorUserLine {
+	// The chat input carries no role color: the section's type letter
+	// states the user-input type. See TheoryOfOutputControls.
+	if lines[0].Text != "hello" || lines[0].Color != taiui.NoColor {
 		t.Fatalf("unexpected first line: %+v", lines[0])
 	}
-	if lines[1].Text != "world" || lines[1].Color != outputColorUserLine {
+	if lines[1].Text != "world" || lines[1].Color != taiui.NoColor {
 		t.Fatalf("unexpected second line: %+v", lines[1])
+	}
+	if len(tui.outputSections) != 1 || tui.outputSections[0].letter != "Ｕ" {
+		t.Fatalf("expected one user-letter section, got %+v", tui.outputSections)
 	}
 	if !tui.tabs.Expanded[0] {
 		t.Fatal("output tab should auto-expand on chat input")
@@ -326,18 +330,12 @@ func TestDisplayChatInputSetsOutputRole(t *testing.T) {
 	}
 }
 
-// TestDisplayChatInputCollapsibleSection verifies that the chat input
-// opens the Output tab's first collapsible section: the fold machinery
-// treats it like every other section, so collapsing it reduces it to
-// its first line and expanding re-reveals every line. See
-// TheoryOfTUIOutputSections and TheoryOfOutputControls.
 func TestDisplayChatInputCollapsibleSection(t *testing.T) {
 	tui := newTUIForTest()
 	box := taiui.Box{Top: 0, Left: 0, Bottom: 20, Right: 40}
 
 	displayChatInput(tui, flags.Chats{"user request"})
-	tui.writeOutputPart(generators.RoleModel, outputColorThoughtLine, true,
-		"thought line one\nthought line two\n")
+	tui.writeOutputPart(generators.RoleModel, true, "thought line one\nthought line two\n")
 
 	tui.mu.Lock()
 	defer tui.mu.Unlock()
@@ -351,8 +349,13 @@ func TestDisplayChatInputCollapsibleSection(t *testing.T) {
 	expanded := displayTexts(expandedDisplay)
 	assertTexts(t, collapsed, "user request", "thought line one", "thought line two")
 	assertTexts(t, expanded, "user request", "", "thought line one", "thought line two")
-	if expandedDisplay[0].Color != outputColorUserLine {
-		t.Fatalf("expected the user color on the chat input row, got %#x", expandedDisplay[0].Color)
+	// The input row carries no role color; its section's type letter
+	// states the user-input type. See TheoryOfOutputControls.
+	if expandedDisplay[0].Color != taiui.NoColor {
+		t.Fatalf("expected the default foreground on the chat input row, got %#x", expandedDisplay[0].Color)
+	}
+	if tui.outputSections[0].letter != "Ｕ" {
+		t.Fatalf("expected the Ｕ letter on the chat input section, got %q", tui.outputSections[0].letter)
 	}
 }
 
@@ -1865,25 +1868,10 @@ func TestTuiStateFlushKeepsCompleteLine(t *testing.T) {
 	}
 }
 
-func TestRoleColor(t *testing.T) {
-	cases := []struct {
-		role generators.Role
-		want taiui.Color
-	}{
-		{generators.RoleUser, outputColorUserLine},
-		{generators.RoleTool, outputColorToolLine},
-		{generators.RoleSystem, outputColorSystemLine},
-		{generators.RoleLog, outputColorLogLine},
-		{generators.RoleModel, taiui.NoColor},
-		{generators.RoleAssistant, taiui.NoColor},
-	}
-	for _, c := range cases {
-		if got := roleColor(c.role); got != c.want {
-			t.Fatalf("roleColor(%s) = %#x, want %#x", c.role, got, c.want)
-		}
-	}
-}
-
+// TestTUICaptureContentRoleColors verifies that the Output tab carries
+// no role foreground color: every body line renders in the default
+// foreground, and each section states its content type with its
+// full-width letter. See TheoryOfOutputControls.
 func TestTUICaptureContentRoleColors(t *testing.T) {
 	tui := newTUIForTest()
 	state := generators.NewPrompts("", nil)
@@ -1908,30 +1896,29 @@ func TestTUICaptureContentRoleColors(t *testing.T) {
 	tui.mu.Lock()
 	defer tui.mu.Unlock()
 	lines := tui.output.Lines()
-	want := []struct {
-		text  string
-		color taiui.Color
-	}{
-		{"user", outputColorUserLine},
-		{"", taiui.NoColor},
-		{"model", taiui.NoColor},
-		{"", taiui.NoColor},
-		{"tool", outputColorToolLine},
-		{"", taiui.NoColor},
-		{"system", outputColorSystemLine},
-		{"", taiui.NoColor},
-		{"log", outputColorLogLine},
+	wantText := []string{"user", "", "model", "", "tool", "", "system", "", "log"}
+	if len(lines) != len(wantText) {
+		t.Fatalf("expected %d lines, got %d: %v", len(wantText), len(lines), lines)
 	}
-	if len(lines) != len(want) {
-		t.Fatalf("expected %d lines, got %d: %v", len(want), len(lines), lines)
+	for i, want := range wantText {
+		if lines[i].Text != want || lines[i].Color != taiui.NoColor {
+			t.Fatalf("line %d: got %+v, want text %q in the default foreground", i, lines[i], want)
+		}
 	}
-	for i, w := range want {
-		if lines[i].Text != w.text || lines[i].Color != w.color {
-			t.Fatalf("line %d: got %+v, want text %q color %#x", i, lines[i], w.text, w.color)
+	wantLetters := []string{"Ｕ", "Ｍ", "Ｃ", "Ｓ", "Ｌ"}
+	if len(tui.outputSections) != len(wantLetters) {
+		t.Fatalf("expected %d sections, got %d", len(wantLetters), len(tui.outputSections))
+	}
+	for i, letter := range wantLetters {
+		if got := tui.outputSections[i].letter; got != letter {
+			t.Fatalf("section %d letter %q, want %q", i, got, letter)
 		}
 	}
 }
 
+// TestTUICaptureContentThoughtColor verifies that the thinking and body
+// sections carry no distinct foreground: their type letters state the
+// difference. See TheoryOfOutputControls.
 func TestTUICaptureContentThoughtColor(t *testing.T) {
 	tui := newTUIForTest()
 	state := generators.NewPrompts("", nil)
@@ -1951,33 +1938,39 @@ func TestTUICaptureContentThoughtColor(t *testing.T) {
 	tui.mu.Lock()
 	defer tui.mu.Unlock()
 	lines := tui.output.Lines()
-	want := []struct {
-		text  string
-		color taiui.Color
-	}{
-		{"thinking", outputColorThoughtLine},
-		{"", taiui.NoColor},
-		{"answer", taiui.NoColor},
+	wantText := []string{"thinking", "", "answer"}
+	if len(lines) != len(wantText) {
+		t.Fatalf("expected %d lines, got %d: %v", len(wantText), len(lines), lines)
 	}
-	if len(lines) != len(want) {
-		t.Fatalf("expected %d lines, got %d: %v", len(want), len(lines), lines)
+	for i, want := range wantText {
+		if lines[i].Text != want || lines[i].Color != taiui.NoColor {
+			t.Fatalf("line %d: got %+v, want text %q in the default foreground", i, lines[i], want)
+		}
 	}
-	for i, w := range want {
-		if lines[i].Text != w.text || lines[i].Color != w.color {
-			t.Fatalf("line %d: got %+v, want text %q color %#x", i, lines[i], w.text, w.color)
+	wantLetters := []string{"Ｔ", "Ｍ"}
+	if len(tui.outputSections) != len(wantLetters) {
+		t.Fatalf("expected %d sections, got %d", len(wantLetters), len(tui.outputSections))
+	}
+	for i, letter := range wantLetters {
+		if got := tui.outputSections[i].letter; got != letter {
+			t.Fatalf("section %d letter %q, want %q", i, got, letter)
 		}
 	}
 }
 
+// TestWrapTabLinesCarriesColors protects taiui's wrap semantics: a
+// wrapped display line keeps its source line's colors. The test uses
+// fixed colors independent of any role palette. See taiui.TheoryOfLines.
 func TestWrapTabLinesCarriesColors(t *testing.T) {
+	fixed := taiui.HexColor(0x808080)
 	lines := []taiui.Line{
-		{Text: "aaa bbb", Color: outputColorUserLine},
+		{Text: "aaa bbb", Color: fixed},
 		{Text: "ccc", Color: taiui.NoColor},
 	}
 	wrapped := taiui.WrapLinesColored(lines, 5)
 	want := []taiui.Line{
-		{Text: "aaa", Color: outputColorUserLine},
-		{Text: "bbb", Color: outputColorUserLine},
+		{Text: "aaa", Color: fixed},
+		{Text: "bbb", Color: fixed},
 		{Text: "ccc", Color: taiui.NoColor},
 	}
 	if len(wrapped) != len(want) {
@@ -2023,9 +2016,13 @@ func TestTUIPanelNoBackgroundByDefault(t *testing.T) {
 	}
 }
 
+// TestTUIPanelColorsContent verifies that a panel carries each line's
+// foreground to its cells. The test uses a fixed color, independent of
+// the Output tab's removed role palette.
 func TestTUIPanelColorsContent(t *testing.T) {
+	red := taiui.HexColor(0xff0000)
 	lines := []taiui.Line{
-		{Text: "red", Color: outputColorLogLine},
+		{Text: "red", Color: red},
 		{Text: "plain", Color: taiui.NoColor},
 	}
 	element := taiui.Panel(
@@ -2055,60 +2052,25 @@ func TestTUIPanelColorsContent(t *testing.T) {
 	}
 }
 
-func TestTUIPanelColorsUseAnsi16Palette(t *testing.T) {
-	lines := []taiui.Line{
-		{Text: "u", Color: outputColorUserLine},
-		{Text: "t", Color: outputColorToolLine},
-		{Text: "s", Color: outputColorSystemLine},
-		{Text: "l", Color: outputColorLogLine},
-		{Text: "m", Color: outputColorThoughtLine},
-	}
-	element := taiui.LinesElement(lines, taiui.Box{Top: 0, Left: 0, Bottom: 5, Right: 40})
-	screen := &panelTestScreen{width: 40, height: 5}
-	taiui.Render(element, screen)
-	if len(screen.frames) == 0 {
-		t.Fatal("expected a rendered frame")
-	}
-	frame := screen.frames[len(screen.frames)-1]
-	want := []taiui.Color{outputColorUserLine, outputColorToolLine, outputColorSystemLine, outputColorLogLine, outputColorThoughtLine}
-	for i, c := range want {
-		cell := frame.Cells[i*frame.Width]
-		if !cell.Set {
-			t.Fatalf("expected row %d to be painted", i)
-		}
-		fg := cell.Style.Fg()
-		if fg&color.IsRGB != 0 {
-			t.Fatalf("color %d must be a palette color, not true-color RGB", i)
-		}
-		// The palette index is the low byte of the color value; the high
-		// bits carry the IsValid marker, so the comparison masks them off.
-		if got := int(fg & 0xff); got != int(c&0xff) {
-			t.Fatalf("color %d: expected ANSI 16 palette index %d, got %d", i, int(c&0xff), got)
-		}
-	}
-}
-
 func TestTUIJumpToTransition(t *testing.T) {
-	// The [ ] shortcuts must jump the Output tab's view through the
-	// section transitions, letting the user quickly browse the whole
-	// output. The Output tab colors each section by its role and
-	// thinking state, so a transition is a color change between
-	// consecutive display lines. Each transition yields two stops — the
-	// previous section's end anchored at the pane bottom and the new
-	// section's start anchored at the pane top — so the walk covers both
-	// sides of every change. See TheoryOfTUI.
+	// The [ and ] shortcuts jump the Output tab's view through the
+	// section boundaries, letting the user browse the whole output. A
+	// boundary is a section change — a role or thinking-state switch —
+	// and each boundary yields two stops: the exit stop anchoring the
+	// previous section's end at the pane bottom and the entry stop
+	// anchoring the new section's start at the pane top. See
+	// TheoryOfOutputControls.
 
-	// setupLong builds an output long enough to scroll, with sections
-	// (plain, thought, plain, tool, plain) whose transitions sit at
-	// display indices 20, 21, 41, and 42: the thought and tool sections
-	// each contribute an entry boundary and an exit boundary. With the
-	// output pane reduced to 6 rows (the tab box of 8 rows minus the
-	// one-row label strip and the input bar row), each boundary
-	// contributes an exit stop at boundary-6 and an entry stop at the
-	// boundary, so the forward walk visits offsets 14, 15, 20, 21, 35,
-	// 36, 41, 42: at each change the view first shows the previous
-	// section's end at the pane bottom, then the new section's start at
-	// the pane top. See TheoryOfTUIChatInput.
+	// setupLong builds an output long enough to scroll, with five
+	// sections: plain (20 lines), thought (1), middle (20), tool (1),
+	// and tail (20). Each section change inserts a blank separator line
+	// that belongs to the section it closes, so the section starts sit
+	// at display rows 0, 21, 23, 44, and 46, and the display holds 66
+	// rows. With the output pane reduced to 6 rows (the tab box of 8
+	// rows minus the one-row label strip and the input bar row), each
+	// boundary contributes an exit stop at boundary-6 and an entry stop
+	// at the boundary itself: 15, 21, 17, 23, 38, 44, 40, and 46. See
+	// TheoryOfTUIChatInput.
 	setupLong := func(t *testing.T) *TUI {
 		t.Helper()
 		tui := newTUIForTest()
@@ -2122,114 +2084,60 @@ func TestTUIJumpToTransition(t *testing.T) {
 		for i := 0; i < 20; i++ {
 			fmt.Fprintf(&b, "plain %02d\n", i)
 		}
-		tui.writeColored(taiui.NoColor, []byte(b.String()))
-		tui.writeColored(outputColorThoughtLine, []byte("a thought\n"))
+		tui.writeOutputPart(generators.RoleModel, false, b.String())
+		tui.writeOutputPart(generators.RoleModel, true, "a thought\n")
 		b.Reset()
 		for i := 0; i < 20; i++ {
 			fmt.Fprintf(&b, "middle %02d\n", i)
 		}
-		tui.writeColored(taiui.NoColor, []byte(b.String()))
-		tui.writeColored(outputColorToolLine, []byte("a tool call\n"))
+		tui.writeOutputPart(generators.RoleModel, false, b.String())
+		tui.writeOutputPart(generators.RoleTool, false, "a tool call\n")
 		b.Reset()
 		for i := 0; i < 20; i++ {
 			fmt.Fprintf(&b, "tail %02d\n", i)
 		}
-		tui.writeColored(taiui.NoColor, []byte(b.String()))
+		tui.writeOutputPart(generators.RoleModel, false, b.String())
 		tui.scrolls[0].Follow = false
 		return tui
 	}
 
 	t.Run("Next", func(t *testing.T) {
 		tui := setupLong(t)
-		tui.jumpToTransition(1)
-		if tui.scrolls[0].Offset != 14 {
-			t.Fatalf("expected offset 14 at the plain section's end stop, got %d", tui.scrolls[0].Offset)
+		for _, want := range []int{15, 17, 21, 23, 38, 40, 44, 46} {
+			tui.jumpToTransition(1)
+			if tui.scrolls[0].Offset != want {
+				t.Fatalf("expected offset %d at the next stop, got %d", want, tui.scrolls[0].Offset)
+			}
 		}
 		if tui.tabs.Focus != 0 {
 			t.Fatalf("expected the output tab focused after the jump, got %d", tui.tabs.Focus)
 		}
-		tui.jumpToTransition(1)
-		if tui.scrolls[0].Offset != 15 {
-			t.Fatalf("expected offset 15 at the thought section's end stop, got %d", tui.scrolls[0].Offset)
-		}
-		tui.jumpToTransition(1)
-		if tui.scrolls[0].Offset != 20 {
-			t.Fatalf("expected offset 20 at the thought entry stop, got %d", tui.scrolls[0].Offset)
-		}
-		tui.jumpToTransition(1)
-		if tui.scrolls[0].Offset != 21 {
-			t.Fatalf("expected offset 21 at the middle entry stop, got %d", tui.scrolls[0].Offset)
-		}
-		tui.jumpToTransition(1)
-		if tui.scrolls[0].Offset != 35 {
-			t.Fatalf("expected offset 35 at the middle section's end stop, got %d", tui.scrolls[0].Offset)
-		}
-		tui.jumpToTransition(1)
-		if tui.scrolls[0].Offset != 36 {
-			t.Fatalf("expected offset 36 at the tool section's end stop, got %d", tui.scrolls[0].Offset)
-		}
-		tui.jumpToTransition(1)
-		if tui.scrolls[0].Offset != 41 {
-			t.Fatalf("expected offset 41 at the tool entry stop, got %d", tui.scrolls[0].Offset)
-		}
-		tui.jumpToTransition(1)
-		if tui.scrolls[0].Offset != 42 {
-			t.Fatalf("expected offset 42 at the tail entry stop, got %d", tui.scrolls[0].Offset)
-		}
-		// Past the last stop no transition lies ahead: the forward key
+		// Past the last stop no boundary lies ahead: the forward key
 		// falls back to the live tail — the symmetric endpoint of the
 		// backward fallback to the content start — instead of silently
-		// doing nothing. The display holds 62 lines and the pane shows
-		// 6, so the tail offset is 56.
+		// doing nothing. The display holds 66 rows and the pane shows
+		// 6, so the tail offset is 60.
 		tui.jumpToTransition(1)
-		if tui.scrolls[0].Offset != 56 {
-			t.Fatalf("expected offset 56 at the live tail past the last stop, got %d", tui.scrolls[0].Offset)
+		if tui.scrolls[0].Offset != 60 {
+			t.Fatalf("expected offset 60 at the live tail past the last stop, got %d", tui.scrolls[0].Offset)
 		}
 		tui.jumpToTransition(1)
-		if tui.scrolls[0].Offset != 56 {
+		if tui.scrolls[0].Offset != 60 {
 			t.Fatalf("expected the view to stay at the tail, got %d", tui.scrolls[0].Offset)
 		}
 	})
 
 	t.Run("Previous", func(t *testing.T) {
 		tui := setupLong(t)
-		tui.scrolls[0].Offset = 42
-		tui.jumpToTransition(-1)
-		if tui.scrolls[0].Offset != 41 {
-			t.Fatalf("expected offset 41 after the prev-jump, got %d", tui.scrolls[0].Offset)
+		tui.scrolls[0].Offset = 60
+		for _, want := range []int{46, 44, 40, 38, 23, 21, 17, 15, 0} {
+			tui.jumpToTransition(-1)
+			if tui.scrolls[0].Offset != want {
+				t.Fatalf("expected offset %d after the prev-jump, got %d", want, tui.scrolls[0].Offset)
+			}
 		}
-		tui.jumpToTransition(-1)
-		if tui.scrolls[0].Offset != 36 {
-			t.Fatalf("expected offset 36 after the second prev-jump, got %d", tui.scrolls[0].Offset)
-		}
-		tui.jumpToTransition(-1)
-		if tui.scrolls[0].Offset != 35 {
-			t.Fatalf("expected offset 35 after the third prev-jump, got %d", tui.scrolls[0].Offset)
-		}
-		tui.jumpToTransition(-1)
-		if tui.scrolls[0].Offset != 21 {
-			t.Fatalf("expected offset 21 after the fourth prev-jump, got %d", tui.scrolls[0].Offset)
-		}
-		tui.jumpToTransition(-1)
-		if tui.scrolls[0].Offset != 20 {
-			t.Fatalf("expected offset 20 after the fifth prev-jump, got %d", tui.scrolls[0].Offset)
-		}
-		tui.jumpToTransition(-1)
-		if tui.scrolls[0].Offset != 15 {
-			t.Fatalf("expected offset 15 after the sixth prev-jump, got %d", tui.scrolls[0].Offset)
-		}
-		tui.jumpToTransition(-1)
-		if tui.scrolls[0].Offset != 14 {
-			t.Fatalf("expected offset 14 after the seventh prev-jump, got %d", tui.scrolls[0].Offset)
-		}
-		// Past the first transition's exit stop the [ key must reach the
-		// very beginning of the content: the first display line is never
-		// a stop, so without the fallback the start of the first
-		// section would be unreachable.
-		tui.jumpToTransition(-1)
-		if tui.scrolls[0].Offset != 0 {
-			t.Fatalf("expected the view to reach the very beginning, got %d", tui.scrolls[0].Offset)
-		}
+		// At the very beginning no earlier stop exists; the view stays
+		// put instead of jumping anywhere.
 		tui.jumpToTransition(-1)
 		if tui.scrolls[0].Offset != 0 {
 			t.Fatalf("expected the view to stay at 0 at the very beginning, got %d", tui.scrolls[0].Offset)
@@ -2239,12 +2147,11 @@ func TestTUIJumpToTransition(t *testing.T) {
 	t.Run("FromTailSentinel", func(t *testing.T) {
 		// Before the first render the scroll offset is the tail sentinel;
 		// the jump clamps it against the fresh display so it anchors at
-		// the content end, and the previous jump lands on the last
-		// stop.
+		// the content end, and the previous jump lands on the last stop.
 		tui := setupLong(t)
 		tui.scrolls[0].Offset = 1 << 30
 		tui.jumpToTransition(-1)
-		if tui.scrolls[0].Offset != 42 {
+		if tui.scrolls[0].Offset != 46 {
 			t.Fatalf("expected the last stop when jumping back from the tail, got %d", tui.scrolls[0].Offset)
 		}
 	})
@@ -2262,8 +2169,8 @@ func TestTUIJumpToTransition(t *testing.T) {
 		if tui.tabs.Focus != 0 {
 			t.Fatalf("expected the output tab focused after the jump, got %d", tui.tabs.Focus)
 		}
-		if tui.scrolls[0].Offset != 14 {
-			t.Fatalf("expected offset 14 after the jump, got %d", tui.scrolls[0].Offset)
+		if tui.scrolls[0].Offset != 15 {
+			t.Fatalf("expected offset 15 after the jump, got %d", tui.scrolls[0].Offset)
 		}
 	})
 
@@ -2278,9 +2185,9 @@ func TestTUIJumpToTransition(t *testing.T) {
 		}
 		// The output pane is smaller here (box height 6, pane height 4
 		// after the label strip and the input bar row), so the first
-		// stop sits at boundary 20 minus 4.
-		if tui.scrolls[0].Offset != 16 {
-			t.Fatalf("expected offset 16 after the jump, got %d", tui.scrolls[0].Offset)
+		// stop sits at boundary 21 minus 4.
+		if tui.scrolls[0].Offset != 17 {
+			t.Fatalf("expected offset 17 after the jump, got %d", tui.scrolls[0].Offset)
 		}
 	})
 
@@ -2299,7 +2206,7 @@ func TestTUIJumpToTransition(t *testing.T) {
 		}
 	})
 
-	t.Run("NoTransitions", func(t *testing.T) {
+	t.Run("SingleSection", func(t *testing.T) {
 		tui := newTUIForTest()
 		tui.tabs.Expanded = []bool{true, false, false}
 		tui.tabs.HasContent = []bool{true, false, false}
@@ -2307,41 +2214,24 @@ func TestTUIJumpToTransition(t *testing.T) {
 		tui.screen = taiui.NewTerminalScreen(&strings.Builder{}, 80, 10)
 		tui.width = 80
 		tui.height = 10
-		// All lines share the default color: no transitions to jump to.
-		// The forward key must still move the view — the whole output is
-		// one section, so it falls back to the live tail — just as the
+		// One section carries no boundary: the forward key falls back to
+		// the live tail — the whole output is one section — just as the
 		// backward key falls back to the very beginning. With 20 lines
 		// in a 6-row pane the tail offset is 14.
+		var b strings.Builder
 		for i := 0; i < 20; i++ {
-			tui.write([]byte(fmt.Sprintf("line %02d\n", i)))
+			fmt.Fprintf(&b, "line %02d\n", i)
 		}
+		tui.writeOutputPart(generators.RoleModel, false, b.String())
 		tui.scrolls[0].Offset = 0
 		tui.jumpToTransition(1)
 		if tui.scrolls[0].Offset != 14 {
-			t.Fatalf("expected the ] key to reach the live tail without transitions, got %d", tui.scrolls[0].Offset)
-		}
-	})
-
-	t.Run("PreviousWithoutTransitions", func(t *testing.T) {
-		// With no section transitions in the output, the [ key must
-		// still reach the very beginning of the content: the whole
-		// output is one section, so its start is the previous-navigation
-		// target.
-		tui := newTUIForTest()
-		tui.tabs.Expanded = []bool{true, false, false}
-		tui.tabs.HasContent = []bool{true, false, false}
-		tui.tabs.Focus = 0
-		tui.screen = taiui.NewTerminalScreen(&strings.Builder{}, 80, 10)
-		tui.width = 80
-		tui.height = 10
-		// All lines share the default color: no transitions to jump to.
-		for i := 0; i < 20; i++ {
-			tui.write([]byte(fmt.Sprintf("line %02d\n", i)))
+			t.Fatalf("expected the ] key to reach the live tail in a single section, got %d", tui.scrolls[0].Offset)
 		}
 		tui.scrolls[0].Offset = 5
 		tui.jumpToTransition(-1)
 		if tui.scrolls[0].Offset != 0 {
-			t.Fatalf("expected the [ key to reach the very beginning without transitions, got %d", tui.scrolls[0].Offset)
+			t.Fatalf("expected the [ key to reach the very beginning in a single section, got %d", tui.scrolls[0].Offset)
 		}
 	})
 }

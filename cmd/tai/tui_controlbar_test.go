@@ -273,8 +273,8 @@ func TestTUIMenuBarClicks(t *testing.T) {
 
 	t.Run("CollapseAll", func(t *testing.T) {
 		tui := newBar()
-		tui.writeOutputPart(generators.RoleUser, outputColorUserLine, false, "a\n")
-		tui.writeOutputPart(generators.RoleModel, taiui.NoColor, false, "b\n")
+		tui.writeOutputPart(generators.RoleUser, false, "a\n")
+		tui.writeOutputPart(generators.RoleModel, false, "b\n")
 		tui.handleMouseKey("mouse-left@2,0")
 		tui.handleMouseKey("mouse-left@5,3")
 		for i := range tui.outputSections {

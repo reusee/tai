@@ -13,17 +13,17 @@ UI style theory:
 - The terminal UI's colors resolve from the dscope scope as one
   UIStyle value, decoded from the tui config section. The zero value
   is the built-in default: no background anywhere (the terminal
-  default) and the historical palette foregrounds, so the default
+  default) and the palette label foregrounds, so the default
   interface paints no background and alternating log shades stay
   inert.
-- apply re-derives the package-level style values (panelStyle,
-  inputBarStyle, and the role colors) from the resolved configuration
-  once at startup, before the TUI's first render; the display
-  functions keep reading the package-level values, so no call site
-  changes. The configuration is fixed for the session, runWithTUI
-  applies it before any goroutine starts, and tests implicitly use
-  the built-in defaults. This one-time init is the sanctioned use of
-  the package-level style values.
+- apply re-derives the package-level style values (panelStyle and
+  inputBarStyle) from the resolved configuration once at startup,
+  before the TUI's first render; the display functions keep reading
+  the package-level values, so no call site changes. The
+  configuration is fixed for the session, runWithTUI applies it
+  before any goroutine starts, and tests implicitly use the built-in
+  defaults. This one-time init is the sanctioned use of the
+  package-level style values.
 - An empty background setting paints no background; an empty
   foreground setting keeps the built-in default. taiui.AltBG returns
   an unset base unchanged, so configuring a background re-activates
@@ -32,7 +32,10 @@ UI style theory:
   tui.tree_colors rules decide the foreground of every tree line —
   the first rule whose every non-empty field (category, type, author)
   matches the node wins, and no match keeps the default foreground.
-  The role colors stay scoped to the Output tab's roleColor.
+  The Output tab carries no role colors at all: a section's content
+  type is stated by the full-width letter its control column draws
+  (see TheoryOfOutputControls), so the style surface covers the
+  panels, the input bar, and the tree rules only.
 `
 
 var _ configs.Config = UIStyle{}
@@ -54,6 +57,8 @@ type TreeColorRule struct {
 // the tui config section. Every field is a color string, a W3C name
 // or a "#rrggbb" hex value. An empty background field paints no
 // background; an empty foreground field keeps the built-in default.
+// The Output tab's content carries no configurable role color: its
+// content type is stated by the type letter in the control column.
 // See TheoryOfUIStyle.
 type UIStyle struct {
 	TabUnfocusedBG   string          `json:"tab_unfocused_bg"`
@@ -61,11 +66,6 @@ type UIStyle struct {
 	LabelFG          string          `json:"label_fg"`
 	FocusLabelFG     string          `json:"focus_label_fg"`
 	UnseenDotColor   string          `json:"unseen_dot_color"`
-	UserColor        string          `json:"user_color"`
-	ToolColor        string          `json:"tool_color"`
-	SystemColor      string          `json:"system_color"`
-	LogColor         string          `json:"log_color"`
-	ThoughtColor     string          `json:"thought_color"`
 	InputFocusedFG   string          `json:"input_focused_fg"`
 	InputUnfocusedFG string          `json:"input_unfocused_fg"`
 	TreeColors       []TreeColorRule `json:"tree_colors"`
@@ -112,21 +112,6 @@ func (s UIStyle) fillFrom(parsed UIStyle) UIStyle {
 	if s.UnseenDotColor == "" {
 		s.UnseenDotColor = parsed.UnseenDotColor
 	}
-	if s.UserColor == "" {
-		s.UserColor = parsed.UserColor
-	}
-	if s.ToolColor == "" {
-		s.ToolColor = parsed.ToolColor
-	}
-	if s.SystemColor == "" {
-		s.SystemColor = parsed.SystemColor
-	}
-	if s.LogColor == "" {
-		s.LogColor = parsed.LogColor
-	}
-	if s.ThoughtColor == "" {
-		s.ThoughtColor = parsed.ThoughtColor
-	}
 	if s.InputFocusedFG == "" {
 		s.InputFocusedFG = parsed.InputFocusedFG
 	}
@@ -145,11 +130,6 @@ func (s UIStyle) fillFrom(parsed UIStyle) UIStyle {
 func (s UIStyle) apply() {
 	panelStyle = s.panelStyleOf()
 	inputBarStyle = s.inputBarStyleOf()
-	outputColorUserLine = s.userColor()
-	outputColorToolLine = s.toolColor()
-	outputColorSystemLine = s.systemColor()
-	outputColorLogLine = s.logColor()
-	outputColorThoughtLine = s.thoughtColor()
 	treeColorRules = s.treeColorRulesOf()
 }
 
@@ -176,31 +156,6 @@ func (s UIStyle) inputBarStyleOf() taiui.InputBarStyle {
 		FocusedFG:   parseFGColor(s.InputFocusedFG, color.PaletteColor(15)),
 		UnfocusedFG: parseFGColor(s.InputUnfocusedFG, color.PaletteColor(8)),
 	}
-}
-
-// userColor is the user input line color.
-func (s UIStyle) userColor() taiui.Color {
-	return parseFGColor(s.UserColor, color.PaletteColor(int(outputColorUser)))
-}
-
-// toolColor is the tool call line color.
-func (s UIStyle) toolColor() taiui.Color {
-	return parseFGColor(s.ToolColor, color.PaletteColor(int(outputColorTool)))
-}
-
-// systemColor is the system message line color.
-func (s UIStyle) systemColor() taiui.Color {
-	return parseFGColor(s.SystemColor, color.PaletteColor(int(outputColorSystem)))
-}
-
-// logColor is the log and event line color.
-func (s UIStyle) logColor() taiui.Color {
-	return parseFGColor(s.LogColor, color.PaletteColor(int(outputColorLog)))
-}
-
-// thoughtColor is the thought summary header color.
-func (s UIStyle) thoughtColor() taiui.Color {
-	return parseFGColor(s.ThoughtColor, color.PaletteColor(int(outputColorThought)))
 }
 
 // parseBGColor decodes a background setting: an empty string paints
