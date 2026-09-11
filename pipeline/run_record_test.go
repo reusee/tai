@@ -1,67 +1,61 @@
 package pipeline
 
 import (
+	"database/sql"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/reusee/tai/blocks"
+	"github.com/reusee/dscope"
 	"github.com/reusee/tai/generators"
+	"github.com/reusee/tai/modes"
+	"github.com/reusee/tai/records"
+	"github.com/reusee/tai/tree"
 )
 
-type fakeInteractionRecorder struct {
-	enabled bool
-	events  []string
+// withRecorderRun resolves the module graph with a recorder backed by a
+// temporary database, so the recording tests exercise the real
+// recording path without touching the user config directory. The extra
+// definitions are forked on top of the base scope (e.g., a session tree
+// continuation) and may be empty. See
+// records.TheoryOfInteractionRecording.
+func withRecorderRun(t *testing.T, extra []any, fn func(run Run, recorder *records.Recorder)) {
+	t.Helper()
+	scope := dscope.New(
+		modes.ForTest(t),
+		new(Module),
+	).Fork(
+		func() records.DBPath {
+			return records.DBPath(filepath.Join(t.TempDir(), "test.db"))
+		},
+		func() records.Enabled { return records.Enabled(true) },
+	)
+	if len(extra) > 0 {
+		scope = scope.Fork(extra...)
+	}
+	scope.Call(func(run Run, recorder *records.Recorder) {
+		if recorder == nil {
+			t.Fatal("recorder is nil")
+		}
+		fn(run, recorder)
+	})
 }
 
-func (f *fakeInteractionRecorder) Enabled() bool { return f.enabled }
-
-func (f *fakeInteractionRecorder) StartSession(command string) {
-	f.events = append(f.events, "session_start:"+command)
-}
-
-func (f *fakeInteractionRecorder) EndSession(err error) {
-	f.events = append(f.events, "session_end")
-}
-
-func (f *fakeInteractionRecorder) SystemPrompt(prompt string) {
-	f.events = append(f.events, "system_prompt")
-}
-func (f *fakeInteractionRecorder) AttemptStart() {
-	f.events = append(f.events, "attempt_start")
-}
-func (f *fakeInteractionRecorder) AttemptCompleted(summaries []string) {
-	f.events = append(f.events, "attempt_completed")
-}
-func (f *fakeInteractionRecorder) AttemptTruncated() {
-	f.events = append(f.events, "attempt_truncated")
-}
-func (f *fakeInteractionRecorder) AttemptError(err error) {
-	f.events = append(f.events, "attempt_error:"+err.Error())
-}
-func (f *fakeInteractionRecorder) Content(content *generators.Content) {
-	f.events = append(f.events, "content_"+string(content.Role))
-}
-func (f *fakeInteractionRecorder) Block(block blocks.Block) {
-	f.events = append(f.events, "block_"+block.Kind)
-}
-func (f *fakeInteractionRecorder) ParseError(parseErr *blocks.BlockParseError) {
-	f.events = append(f.events, "parse_error")
-}
-
-func (f *fakeInteractionRecorder) Event(typ string, detail string) {
-	f.events = append(f.events, "event_"+typ)
-}
-
-func TestRunRecordsAttempt(t *testing.T) {
-	withRun(t, func(run Run) {
-		rec := &fakeInteractionRecorder{enabled: true}
-		_, err := runOnce(run, RunOptions{
-			Generator:           nil,
-			InitialState:        generators.NewPrompts("my system prompt", nil),
-			Components:          nil,
-			InteractionRecorder: rec,
-			Command:             "test-command",
+func TestRunRecordsFreshSession(t *testing.T) {
+	// A fresh run owns its recording session: it opens the session
+	// through the resolved recorder, attaches the sink to the run's
+	// tree, and ends the session with the run's outcome. The recorded
+	// stream is the run's tree operations, so the transcript is the
+	// replayed tree with each node rendered in full. See
+	// records.TheoryOfInteractionRecording.
+	withRecorderRun(t, nil, func(run Run, recorder *records.Recorder) {
+		result, err := runOnce(run, RunOptions{
+			Generator: nil,
+			InitialState: generators.NewPrompts("sys prompt", []*generators.Content{
+				{Role: generators.RoleUser, Parts: []generators.Part{generators.Text("task")}},
+			}),
+			Command: "test-command",
 			PhaseBuilder: func(g generators.Generator) generators.Phase {
 				return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
 			},
@@ -69,31 +63,49 @@ func TestRunRecordsAttempt(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		joined := strings.Join(rec.events, ",")
+		if result.SessionTree == nil {
+			t.Fatal("expected a session tree")
+		}
+		// A fresh temporary database numbers the first session 1.
+		text, err := records.Transcript(recorder, 1)
+		if err != nil {
+			t.Fatalf("transcript: %v", err)
+		}
 		for _, want := range []string{
-			"session_start:test-command",
-			"system_prompt",
-			"attempt_start",
-			"content_assistant",
-			"block_summary",
-			"attempt_completed",
-			"session_end",
+			"=== Session 1: test-command ===",
+			"command line: ",
+			"status: success",
+			"root [root]",
+			"system-1 [system/program]",
+			"| sys prompt",
+			"attempt-1 [attempt/program]",
+			"user-1 [user/user]",
+			"| task",
+			"model-1 [model/model]",
+			"summary-1 [summary/model]",
+			"| Done.",
 		} {
-			if !strings.Contains(joined, want) {
-				t.Fatalf("events missing %q: %s", want, joined)
+			if !strings.Contains(text, want) {
+				t.Fatalf("transcript missing %q:\n%s", want, text)
 			}
 		}
 	})
 }
 
-func TestRunRecordsDisabled(t *testing.T) {
-	withRun(t, func(run Run) {
-		rec := &fakeInteractionRecorder{enabled: false}
-		_, err := runOnce(run, RunOptions{
-			Generator:           nil,
-			InitialState:        generators.NewPrompts("", nil),
-			Components:          nil,
-			InteractionRecorder: rec,
+func TestRunContinuedSessionLeavesRecordingToRunner(t *testing.T) {
+	// A continued run — a goal loop — receives the runner's continuation
+	// and leaves session ownership to the runner: it writes into the
+	// runner's tree and never opens a recorder session itself, so one
+	// goal run records as one session owned by the runner. See
+	// records.TheoryOfInteractionRecording.
+	withRecorderRun(t, []any{
+		func() SessionTreeContinuation {
+			return SessionTreeContinuation{Tree: tree.New(), Parent: "root"}
+		},
+	}, func(run Run, recorder *records.Recorder) {
+		result, err := runOnce(run, RunOptions{
+			Generator:    nil,
+			InitialState: generators.NewPrompts("", nil),
 			PhaseBuilder: func(g generators.Generator) generators.Phase {
 				return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
 			},
@@ -101,131 +113,14 @@ func TestRunRecordsDisabled(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if len(rec.events) != 0 {
-			t.Fatalf("disabled recorder must not receive events, got %v", rec.events)
+		if result.SessionTree == nil {
+			t.Fatal("expected the continued tree")
 		}
-	})
-}
-
-func TestRunRecordsAttemptError(t *testing.T) {
-	withRun(t, func(run Run) {
-		rec := &fakeInteractionRecorder{enabled: true}
-		_, err := runOnce(run, RunOptions{
-			Generator:           nil,
-			InitialState:        generators.NewPrompts("", nil),
-			Components:          nil,
-			InteractionRecorder: rec,
-			PhaseBuilder: func(g generators.Generator) generators.Phase {
-				return errorPhase(errors.New("boom"))
-			},
-		})
-		if err == nil {
-			t.Fatal("expected error")
+		if _, ok := result.SessionTree.Node("model-1"); !ok {
+			t.Fatal("expected the loop's nodes in the continued tree")
 		}
-		joined := strings.Join(rec.events, ",")
-		if !strings.Contains(joined, "attempt_error:boom") {
-			t.Fatalf("expected attempt_error:boom, got %s", joined)
-		}
-	})
-}
-
-func TestRunRecordsTruncationRetry(t *testing.T) {
-	withRun(t, func(run Run) {
-		rec := &fakeInteractionRecorder{enabled: true}
-		callCount := 0
-		phaseBuilder := func(g generators.Generator) generators.Phase {
-			callCount++
-			if callCount == 1 {
-				return appendPhase("no summary")
-			}
-			return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
-		}
-
-		_, err := runOnce(run, RunOptions{
-			Generator:                nil,
-			InitialState:             generators.NewPrompts("", nil),
-			Components:               nil,
-			InteractionRecorder:      rec,
-			PhaseBuilder:             phaseBuilder,
-			RetryOnMissingCompletion: true,
-			MaxRetries:               3,
-			Handoff: func(text string) (*Handoff, error) {
-				return &Handoff{Summary: "summary", Prompt: "retry prompt"}, nil
-			},
-		})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		joined := strings.Join(rec.events, ",")
-		if !strings.Contains(joined, "attempt_truncated") {
-			t.Fatalf("expected attempt_truncated, got %s", joined)
-		}
-		if !strings.Contains(joined, "attempt_completed") {
-			t.Fatalf("expected attempt_completed, got %s", joined)
-		}
-	})
-}
-
-func TestRunRecordsParseError(t *testing.T) {
-	withRun(t, func(run Run) {
-		rec := &fakeInteractionRecorder{enabled: true}
-		phaseBuilder := func(g generators.Generator) generators.Phase {
-			return appendPhaseWithFlush("<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nfunc Foo() {}\n")
-		}
-
-		_, err := runOnce(run, RunOptions{
-			Generator:           nil,
-			InitialState:        generators.NewPrompts("", nil),
-			Components:          nil,
-			InteractionRecorder: rec,
-			PhaseBuilder:        phaseBuilder,
-		})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		joined := strings.Join(rec.events, ",")
-		if !strings.Contains(joined, "parse_error") {
-			t.Fatalf("expected parse_error event, got %s", joined)
-		}
-	})
-}
-
-func TestRunRecordsDecisionEvents(t *testing.T) {
-	withRun(t, func(run Run) {
-		rec := &fakeInteractionRecorder{enabled: true}
-		callCount := 0
-		phaseBuilder := func(g generators.Generator) generators.Phase {
-			callCount++
-			if callCount == 1 {
-				return appendPhase("incomplete output without summary")
-			}
-			return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
-		}
-
-		_, err := runOnce(run, RunOptions{
-			Generator:                nil,
-			InitialState:             generators.NewPrompts("", nil),
-			Components:               nil,
-			InteractionRecorder:      rec,
-			PhaseBuilder:             phaseBuilder,
-			RetryOnMissingCompletion: true,
-			MaxRetries:               3,
-			Handoff: func(text string) (*Handoff, error) {
-				return &Handoff{Summary: "summary", Prompt: "retry prompt"}, nil
-			},
-		})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if callCount != 2 {
-			t.Fatalf("expected 2 calls (retry once), got %d", callCount)
-		}
-		joined := strings.Join(rec.events, ",")
-		if !strings.Contains(joined, "event_decision") {
-			t.Fatalf("expected decision events, got: %s", joined)
-		}
-		if !strings.Contains(joined, "attempt_truncated") {
-			t.Fatalf("expected attempt_truncated event, got: %s", joined)
+		if _, err := records.Transcript(recorder, 1); !errors.Is(err, sql.ErrNoRows) {
+			t.Fatalf("a continued run must not open a recorder session, got: %v", err)
 		}
 	})
 }

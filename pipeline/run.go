@@ -226,21 +226,6 @@ const missingSummaryRetryPrefix = "[System note: Your previous response ended WI
 // RunOptions.StateDecorators.
 type StateDecorator func(generators.State) generators.State
 
-// InteractionRecorder provider: the default is nil, meaning no interaction
-// recording. Commands that want recording pass their recorder explicitly
-// through RunOptions.InteractionRecorder, which takes precedence over the
-// loop's default. Keeping the default provider here (rather than in an
-// outer module) avoids duplicate-definition conflicts in dscope scopes.
-// See records.TheoryOfInteractionRecording.
-func (Module) InteractionRecorder() InteractionRecorder {
-	return nil
-}
-
-// The records.Recorder implements InteractionRecorder. The assertion lives
-// here rather than in records: pipeline imports records, and the reverse
-// import would create a cycle. See records.TheoryOfInteractionRecording.
-var _ InteractionRecorder = (*records.Recorder)(nil)
-
 // Run executes generation generations in a loop. Each generation wraps
 // the state with ParserState, executes the phase chain (retrying
 // incomplete attempts as further attempts within the generation),
@@ -287,11 +272,25 @@ type generationResult struct {
 type loopState struct {
 	ctx     context.Context
 	opts    RunOptions
-	rec     InteractionRecorder
 	result  *Result
 	yield   func(*tree.Tree, error) bool
 	stopped bool
 	state   generators.State
+
+	// recorder writes the run's session tree operation stream when this
+	// run owns the recording session — a fresh run; a goal loop's
+	// continuation leaves session ownership to the runner, which
+	// attached the sink and opened the session before the loop. A nil
+	// recorder records nothing. See
+	// records.TheoryOfInteractionRecording.
+	recorder *records.Recorder
+	// eventSink buffers the generator-level events (api_call,
+	// api_error) written by the generators of the run's scope. The loop
+	// drains it after each attempt's phase chain and at the run's end,
+	// recording every buffered event as a session-tree event node of
+	// the same type. A nil sink drains nothing. See
+	// generators.TheoryOfEventRecorder.
+	eventSink *generators.EventSink
 
 	// attempt is the session-wide 1-based attempt number of the attempt
 	// being executed: it increments across every attempt of the run and
@@ -454,15 +453,12 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 		generationParseErrors = nil
 		prefetchedFutures = nil
 
-		// Attempt open: report to the interaction recorder, write the
-		// attempt structure node with the user prompts the attempt
-		// consumes, and reset per-attempt state (e.g.,
-		// MemoryStore.Reset). Only the generation's first attempt
-		// honors the parse-error correction path's skip; retries
-		// reset unconditionally. See TheoryOfLoopEvents.
-		if ls.rec != nil && ls.rec.Enabled() {
-			ls.rec.AttemptStart()
-		}
+		// Attempt open: write the attempt structure node with the user
+		// prompts the attempt consumes and reset per-attempt state
+		// (e.g., MemoryStore.Reset). Only the generation's first
+		// attempt honors the parse-error correction path's skip;
+		// retries reset unconditionally. See TheoryOfLoopEvents and
+		// TheoryOfSessionTree.
 		ls.writeAttemptNode()
 		if ls.opts.OnAttemptStart != nil && (!ls.skipOnAttemptStart || retry > 0) {
 			ls.opts.OnAttemptStart()
@@ -490,12 +486,6 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 		// Create parser handler that collects blocks and
 		// optionally invokes the caller's BlockHandler.
 		parserHandler := func(block blocks.Block) error {
-			// Report every parsed block to the interaction
-			// recorder, whether or not it is consumed by the
-			// caller's BlockHandler.
-			if ls.rec != nil && ls.rec.Enabled() {
-				ls.rec.Block(block)
-			}
 			if ls.opts.BlockHandler != nil {
 				consumed, err := ls.opts.BlockHandler(block)
 				if err != nil {
@@ -552,12 +542,6 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 			// fed back to the model for self-correction.
 			// See TheoryOfParseErrorCollection.
 			generationParseErrors = ps.ParseErrors()
-			// Report malformed blocks to the interaction recorder.
-			if ls.rec != nil && ls.rec.Enabled() {
-				for _, parseErr := range generationParseErrors {
-					ls.rec.ParseError(parseErr)
-				}
-			}
 		} else {
 			phaseState = wrappedState
 		}
@@ -581,6 +565,12 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 		if finishReason != "" {
 			ls.writeEventNode("finish", "finish: "+finishReason)
 		}
+
+		// Generator-level events buffered during the attempt's phase
+		// chain (api_call, api_error) join the tree as event nodes of
+		// the same type, immediately after the attempt's other facts.
+		// See generators.TheoryOfEventRecorder.
+		ls.drainEventSink()
 
 		if generationErr != nil {
 			// A disk-change failure cannot be repaired by retrying
@@ -621,14 +611,8 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 				if generators.CountContents(phaseState) > prevCount {
 					ls.state = phaseState
 
-					// Report the failed attempt to the
-					// interaction recorder and record the retry
-					// decision as an event node, immediately.
-					// See TheoryOfLoopEvents.
-					if ls.rec != nil && ls.rec.Enabled() {
-						ls.rec.AttemptError(generationErr)
-						ls.rec.Event("decision", fmt.Sprintf("error after partial output triggered retry: attempt %d/%d: %v", retry+1, ls.maxRetries, generationErr))
-					}
+					// Record the retry decision as an event node,
+					// immediately. See TheoryOfLoopEvents.
 					ls.writeEventNode("retry", fmt.Sprintf("retry attempt %d/%d: %v",
 						retry+1, ls.maxRetries, generationErr))
 
@@ -656,22 +640,25 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 						if incompleteText != "" {
 							// Record the handoff request's start
 							// immediately, before the request is
-							// sent. Handoff event nodes carry the
-							// attempt attribution but no budget
-							// figures: handoff generation itself
-							// retries without an attempt limit, so
-							// an "attempt x/y" display would
-							// misrepresent it. See
+							// sent, carrying the incomplete output
+							// it condenses. Handoff event nodes
+							// carry the attempt attribution but no
+							// budget figures: handoff generation
+							// itself retries without an attempt
+							// limit, so an "attempt x/y" display
+							// would misrepresent it. See
 							// TheoryOfLoopEvents and
 							// TheoryOfHandoff.
-							ls.writeEventNode("handoff-start", "handoff started")
+							ls.writeEventNode("handoff-start", "handoff started for the incomplete output:\n\n"+incompleteText)
 							handoff, handoffErr := ls.opts.Handoff(handoffInput(incompleteText, ls.sessionTree, ls.sessionParent()))
 							if handoffErr == nil && handoff != nil {
 								summary = handoff.Summary
 								retryPrompt = handoff.Prompt
-								// Record the produced handoff. See
+								// Record the produced handoff: the
+								// summary, the request's raw output,
+								// and its reasoning. See
 								// TheoryOfLoopEvents.
-								ls.writeEventNode("handoff", "handoff summary:\n"+handoff.Summary)
+								ls.writeEventNode("handoff", handoffNodeContent(handoff))
 								// Account the handoff request's own token
 								// spend before the failed attempt is
 								// recorded. The window starts at the
@@ -681,6 +668,11 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 								// See TheoryOfHandoffUsageAccounting.
 								phaseState = appendHandoffUsage(phaseState, prevCount, handoff.Usage)
 							}
+							// The handoff request's own generator
+							// events (api_call, api_error) join the
+							// tree before the retry attempt opens.
+							// See generators.TheoryOfEventRecorder.
+							ls.drainEventSink()
 						}
 					}
 
@@ -774,17 +766,8 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 			break
 		}
 
-		// Report the truncated attempt to the interaction recorder
-		// and record the truncation as an event node, immediately,
-		// before the handoff request. See TheoryOfLoopEvents.
-		if ls.rec != nil && ls.rec.Enabled() {
-			ls.rec.AttemptTruncated()
-			if isAbnormalFinish {
-				ls.rec.Event("decision", fmt.Sprintf("abnormal finish reason %q triggered retry: attempt %d/%d", finishReason, retry+1, ls.maxRetries))
-			} else {
-				ls.rec.Event("decision", fmt.Sprintf("missing completion (no summary block) triggered retry: attempt %d/%d", retry+1, ls.maxRetries))
-			}
-		}
+		// Record the truncation as an event node, immediately, before
+		// the handoff request. See TheoryOfLoopEvents.
 		truncatedDetail := "missing completion (no summary block)"
 		if isAbnormalFinish {
 			truncatedDetail = fmt.Sprintf("abnormal finish reason %q", finishReason)
@@ -802,17 +785,18 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 		if ls.opts.Handoff != nil {
 			incompleteText := ExtractIncompleteOutput(phaseState, attemptBase)
 			if incompleteText != "" {
-				// Record the handoff request's start immediately.
-				// See TheoryOfLoopEvents.
-				ls.writeEventNode("handoff-start", "handoff started")
+				// Record the handoff request's start immediately. See
+				// TheoryOfLoopEvents.
+				ls.writeEventNode("handoff-start", "handoff started for the incomplete output:\n\n"+incompleteText)
 				handoff, rerr := ls.opts.Handoff(handoffInput(incompleteText, ls.sessionTree, ls.sessionParent()))
 				if rerr == nil && handoff != nil {
 					summary = handoff.Summary
 					retryPrompt = handoff.Prompt
 					// Record the produced handoff. See TheoryOfLoopEvents.
-					ls.writeEventNode("handoff", "handoff summary:\n"+handoff.Summary)
+					ls.writeEventNode("handoff", handoffNodeContent(handoff))
 					phaseState = appendHandoffUsage(phaseState, attemptBase, handoff.Usage)
 				}
+				ls.drainEventSink()
 			}
 		}
 
@@ -871,7 +855,6 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 	}
 
 	if generationErr != nil {
-		ls.recordAttemptError(generationErr)
 		if ls.opts.OnPhaseError != nil {
 			phaseState = ls.opts.OnPhaseError(phaseState, generationErr)
 		}
@@ -892,7 +875,7 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 		if incompleteText != "" {
 			// Record the handoff request's start immediately.
 			// See TheoryOfLoopEvents.
-			ls.writeEventNode("handoff-start", "handoff started")
+			ls.writeEventNode("handoff-start", "handoff started for the incomplete output:\n\n"+incompleteText)
 			if handoff, serr := ls.opts.Handoff(handoffInput(incompleteText, ls.sessionTree, ls.sessionParent())); serr == nil && handoff != nil {
 				// Record the synthesized completion summary. See
 				// TheoryOfLoopEvents.
@@ -910,7 +893,6 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 					},
 				})
 				if appendErr != nil {
-					ls.recordAttemptError(appendErr)
 					if ls.opts.OnPhaseError != nil {
 						phaseState = ls.opts.OnPhaseError(phaseState, appendErr)
 					}
@@ -919,6 +901,7 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 				}
 				generationSummaries = append(generationSummaries, handoff.Summary)
 			}
+			ls.drainEventSink()
 		}
 	}
 
@@ -932,19 +915,15 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 			if errors.As(serr, &flushDiskChanged) {
 				return generationResult{state: phaseState}, ls.endOnDiskChange(serr, phaseState, attemptBase)
 			}
-			ls.recordAttemptError(serr)
 			ls.recordAttemptUsage(phaseState, attemptBase, "error")
 			return generationResult{state: phaseState}, serr
 		}
 	}
 
-	// Record the attempt's token usage and report the successfully
-	// completed attempt to the interaction recorder and the session
-	// tree. See TheoryOfUsageLogging and TheoryOfLoopEvents.
+	// Record the attempt's token usage and write the attempt's
+	// completion event node. See TheoryOfUsageLogging and
+	// TheoryOfLoopEvents.
 	ls.recordAttemptUsage(phaseState, attemptBase, "")
-	if ls.rec != nil && ls.rec.Enabled() {
-		ls.rec.AttemptCompleted(generationSummaries)
-	}
 	// The completed node carries the attempt's summary bodies, so the
 	// Tree tab shows the completion with its summary collapsed by
 	// default. See TheoryOfLoopEvents.
@@ -992,13 +971,6 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 	if len(generationUncorrected) > 0 {
 		ls.uncorrectedParseErrors = appendUncorrectedParseErrors(ls.uncorrectedParseErrors, generationUncorrected)
 	}
-	if ls.rec != nil && ls.rec.Enabled() {
-		if len(correctionParts) > 0 {
-			ls.rec.Event("decision", fmt.Sprintf("block correction attempt %d/%d: %d malformed block(s) and %d unavailable-kind block(s) fed back to the model", ls.parseErrorCorrections, maxParseErrorCorrections, len(generationParseErrors), len(unknownKinds)))
-		} else if len(generationUncorrected) > 0 {
-			ls.rec.Event("decision", fmt.Sprintf("parse error correction budget exhausted: %d malformed block(s) recorded as uncorrected", len(generationUncorrected)))
-		}
-	}
 
 	// Single-shot mode: no component processing.
 	if len(ls.opts.Components) == 0 {
@@ -1014,7 +986,6 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 				Parts: feedbackParts,
 			})
 			if aerr != nil {
-				ls.recordAttemptError(aerr)
 				return generationResult{state: ls.state}, aerr
 			}
 			ls.writeFeedbackInputNode(feedbackParts)
@@ -1057,7 +1028,6 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 		prefetchedFutures...,
 	)
 	if cerr != nil {
-		ls.recordAttemptError(cerr)
 		return generationResult{state: ls.state}, cerr
 	}
 	ls.remainingBlocks = append(ls.remainingBlocks, generationRemaining...)
@@ -1148,13 +1118,9 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 				Parts: combinedParts,
 			})
 			if aerr != nil {
-				ls.recordAttemptError(aerr)
 				return generationResult{state: ls.state}, aerr
 			}
 			ls.writeFeedbackInputNode(combinedParts)
-		}
-		if ls.rec != nil && ls.rec.Enabled() {
-			ls.rec.Event("decision", continueReason)
 		}
 		ls.writeEventNode("continue", fmt.Sprintf("attempt %d continues: %s",
 			ls.attempt, continueReason))
@@ -1174,14 +1140,10 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 		prevCount := generators.CountContents(ls.state)
 		ls.state, idleContinue, cerr = ls.opts.OnIdle(ls.ctx, ls.state)
 		if cerr != nil {
-			ls.recordAttemptError(cerr)
 			return generationResult{state: ls.state}, cerr
 		}
 		if idleContinue {
 			ls.recordIdleUserInput(ls.state, prevCount)
-			if ls.rec != nil && ls.rec.Enabled() {
-				ls.rec.Event("decision", "idle handler returned user input; starting a new generation")
-			}
 			ls.writeEventNode("idle", "idle input received; starting the next generation")
 			return generationResult{
 				state:        ls.state,
@@ -1197,6 +1159,21 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 	}, nil
 }
 
+// drainEventSink records the generator-level events buffered in the
+// scope's sink as session-tree event nodes of the same type, in
+// occurrence order, and empties the sink. The events are written under
+// the current attempt node, so an API call or API error lands in the
+// attempt it served. A nil sink drains nothing. See
+// generators.TheoryOfEventRecorder.
+func (ls *loopState) drainEventSink() {
+	if ls.eventSink == nil || ls.sessionTree == nil {
+		return
+	}
+	for _, event := range ls.eventSink.Drain() {
+		ls.writeEventNode(tree.Type(event.Type), event.Detail)
+	}
+}
+
 // describeGenerator renders the generator spec of one attempt as the
 // generator node's content: the resolved spec path, the model
 // identity, and the effective temperature, reasoning effort, and token
@@ -1205,14 +1182,14 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 // resolution (built-in shortcuts, the ollama shorthand) carry no path
 // and omit the field. The effective values mirror the generators'
 // flag-over-spec precedence — the -temperature and -effort flags
-// override the spec fields (see Gemini.Generate and OpenAI.Generate) —
-// so the node's content reports the values the request actually
-// carries, unlike the generators' "generating" log, which records the
-// spec's effort even when the flag overrides it. Max generate tokens
-// come from the spec: every built-in command passes nil
-// GenerateOptions, so the spec field is the effective limit;
-// flags.MaxTokens bounds only the input budget and is not part of the
-// request. Unset values are omitted from the detail. See
+// override the spec fields (see Gemini.Generate and
+// OpenAI.Generate) — so the node's content reports the values the
+// request actually carries, unlike the generators' "generating" log,
+// which records the spec's effort even when the flag overrides it.
+// Max generate tokens come from the spec: every built-in command
+// passes nil GenerateOptions, so the spec field is the effective
+// limit; flags.MaxTokens bounds only the input budget and is not part
+// of the request. Unset values are omitted from the detail. See
 // TheoryOfLoopEvents.
 func describeGenerator(
 	spec generators.Spec,
@@ -1303,14 +1280,6 @@ func (ls *loopState) recordAttemptUsage(state generators.State, attemptBaseCount
 	ls.logger.InfoContext(ls.ctx, "usage", args...)
 }
 
-// recordAttemptError reports a failed attempt to the interaction
-// recorder when recording is active.
-func (ls *loopState) recordAttemptError(err error) {
-	if ls.rec != nil && ls.rec.Enabled() {
-		ls.rec.AttemptError(err)
-	}
-}
-
 // endWithHandoff condenses the interrupted output of a failed attempt
 // into a handoff when one is available, records the failed attempt, and
 // returns the handoff for the caller's terminal error. It is the shared
@@ -1322,15 +1291,15 @@ func (ls *loopState) endWithHandoff(err error, phaseState generators.State, atte
 	if ls.opts.Handoff != nil {
 		incompleteText := ExtractIncompleteOutput(phaseState, attemptBase)
 		if incompleteText != "" {
-			ls.writeEventNode("handoff-start", "handoff started")
+			ls.writeEventNode("handoff-start", "handoff started for the incomplete output:\n\n"+incompleteText)
 			if h, herr := ls.opts.Handoff(handoffInput(incompleteText, ls.sessionTree, ls.sessionParent())); herr == nil && h != nil {
 				handoff = h
-				ls.writeEventNode("handoff", "handoff summary:\n"+h.Summary)
+				ls.writeEventNode("handoff", handoffNodeContent(h))
 				phaseState = appendHandoffUsage(phaseState, attemptBase, h.Usage)
 			}
+			ls.drainEventSink()
 		}
 	}
-	ls.recordAttemptError(err)
 	ls.recordAttemptUsage(phaseState, attemptBase, "error")
 	return handoff
 }
@@ -1357,6 +1326,10 @@ func (ls *loopState) finishWithError(err error, finalState generators.State) {
 	// TheoryOfSessionTree.
 	ls.result.SessionTree = ls.sessionTree
 	ls.runErr = err
+	// The sink's remaining events (e.g., the failing request's API
+	// error) join the tree before the terminal error node. See
+	// generators.TheoryOfEventRecorder.
+	ls.drainEventSink()
 	// The terminal error joins the tree as a run-error event node
 	// under the current attempt node before the final yield, so the
 	// record carries it even when the consumer stops at the terminal
@@ -1374,6 +1347,9 @@ func (ls *loopState) finishWithError(err error, finalState generators.State) {
 // no attempt consumed because the run ended — join the session parent,
 // keeping the record complete. See TheoryOfSessionTree.
 func (ls *loopState) finish(finalState generators.State, finalBlocks []blocks.Block) {
+	// The sink's remaining events join the tree before the run's nodes
+	// close. See generators.TheoryOfEventRecorder.
+	ls.drainEventSink()
 	ls.writePendingUserInputs(ls.sessionParent())
 	ls.result.FinalState = finalState
 	ls.result.RemainingBlocks = finalBlocks
@@ -1388,49 +1364,6 @@ func (ls *loopState) finish(finalState generators.State, finalBlocks []blocks.Bl
 // the block is not passed to ProcessComponents. If err is non-nil,
 // streaming stops immediately. See TheoryOfLoops.
 type BlockHandler func(block blocks.Block) (consumed bool, err error)
-
-type InteractionRecorder interface {
-	// Enabled reports whether recording is active. When false, the loop
-	// does not wrap the state, record contents, or call the lifecycle
-	// methods.
-	Enabled() bool
-	// StartSession begins a recording session for the given command.
-	// Called once when the loop starts.
-	StartSession(command string)
-	// EndSession closes the current session with the given outcome.
-	// A non-nil error marks the session as failed.
-	EndSession(err error)
-	// SystemPrompt records the session's system prompt. Called once when
-	// the loop starts.
-	SystemPrompt(prompt string)
-	// AttemptStart marks the beginning of a generation attempt: one
-	// pass through the phase chain, numbered within its generation.
-	AttemptStart()
-	// AttemptCompleted marks an attempt that completed normally,
-	// carrying the summary block bodies.
-	AttemptCompleted(summaries []string)
-	// AttemptTruncated marks an attempt that ended without a completion
-	// signal (no summary block or abnormal finish reason) and was
-	// retried.
-	AttemptTruncated()
-	// AttemptError marks an attempt that failed with an error.
-	AttemptError(err error)
-	// Content records a content appended to the generation state.
-	Content(content *generators.Content)
-	// Block records a structured block parsed from the model output.
-	Block(block blocks.Block)
-	// ParseError records a malformed block that could not be parsed.
-	ParseError(parseErr *blocks.BlockParseError)
-	// Event records an arbitrary session event with the current attempt
-	// number, carrying a type and a free-form detail. The generation
-	// loop uses it for flow decisions (retries, parse-error
-	// corrections, component-triggered generations, session metadata),
-	// and generator implementations use it through the dscope-injected
-	// EventRecorder for API-level events (api_call, api_error). The
-	// transcript renders each event by its type.
-	// See records.TheoryOfEventRecording.
-	Event(typ string, detail string)
-}
 
 type RunOptions struct {
 	// Generator is the model used for generation.
@@ -1479,17 +1412,11 @@ type RunOptions struct {
 	// produces no plan feedback. See TheoryOfPlan.
 	PlanMode bool
 
-	// InteractionRecorder receives generation events (contents, blocks,
-	// attempt lifecycle) for interaction recording and self-improvement
-	// analysis. When nil, the Recorder provider default is used (see the
-	// InteractionRecorder provider in this package).
-	// See records.TheoryOfInteractionRecording.
-	InteractionRecorder InteractionRecorder
-
-	// Command identifies the invoking command (e.g., "ai", "next"). It is
-	// recorded as the session's command name when interaction recording
-	// is active. When empty, "codes" is used.
-	// See records.TheoryOfInteractionRecording.
+	// Command names the recording session when this run owns one — a
+	// fresh run, which opens the session through the resolved recorder.
+	// A continued run (a goal loop) leaves session ownership to the
+	// runner, and the name is unused there. When empty, "codes" is
+	// used. See records.TheoryOfInteractionRecording.
 	Command string
 
 	// OnAttemptStart is called before each attempt (including retries).
@@ -1561,6 +1488,25 @@ func formatHandoffPrompt(retryPrompt string, attempt, maxAttempts int) string {
 	return fmt.Sprintf(incompleteOutputHandoffPrefix, attempt, maxAttempts) + retryPrompt
 }
 
+// handoffNodeContent renders the handoff event node's content: the
+// parsed summary, the handoff request's raw output, and its reasoning.
+// The request runs outside the loop's state chain, so this node is the
+// only path for its raw material into the record. See TheoryOfHandoff.
+func handoffNodeContent(h *Handoff) string {
+	var b strings.Builder
+	b.WriteString("handoff summary:\n")
+	b.WriteString(h.Summary)
+	if h.RawOutput != "" {
+		b.WriteString("\n\nhandoff response:\n")
+		b.WriteString(h.RawOutput)
+	}
+	for _, thought := range h.Thoughts {
+		b.WriteString("\n\nhandoff reasoning:\n")
+		b.WriteString(thought)
+	}
+	return b.String()
+}
+
 // Result holds the outcome of a generation loop.
 type Result struct {
 	// FinalState is the state after the last generation (without
@@ -1584,69 +1530,6 @@ type Result struct {
 	// loop to present the changes to a second model. See
 	// TheoryOfReviewLoop in generate.go.
 	Diffs []changes.FileDiff
-}
-
-// RecordState reports the given state's system prompt and contents to the
-// interaction recorder and returns a state that captures future appends.
-// When the recorder is nil or disabled, the state is returned unchanged
-// and enabled is false. Commands that run phases outside the loop (e.g.,
-// ping) use this to participate in interaction recording.
-// See records.TheoryOfInteractionRecording.
-func RecordState(recorder InteractionRecorder, state generators.State) (generators.State, bool) {
-	if recorder == nil || !recorder.Enabled() {
-		return state, false
-	}
-	recorder.SystemPrompt(state.SystemPrompt())
-	for content := range state.Contents() {
-		recorder.Content(content)
-	}
-	return recordedState{upstream: state, recorder: recorder}, true
-}
-
-// recordedState is a State layer that reports appended contents to an
-// InteractionRecorder. It sits below ParserState so every content append
-// (user input, model output, reasoning thoughts, tool calls, retry
-// feedback) is captured for interaction recording. State immutability is
-// preserved: AppendContent and Flush return a new recordedState.
-// See records.TheoryOfInteractionRecording.
-type recordedState struct {
-	upstream generators.State
-	recorder InteractionRecorder
-}
-
-func (s recordedState) Unwrap() generators.State {
-	return s.upstream
-}
-
-func (s recordedState) Flush() (generators.State, error) {
-	newUpstream, err := s.upstream.Flush()
-	if err != nil {
-		return nil, err
-	}
-	return recordedState{upstream: newUpstream, recorder: s.recorder}, nil
-}
-
-func (s recordedState) Functions() iter.Seq[*generators.Function] {
-	return s.upstream.Functions()
-}
-
-func (s recordedState) SystemPrompt() string {
-	return s.upstream.SystemPrompt()
-}
-
-func (s recordedState) Contents() iter.Seq[*generators.Content] {
-	return s.upstream.Contents()
-}
-
-var _ generators.State = recordedState{}
-
-func (s recordedState) AppendContent(content *generators.Content) (generators.State, error) {
-	s.recorder.Content(content)
-	newUpstream, err := s.upstream.AppendContent(content)
-	if err != nil {
-		return nil, err
-	}
-	return recordedState{upstream: newUpstream, recorder: s.recorder}, nil
 }
 
 const TheoryOfRunDecorators = `
@@ -1682,8 +1565,19 @@ func (Module) RunDecorators() RunDecorators {
 	return nil
 }
 
+// Run provider: the generation loop with the session bookkeeping bound
+// at provider resolution — the interaction recorder and the generator
+// event sink are dscope provided, so a run resolved in a command's
+// scope records into that scope's recorder and drains that scope's
+// sink. A fresh run owns its recording session: the recorder's sink is
+// attached to the run's tree before the first write and the session
+// ends with the run's terminal error. A continued run — a goal loop —
+// receives the runner's session tree and leaves session ownership to
+// the runner, which attached the sink and opened the session.
+// See records.TheoryOfInteractionRecording and TheoryOfGoalMode.
 func (Module) Run(
-	recorder InteractionRecorder,
+	recorder *records.Recorder,
+	eventSink *generators.EventSink,
 	logger logs.Logger,
 	temperatureFlag generators.TemperatureFlag,
 	effortFlag generators.EffortFlag,
@@ -1696,16 +1590,6 @@ func (Module) Run(
 			result = &Result{}
 		}
 		return func(yield func(*tree.Tree, error) bool) {
-			// Determine the active interaction recorder. When the caller does
-			// not pass one explicitly, the provider-injected default is used,
-			// so every loop run records interactions automatically.
-			// See records.TheoryOfInteractionRecording.
-			rec := opts.InteractionRecorder
-			if rec == nil {
-				rec = recorder
-			}
-			opts.InteractionRecorder = rec
-
 			// The loop state carries the mutable state of the run. Every
 			// event write yields the full session tree through the
 			// guarded emitTree/emitTerminalTree methods. The temperature
@@ -1715,7 +1599,6 @@ func (Module) Run(
 			ls := &loopState{
 				ctx:             ctx,
 				opts:            opts,
-				rec:             rec,
 				result:          result,
 				yield:           yield,
 				state:           opts.InitialState,
@@ -1723,6 +1606,8 @@ func (Module) Run(
 				logger:          logger,
 				temperatureFlag: temperatureFlag,
 				effortFlag:      effortFlag,
+				recorder:        recorder,
+				eventSink:       eventSink,
 			}
 			if ls.maxRetries == 0 && (opts.RetryOnMissingCompletion || opts.RetryOnError) {
 				ls.maxRetries = defaultMaxRetries
@@ -1741,6 +1626,26 @@ func (Module) Run(
 			} else {
 				ls.sessionTree = tree.New()
 				ls.sessionRoot = "root"
+				// A fresh run owns its recording session: the recorder's
+				// sink is attached to the run's tree before the first
+				// write, so every operation of the run is one session's
+				// operation stream, and the session ends with the run's
+				// terminal error. A continued run leaves session
+				// ownership to the runner, which attached the sink and
+				// opened the session before the loop. See
+				// records.TheoryOfInteractionRecording and
+				// TheoryOfGoalMode.
+				if recorder != nil && recorder.Enabled() {
+					ls.sessionTree = ls.sessionTree.WithOpSink(recorder.Sink())
+					command := opts.Command
+					if command == "" {
+						command = "codes"
+					}
+					recorder.StartSession(command)
+					defer func() {
+						recorder.EndSession(ls.runErr)
+					}()
+				}
 			}
 			ls.sessionTree = writeInitialSystemNode(ls.sessionTree, ls.sessionRoot, opts.InitialState)
 			// gotools' context-assembly diagnostics — the token
@@ -1769,45 +1674,11 @@ func (Module) Run(
 			// TheoryOfLoopEvents.
 			ls.emitTree()
 
-			recording := rec != nil && rec.Enabled()
-			if recording {
-				command := opts.Command
-				if command == "" {
-					command = "codes"
-				}
-				rec.StartSession(command)
-				// EndSession is deferred so every return path — including
-				// errors — closes the session with the final outcome. The
-				// deferred function runs when the iterator is exhausted,
-				// whether the consumer pulled the terminal error and
-				// resumed, or stopped the iteration early.
-				defer func() {
-					rec.EndSession(ls.runErr)
-				}()
-				// Session-level metadata is recorded as events so the
-				// transcript identifies the invocation and the model that
-				// powered it. See records.TheoryOfEventRecording.
-				rec.Event("decision", fmt.Sprintf("command line: %s", strings.Join(os.Args, " ")))
-				if opts.Generator != nil {
-					spec := opts.Generator.Spec()
-					rec.Event("decision", fmt.Sprintf("generator selected: name=%q model=%q family=%q effort=%q",
-						spec.Name, spec.Model, spec.Family, spec.ReasoningEffort))
-				}
-			}
-
-			// Report the initial system prompt and contents, then wrap the
-			// state so every subsequent content append is captured for
-			// interaction recording. The recordedState layer sits below
-			// ParserState so both the parsed blocks and the contents
-			// carrying them are recorded. Recording is skipped entirely when
-			// the recorder is nil or disabled.
-			// See records.TheoryOfInteractionRecording.
-			ls.state, _ = RecordState(rec, ls.state)
-
-			// Apply the state decorators after recording so decorations (e.g.,
-			// observing output content for a TUI) see every subsequent
-			// content append. Decorators are applied in order, each wrapping
-			// the state produced by the previous one. See StateDecorator.
+			// Apply the state decorators after the recording session is
+			// established so decorations (e.g., observing output content
+			// for a TUI) see every subsequent content append. Decorators
+			// are applied in order, each wrapping the state produced by
+			// the previous one. See StateDecorator.
 			for _, decorator := range opts.StateDecorators {
 				if decorator != nil {
 					ls.state = decorator(ls.state)

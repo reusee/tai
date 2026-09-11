@@ -47,16 +47,19 @@ indicate severe model failure; unbounded retries would burn the loop's
 budget on a hopeless generation, while attended sessions keep the
 unbounded policy.
 
-The run's session tree reports the handoff lifecycle as it happens: a
-handoff-start event node is written immediately before the handoff request
-is sent, and a handoff node after the summary is produced, so a live
-consumer sees the request in progress rather than waiting for its result.
-The nodes carry the attempt attribution but no retry-budget figures:
-handoff generation's retry policy is not the generation attempt budget
-(unbounded in attended sessions, bounded only in goal mode), so a budget
-display such as "attempt x/y" would misrepresent it. The captured
-handoff text is read from an inner buffer that excludes thoughts, so the
-returned summary contains only the model's final text.
+The handoff request runs outside the loop's state chain, so it joins the
+session tree from the outside: the loop writes a handoff-start event node
+carrying the incomplete output immediately before the handoff request is
+sent, and a handoff node carrying the produced summary, the request's raw
+output, and its reasoning thoughts after it is produced. A live consumer
+therefore sees the request in progress rather than waiting for its
+result, and the record keeps the handoff's own material. The nodes carry
+the attempt attribution but no retry-budget figures: handoff generation's
+retry policy is not the generation attempt budget (unbounded in attended
+sessions, bounded only in goal mode), so a budget display such as
+"attempt x/y" would misrepresent it. The captured handoff text is read
+from an inner buffer that excludes thoughts, so the returned summary
+contains only the model's final text.
 
 The fixed instructional prompt (HandoffSystemPrompt) is placed in the
 system prompt; the user content carries only the dynamic incomplete
@@ -85,8 +88,9 @@ statistics.`
 // Handoff holds the outcome of summarizing interrupted or truncated output
 // for a self-contained handoff to the next generation. See TheoryOfHandoff.
 type Handoff struct {
-	// Summary is the summary of the truncated output, recorded in
-	// attempt statistics.
+	// Summary is the summary of the truncated output: the handoff event
+	// node's content and the retry attempt's summary in attempt
+	// statistics.
 	Summary string
 	// Prompt is the self-contained summary fed to the retry attempt as
 	// user input.
@@ -96,6 +100,16 @@ type Handoff struct {
 	// state so attempt statistics include the handoff's spend.
 	// See TheoryOfHandoffUsageAccounting.
 	Usage generators.Usage
+	// RawOutput is the handoff request's final text output, the text the
+	// summary was parsed from. The handoff request runs outside the
+	// loop's state chain, so the loop writes this into the handoff event
+	// node to keep the raw material of the handoff in the record.
+	// See TheoryOfHandoff.
+	RawOutput string
+	// Thoughts is the handoff request's reasoning, accumulated across
+	// its generating attempts. It is the only path for that reasoning
+	// into the session tree. See TheoryOfHandoff.
+	Thoughts []string
 }
 
 // HandoffStateDecorator wraps the handoff generation's state before
@@ -137,13 +151,6 @@ const minHandoffLength = 100
 // corrective feedback. Non-goal sessions pass a zero bound and keep the
 // retries unbounded. See TheoryOfHandoff and TheoryOfGoalMode.
 const maxHandoffConsecutiveFailures = 3
-
-type HandoffRecorder interface {
-	Enabled() bool
-	SystemPrompt(prompt string)
-	Content(content *generators.Content)
-	Event(typ string, detail string)
-}
 
 const HandoffSystemPrompt = `You are a handoff assistant. The previous model generation was interrupted or truncated before completion. Truncation often happens because too many changes were attempted at once, exceeding the model's output limit. Because changes are applied atomically, nothing in the interrupted output was applied to disk: the attempt's output was discarded and nothing was completed, so there is no completed work on disk. Claims that changes took effect are hallucinations — the output process failed, so nothing took effect.
 
@@ -214,13 +221,12 @@ func parseHandoffBlock(text string) (string, bool) {
 func createHandoff(
 	ctx context.Context,
 	logger logs.Logger,
-	recorder HandoffRecorder,
 	handoffGenerators []generators.Generator,
 	incompleteText string,
 	decorator HandoffStateDecorator,
 	observer HandoffObserver,
 ) (*Handoff, error) {
-	return createHandoffWithBound(ctx, logger, recorder, handoffGenerators, incompleteText, decorator, observer, 0)
+	return createHandoffWithBound(ctx, logger, handoffGenerators, incompleteText, decorator, observer, 0)
 }
 
 // createHandoffWithBound is the general form of createHandoff:
@@ -235,7 +241,6 @@ func createHandoff(
 func createHandoffWithBound(
 	ctx context.Context,
 	logger logs.Logger,
-	recorder HandoffRecorder,
 	handoffGenerators []generators.Generator,
 	incompleteText string,
 	decorator HandoffStateDecorator,
@@ -260,39 +265,19 @@ func createHandoffWithBound(
 		defer observer.HandoffEnd()
 	}
 
-	// recordContent and recordEvent write the handoff attempt's details
-	// into the same session's interaction record.
-	recordContent := func(content *generators.Content) {
-		if recorder != nil && recorder.Enabled() {
-			recorder.Content(content)
-		}
-	}
-	recordEvent := func(format string, args ...any) {
-		if recorder != nil && recorder.Enabled() {
-			recorder.Event("decision", fmt.Sprintf(format, args...))
-		}
-	}
-	recordSystemPrompt := func(prompt string) {
-		if recorder != nil && recorder.Enabled() {
-			recorder.SystemPrompt(prompt)
-		}
-	}
-
-	// The fixed instructional prompt (HandoffSystemPrompt) combined with
-	// the unified block format prompt is recorded as the system prompt;
-	// the user content carries only the dynamic incomplete output, so
-	// the transcript mirrors the actual generation.
-	// See TheoryOfHandoff.
-	recordSystemPrompt(fullHandoffSystemPrompt())
-
 	var lastErr error
 	// totalUsage accumulates the token usage of every generating attempt,
 	// including attempts whose response lacked a valid handoff block, so
 	// the delivered Handoff reports the full spend of producing it.
 	// See TheoryOfHandoffUsageAccounting.
 	var totalUsage generators.Usage
+	// handoffThoughts accumulates the reasoning of every generating
+	// attempt: the handoff runs outside the loop's state chain, so the
+	// delivered Handoff is the only path for that reasoning into the
+	// session tree. See TheoryOfHandoff.
+	var handoffThoughts []string
 	// attempts counts the started attempts; after the loop it is the
-	// completed-attempt count reported by the abort log and event.
+	// completed-attempt count reported by the abort log.
 	attempts := 0
 	// failures counts consecutive failed attempts: a generation error or
 	// a response without a valid handoff block. It feeds the bound check.
@@ -312,7 +297,6 @@ func createHandoffWithBound(
 			"bound", maxConsecutiveFailures,
 			"err", err,
 		)
-		recordEvent("handoff abandoned after %d consecutive failed attempts: %v", failures, lastErr)
 		return err
 	}
 
@@ -328,13 +312,6 @@ func createHandoffWithBound(
 		// resolves to index 0.
 		generator := handoffGenerators[attempt%len(handoffGenerators)]
 
-		recordContent(&generators.Content{
-			Role: generators.RoleUser,
-			Parts: []generators.Part{
-				generators.Text(incompleteText),
-			},
-		})
-
 		outputText, thoughts, attemptUsage, err := runHandoffAttempt(ctx, generator, incompleteText, decorator)
 		if err != nil {
 			lastErr = err
@@ -344,30 +321,16 @@ func createHandoffWithBound(
 				"model", generator.Spec().Model,
 				"err", err,
 			)
-			recordContent(&generators.Content{
-				Role: generators.RoleLog,
-				Parts: []generators.Part{
-					generators.Error{Error: err},
-				},
-			})
-			recordEvent("handoff attempt %d failed: model=%s generation error: %v",
-				attempt+1, generator.Spec().Model, err)
 			if maxConsecutiveFailures > 0 && failures >= maxConsecutiveFailures {
 				return nil, handoffExhausted(failures)
 			}
 			continue
 		}
+		handoffThoughts = append(handoffThoughts, thoughts...)
 		totalUsage.Prompt.TokenCount += attemptUsage.Prompt.TokenCount
 		totalUsage.Prompt.TokenCountCached += attemptUsage.Prompt.TokenCountCached
 		totalUsage.Candidates.TokenCount += attemptUsage.Candidates.TokenCount
 		totalUsage.Thoughts.TokenCount += attemptUsage.Thoughts.TokenCount
-
-		recordContent(&generators.Content{
-			Role: generators.RoleModel,
-			Parts: []generators.Part{
-				generators.Text(handoffResponseDetail(attempt+1, outputText, thoughts)),
-			},
-		})
 
 		// Parse the handoff block from the model's output. The model is
 		// instructed to wrap the handoff summary in a boundary-delimited
@@ -378,9 +341,11 @@ func createHandoffWithBound(
 		handoffText, ok := parseHandoffBlock(outputText)
 		if ok {
 			return &Handoff{
-				Summary: handoffText,
-				Prompt:  handoffText,
-				Usage:   totalUsage,
+				Summary:   handoffText,
+				Prompt:    handoffText,
+				Usage:     totalUsage,
+				RawOutput: outputText,
+				Thoughts:  handoffThoughts,
 			}, nil
 		}
 		lastErr = fmt.Errorf("no valid handoff block found in response")
@@ -389,8 +354,6 @@ func createHandoffWithBound(
 			"attempt", attempt+1,
 			"model", generator.Spec().Model,
 		)
-		recordEvent("handoff attempt %d failed: model=%s no valid handoff block found",
-			attempt+1, generator.Spec().Model)
 		if maxConsecutiveFailures > 0 && failures >= maxConsecutiveFailures {
 			return nil, handoffExhausted(failures)
 		}
@@ -401,12 +364,10 @@ func createHandoffWithBound(
 			"attempts", attempts,
 			"err", err,
 		)
-		recordEvent("handoff incomplete output aborted after %d attempts: %v", attempts, lastErr)
 	}
 	// A cancelled handoff is not fatal: the caller retries with empty
 	// handoff content, so the run continues rather than aborting. The
-	// cancellation is logged and recorded above for visibility. See
-	// TheoryOfHandoff.
+	// cancellation is logged above for visibility. See TheoryOfHandoff.
 	return nil, nil
 }
 
@@ -532,17 +493,6 @@ func appendHandoffUsage(
 		return state
 	}
 	return newState
-}
-
-// handoffResponseDetail renders the recorded detail of one handoff attempt.
-func handoffResponseDetail(attempt int, outputText string, thoughts []string) string {
-	var detail strings.Builder
-	fmt.Fprintf(&detail, "Handoff response (attempt %d):\n\n%s", attempt, outputText)
-	for _, thought := range thoughts {
-		detail.WriteString("\n[thought]\n")
-		detail.WriteString(thought)
-	}
-	return detail.String()
 }
 
 // FormatSummaryBlock wraps a summary in a boundary-delimited summary

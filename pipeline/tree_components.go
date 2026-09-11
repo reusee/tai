@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"strings"
 
@@ -654,26 +655,6 @@ func (Module) SessionTreeContinuation() SessionTreeContinuation {
 	return SessionTreeContinuation{}
 }
 
-// extractModelTexts joins the Text parts of the model-role contents
-// appended after sinceCount; Thought parts never enter the tree. See
-// TheoryOfSessionTree.
-func extractModelTexts(state generators.State, sinceCount int) string {
-	var texts []string
-	i := 0
-	for c := range state.Contents() {
-		if i >= sinceCount &&
-			(c.Role == generators.RoleModel || c.Role == generators.RoleAssistant) {
-			for _, p := range c.Parts {
-				if t, ok := p.(generators.Text); ok {
-					texts = append(texts, string(t))
-				}
-			}
-		}
-		i++
-	}
-	return strings.Join(texts, "")
-}
-
 // extractUserTextsSince joins the Text parts of the user-role contents
 // appended after sinceCount. See TheoryOfSessionTree.
 func extractUserTextsSince(state generators.State, sinceCount int) string {
@@ -692,18 +673,81 @@ func extractUserTextsSince(state generators.State, sinceCount int) string {
 	return strings.Join(texts, "")
 }
 
-// recordAttemptTree writes the successful attempt's nodes: the model
-// node under the current attempt node (the attempt's model-role Text
-// parts), one summary node per summary body, and the block batch
-// (handled plus collected). Blocks whose parent names a node an earlier
-// block of the batch creates are deferred: their collected indexes
-// return to the caller, and writeDeferredBlockNodes writes their nodes
-// after the components have run. On a naming fault the batch is
-// discarded, the error node recorded, the errors stored for the shared
-// correction decision, and the returned names are nil. Every tree
-// write ends with a full-tree yield, so the consumer sees the
-// attempt's session nodes the moment they exist. See
-// TheoryOfSessionTree and TheoryOfLoopEvents.
+// extractThoughtsSince joins the Thought parts of the model-role
+// contents appended after sinceCount: one attempt's reasoning trace. The
+// trace is recorded as its own thought event node, which keeps it out of
+// every model-facing outline while preserving it in the record. See
+// TheoryOfSessionTree.
+func extractThoughtsSince(state generators.State, sinceCount int) string {
+	var thoughts []string
+	i := 0
+	for c := range state.Contents() {
+		if i >= sinceCount &&
+			(c.Role == generators.RoleModel || c.Role == generators.RoleAssistant) {
+			for _, p := range c.Parts {
+				if thought, ok := p.(generators.Thought); ok && len(thought) > 0 {
+					thoughts = append(thoughts, string(thought))
+				}
+			}
+		}
+		i++
+	}
+	return strings.Join(thoughts, "")
+}
+
+// renderModelContent renders the model-role content of one attempt as
+// the model node's tree text: Text parts verbatim, tool calls and their
+// results, errors, file references, and file attachments (binary
+// content encoded as base64) — every part kind the model produces or
+// receives, so the node is a faithful record. Thought parts get their
+// own event node and metadata parts (usage, finish reason) have their
+// own event nodes, so they are skipped here. See TheoryOfSessionTree.
+func renderModelContent(state generators.State, sinceCount int) string {
+	var texts []string
+	i := 0
+	for c := range state.Contents() {
+		if i >= sinceCount &&
+			(c.Role == generators.RoleModel || c.Role == generators.RoleAssistant) {
+			for _, p := range c.Parts {
+				switch p := p.(type) {
+				case generators.Text:
+					if len(p) > 0 {
+						texts = append(texts, string(p))
+					}
+				case generators.FuncCall:
+					texts = append(texts, fmt.Sprintf("\n[function call] %s(%v)\n", p.Name, p.Arguments))
+				case generators.CallResult:
+					texts = append(texts, fmt.Sprintf("\n[call result] %s(%v)\n", p.Name, p.Results))
+				case generators.Error:
+					if p.Error != nil {
+						texts = append(texts, "\n[error] "+p.Error.Error())
+					}
+				case generators.FileURL:
+					texts = append(texts, "\n[file] "+string(p))
+				case generators.FileContent:
+					texts = append(texts, fmt.Sprintf("\n[file content: %s, base64]\n%s",
+						p.MimeType, base64.StdEncoding.EncodeToString(p.Content)))
+				}
+			}
+		}
+		i++
+	}
+	return strings.Join(texts, "")
+}
+
+// recordAttemptTree writes the successful attempt's nodes: the thought
+// node carrying the attempt's reasoning trace (when any), the model
+// node under the current attempt node (the attempt's model-role content
+// with every part kind rendered), one summary node per summary body,
+// and the block batch (handled plus collected). Blocks whose parent
+// names a node an earlier block of the batch creates are deferred:
+// their collected indexes return to the caller, and
+// writeDeferredBlockNodes writes their nodes after the components have
+// run. On a naming fault the batch is discarded, the error node
+// recorded, the errors stored for the shared correction decision, and
+// the returned names are nil. Every tree write ends with a full-tree
+// yield, so the consumer sees the attempt's session nodes the moment
+// they exist. See TheoryOfSessionTree and TheoryOfLoopEvents.
 func (ls *loopState) recordAttemptTree(
 	phaseState generators.State,
 	attemptBase int,
@@ -713,11 +757,16 @@ func (ls *loopState) recordAttemptTree(
 	if ls.sessionTree == nil {
 		return nil, nil
 	}
-	next, responseName, err := ls.sessionTree.WriteAuto(ls.attemptParent(), "model", tree.TypeModel, tree.AuthorModel, extractModelTexts(phaseState, attemptBase))
+	// The attempt's reasoning trace is its own event node: the model
+	// node carries answer content, and the trace stays in the record
+	// without entering any model-facing outline. See
+	// TheoryOfLoopEvents.
+	if thoughts := extractThoughtsSince(phaseState, attemptBase); thoughts != "" {
+		ls.writeEventNode("thought", thoughts)
+	}
+	next, responseName, err := ls.sessionTree.WriteAuto(ls.attemptParent(), "model", tree.TypeModel, tree.AuthorModel, renderModelContent(phaseState, attemptBase))
 	if err != nil {
-		if ls.rec != nil && ls.rec.Enabled() {
-			ls.rec.Event("decision", fmt.Sprintf("session tree: response node not written: %v", err))
-		}
+		ls.writeEventNode("run-error", fmt.Sprintf("session tree: response node not written: %v", err))
 	} else {
 		ls.sessionTree = next
 		ls.currentResponse = responseName

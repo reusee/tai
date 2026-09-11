@@ -18,7 +18,6 @@ import (
 	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/nets"
 	"github.com/reusee/tai/pipeline/codetypes"
-	"github.com/reusee/tai/records"
 )
 
 const TheoryOfStreamingApply = `
@@ -348,7 +347,6 @@ type CreateHandoff func(
 
 func (Module) CreateHandoff(
 	logger logs.Logger,
-	recorder *records.Recorder,
 	getHandoffGenerators GetHandoffGenerators,
 	handoffDecorator HandoffStateDecorator,
 	handoffObserver HandoffObserver,
@@ -373,7 +371,7 @@ func (Module) CreateHandoff(
 		if err != nil {
 			return nil, err
 		}
-		return createHandoffWithBound(ctx, logger, recorder, generators, incompleteText, handoffDecorator, handoffObserver, maxConsecutiveFailures)
+		return createHandoffWithBound(ctx, logger, generators, incompleteText, handoffDecorator, handoffObserver, maxConsecutiveFailures)
 	}
 }
 
@@ -543,7 +541,6 @@ func (Module) GenerateWithResultWithStats(
 	funcDecls generators.FuncDecls,
 	apply flags.Apply,
 	loopRun Run,
-	recorder *records.Recorder,
 	writeTimes *changes.FileWriteTimes,
 	hashes *changes.FileHashes,
 	createHandoff CreateHandoff,
@@ -581,18 +578,15 @@ func (Module) GenerateWithResultWithStats(
 			"model", spec.Model,
 			"effort", spec.ReasoningEffort,
 		)
-		if recorder != nil && recorder.Enabled() {
-			recorder.Event("decision", fmt.Sprintf("generator selected: name=%q family=%q model=%q effort=%q", spec.Name, spec.Family, spec.Model, spec.ReasoningEffort))
-		}
 
 		// handoff generator
 		handoffGenerator, err := getHandoffGenerator()
 		if err != nil {
 			return Result{}, nil, err
 		}
-		if recorder != nil && recorder.Enabled() {
-			recorder.Event("decision", fmt.Sprintf("handoff generator selected: model=%s", handoffGenerator.Spec().Model))
-		}
+		logger.Info("handoff generator",
+			"model", handoffGenerator.Spec().Model,
+		)
 
 		// Calculate basic limits. The full context window is available for
 		// input without reserving max generate tokens: most tasks complete
@@ -642,9 +636,6 @@ func (Module) GenerateWithResultWithStats(
 			"functions", funcTokens,
 			"max user content", maxUserPromptTokens,
 		)
-		if recorder != nil && recorder.Enabled() {
-			recorder.Event("decision", fmt.Sprintf("token limits computed: max_input=%d system=%d functions=%d user_capacity=%d", maxInputTokens, systemPromptTokens, funcTokens, maxUserPromptTokens))
-		}
 
 		// The chat input brackets the parts provider content: a copy of
 		// the joined chat arguments is prepended before the context so
@@ -689,9 +680,6 @@ func (Module) GenerateWithResultWithStats(
 			"tokens", userPromptTokens,
 			"parts", len(userPromptParts),
 		)
-		if recorder != nil && recorder.Enabled() {
-			recorder.Event("decision", fmt.Sprintf("user prompt assembled: parts=%d tokens=%d", len(userPromptParts), userPromptTokens))
-		}
 
 		if debug {
 			fmt.Fprintf(output, "system prompt: %s\n", systemPrompt)
@@ -794,10 +782,9 @@ func (Module) GenerateWithResultWithStats(
 			PhaseBuilder: func(g generators.Generator) generators.Phase {
 				return buildGenerate(g, nil)(nil)
 			},
-			Root:                root,
-			HTTPClient:          httpClient,
-			Command:             "codes",
-			InteractionRecorder: recorder,
+			Root:       root,
+			HTTPClient: httpClient,
+			Command:    "codes",
 
 			OnAttemptStart: func() {
 				memStore.Reset()
@@ -807,9 +794,6 @@ func (Module) GenerateWithResultWithStats(
 			OnAttemptSuccess: func(attemptState generators.State, summaries []string) error {
 				if err := memStore.Flush(); err != nil {
 					return err
-				}
-				if recorder != nil && recorder.Enabled() {
-					recorder.Event("decision", "attempt succeeded: in-memory changes flushed to disk")
 				}
 
 				elapsed := time.Since(attemptStartTime)

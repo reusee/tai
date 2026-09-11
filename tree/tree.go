@@ -27,6 +27,10 @@ tree theory: writes and transforms on immutable path-copying trees.
   per operation, an O(n) cost accepted for a pure-value tree. Write, Merge,
   Modify, and Delete share one path-copying core, so their immutability
   semantics stay identical.
+- Every applied mutation reports its operation to the tree's op sink: a
+  write carries the appended node's full identity, a modify the replaced
+  content, and a delete the removed node's name. Recording the sink records
+  the session. See TheoryOfOperationLog.
 - Modify and Delete transform the tree beyond appends: Modify rewrites a
   node's content in place — name, parent, type, author, children, and
   InsertTime are preserved, so a rewrite changes what the node says, never
@@ -142,11 +146,10 @@ const TypeContext Type = "context"
 // TheoryOfTree.
 const TypeGenerator Type = "generator"
 
-// The event subtypes classify one recorded occurrence each: one type
-// per occurrence kind of a run. Every constant's string equals the
-// event node name prefix the pipeline writes, so typed event nodes
-// carry their kind in their names. All of them derive to
-// CategoryEvent. See TheoryOfTree.
+// The event subtypes classify one recorded occurrence each: one type per
+// occurrence kind of a run. Every constant's string equals the event node name
+// prefix the pipeline writes, so typed event nodes carry their kind in their
+// names. All of them derive to CategoryEvent. See TheoryOfTree.
 const (
 	TypeFinish             Type = "finish"
 	TypeUsage              Type = "usage"
@@ -157,9 +160,12 @@ const (
 	TypeCompleted          Type = "completed"
 	TypeSynthesizedSummary Type = "synthesized-summary"
 	TypeThoughtSummary     Type = "thought-summary"
+	TypeThought            Type = "thought"
 	TypeContinue           Type = "continue"
 	TypeIdle               Type = "idle"
 	TypeRunError           Type = "run-error"
+	TypeAPICall            Type = "api_call"
+	TypeAPIError           Type = "api_error"
 )
 
 // Category is the coarse classification layer above Type: a pure
@@ -187,7 +193,8 @@ func (t Type) Category() Category {
 	case TypeContext, TypeGenerator, TypeFinish, TypeUsage,
 		TypeTruncated, TypeRetry, TypeHandoffStart, TypeHandoff,
 		TypeCompleted, TypeSynthesizedSummary, TypeThoughtSummary,
-		TypeContinue, TypeIdle, TypeRunError:
+		TypeThought, TypeContinue, TypeIdle, TypeRunError,
+		TypeAPICall, TypeAPIError:
 		return CategoryEvent
 	case TypeBlockResult, TypeSummary:
 		return CategoryBlock
@@ -250,6 +257,12 @@ func (t Type) Emoji() string {
 		return "🧩"
 	case TypeThoughtSummary:
 		return "💭"
+	case TypeThought:
+		return "🤔"
+	case TypeAPICall:
+		return "📡"
+	case TypeAPIError:
+		return "🚨"
 	case TypeContinue:
 		return "➡️"
 	case TypeIdle:
@@ -359,12 +372,20 @@ func (n *Node) IsAborted() bool {
 	return false
 }
 
-// Tree is an immutable tree of session operations. Every Write returns a
-// new Tree sharing untouched subtrees with the original by pointer.
-// See TheoryOfTree.
+// Tree is an immutable tree of session operations. Every mutation returns
+// a new Tree sharing untouched subtrees with the original by pointer, and
+// reports the applied operation to the tree's op sink when one is
+// attached. See TheoryOfTree and TheoryOfOperationLog.
 type Tree struct {
 	root   *Node
 	byName map[string]*Node
+
+	// sink receives every operation applied to this version and the
+	// versions derived from it, as the operation is applied; nil records
+	// nothing. The sink is attached with WithOpSink and shared by path
+	// copying, so one attachment covers a session's writes.
+	// See TheoryOfOperationLog.
+	sink OpSink
 }
 
 // New returns a tree containing only the root node.
@@ -400,28 +421,37 @@ func validateWrite(name string, author Author) error {
 }
 
 // Write returns a new tree with one node written under parent. The original
-// tree is unchanged; nodes off the write path are shared by pointer.
-// See TheoryOfTree.
+// tree is unchanged; nodes off the write path are shared by pointer. The
+// applied write is reported to the tree's op sink.
+// See TheoryOfTree and TheoryOfOperationLog.
 func (t *Tree) Write(parent, name string, typ Type, author Author, content string) (*Tree, error) {
-	return t.writeOp(WriteOp{
+	next, op, err := t.writeOp(WriteOp{
 		Parent:  parent,
 		Name:    name,
 		Type:    typ,
 		Author:  author,
 		Content: content,
 	})
-}
-
-// writeOp applies one write: validation, duplicate check, the zero insert
-// time taking the current time, and the shared path-copying core. Write
-// and WriteAll delegate here, so both carry identical semantics.
-// See TheoryOfTree.
-func (t *Tree) writeOp(op WriteOp) (*Tree, error) {
-	if err := validateWrite(op.Name, op.Author); err != nil {
+	if err != nil {
 		return nil, err
 	}
+	t.emitOp(op)
+	return next, nil
+}
+
+// writeOp applies one write without reporting it: validation, duplicate
+// check, the zero insert time taking the current time, and the attachment
+// core. It returns the new tree and the operation that attached the node,
+// so the caller decides when the operation is reported: Write reports
+// immediately, while WriteAll and Merge stage silently and report only
+// after the whole mutation succeeds.
+// See TheoryOfTree and TheoryOfOperationLog.
+func (t *Tree) writeOp(op WriteOp) (*Tree, Op, error) {
+	if err := validateWrite(op.Name, op.Author); err != nil {
+		return nil, Op{}, err
+	}
 	if _, exists := t.byName[op.Name]; exists {
-		return nil, fmt.Errorf("%w: %q", ErrDuplicateName, op.Name)
+		return nil, Op{}, fmt.Errorf("%w: %q", ErrDuplicateName, op.Name)
 	}
 	insertTime := op.InsertTime
 	if insertTime.IsZero() {
@@ -435,13 +465,18 @@ func (t *Tree) writeOp(op WriteOp) (*Tree, error) {
 		Content:    op.Content,
 		InsertTime: insertTime,
 	}
-	return t.writeChild(child)
+	next, err := t.writeChild(child)
+	if err != nil {
+		return nil, Op{}, err
+	}
+	return next, opForNode(child), nil
 }
 
 // writeChild attaches a fully built child node — unique name, existing
-// parent — by path copying. It is the shared core of Write and Merge. The
-// ancestor walk delegates to copyPathToRoot, shared with Modify and Delete,
-// so all carry identical path-copying semantics. See TheoryOfTree.
+// parent — by path copying. It reports nothing: the caller owns the
+// operation and emits it when the whole mutation is applied. It is the
+// shared core of Write and Merge, so both carry identical path-copying
+// semantics. See TheoryOfTree and TheoryOfOperationLog.
 func (t *Tree) writeChild(child *Node) (*Tree, error) {
 	parentNode, ok := t.byName[child.Parent]
 	if !ok {
@@ -463,7 +498,7 @@ func (t *Tree) writeChild(child *Node) (*Tree, error) {
 	}
 	byName[child.Name] = child
 
-	return &Tree{root: newRoot, byName: byName}, nil
+	return &Tree{root: newRoot, byName: byName, sink: t.sink}, nil
 }
 
 // copyPathToRoot copies every ancestor of newNode up to the root, swapping
@@ -502,12 +537,16 @@ func (t *Tree) copyPathToRoot(newNode *Node) (newRoot *Node, copied []*Node) {
 // by pointer. A node present in both trees must be logically identical —
 // same parent, type, author, and content — or the merge fails with
 // ErrDuplicateName and no tree is returned. Grafted nodes keep their
-// original InsertTime. See TheoryOfTree.
+// original InsertTime. The graft stages without reporting, so a
+// conflicting merge emits nothing; the applied writes are reported
+// together after the merge succeeds. See TheoryOfTree and
+// TheoryOfOperationLog.
 func (t *Tree) Merge(other *Tree) (*Tree, error) {
 	if other == nil {
 		return t, nil
 	}
-	cur := t
+	cur := t.withoutSink()
+	var applied []Op
 	var graft func(n *Node) error
 	graft = func(n *Node) error {
 		if existing, ok := cur.byName[n.Name]; ok {
@@ -518,19 +557,19 @@ func (t *Tree) Merge(other *Tree) (*Tree, error) {
 				return fmt.Errorf("%w: %q conflicts with the receiver's node", ErrDuplicateName, n.Name)
 			}
 		} else {
-			child := &Node{
-				Name:       n.Name,
+			next, op, err := cur.writeOp(WriteOp{
 				Parent:     n.Parent,
+				Name:       n.Name,
 				Type:       n.Type,
 				Author:     n.Author,
 				Content:    n.Content,
 				InsertTime: n.InsertTime,
-			}
-			next, err := cur.writeChild(child)
+			})
 			if err != nil {
 				return err
 			}
 			cur = next
+			applied = append(applied, op)
 		}
 		for _, c := range n.children {
 			if err := graft(c); err != nil {
@@ -547,7 +586,10 @@ func (t *Tree) Merge(other *Tree) (*Tree, error) {
 			return nil, err
 		}
 	}
-	return cur, nil
+	for _, op := range applied {
+		t.emitOp(op)
+	}
+	return cur.WithOpSink(t.sink), nil
 }
 
 // shallowCopy copies a node's value fields. The children slice is left nil:
@@ -575,22 +617,32 @@ type WriteOp struct {
 // an intermediate tree, so a failing op returns an error and leaves the
 // receiver untouched, and a successful batch returns one tree carrying
 // every write. Later ops may reference nodes written earlier in the batch.
+// The batch stages without reporting — a failed batch emits nothing — and
+// reports its applied operations together after the whole batch succeeds.
+// See TheoryOfOperationLog.
 func (t *Tree) WriteAll(ops ...WriteOp) (*Tree, error) {
-	cur := t
+	cur := t.withoutSink()
+	applied := make([]Op, 0, len(ops))
 	for _, op := range ops {
-		next, err := cur.writeOp(op)
+		next, appliedOp, err := cur.writeOp(op)
 		if err != nil {
 			return nil, err
 		}
 		cur = next
+		applied = append(applied, appliedOp)
 	}
-	return cur, nil
+	for _, op := range applied {
+		t.emitOp(op)
+	}
+	return cur.WithOpSink(t.sink), nil
 }
 
 // Modify returns a new tree with the named node's content replaced. The
 // node keeps its name, parent, type, author, children, and InsertTime, so
 // a rewrite changes what the node says, never where or when it was
-// written. The root is structural and cannot be modified. See TheoryOfTree.
+// written. The root is structural and cannot be modified. The applied
+// modification is reported to the tree's op sink. See TheoryOfTree and
+// TheoryOfOperationLog.
 func (t *Tree) Modify(name, content string) (*Tree, error) {
 	node, ok := t.byName[name]
 	if !ok {
@@ -626,12 +678,24 @@ func (t *Tree) Modify(name, content string) (*Tree, error) {
 	}
 	byName[modified.Name] = modified
 
-	return &Tree{root: newRoot, byName: byName}, nil
+	t.emitOp(Op{
+		Kind:    OpModify,
+		Parent:  node.Parent,
+		Name:    name,
+		Type:    node.Type,
+		Author:  node.Author,
+		Content: content,
+		Time:    time.Now(),
+	})
+
+	return &Tree{root: newRoot, byName: byName, sink: t.sink}, nil
 }
 
 // Delete returns a new tree with the named node and its descendants
 // removed. Their names leave the index, so they can be written again. The
-// root is structural and cannot be deleted. See TheoryOfTree.
+// root is structural and cannot be deleted. The applied deletion is
+// reported to the tree's op sink. See TheoryOfTree and
+// TheoryOfOperationLog.
 func (t *Tree) Delete(name string) (*Tree, error) {
 	node, ok := t.byName[name]
 	if !ok {
@@ -671,7 +735,17 @@ func (t *Tree) Delete(name string) (*Tree, error) {
 	}
 	drop(node)
 
-	return &Tree{root: newRoot, byName: byName}, nil
+	t.emitOp(Op{
+		Kind:    OpDelete,
+		Parent:  node.Parent,
+		Name:    name,
+		Type:    node.Type,
+		Author:  node.Author,
+		Content: node.Content,
+		Time:    time.Now(),
+	})
+
+	return &Tree{root: newRoot, byName: byName, sink: t.sink}, nil
 }
 
 // Abort marks the node as abandoned by writing an abort child under it,

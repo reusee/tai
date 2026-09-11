@@ -10,6 +10,7 @@ import (
 	"github.com/reusee/dscope"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/modes"
+	"github.com/reusee/tai/tree"
 )
 
 type analysisMockGenerator struct{}
@@ -68,17 +69,17 @@ func TestRunAnalysis(t *testing.T) {
 		// Recording must be enabled: with the default disabled state,
 		// StartSession is a no-op and no session row is inserted,
 		// causing the query below to fail with "sql: no rows in result
-		// set". Other tests in this package enable recording via the
-		// withRecorder helper; this test records an interaction to
-		// analyze, so it must enable recording too.
-		// See TheoryOfInteractionRecording.
+		// set". This test records a session to analyze, so it must
+		// enable recording. See TheoryOfInteractionRecording.
 		func() Enabled {
 			return Enabled(true)
 		},
 	).Call(func(recorder *Recorder, runAnalysis RunAnalysis) {
 		recorder.StartSession("test")
-		recorder.AttemptStart()
-		recorder.AttemptCompleted(nil)
+		tr := tree.New().WithOpSink(recorder.Sink())
+		if _, err := tr.Write("root", "user-1", tree.TypeUser, tree.AuthorUser, "task input"); err != nil {
+			t.Fatal(err)
+		}
 		recorder.EndSession(nil)
 
 		var id int64
@@ -103,8 +104,9 @@ func TestAnalysisSystemPromptContent(t *testing.T) {
 		"根因分析",
 		"改进建议",
 		"尝试",
-		"attempt_start",
-		"attempt_end",
+		"循环",
+		"会话树",
+		"节点",
 	} {
 		if !strings.Contains(analysisSystemPrompt, want) {
 			t.Fatalf("analysisSystemPrompt missing %q", want)

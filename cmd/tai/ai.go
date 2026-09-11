@@ -13,7 +13,6 @@ import (
 	"github.com/reusee/tai/modes"
 	"github.com/reusee/tai/nets"
 	"github.com/reusee/tai/pipeline"
-	"github.com/reusee/tai/records"
 )
 
 const TheoryOfAiCommand = `
@@ -128,7 +127,6 @@ var AICommand = apps.New("ai",
 		flagChats flags.Chats,
 		noMemory NoMemory,
 		loopRun pipeline.Run,
-		recorder *records.Recorder,
 		httpClient nets.HTTPClient,
 		getDefaultSummarizer pipeline.GetDefaultSummarizer,
 		summarizeThoughts flags.SummarizeThoughts,
@@ -180,21 +178,22 @@ var AICommand = apps.New("ai",
 		// OnIdle, which is invoked by the loop when no component triggers.
 		// This ensures automated actions (shell, ingest) are processed
 		// before prompting the user for input, and memory is persisted
-		// after each attempt via OnAttemptSuccess. The interaction
-		// recorder is passed explicitly so the session is captured when
-		// -record is enabled. The result is filled into result as the run
-		// progresses; every tree yield carries the run's full session
-		// tree — the loop's own event nodes included — and the terminal
-		// error, if any, arrives with the final yield's error component.
-		// See pipeline.TheoryOfIdleHandler, pipeline.TheoryOfLoops and
-		// pipeline.TheoryOfLoopEvents.
+		// after each attempt via OnAttemptSuccess. The loop's recording
+		// session is opened through the scope's recorder, so the session
+		// is captured when -record is enabled without the command
+		// carrying the recorder itself. The result is filled into result
+		// as the run progresses; every tree yield carries the run's full
+		// session tree — the loop's own event nodes included — and the
+		// terminal error, if any, arrives with the final yield's error
+		// component. See pipeline.TheoryOfIdleHandler,
+		// pipeline.TheoryOfLoops, pipeline.TheoryOfLoopEvents and
+		// records.TheoryOfInteractionRecording.
 		var result pipeline.Result
 		for _, e := range loopRun(ctx, pipeline.RunOptions{
-			Generator:           generator,
-			InitialState:        baseState,
-			Components:          comps.ComponentSet,
-			Command:             "ai",
-			InteractionRecorder: recorder,
+			Generator:    generator,
+			InitialState: baseState,
+			Components:   comps.ComponentSet,
+			Command:      "ai",
 			PhaseBuilder: func(g generators.Generator) generators.Phase {
 				return buildGenerate(g, nil)(nil)
 			},

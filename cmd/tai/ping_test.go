@@ -14,7 +14,6 @@ import (
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/pipeline"
-	"github.com/reusee/tai/records"
 	"github.com/reusee/tai/tree"
 )
 
@@ -277,7 +276,6 @@ func TestPingCommandUsesRunLoop(t *testing.T) {
 	// loudly here when the main signature changes.
 	mainFn := PingCommand.Main.(func(
 		Output,
-		*records.Recorder,
 		generators.GetDefaultGenerator,
 		generators.BuildGenerate,
 		pipeline.Run,
@@ -298,7 +296,6 @@ func TestPingCommandUsesRunLoop(t *testing.T) {
 	os.Stdout = w
 	mainFn(
 		Output(os.Stdout),
-		nil,
 		func() (generators.Generator, error) { return aiMockGenerator{}, nil },
 		func(generator generators.Generator, options *generators.GenerateOptions) generators.PhaseBuilder {
 			return func(cont generators.Phase) generators.Phase {
@@ -387,7 +384,6 @@ func TestPingCommandInjectsExtraSystemPrompt(t *testing.T) {
 	// loudly here when the main signature changes.
 	mainFn := PingCommand.Main.(func(
 		Output,
-		*records.Recorder,
 		generators.GetDefaultGenerator,
 		generators.BuildGenerate,
 		pipeline.Run,
@@ -406,7 +402,6 @@ func TestPingCommandInjectsExtraSystemPrompt(t *testing.T) {
 	os.Stdout = w
 	mainFn(
 		Output(os.Stdout),
-		nil,
 		func() (generators.Generator, error) { return aiMockGenerator{}, nil },
 		func(generator generators.Generator, options *generators.GenerateOptions) generators.PhaseBuilder {
 			return func(cont generators.Phase) generators.Phase {
@@ -471,7 +466,6 @@ func TestPingCommandThoughtsFlag(t *testing.T) {
 	// loudly here when the main signature changes.
 	mainFn := PingCommand.Main.(func(
 		Output,
-		*records.Recorder,
 		generators.GetDefaultGenerator,
 		generators.BuildGenerate,
 		pipeline.Run,
@@ -509,7 +503,6 @@ func TestPingCommandThoughtsFlag(t *testing.T) {
 			os.Stdout = w
 			mainFn(
 				Output(os.Stdout),
-				nil,
 				generator,
 				buildGen,
 				fakeRun,

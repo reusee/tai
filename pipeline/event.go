@@ -9,22 +9,23 @@ Run is the loop's single tree iterator: every notable occurrence during
 a generation run — attempt lifecycle, the generator spec of each
 attempt, retry decisions, handoffs, synthesized completion summaries,
 attempt finish reasons, per-attempt token usage, periodic thought
-summaries, component-triggered continuations, idle-handler input, and
-the context-assembly diagnostics replayed at startup — is recorded as
-one event node (an event-subtype type in Category event, program
-author) in the session tree, and then the FULL tree is yielded to the
-consumer (iter.Seq2[*tree.Tree, error]). There is no separate event
-stream: the events mechanism is fully merged into the tree, so the
-display front-end renders — and projects — the same tree the pipeline
-writes, never a separately maintained copy. Occurrences are recorded
-and yielded the moment their facts are known — an attempt node
-precedes its work, a handoff-start node precedes the handoff request,
-and a truncation node fires when truncation is detected, before the
-handoff summary is requested — so a live consumer sees what is
-happening as it happens; the terminal error, if any, arrives with the
-final yield's error component and ends the sequence. The *Result is
-still filled incrementally, so callers that only need the outcome drain
-the iterator and read the result, while callers that want live signals
+summaries, generator-level API events, component-triggered
+continuations, idle-handler input, and the context-assembly
+diagnostics replayed at startup — is recorded as one event node (an
+event-subtype type in Category event, program author) in the session
+tree, and then the FULL tree is yielded to the consumer
+(iter.Seq2[*tree.Tree, error]). There is no separate event stream: the
+events mechanism is fully merged into the tree, so the display
+front-end renders — and projects — the same tree the pipeline writes,
+never a separately maintained copy. Occurrences are recorded and
+yielded the moment their facts are known — an attempt node precedes
+its work, a handoff-start node precedes the handoff request, and a
+truncation node fires when truncation is detected, before the handoff
+summary is requested — so a live consumer sees what is happening as it
+happens; the terminal error, if any, arrives with the final yield's
+error component and ends the sequence. The *Result is still filled
+incrementally, so callers that only need the outcome drain the
+iterator and read the result, while callers that want live signals
 (a TUI, an observer) consume the trees as they stream.
 
 Event nodes hang under the current attempt node — one attempt
@@ -36,16 +37,19 @@ position attributes every occurrence to its attempt and, through it,
 to its goal loop; no attempt or loop number is stamped onto the node.
 The node type IS the event kind — one of the event subtypes
 (generator, finish, usage, truncated, retry, handoff-start, handoff,
-completed, synthesized-summary, thought-summary, continue, idle,
-run-error, context), and the goal runner writes goal verdicts as
-tree.TypeGoal structure nodes — while the node name carries the
-subtype as a prefix, made unique by AutoName, so typed event nodes
-carry their kind in their names. The node content is the
-human-readable description; multi-line content (handoff and
+completed, synthesized-summary, thought-summary, thought, api_call,
+api_error, continue, idle, run-error, context), and the goal runner
+writes goal verdicts as tree.TypeGoal structure nodes — while the node
+name carries the subtype as a prefix, made unique by AutoName, so
+typed event nodes carry their kind in their names. The node content is
+the human-readable description; multi-line content (handoff and
 completion summaries) collapses by default in the display front-end's
-Tree tab. Event nodes are program bookkeeping: every model-facing
-outline excludes them by category (treeOutlinePart, handoffOutlinePart),
-so the model never sees the loop's own bookkeeping.
+Tree tab. Change blocks and their results are block nodes, not event
+nodes; the thought, api_call, and api_error subtypes are the loop's
+own record of the attempt's reasoning and its generator-level API
+facts. Event nodes are program bookkeeping: every model-facing outline
+excludes them by category (treeOutlinePart, handoffOutlinePart), so
+the model never sees the loop's own bookkeeping.
 
 The attempt is the loop's bookkeeping unit: one pass through the
 phase chain, and one attempt structure node in the tree — the
@@ -72,7 +76,15 @@ flag overrides applied (the flags are dscope provided and captured by
 the Module.Run provider, mirroring the generators' flag-over-spec
 precedence). The node is the loop-level view: retries internal to the
 generator's Retrier are separate API calls not visible here, so one
-loop attempt may cover several requests.
+loop attempt may cover several requests. Generator-level events the
+generator writes through the scope's generators.EventRecorder — API
+calls and API errors — are buffered in the scope's generators.EventSink
+and drained by the loop after each attempt's phase chain and at the
+run's end, becoming event nodes of the same type under the attempt
+that served the request. The attempt's reasoning thoughts are
+recorded as one thought event node alongside the attempt's model node,
+so the trace stays in the record without entering any model-facing
+outline.
 
 Thought summaries join the same tree: the ThoughtsSummarize state
 layer forwards through an emitter installed by Module.Run, which
@@ -88,21 +100,26 @@ gotools.TheoryOfTokenComposition).
 
 loopState owns the guarded yield: after the consumer stops, the
 iterator contract forbids calling yield again, but the loop's
-bookkeeping — result filling, recorder calls, EndSession — must still
-complete, so event nodes are still written while further yields are
-dropped. runGeneration executes inside Run's iterator body and emits
-through the same guarded yield, so there is exactly one channel: the
-run's own iterator. Thought summaries are produced synchronously
+bookkeeping — result filling, session bookkeeping, EndSession — must
+still complete, so event nodes are still written while further yields
+are dropped. runGeneration executes inside Run's iterator body and
+emits through the same guarded yield, so there is exactly one channel:
+the run's own iterator. Thought summaries are produced synchronously
 inside phase execution on the loop's goroutine, so their reentrant
 yield is safe. Functions that produce values rather than occurrences
 — ProcessComponents, the Handoff option, the attempt callbacks — keep
 their signatures: they are steps of the loop, not streams, and the
 loop records their outcomes as event nodes.
 
-Event nodes complement the InteractionRecorder rather than replacing
-it: the recorder persists the full interaction transcript for
-analysis, while the tree is the in-band channel a live consumer
-observes during the run.
+The recorder persists the session's tree operation stream
+(records.TheoryOfInteractionRecording), not a parallel event stream:
+a fresh run opens the session through the resolved recorder and
+attaches its sink to the session tree, so every node write — event
+nodes included — is one recorded operation, and the session ends with
+the run's terminal error. A continued run — a goal loop — leaves
+session ownership to the runner, which attached the sink and opened
+the session before the loop. The tree is therefore both the record and
+the in-band channel a live consumer observes during the run.
 `
 
 // writeEventNode records one loop occurrence as an event node of the

@@ -20,6 +20,7 @@ import (
 	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/modes"
 	"github.com/reusee/tai/nets"
+	"github.com/reusee/tai/records"
 	"github.com/reusee/tai/tree"
 )
 
@@ -28,6 +29,13 @@ func withRun(t *testing.T, fn func(Run)) {
 	dscope.New(
 		modes.ForTest(t),
 		new(Module),
+	).Fork(
+		// A nil recorder keeps the loop's recording path inert: the
+		// tests assert the loop's behavior, not its record, and
+		// resolving the module's recorder provider would open the
+		// user's database. See
+		// records.TheoryOfInteractionRecording.
+		func() *records.Recorder { return nil },
 	).Call(func(run Run) {
 		fn(run)
 	})

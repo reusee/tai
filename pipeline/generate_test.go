@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/reusee/dscope"
-	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/changes"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
@@ -589,7 +588,7 @@ func TestCreateHandoffCancelledContext(t *testing.T) {
 	}
 	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
 	longInput := strings.Repeat("long incomplete text ", 10)
-	handoff, err := createHandoff(ctx, logger, nil, []generators.Generator{gen}, longInput, nil, nil)
+	handoff, err := createHandoff(ctx, logger, []generators.Generator{gen}, longInput, nil, nil)
 	if err != nil {
 		t.Fatalf("expected nil error when the context is cancelled, got %v", err)
 	}
@@ -613,7 +612,7 @@ func TestCreateHandoffRetriesOnGenerationFailure(t *testing.T) {
 	}
 	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
 	longInput := strings.Repeat("long incomplete text ", 10)
-	handoff, err := createHandoff(context.Background(), logger, nil, []generators.Generator{gen}, longInput, nil, nil)
+	handoff, err := createHandoff(context.Background(), logger, []generators.Generator{gen}, longInput, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -648,7 +647,7 @@ func TestCreateHandoffRetriesWithoutLimit(t *testing.T) {
 	}
 	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
 	longInput := strings.Repeat("long incomplete text ", 10)
-	handoff, err := createHandoff(context.Background(), logger, nil, []generators.Generator{gen}, longInput, nil, nil)
+	handoff, err := createHandoff(context.Background(), logger, []generators.Generator{gen}, longInput, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -681,7 +680,7 @@ func TestCreateHandoffWithBoundAbandonsAfterConsecutiveFailures(t *testing.T) {
 			errors.New("failure 3"),
 		},
 	}
-	_, err := createHandoffWithBound(context.Background(), logger, nil, []generators.Generator{errGen}, longInput, nil, nil, maxHandoffConsecutiveFailures)
+	_, err := createHandoffWithBound(context.Background(), logger, []generators.Generator{errGen}, longInput, nil, nil, maxHandoffConsecutiveFailures)
 	if err == nil {
 		t.Fatal("expected exhaustion error after 3 consecutive generation failures")
 	}
@@ -692,7 +691,7 @@ func TestCreateHandoffWithBoundAbandonsAfterConsecutiveFailures(t *testing.T) {
 	noBlockGen := &summarizeRetryMockGenerator{
 		responses: []string{"no block 1", "no block 2", "no block 3", "no block 4"},
 	}
-	_, err = createHandoffWithBound(context.Background(), logger, nil, []generators.Generator{noBlockGen}, longInput, nil, nil, maxHandoffConsecutiveFailures)
+	_, err = createHandoffWithBound(context.Background(), logger, []generators.Generator{noBlockGen}, longInput, nil, nil, maxHandoffConsecutiveFailures)
 	if err == nil {
 		t.Fatal("expected exhaustion error after 3 consecutive responses without a valid handoff block")
 	}
@@ -712,7 +711,7 @@ func TestCreateHandoffWithBoundAbandonsAfterConsecutiveFailures(t *testing.T) {
 			"", "", "<<黿鼍 handoff\nrecovered handoff text\n黿鼍",
 		},
 	}
-	handoff, err := createHandoffWithBound(context.Background(), logger, nil, []generators.Generator{recoveringGen}, longInput, nil, nil, maxHandoffConsecutiveFailures)
+	handoff, err := createHandoffWithBound(context.Background(), logger, []generators.Generator{recoveringGen}, longInput, nil, nil, maxHandoffConsecutiveFailures)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -737,7 +736,7 @@ func TestCreateHandoffGoalLoopBoundsRetries(t *testing.T) {
 			errors.New("failure 4"),
 		},
 	}
-	create := Module{}.CreateHandoff(logger, nil, func() ([]generators.Generator, error) {
+	create := Module{}.CreateHandoff(logger, func() ([]generators.Generator, error) {
 		return []generators.Generator{goalGen}, nil
 	}, nil, nil, 1)
 	if _, err := create(context.Background(), longInput); err == nil {
@@ -756,7 +755,7 @@ func TestCreateHandoffGoalLoopBoundsRetries(t *testing.T) {
 		},
 		responses: []string{"", "", "", "", "<<黿鼍 handoff\nunbounded handoff text\n黿鼍"},
 	}
-	create = Module{}.CreateHandoff(logger, nil, func() ([]generators.Generator, error) {
+	create = Module{}.CreateHandoff(logger, func() ([]generators.Generator, error) {
 		return []generators.Generator{plainGen}, nil
 	}, nil, nil, 0)
 	handoff, err := create(context.Background(), longInput)
@@ -790,7 +789,7 @@ func TestCreateHandoffLogsErrors(t *testing.T) {
 	var buf bytes.Buffer
 	logger := logs.Logger{slog.New(slog.NewTextHandler(&buf, nil))}
 	longInput := strings.Repeat("long incomplete text ", 10)
-	handoff, err := createHandoff(ctx, logger, nil, []generators.Generator{gen}, longInput, nil, nil)
+	handoff, err := createHandoff(ctx, logger, []generators.Generator{gen}, longInput, nil, nil)
 	if err != nil {
 		t.Fatalf("expected nil error when the context is cancelled, got %v", err)
 	}
@@ -853,185 +852,30 @@ func TestCreateHandoffProvider(t *testing.T) {
 	})
 }
 
-// fakeRecorderForSummarize is a minimal InteractionRecorder for testing
-// that summarize requests, responses, and decision events are recorded.
-// Contents and events are tracked separately so tests can assert both.
-type fakeRecorderForSummarize struct {
-	enabled  bool
-	contents []*generators.Content
-	events   []string
-}
-
-func TestCreateHandoffRecords(t *testing.T) {
-	longInput := strings.Repeat("long incomplete text ", 10)
-
-	t.Run("Enabled", func(t *testing.T) {
-		gen := &summarizeRetryMockGenerator{
-			responses: []string{
-				"<<黿鼍 handoff\nhandoff prompt text\n黿鼍",
-			},
-		}
-		logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
-		rec := &fakeRecorderForSummarize{enabled: true}
-		handoff, err := createHandoff(context.Background(), logger, rec, []generators.Generator{gen}, longInput, nil, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if handoff == nil {
-			t.Fatal("expected handoff summary")
-		}
-		if len(rec.contents) != 2 {
-			t.Fatalf("expected 2 recorded contents, got %d", len(rec.contents))
-		}
-		if rec.contents[0].Role != generators.RoleUser {
-			t.Fatalf("expected first content role user, got %s", rec.contents[0].Role)
-		}
-		if text, ok := rec.contents[0].Parts[0].(generators.Text); !ok || !strings.Contains(string(text), "long incomplete text") {
-			t.Fatalf("expected first content to include the incomplete text, got %v", rec.contents[0].Parts[0])
-		}
-		if rec.contents[1].Role != generators.RoleModel {
-			t.Fatalf("expected second content role model, got %s", rec.contents[1].Role)
-		}
-		if text, ok := rec.contents[1].Parts[0].(generators.Text); !ok || !strings.Contains(string(text), "handoff prompt text") {
-			t.Fatalf("expected second content to include the handoff prompt text, got %v", rec.contents[1].Parts[0])
-		}
-		if len(rec.events) != 0 {
-			t.Fatalf("expected no decision events on success, got %v", rec.events)
-		}
-	})
-
-	t.Run("Disabled", func(t *testing.T) {
-		gen := &summarizeRetryMockGenerator{
-			responses: []string{
-				"<<黿鼍 handoff\nhandoff prompt text\n黿鼍",
-			},
-		}
-		logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
-		rec := &fakeRecorderForSummarize{enabled: false}
-		_, err := createHandoff(context.Background(), logger, rec, []generators.Generator{gen}, longInput, nil, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(rec.contents) != 0 {
-			t.Fatalf("expected no recorded contents when disabled, got %d", len(rec.contents))
-		}
-		if len(rec.events) != 0 {
-			t.Fatalf("expected no recorded events when disabled, got %v", rec.events)
-		}
-	})
-
-	t.Run("RecordsFailure", func(t *testing.T) {
-		gen := &summarizeRetryMockGenerator{
-			errs: []error{
-				errors.New("failure"),
-			},
-			responses: []string{
-				"", // unused (first call errors)
-				"<<黿鼍 handoff\nhandoff prompt text\n黿鼍",
-			},
-		}
-		logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
-		rec := &fakeRecorderForSummarize{enabled: true}
-		handoff, err := createHandoff(context.Background(), logger, rec, []generators.Generator{gen}, longInput, nil, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if handoff == nil {
-			t.Fatal("expected handoff summary")
-		}
-		if len(rec.contents) != 4 {
-			t.Fatalf("expected 4 recorded contents, got %d", len(rec.contents))
-		}
-		if rec.contents[0].Role != generators.RoleUser {
-			t.Fatalf("expected content 0 role user, got %s", rec.contents[0].Role)
-		}
-		if rec.contents[1].Role != generators.RoleLog {
-			t.Fatalf("expected content 1 role log, got %s", rec.contents[1].Role)
-		}
-		if rec.contents[2].Role != generators.RoleUser {
-			t.Fatalf("expected content 2 role user, got %s", rec.contents[2].Role)
-		}
-		if rec.contents[3].Role != generators.RoleModel {
-			t.Fatalf("expected content 3 role model, got %s", rec.contents[3].Role)
-		}
-		if len(rec.events) != 1 {
-			t.Fatalf("expected 1 decision event, got %d: %v", len(rec.events), rec.events)
-		}
-		if !strings.Contains(rec.events[0], "generation error") || !strings.Contains(rec.events[0], "failure") {
-			t.Fatalf("unexpected decision event: %s", rec.events[0])
-		}
-	})
-}
-
-func TestCreateHandoffRecordsEmptyResponses(t *testing.T) {
-	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
-	longInput := strings.Repeat("long incomplete text ", 10)
-
-	t.Run("CancelledContextRecordsFinalAbort", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		gen := &summarizeRetryMockGenerator{
-			responses: []string{"", "", ""},
-			onCall: func(call int) {
-				if call == 2 {
-					cancel()
-				}
-			},
-		}
-		rec := &fakeRecorderForSummarize{enabled: true}
-		handoff, err := createHandoff(ctx, logger, rec, []generators.Generator{gen}, longInput, nil, nil)
-		if err != nil {
-			t.Fatalf("expected nil error when the context is cancelled, got %v", err)
-		}
-		if handoff != nil {
-			t.Fatalf("expected nil handoff on cancellation, got %+v", handoff)
-		}
-		if len(rec.events) != 4 {
-			t.Fatalf("expected 4 decision events (3 attempts + abort), got %d: %v",
-				len(rec.events), rec.events)
-		}
-		last := rec.events[len(rec.events)-1]
-		if !strings.Contains(last, "handoff incomplete output aborted") {
-			t.Fatalf("expected final abort event, got %s", last)
-		}
-	})
-}
-
-func TestCreateHandoffRecordsThoughts(t *testing.T) {
-	longInput := strings.Repeat("long incomplete text ", 10)
+func TestCreateHandoffPreservesRawMaterial(t *testing.T) {
+	// The handoff request runs outside the loop's state chain, so its
+	// raw output and its reasoning survive only through the delivered
+	// Handoff value: the loop writes them into the handoff event node.
+	// See TheoryOfHandoff.
+	raw := "<<黿鼍 handoff\nThe condensed body.\n黿鼍"
 	gen := &summarizeRetryMockGenerator{
-		thoughts: []string{"the model reasoned about the handoff here"},
-		responses: []string{
-			"",
-			"<<黿鼍 handoff\nhandoff prompt text\n黿鼍",
-		},
+		thoughts:  []string{"first reasoning"},
+		responses: []string{raw},
 	}
 	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
-	rec := &fakeRecorderForSummarize{enabled: true}
-	handoff, err := createHandoff(context.Background(), logger, rec, []generators.Generator{gen}, longInput, nil, nil)
+	longInput := strings.Repeat("long incomplete text ", 10)
+	handoff, err := createHandoff(context.Background(), logger, []generators.Generator{gen}, longInput, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if handoff == nil {
 		t.Fatal("expected handoff")
 	}
-	if handoff.Summary != "handoff prompt text" {
-		t.Fatalf("expected summary 'handoff prompt text', got %q", handoff.Summary)
+	if handoff.RawOutput != raw {
+		t.Fatalf("expected the raw output preserved, got %q", handoff.RawOutput)
 	}
-	if handoff.Prompt != "handoff prompt text" {
-		t.Fatalf("expected prompt 'handoff prompt text', got %q", handoff.Prompt)
-	}
-	var firstResponse string
-	for _, c := range rec.contents {
-		if c.Role == generators.RoleModel {
-			if text, ok := c.Parts[0].(generators.Text); ok {
-				firstResponse = string(text)
-			}
-			break
-		}
-	}
-	if !strings.Contains(firstResponse, "[thought]\nthe model reasoned about the handoff here") {
-		t.Fatalf("expected model thoughts in recorded response, got %q", firstResponse)
+	if len(handoff.Thoughts) != 1 || handoff.Thoughts[0] != "first reasoning" {
+		t.Fatalf("expected the request's reasoning preserved, got %v", handoff.Thoughts)
 	}
 }
 
@@ -1058,7 +902,7 @@ func TestCreateHandoffRejectsPlainTextWithoutBlock(t *testing.T) {
 	}
 	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
 	longInput := strings.Repeat("long incomplete text ", 10)
-	handoff, err := createHandoff(ctx, logger, nil, []generators.Generator{gen}, longInput, nil, nil)
+	handoff, err := createHandoff(ctx, logger, []generators.Generator{gen}, longInput, nil, nil)
 	if err != nil {
 		t.Fatalf("expected nil error when the context is cancelled, got %v", err)
 	}
@@ -1081,7 +925,7 @@ func TestCreateHandoffParsesHandoffBlockBody(t *testing.T) {
 	}
 	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
 	longInput := strings.Repeat("long incomplete text ", 10)
-	handoff, err := createHandoff(context.Background(), logger, nil, []generators.Generator{gen}, longInput, nil, nil)
+	handoff, err := createHandoff(context.Background(), logger, []generators.Generator{gen}, longInput, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1153,7 +997,7 @@ func TestCreateHandoffAccumulatesUsageAcrossAttempts(t *testing.T) {
 	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
 	input := strings.Repeat("long incomplete text ", 10)
 
-	handoff, err := createHandoff(context.Background(), logger, nil, []generators.Generator{gen}, input, nil, nil)
+	handoff, err := createHandoff(context.Background(), logger, []generators.Generator{gen}, input, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1182,7 +1026,7 @@ func TestCreateHandoffSkipsShortOutput(t *testing.T) {
 	}
 	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
 	shortInput := "too short"
-	handoff, err := createHandoff(context.Background(), logger, nil, []generators.Generator{gen}, shortInput, nil, nil)
+	handoff, err := createHandoff(context.Background(), logger, []generators.Generator{gen}, shortInput, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1233,7 +1077,7 @@ func TestCreateHandoffStreamsToDecorator(t *testing.T) {
 		return decoratorCapture{State: state, captured: &captured}
 	}
 	longInput := strings.Repeat("long incomplete text ", 10)
-	handoff, err := createHandoff(context.Background(), logger, nil, []generators.Generator{gen}, longInput, decorator, nil)
+	handoff, err := createHandoff(context.Background(), logger, []generators.Generator{gen}, longInput, decorator, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1268,7 +1112,7 @@ func TestCreateHandoffReportsLifecycle(t *testing.T) {
 	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
 	obs := &fakeHandoffObserver{}
 	longInput := strings.Repeat("long incomplete text ", 10)
-	handoff, err := createHandoff(context.Background(), logger, nil, []generators.Generator{gen}, longInput, nil, obs)
+	handoff, err := createHandoff(context.Background(), logger, []generators.Generator{gen}, longInput, nil, obs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1289,7 +1133,7 @@ func TestCreateHandoffReportsLifecycleOnFailure(t *testing.T) {
 	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
 	obs := &fakeHandoffObserver{}
 	longInput := strings.Repeat("long incomplete text ", 10)
-	handoff, err := createHandoff(ctx, logger, nil, []generators.Generator{gen}, longInput, nil, obs)
+	handoff, err := createHandoff(ctx, logger, []generators.Generator{gen}, longInput, nil, obs)
 	if err != nil {
 		t.Fatalf("expected nil error when the context is cancelled, got %v", err)
 	}
@@ -1304,34 +1148,6 @@ func TestCreateHandoffReportsLifecycleOnFailure(t *testing.T) {
 func (f *fakeHandoffObserver) HandoffEnd() { f.ended++ }
 
 func (f *fakeHandoffObserver) HandoffStart() { f.started++ }
-
-func (f *fakeRecorderForSummarize) Enabled() bool { return f.enabled }
-
-func (f *fakeRecorderForSummarize) StartSession(string) {}
-
-func (f *fakeRecorderForSummarize) EndSession(error) {}
-
-func (f *fakeRecorderForSummarize) SystemPrompt(string) {}
-
-func (f *fakeRecorderForSummarize) AttemptStart() {}
-
-func (f *fakeRecorderForSummarize) AttemptCompleted([]string) {}
-
-func (f *fakeRecorderForSummarize) AttemptTruncated() {}
-
-func (f *fakeRecorderForSummarize) AttemptError(error) {}
-
-func (f *fakeRecorderForSummarize) Content(content *generators.Content) {
-	f.contents = append(f.contents, content)
-}
-
-func (f *fakeRecorderForSummarize) Block(blocks.Block) {}
-
-func (f *fakeRecorderForSummarize) ParseError(*blocks.BlockParseError) {}
-
-func (f *fakeRecorderForSummarize) Event(typ string, detail string) {
-	f.events = append(f.events, typ+": "+detail)
-}
 
 func (debugOutputMockGenerator) Spec() generators.Spec {
 	return generators.Spec{ContextTokens: 100000}

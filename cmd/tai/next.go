@@ -14,7 +14,6 @@ import (
 	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/modes"
 	"github.com/reusee/tai/pipeline"
-	"github.com/reusee/tai/records"
 )
 
 const TheoryOfNextCommand = `
@@ -124,7 +123,6 @@ var NextCommand = apps.New("next",
 		buildChat pipeline.BuildChat,
 		flagThoughts flags.Thoughts,
 		loopRun pipeline.Run,
-		recorder *records.Recorder,
 		getDefaultSummarizer pipeline.GetDefaultSummarizer,
 		summarizeThoughts flags.SummarizeThoughts,
 	) {
@@ -164,20 +162,21 @@ var NextCommand = apps.New("next",
 		// tree. The phase chain (generate -> chat) drives the
 		// interactive session. Generation errors after content output
 		// retry with the error message fed back as user content. The
-		// interaction recorder is passed explicitly so the session is
-		// captured when -record is enabled. The result is filled into
-		// result as the run progresses; every tree yield carries the
-		// run's full session tree — the loop's own event nodes
-		// included — and the terminal error, if any, arrives with the
-		// final yield's error component. See pipeline.TheoryOfLoops and
-		// pipeline.TheoryOfLoopEvents.
+		// loop's recording session is opened through the scope's
+		// recorder, so the session is captured when -record is enabled
+		// without the command carrying the recorder itself. The result
+		// is filled into result as the run progresses; every tree yield
+		// carries the run's full session tree — the loop's own event
+		// nodes included — and the terminal error, if any, arrives with
+		// the final yield's error component. See pipeline.TheoryOfLoops,
+		// pipeline.TheoryOfLoopEvents and
+		// records.TheoryOfInteractionRecording.
 		var result pipeline.Result
 		for _, e := range loopRun(ctx, pipeline.RunOptions{
-			Generator:           generator,
-			InitialState:        state,
-			Components:          nil,
-			Command:             "next",
-			InteractionRecorder: recorder,
+			Generator:    generator,
+			InitialState: state,
+			Components:   nil,
+			Command:      "next",
 			PhaseBuilder: func(g generators.Generator) generators.Phase {
 				return buildGenerate(g, nil)(buildChat(g, nil)(nil))
 			},

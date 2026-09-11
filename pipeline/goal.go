@@ -12,6 +12,7 @@ import (
 	"github.com/reusee/prompts"
 	"github.com/reusee/tai/changes"
 	"github.com/reusee/tai/flags"
+	"github.com/reusee/tai/records"
 	"github.com/reusee/tai/tree"
 )
 
@@ -355,6 +356,13 @@ type GoalOptions struct {
 	// When empty, post-done loops keep the default model. See
 	// TheoryOfGoalReviewModel.
 	ReviewModels []string
+	// Recorder records the whole run as one session: the recorder's sink
+	// is attached to the run's session tree before the first loop, so
+	// every loop's operations join one session's operation stream, and
+	// the session ends after the last loop. A nil recorder records
+	// nothing. See TheoryOfGoalMode and
+	// records.TheoryOfInteractionRecording.
+	Recorder *records.Recorder
 }
 
 // GoalLoop is the 1-based number of the goal loop that a generation
@@ -718,8 +726,20 @@ func RunGoal(ctx context.Context, opts GoalOptions) GoalResult {
 	// One run, one tree: the run's session tree grows across loops, each
 	// loop writing its session nodes under its loop-N node. See
 	// TheoryOfGoalMode and TheoryOfSessionTree.
-	var runTree *tree.Tree
+	runTree := tree.New()
 	loopsRun := 0
+
+	// One run, one recorder session: the recorder's sink is attached to
+	// the run's session tree before the first loop, so every loop's
+	// operations join one session's operation stream, and the session
+	// ends after the last loop with the run's terminal error. A nil
+	// recorder (recording disabled or unavailable) records nothing. See
+	// TheoryOfGoalMode and records.TheoryOfInteractionRecording.
+	var runErr error
+	if opts.Recorder != nil && opts.Recorder.Enabled() {
+		runTree = runTree.WithOpSink(opts.Recorder.Sink())
+		opts.Recorder.StartSession("goal")
+	}
 
 	// The reporter routes every progress message: recorded as a goal
 	// event node plus the observer callback when one is set (a display
@@ -734,6 +754,16 @@ func RunGoal(ctx context.Context, opts GoalOptions) GoalResult {
 	state := &goalLoopState{}
 	var allStats []AttemptStat
 	var allDiffs []changes.FileDiff
+
+	if opts.Recorder != nil && opts.Recorder.Enabled() {
+		defer func() {
+			endErr := runErr
+			if state.achieved {
+				endErr = nil
+			}
+			opts.Recorder.EndSession(endErr)
+		}()
+	}
 
 	// runOneLoop executes one generation loop and folds its outcome into
 	// the runner state. It reports whether the run should stop after the
@@ -756,9 +786,6 @@ func RunGoal(ctx context.Context, opts GoalOptions) GoalResult {
 		// N" label so the display front-end's Tree tab distinguishes the
 		// loops' collapsed rows. See TheoryOfGoalMode and
 		// TheoryOfSessionTree.
-		if runTree == nil {
-			runTree = tree.New()
-		}
 		loopNode := goalLoopNodeName(loopsRun)
 		if next, werr := runTree.Write("root", loopNode, tree.TypeLoop, tree.AuthorProgram, fmt.Sprintf("goal loop %d", loopsRun)); werr == nil {
 			runTree = next
@@ -771,6 +798,12 @@ func RunGoal(ctx context.Context, opts GoalOptions) GoalResult {
 		// the next loop continues from it. See TheoryOfGoalMode.
 		if result.SessionTree != nil {
 			runTree = result.SessionTree
+		}
+		// A loop error is the run's terminal candidate: the session ends
+		// with it unless a later loop achieves the goal. See
+		// TheoryOfGoalMode.
+		if err != nil {
+			runErr = err
 		}
 		// A loop without a task is terminal: the generation pipeline has
 		// no chat input to generate against, so retrying loops cannot
@@ -814,9 +847,6 @@ func RunGoal(ctx context.Context, opts GoalOptions) GoalResult {
 		reporter.failure(fmt.Sprintf("Review failed: %v\n", err))
 	}
 
-	if runTree == nil {
-		runTree = tree.New()
-	}
 	return GoalResult{
 		Achieved: state.achieved,
 		LoopsRun: loopsRun,
@@ -902,14 +932,19 @@ func makeGoalLoopGenerator(reset dscope.Reset) GoalLoopGenerator {
 // reset to the resolving scope, so the command's forks (parts provider,
 // goal system prompt) apply to every loop. The goal tree observer is
 // resolved from the scope, so a display front-end's fork receives the
-// goal verdicts as goal structure nodes in the run's tree. The configured
-// review models rotate across the post-done loops, one per done block;
-// see TheoryOfGoalReviewModel.
+// goal verdicts as goal structure nodes in the run's tree. The recorder
+// is resolved from the scope too: when recording is enabled, the whole
+// run is one recorded session — the recorder's sink attached to the
+// run's tree and the session ended after the last loop — so every loop's
+// operations join one session's stream. The configured review models
+// rotate across the post-done loops, one per done block; see
+// TheoryOfGoalReviewModel.
 func (Module) GoalRun(
 	reset dscope.Reset,
 	runReview RunReview,
 	observeGoal GoalTreeObserver,
 	reviewModels ReviewModels,
+	recorder *records.Recorder,
 ) GoalRun {
 	models := make([]string, 0, len(reviewModels))
 	for _, model := range reviewModels {
@@ -924,6 +959,7 @@ func (Module) GoalRun(
 			Review:       runReview,
 			GoalTree:     observeGoal,
 			ReviewModels: models,
+			Recorder:     recorder,
 		})
 	}
 }

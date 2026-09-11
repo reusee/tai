@@ -44,10 +44,11 @@ func (o *OpenAI) Spec() Spec {
 	return o.spec
 }
 
-// recordEvent records an API-level event in the interaction transcript
-// when interaction recording is active. The recorder is injected as a
-// dscope dependency when the generator is constructed; the tai command
-// forks the EventRecorder provider with the records.Recorder value. See
+// recordEvent records an API-level event (api_call, api_error) in the
+// scope's generators.EventSink: the per-scope EventSink is the default
+// EventRecorder, injected as a dscope dependency when the generator is
+// constructed, and the generation loop drains the sink after each round,
+// recording every buffered event as a session-tree event node. See
 // generators.TheoryOfEventRecorder.
 func (o *OpenAI) recordEvent(typ string, detail string) {
 	if rec := o.EventRecorder(); rec != nil && rec.Enabled() {

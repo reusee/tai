@@ -16,7 +16,6 @@ import (
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/modes"
 	"github.com/reusee/tai/pipeline"
-	"github.com/reusee/tai/records"
 )
 
 const TheoryOfPingCommand = `
@@ -270,7 +269,6 @@ var PingCommand = apps.New("ping",
 	"Test whether a model is reachable and can emit blocks in the required format",
 	func(
 		output Output,
-		recorder *records.Recorder,
 		getDefaultGenerator generators.GetDefaultGenerator,
 		buildGenerate generators.BuildGenerate,
 		loopRun pipeline.Run,
@@ -321,7 +319,9 @@ var PingCommand = apps.New("ping",
 
 		// Run the unified generation loop in single-shot mode (no
 		// components). The loop handles ParserState wrapping, phase
-		// execution, and interaction recording; the TUI's finish-reason
+		// execution, and its own recording session (opened through the
+		// scope's recorder, so -record captures the session without the
+		// command carrying the recorder); the TUI's finish-reason
 		// observer is applied via RunOptions.StateDecorators when -tui
 		// is enabled. Parsed blocks are collected in result.RemainingBlocks
 		// because no component consumes them. The result is filled into
@@ -329,14 +329,14 @@ var PingCommand = apps.New("ping",
 		// run's full session tree — the loop's own event nodes included —
 		// and the terminal error, if any, arrives with the final yield's
 		// error component. See pipeline.TheoryOfLoops,
-		// pipeline.TheoryOfLoopEvents and TheoryOfTUI.
+		// pipeline.TheoryOfLoopEvents, records.TheoryOfInteractionRecording
+		// and TheoryOfTUI.
 		var result pipeline.Result
 		for _, e := range loopRun(ctx, pipeline.RunOptions{
-			Generator:           generator,
-			InitialState:        state,
-			Components:          nil,
-			Command:             "ping",
-			InteractionRecorder: recorder,
+			Generator:    generator,
+			InitialState: state,
+			Components:   nil,
+			Command:      "ping",
 			PhaseBuilder: func(g generators.Generator) generators.Phase {
 				return buildGenerate(g, nil)(nil)
 			},

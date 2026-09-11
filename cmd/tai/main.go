@@ -54,15 +54,11 @@ func main() {
 		return
 	}
 
-	// Every generation command resolves its generators in a scope that
-	// carries the interaction recorder as the generators-level
-	// EventRecorder. The binding is forked here, once, so commands do not
-	// wire it individually; generators record API-level events
-	// (api_call, api_error) through their dscope-injected EventRecorder
-	// instead of receiving the recorder through the context. See
+	// Generator-level events (api_call, api_error) are captured by the
+	// generators module's default EventRecorder — the scope's EventSink —
+	// and the generation loop drains the sink into session-tree event
+	// nodes. No command-side override is needed. See
 	// generators.TheoryOfEventRecorder.
-	scope = scope.Fork(eventRecorderDef)
-
 	if bool(scope.Get[Tui]()) {
 		runWithTUI(app, scope)
 		return
