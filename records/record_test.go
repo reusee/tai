@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/reusee/dscope"
 	"github.com/reusee/tai/generators"
@@ -85,11 +86,11 @@ func TestRecorderWritesTreeOperations(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, want := range []string{
-			"=== Session", "test-command", "status: success",
-			"operations: 3",
-			"root [root]",
-			"user-1 [user/user]", "| hello again",
-			"model-1 [model/model]", "| the answer",
+			"=== Session", "command=test-command", "status=success",
+			"operations=3",
+			"root type=root author= parent= time=",
+			"user-1 type=user author=user parent=root time=", "| hello again",
+			"model-1 type=model author=model parent=user-1 time=", "| the answer",
 		} {
 			if !strings.Contains(text, want) {
 				t.Fatalf("transcript missing %q:\n%s", want, text)
@@ -202,7 +203,10 @@ func TestListSessions(t *testing.T) {
 			t.Fatal(err)
 		}
 		out := buf.String()
-		for _, want := range []string{"first", "second", "ID", "Command", "Status", "Ops"} {
+		for _, want := range []string{
+			"id=1", "command=first", "status=success", "operations=1",
+			"id=2", "command=second", "operations=0",
+		} {
 			if !strings.Contains(out, want) {
 				t.Fatalf("listing missing %q:\n%s", want, out)
 			}
@@ -270,11 +274,48 @@ func TestTranscriptRendersDeletedSubtrees(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(text, "user-1 [user/user]") || !strings.Contains(text, "| kept") {
+		if !strings.Contains(text, "user-1 type=user author=user") || !strings.Contains(text, "| kept") {
 			t.Fatalf("transcript must carry the surviving node, got:\n%s", text)
 		}
 		if strings.Contains(text, "user-2 ") || strings.Contains(text, "| removed") {
 			t.Fatalf("the deleted subtree must not appear in the replayed tree, got:\n%s", text)
+		}
+	})
+}
+
+// TestTranscriptCarriesNodeMetadata verifies that the transcript renders
+// each node's complete metadata: the write's insert time survives the
+// record-replay round trip and appears on the node line alongside the
+// parent, type, and author.
+func TestTranscriptCarriesNodeMetadata(t *testing.T) {
+	withRecorder(t, true, func(recorder *Recorder) {
+		recorder.StartSession("test")
+		tr := tree.New().WithOpSink(recorder.Sink())
+		insertTime := time.Date(2024, 5, 1, 12, 30, 0, 0, time.UTC)
+		tr, err := tr.WriteAll(tree.WriteOp{
+			Parent:     "root",
+			Name:       "user-1",
+			Type:       tree.TypeUser,
+			Author:     tree.AuthorUser,
+			Content:    "hello",
+			InsertTime: insertTime,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		recorder.EndSession(nil)
+
+		var id int64
+		if err := recorder.db.QueryRow(`SELECT id FROM sessions LIMIT 1`).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		text, err := Transcript(recorder, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := "user-1 type=user author=user parent=root time=" + insertTime.Format(time.RFC3339Nano)
+		if !strings.Contains(text, want) {
+			t.Fatalf("transcript must carry the node's complete metadata, got:\n%s", text)
 		}
 	})
 }

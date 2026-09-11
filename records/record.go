@@ -32,7 +32,9 @@ operation stream (tree.Replay), rendered node by node with its full
 content: the whole session is recoverable from what was recorded —
 system prompt, user inputs, model output and reasoning thoughts,
 generated blocks, their processing results, loop and attempt structure,
-event nodes, and errors — with no second, parallel transcript.
+event nodes, and errors — with no second, parallel transcript. The
+session listing, the transcript header, and every tree node line render
+metadata uniformly as key=value pairs.
 
 A session is one recording lifetime: one generation run, or one goal run
 spanning its loops. The recorder is attached to the tree with

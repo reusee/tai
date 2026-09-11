@@ -22,8 +22,8 @@ type SessionInfo struct {
 	OpCount     int
 }
 
-// listSessions writes a table of recent sessions, most recent first, to
-// output. See TheoryOfInteractionRecording.
+// listSessions writes one key=value metadata line per session, most
+// recent first, to output. See TheoryOfInteractionRecording.
 func listSessions(recorder *Recorder, limit int, output io.Writer) error {
 	if recorder == nil || recorder.db == nil {
 		return fmt.Errorf("session database not available")
@@ -39,13 +39,13 @@ LIMIT ?`, limit)
 		return err
 	}
 	defer rows.Close()
-	fmt.Fprintf(output, "%-6s %-10s %-20s %-8s %6s\n", "ID", "Command", "Start", "Status", "Ops")
 	for rows.Next() {
 		var info SessionInfo
 		if err := rows.Scan(&info.ID, &info.Command, &info.StartTime, &info.EndTime, &info.Status, &info.Error, &info.OpCount); err != nil {
 			return err
 		}
-		fmt.Fprintf(output, "%-6d %-10s %-20s %-8s %6d\n", info.ID, info.Command, info.StartTime, info.Status, info.OpCount)
+		fmt.Fprintf(output, "id=%d command=%s start=%s status=%s operations=%d\n",
+			info.ID, info.Command, info.StartTime, info.Status, info.OpCount)
 	}
 	return rows.Err()
 }
@@ -74,19 +74,20 @@ func Transcript(recorder *Recorder, sessionID int64) (string, error) {
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "=== Session %d: %s ===\n", sessionID, command)
+	fmt.Fprintf(&b, "=== Session %d ===\n", sessionID)
+	fmt.Fprintf(&b, "command=%s\n", command)
 	if commandLine != "" {
-		fmt.Fprintf(&b, "command line: %s\n", commandLine)
+		fmt.Fprintf(&b, "command_line=%s\n", commandLine)
 	}
-	fmt.Fprintf(&b, "start: %s\n", startTime)
+	fmt.Fprintf(&b, "start=%s\n", startTime)
 	if endTime != "" {
-		fmt.Fprintf(&b, "end: %s\n", endTime)
+		fmt.Fprintf(&b, "end=%s\n", endTime)
 	}
-	fmt.Fprintf(&b, "status: %s\n", status)
+	fmt.Fprintf(&b, "status=%s\n", status)
 	if errMsg != "" {
-		fmt.Fprintf(&b, "error: %s\n", errMsg)
+		fmt.Fprintf(&b, "error=%s\n", errMsg)
 	}
-	fmt.Fprintf(&b, "operations: %d\n", len(ops))
+	fmt.Fprintf(&b, "operations=%d\n", len(ops))
 
 	tr, err := tree.Replay(ops)
 	if err != nil {
@@ -128,16 +129,15 @@ func loadOps(recorder *Recorder, sessionID int64) ([]tree.Op, error) {
 }
 
 // writeTreeText renders a node and its subtree as an indented outline:
-// every line carries the node's name, type, and author, and the node's
-// full content follows as indented lines, so a transcript loses none of
-// the recorded material.
+// every line carries the node's complete metadata as key=value pairs —
+// type, author, parent, and insert time — after the node name, and the
+// node's full content follows as indented lines, so a transcript loses
+// none of the recorded material.
 func writeTreeText(b *strings.Builder, n *tree.Node, depth int) {
 	indent := strings.Repeat("  ", depth)
-	if n.Author != "" {
-		fmt.Fprintf(b, "%s%s [%s/%s]\n", indent, n.Name, n.Type, n.Author)
-	} else {
-		fmt.Fprintf(b, "%s%s [%s]\n", indent, n.Name, n.Type)
-	}
+	timeText := n.InsertTime.Format(time.RFC3339Nano)
+	fmt.Fprintf(b, "%s%s type=%s author=%s parent=%s time=%s\n",
+		indent, n.Name, n.Type, n.Author, n.Parent, timeText)
 	if n.Content != "" {
 		for _, line := range strings.Split(n.Content, "\n") {
 			fmt.Fprintf(b, "%s| %s\n", indent, line)
