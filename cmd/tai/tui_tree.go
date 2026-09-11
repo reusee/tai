@@ -51,10 +51,10 @@ Tree tab theory (cmd/tai):
   and type fragments together (category+type is the complete
   classification, so both appear on every row), the content's first
   non-blank line as the preview, the attempt node's jump marker, and
-  the right-aligned elapsed timer, colored by role. Stream rows record
-  expandable false, so the fold controls and double-click toggles are
-  inert, while the click and title-status paths still map presses onto
-  nodes.
+  the right-aligned elapsed timer, in the node's configured line
+  color. Stream rows record expandable false, so the fold controls
+  and double-click toggles are inert, while the click and
+  title-status paths still map presses onto nodes.
 - Every node renders one line by default: "{category emoji} {category}
   {type emoji} {type} {fold slot} first content line". The node name
   and author are secondary to the user, so the collapsed row hides
@@ -131,12 +131,12 @@ Tree tab theory (cmd/tai):
   state, so the next press folds and re-snapshots again. Nodes that
   arrive after the snapshot keep the default collapsed form on
   restore. Every other focus folds the Output tab's sections.
-- Node lines are colored by author and category: event-category and
-  error nodes in the log color, user inputs in the user color,
-  program nodes in the system color, model nodes in the default
-  foreground. The tab alternates the two background shades per node:
-  all display lines of one node share one shade, and consecutive
-  nodes alternate.
+- Node lines carry no built-in role colors: the configured
+  tui.tree_colors rules decide the foreground of every tree line —
+  the first rule whose every non-empty field (category, type, author)
+  matches the node wins, and no match keeps the default foreground.
+  The tab alternates the two background shades per node: all display
+  lines of one node share one shade, and consecutive nodes alternate.
 - Each node's first display line right-aligns the elapsed timer
   ("+0:07") from the session start to the node's insert time; a pane
   too narrow for the timer omits it.
@@ -481,21 +481,25 @@ func treeNodeTypeText(n *tree.Node) string {
 	return n.Type.Emoji() + " " + string(n.Type)
 }
 
-// treeLineColor maps a node to its display color: event-category and
-// error nodes in the log color, user inputs in the user color,
-// program nodes in the system color, model nodes in the default
-// foreground. See TheoryOfTreeTab.
+// treeLineColor maps a node to its display color: the configured
+// tui.tree_colors rules decide it, first match wins. A rule applies
+// when every non-empty field — category, type, author — matches the
+// node; an empty rule list and no match keep the default foreground.
+// See TheoryOfTreeTab.
 func treeLineColor(n *tree.Node) taiui.Color {
-	switch {
-	case n.Category() == tree.CategoryEvent || n.Type == tree.TypeError:
-		return outputColorLogLine
-	case n.Author == tree.AuthorUser:
-		return outputColorUserLine
-	case n.Author == tree.AuthorProgram:
-		return outputColorSystemLine
-	default:
-		return taiui.NoColor
+	for _, rule := range treeColorRules {
+		if rule.category != "" && rule.category != string(n.Category()) {
+			continue
+		}
+		if rule.nodeType != "" && rule.nodeType != string(n.Type) {
+			continue
+		}
+		if rule.author != "" && rule.author != string(n.Author) {
+			continue
+		}
+		return rule.color
 	}
+	return taiui.NoColor
 }
 
 // formatTreeElapsed renders an elapsed duration as a stopwatch
@@ -704,8 +708,8 @@ func (t *TUI) treeStreamDisplay(contentWidth int, base taiui.Color) []taiui.Line
 // so both appear on every row — the content's first non-blank line as
 // the preview, and the attempt node's jump marker, truncated to the
 // pane width with the elapsed timer right-aligned — the same timer
-// layout the tree rows render. The row keeps the node's role color, so
-// the stream reads by role. See TheoryOfTreeTab.
+// layout the tree rows render. The row carries the node's configured
+// line color. See TheoryOfTreeTab.
 func treeStreamNodeLines(n *tree.Node, elapsed time.Duration, shade taiui.Color, contentWidth int, options displaywidth.Options) []taiui.Line {
 	text := treeNodeCategoryText(n) + " " + treeNodeTypeText(n)
 	if first := treeFirstLine(n); first != "" {

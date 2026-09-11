@@ -606,6 +606,41 @@ func TestTreeElapsedTimer(t *testing.T) {
 	}
 }
 
+func TestTreeLineColorRules(t *testing.T) {
+	prev := treeColorRules
+	defer func() { treeColorRules = prev }()
+
+	node := &tree.Node{Type: tree.TypeError, Author: tree.AuthorProgram}
+	treeColorRules = nil
+	if got := treeLineColor(node); got != taiui.NoColor {
+		t.Fatalf("no rules: color = %v, want NoColor", got)
+	}
+
+	treeColorRules = []treeColorRule{
+		{category: "error", color: taiui.HexColor(0xff0000)},
+		{author: "user", color: taiui.HexColor(0x00ff00)},
+	}
+	if got := treeLineColor(node); got != taiui.HexColor(0xff0000) {
+		t.Fatalf("category match: color = %v, want red", got)
+	}
+	user := &tree.Node{Author: tree.AuthorUser}
+	if got := treeLineColor(user); got != taiui.HexColor(0x00ff00) {
+		t.Fatalf("author match: color = %v, want green", got)
+	}
+
+	treeColorRules = []treeColorRule{
+		{category: "message", color: taiui.HexColor(0x0000ff)},
+		{author: "user", color: taiui.HexColor(0x00ff00)},
+	}
+	if got := treeLineColor(user); got != taiui.HexColor(0x00ff00) {
+		t.Fatalf("category mismatch falls through: color = %v, want green", got)
+	}
+	model := &tree.Node{Author: tree.AuthorModel}
+	if got := treeLineColor(model); got != taiui.NoColor {
+		t.Fatalf("no match: color = %v, want NoColor", got)
+	}
+}
+
 // TestTreeHeaderAlignment verifies the global column alignment: every
 // header pads its category fragment to the widest visible category
 // fragment and its type fragment to the widest visible type fragment,
@@ -663,6 +698,25 @@ func TestTreeHeaderAlignment(t *testing.T) {
 	contentCol2, ok2 := columnOf(display[2], "z")
 	if !ok2 || contentCol2 != contentCol0 {
 		t.Fatalf("expected the deep node's content at the fixed content column, got %q", display[2].Text)
+	}
+}
+
+func TestUIStyleTreeColors(t *testing.T) {
+	style := UIStyle{TreeColors: []TreeColorRule{{Category: "event", Color: "red"}}}
+	merged := UIStyle{}.fillFrom(style)
+	if len(merged.TreeColors) != 1 || merged.TreeColors[0].Category != "event" {
+		t.Fatalf("fillFrom lost tree colors: %+v", merged.TreeColors)
+	}
+	rules := style.treeColorRulesOf()
+	if len(rules) != 1 || rules[0].category != "event" {
+		t.Fatalf("treeColorRulesOf = %+v", rules)
+	}
+	if rules[0].color == taiui.NoColor || !rules[0].color.Valid() {
+		t.Fatalf("decoded color = %v, want a valid color", rules[0].color)
+	}
+	empty := UIStyle{}.treeColorRulesOf()
+	if len(empty) != 0 {
+		t.Fatalf("empty style rules = %+v, want none", empty)
 	}
 }
 

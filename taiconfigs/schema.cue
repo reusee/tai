@@ -287,6 +287,12 @@ tui?: {
 	input_focused_fg?: string
 	// input_unfocused_fg colors the chat input line while unfocused.
 	input_unfocused_fg?: string
+	tree_colors?: [...{
+		category?: string
+		type?: string
+		author?: string
+		color?: string
+	}]
 }
 // thoughts_summarize_language sets the output language for thought summaries.
 // When empty (the default), no language hint is given to the summarizer.

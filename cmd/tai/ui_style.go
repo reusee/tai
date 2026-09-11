@@ -28,9 +28,27 @@ UI style theory:
   foreground setting keeps the built-in default. taiui.AltBG returns
   an unset base unchanged, so configuring a background re-activates
   the log alternation without further wiring.
+- Tree tab node lines carry no built-in role colors: the configured
+  tui.tree_colors rules decide the foreground of every tree line —
+  the first rule whose every non-empty field (category, type, author)
+  matches the node wins, and no match keeps the default foreground.
+  The role colors stay scoped to the Output tab's roleColor.
 `
 
 var _ configs.Config = UIStyle{}
+
+// TreeColorRule is one rule of the tui.tree_colors configuration: a
+// foreground color for the tree tab's node lines. Every non-empty
+// field — category, type, author — must match the node for the rule
+// to apply; an empty field matches any node. color accepts a W3C
+// name or a "#rrggbb" hex value; an empty color keeps the default
+// foreground.
+type TreeColorRule struct {
+	Category string `json:"category"`
+	Type     string `json:"type"`
+	Author   string `json:"author"`
+	Color    string `json:"color"`
+}
 
 // UIStyle carries the terminal UI's configurable colors, decoded from
 // the tui config section. Every field is a color string, a W3C name
@@ -38,18 +56,19 @@ var _ configs.Config = UIStyle{}
 // background; an empty foreground field keeps the built-in default.
 // See TheoryOfUIStyle.
 type UIStyle struct {
-	TabUnfocusedBG   string `json:"tab_unfocused_bg"`
-	TabFocusedBG     string `json:"tab_focused_bg"`
-	LabelFG          string `json:"label_fg"`
-	FocusLabelFG     string `json:"focus_label_fg"`
-	UnseenDotColor   string `json:"unseen_dot_color"`
-	UserColor        string `json:"user_color"`
-	ToolColor        string `json:"tool_color"`
-	SystemColor      string `json:"system_color"`
-	LogColor         string `json:"log_color"`
-	ThoughtColor     string `json:"thought_color"`
-	InputFocusedFG   string `json:"input_focused_fg"`
-	InputUnfocusedFG string `json:"input_unfocused_fg"`
+	TabUnfocusedBG   string          `json:"tab_unfocused_bg"`
+	TabFocusedBG     string          `json:"tab_focused_bg"`
+	LabelFG          string          `json:"label_fg"`
+	FocusLabelFG     string          `json:"focus_label_fg"`
+	UnseenDotColor   string          `json:"unseen_dot_color"`
+	UserColor        string          `json:"user_color"`
+	ToolColor        string          `json:"tool_color"`
+	SystemColor      string          `json:"system_color"`
+	LogColor         string          `json:"log_color"`
+	ThoughtColor     string          `json:"thought_color"`
+	InputFocusedFG   string          `json:"input_focused_fg"`
+	InputUnfocusedFG string          `json:"input_unfocused_fg"`
+	TreeColors       []TreeColorRule `json:"tree_colors"`
 }
 
 // ConfigPaths registers the tui config section.
@@ -75,7 +94,8 @@ func (s UIStyle) HandleConfig(path string, values []*cue.Value) (any, error) {
 }
 
 // fillFrom returns a copy whose still-empty fields take parsed's
-// non-empty ones; fields already set survive.
+// non-empty ones; fields already set survive. A rule list set by one
+// config file survives the empty lists of the others.
 func (s UIStyle) fillFrom(parsed UIStyle) UIStyle {
 	if s.TabUnfocusedBG == "" {
 		s.TabUnfocusedBG = parsed.TabUnfocusedBG
@@ -113,6 +133,9 @@ func (s UIStyle) fillFrom(parsed UIStyle) UIStyle {
 	if s.InputUnfocusedFG == "" {
 		s.InputUnfocusedFG = parsed.InputUnfocusedFG
 	}
+	if len(s.TreeColors) == 0 {
+		s.TreeColors = parsed.TreeColors
+	}
 	return s
 }
 
@@ -127,6 +150,7 @@ func (s UIStyle) apply() {
 	outputColorSystemLine = s.systemColor()
 	outputColorLogLine = s.logColor()
 	outputColorThoughtLine = s.thoughtColor()
+	treeColorRules = s.treeColorRulesOf()
 }
 
 // panelStyleOf derives the panel style: empty background settings
@@ -196,6 +220,37 @@ func parseFGColor(setting string, fallback taiui.Color) taiui.Color {
 		return fallback
 	}
 	return color.GetColor(setting)
+}
+
+// treeColorRule is one resolved tree color rule: the color string is
+// decoded once at startup, so rendering never parses settings per
+// frame. An empty color keeps the default foreground.
+type treeColorRule struct {
+	category string
+	nodeType string
+	author   string
+	color    taiui.Color
+}
+
+// treeColorRules holds the resolved tui.tree_colors rules; the zero
+// value keeps every tree line in the default foreground.
+var treeColorRules []treeColorRule
+
+// treeColorRulesOf derives the tree tab color rules from the
+// configuration: the color strings are decoded with the shared
+// foreground parser, so an empty or unrecognized setting yields the
+// default foreground.
+func (s UIStyle) treeColorRulesOf() []treeColorRule {
+	rules := make([]treeColorRule, 0, len(s.TreeColors))
+	for _, r := range s.TreeColors {
+		rules = append(rules, treeColorRule{
+			category: r.Category,
+			nodeType: r.Type,
+			author:   r.Author,
+			color:    parseFGColor(r.Color, taiui.NoColor),
+		})
+	}
+	return rules
 }
 
 // UIStyle provides the zero style: the built-in defaults, no
