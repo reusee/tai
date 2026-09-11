@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/reusee/dscope"
+	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/modes"
 	"github.com/reusee/tai/tree"
@@ -85,12 +86,19 @@ func TestRecorderWritesTreeOperations(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		// Each event renders as a boundary-delimited block of kind
+		// "event": the operation's metadata is the URI query of the
+		// opening header, the content the operation wrote is the block
+		// body. See TheoryOfInteractionRecording.
 		for _, want := range []string{
 			"=== Session", "command=test-command", "status=success",
 			"operations=3",
-			"user-1 kind=write type=user author=user parent=root time=", "| hello again",
-			"user-1 kind=modify",
-			"model-1 kind=write type=model author=model parent=user-1 time=", "| the answer",
+			"<<貞觀 event:?name=user-1&kind=write&type=user&author=user&parent=root&time=",
+			"\nhello\nworld\n",
+			"name=user-1&kind=modify",
+			"\nhello again\n",
+			"name=model-1&kind=write&type=model&author=model&parent=user-1&time=",
+			"\nthe answer\n",
 		} {
 			if !strings.Contains(text, want) {
 				t.Fatalf("transcript missing %q:\n%s", want, text)
@@ -249,8 +257,8 @@ func TestSessionNotFound(t *testing.T) {
 
 // TestTranscriptCarriesNodeMetadata verifies that the transcript renders
 // each write event's complete metadata: the write's insert time survives
-// the record-render round trip and appears on the event line alongside
-// the parent, type, and author.
+// the record-render round trip and appears in the event block's URI
+// query alongside the parent, type, and author.
 func TestTranscriptCarriesNodeMetadata(t *testing.T) {
 	withRecorder(t, true, func(recorder *Recorder) {
 		recorder.StartSession("test")
@@ -277,7 +285,8 @@ func TestTranscriptCarriesNodeMetadata(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := "user-1 kind=write type=user author=user parent=root time=" + insertTime.Format(time.RFC3339Nano)
+		want := "<<貞觀 event:?name=user-1&kind=write&type=user&author=user&parent=root&time=" +
+			percentEncodeEventValue(insertTime.Format(time.RFC3339Nano))
 		if !strings.Contains(text, want) {
 			t.Fatalf("transcript must carry the event's complete metadata, got:\n%s", text)
 		}
@@ -317,13 +326,13 @@ func TestTranscriptRendersDeleteEvents(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(text, "user-1 kind=write type=user author=user parent=root") || !strings.Contains(text, "| kept") {
+		if !strings.Contains(text, "<<貞觀 event:?name=user-1&kind=write&type=user&author=user&parent=root") || !strings.Contains(text, "\nkept\n") {
 			t.Fatalf("the surviving node's write event must carry its content, got:\n%s", text)
 		}
-		if !strings.Contains(text, "user-2 kind=write") || !strings.Contains(text, "| removed") {
+		if !strings.Contains(text, "name=user-2&kind=write") || !strings.Contains(text, "\nremoved\n") {
 			t.Fatalf("the deleted node's write event must carry the content it had when written, got:\n%s", text)
 		}
-		if !strings.Contains(text, "user-2 kind=delete") {
+		if !strings.Contains(text, "name=user-2&kind=delete") {
 			t.Fatalf("the delete must appear as its own event, got:\n%s", text)
 		}
 	})
@@ -354,7 +363,7 @@ func TestTranscriptEventStreamOrder(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		wantOrder := []string{"user-1 kind=write", "attempt-1 kind=write", "model-1 kind=write"}
+		wantOrder := []string{"name=user-1&kind=write", "name=attempt-1&kind=write", "name=model-1&kind=write"}
 		prev := -1
 		for _, want := range wantOrder {
 			idx := strings.Index(text, want)
@@ -366,10 +375,69 @@ func TestTranscriptEventStreamOrder(t *testing.T) {
 			}
 			prev = idx
 		}
-		for _, want := range []string{"| first", "| attempt 1", "| second"} {
+		for _, want := range []string{"\nfirst\n", "\nattempt 1\n", "\nsecond\n"} {
 			if !strings.Contains(text, want) {
 				t.Fatalf("transcript must carry the content line %q, got:\n%s", want, text)
 			}
+		}
+	})
+}
+
+// TestTranscriptEventsParseAsBlocks verifies the transcript's event
+// stream is machine-parseable: each event renders as a block of kind
+// "event" with its metadata percent-encoded into the URI query, and
+// blocks.ParseBlocks recovers every event's metadata and content in
+// application order. An event whose content carries a preset delimiter
+// moves to the next delimiter in the list, so the body never collides
+// with its own closing marker. See TheoryOfInteractionRecording.
+func TestTranscriptEventsParseAsBlocks(t *testing.T) {
+	withRecorder(t, true, func(recorder *Recorder) {
+		recorder.StartSession("test")
+		tr := tree.New().WithOpSink(recorder.Sink())
+		if _, err := tr.Write("root", "user-1", tree.TypeUser, tree.AuthorUser, "plain content"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tr.Write("root", "user-2", tree.TypeUser, tree.AuthorUser, "carries 貞觀 inside"); err != nil {
+			t.Fatal(err)
+		}
+		recorder.EndSession(nil)
+
+		var id int64
+		if err := recorder.db.QueryRow(`SELECT id FROM sessions LIMIT 1`).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		text, err := Transcript(recorder, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		parsed, err := blocks.ParseBlocks([]byte(text))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(parsed) != 2 {
+			t.Fatalf("expected 2 event blocks, got %d:\n%s", len(parsed), text)
+		}
+		first, second := parsed[0], parsed[1]
+		if first.Kind != "event" || second.Kind != "event" {
+			t.Fatalf("blocks must be events, got %q and %q", first.Kind, second.Kind)
+		}
+		if first.Boundary != eventBlockDelimiters[0] {
+			t.Fatalf("first block must use the first preset delimiter, got %q", first.Boundary)
+		}
+		if second.Boundary != eventBlockDelimiters[1] {
+			t.Fatalf("content carrying a preset delimiter must move to the next delimiter, got %q", second.Boundary)
+		}
+		if first.Attributes["name"] != "user-1" || first.Attributes["kind"] != "write" ||
+			first.Attributes["type"] != "user" || first.Attributes["author"] != "user" ||
+			first.Attributes["parent"] != "root" {
+			t.Fatalf("first block metadata mismatch: %v", first.Attributes)
+		}
+		if first.Body != "plain content" {
+			t.Fatalf("first block body must carry the node content, got %q", first.Body)
+		}
+		if second.Attributes["name"] != "user-2" || second.Attributes["kind"] != "write" ||
+			second.Body != "carries 貞觀 inside" {
+			t.Fatalf("second block mismatch: %v %q", second.Attributes, second.Body)
 		}
 	})
 }

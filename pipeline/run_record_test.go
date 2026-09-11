@@ -47,8 +47,9 @@ func TestRunRecordsFreshSession(t *testing.T) {
 	// through the resolved recorder, attaches the sink to the run's
 	// tree, and ends the session with the run's outcome. The recorded
 	// stream is the run's tree operations, so the transcript renders
-	// them as an event stream: one line per applied operation, its
-	// metadata as key=value pairs, the content it wrote below. See
+	// them as an event stream: one boundary-delimited event block per
+	// applied operation, its metadata percent-encoded into the opening
+	// header's URI query, the content it wrote as the block body. See
 	// records.TheoryOfInteractionRecording.
 	withRecorderRun(t, nil, func(run Run, recorder *records.Recorder) {
 		result, err := runOnce(run, RunOptions{
@@ -77,14 +78,14 @@ func TestRunRecordsFreshSession(t *testing.T) {
 			"command=test-command",
 			"command_line=",
 			"status=success",
-			"system-1 kind=write type=system author=program",
-			"| sys prompt",
-			"attempt-1 kind=write type=attempt author=program",
-			"user-1 kind=write type=user author=user",
-			"| task",
-			"model-1 kind=write type=model author=model",
-			"summary-1 kind=write type=summary author=model",
-			"| Done.",
+			"<<貞觀 event:?name=system-1&kind=write&type=system&author=program",
+			"\nsys prompt\n",
+			"name=attempt-1&kind=write&type=attempt&author=program",
+			"name=user-1&kind=write&type=user&author=user",
+			"\ntask\n",
+			"name=model-1&kind=write&type=model&author=model",
+			"name=summary-1&kind=write&type=summary&author=model",
+			"\nDone.\n",
 		} {
 			if !strings.Contains(text, want) {
 				t.Fatalf("transcript missing %q:\n%s", want, text)

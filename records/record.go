@@ -28,17 +28,24 @@ node the generation loop, the goal runner, and the model's block
 components write — is one operation (tree.TheoryOfOperationLog), and the
 recorder persists the operations in application order into one sqlite
 database file. A transcript renders the recorded operation stream as an
-event stream: one line per applied operation in application order —
-kind, type, author, parent, and time as key=value pairs, empty fields
-omitted — with the content the operation wrote following as indented
-lines, and deletes appearing as their own events (kind=delete), so the
-transcript shows the applied history instead of a tree rebuilt from it
-(no tree.Replay rendering). The whole session is recoverable from what
-was recorded — system prompt, user inputs, model output and reasoning
-thoughts, generated blocks, their processing results, loop and attempt
-structure, event nodes, and errors — with no second, parallel
-transcript. The session listing, the transcript header, and every event
-line render metadata uniformly as key=value pairs.
+event stream: one boundary-delimited block per applied operation in
+application order, block kind "event", with the operation's metadata —
+name, kind, type, author, parent, and time, empty fields omitted —
+percent-encoded into the opening header's URI query, and the content the
+operation wrote as the block body, so a program parses the transcript
+with the standard block parser. Deletes appear as their own events
+(kind=delete), so the transcript shows the applied history instead of a
+tree rebuilt from it (no tree.Replay rendering). The block delimiter is
+chosen from a preset list of uncommon Chinese era names in selection
+order: the first delimiter the event's content does not contain, so the
+body never collides with its own opening or closing marker; when every
+preset collides, the event cannot be rendered unambiguously and the
+transcript fails instead of emitting a corrupt block. The whole session
+is recoverable from what was recorded — system prompt, user inputs,
+model output and reasoning thoughts, generated blocks, their processing
+results, loop and attempt structure, event nodes, and errors — with no
+second, parallel transcript. The session listing and the transcript
+header render metadata as key=value pairs.
 
 A session is one recording lifetime: one generation run, or one goal run
 spanning its loops. The recorder is attached to the tree with

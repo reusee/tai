@@ -52,9 +52,10 @@ LIMIT ?`, limit)
 
 // Transcript renders a session as readable text: the session metadata
 // followed by the recorded operation stream rendered as an event stream —
-// one event per applied operation in application order, each carrying
-// its metadata and the node content it wrote. Used for display and as
-// the input to the analysis pass. See TheoryOfInteractionRecording.
+// one event block per applied operation in application order, each
+// carrying its metadata in the opening header's URI query and the node
+// content it wrote as the block body. Used for display and as the input
+// to the analysis pass. See TheoryOfInteractionRecording.
 func Transcript(recorder *Recorder, sessionID int64) (string, error) {
 	if recorder == nil || recorder.db == nil {
 		return "", fmt.Errorf("session database not available")
@@ -91,7 +92,9 @@ func Transcript(recorder *Recorder, sessionID int64) (string, error) {
 
 	b.WriteString("\nevents:\n")
 	for _, op := range ops {
-		writeEventText(&b, op)
+		if err := writeEventBlock(&b, op); err != nil {
+			return "", err
+		}
 	}
 	return b.String(), nil
 }
@@ -125,28 +128,93 @@ func loadOps(recorder *Recorder, sessionID int64) ([]tree.Op, error) {
 	return ops, rows.Err()
 }
 
-// writeEventText renders one recorded operation as an event line: the
-// operation's target node name followed by its metadata as key=value
-// pairs — kind, type, author, parent, and time, empty fields omitted —
-// with the content the operation wrote following as indented lines, so
-// the transcript keeps the applied history with every node's content.
-func writeEventText(b *strings.Builder, op tree.Op) {
-	fmt.Fprintf(b, "%s kind=%s", op.Name, op.Kind)
-	if op.Type != "" {
-		fmt.Fprintf(b, " type=%s", op.Type)
-	}
-	if op.Author != "" {
-		fmt.Fprintf(b, " author=%s", op.Author)
-	}
-	if op.Parent != "" {
-		fmt.Fprintf(b, " parent=%s", op.Parent)
-	}
-	fmt.Fprintf(b, " time=%s\n", op.Time.Format(time.RFC3339Nano))
-	if op.Content != "" {
-		for _, line := range strings.Split(op.Content, "\n") {
-			fmt.Fprintf(b, "| %s\n", line)
+// eventBlockDelimiters lists the preset delimiters of transcript event
+// blocks, in selection order: the first delimiter an event's content
+// does not contain is chosen, so a body never collides with its own
+// opening or closing marker. The names are uncommon Chinese era names,
+// each exactly two Han characters, so the standard block parser accepts
+// them. See TheoryOfInteractionRecording.
+var eventBlockDelimiters = [...]string{
+	"貞觀", "開元", "洪武", "永樂", "弘治", "嘉靖",
+	"萬曆", "順治", "康熙", "雍正", "乾隆", "嘉慶",
+	"道光", "咸豐", "同治", "宣統",
+}
+
+// selectEventDelimiter returns the first preset delimiter the content
+// does not contain. When every preset collides, the event cannot be
+// rendered unambiguously and an error is returned instead of a corrupt
+// block. See TheoryOfInteractionRecording.
+func selectEventDelimiter(content string) (string, error) {
+	for _, delimiter := range eventBlockDelimiters {
+		if !strings.Contains(content, delimiter) {
+			return delimiter, nil
 		}
 	}
+	return "", fmt.Errorf("no preset delimiter is absent from the event content")
+}
+
+// percentEncodeEventValue encodes one URI query value: every byte
+// outside the RFC 3986 unreserved set (A-Z a-z 0-9 - . _ ~) becomes
+// %XX, so spaces, newlines, and non-ASCII bytes never break the header.
+// See TheoryOfInteractionRecording.
+func percentEncodeEventValue(value string) string {
+	var b strings.Builder
+	for i := 0; i < len(value); i++ {
+		c := value[i]
+		switch {
+		case c >= 'A' && c <= 'Z', c >= 'a' && c <= 'z', c >= '0' && c <= '9',
+			c == '-', c == '.', c == '_', c == '~':
+			b.WriteByte(c)
+		default:
+			fmt.Fprintf(&b, "%%%02X", c)
+		}
+	}
+	return b.String()
+}
+
+// eventMetadataQuery renders one operation's metadata as the URI query
+// of its event block header: key=value pairs joined by '&', in the fixed
+// order name, kind, type, author, parent, time, with empty fields
+// omitted and every value percent-encoded, so the standard header parser
+// decodes them. See TheoryOfInteractionRecording.
+func eventMetadataQuery(op tree.Op) string {
+	pairs := make([]string, 0, 6)
+	add := func(key, value string) {
+		if value == "" {
+			return
+		}
+		pairs = append(pairs, key+"="+percentEncodeEventValue(value))
+	}
+	add("name", op.Name)
+	add("kind", string(op.Kind))
+	add("type", string(op.Type))
+	add("author", string(op.Author))
+	add("parent", op.Parent)
+	if !op.Time.IsZero() {
+		add("time", op.Time.Format(time.RFC3339Nano))
+	}
+	return strings.Join(pairs, "&")
+}
+
+// writeEventBlock renders one recorded operation as a boundary-delimited
+// event block: the block kind is "event", the operation's metadata is
+// percent-encoded into the opening header's URI query, and the content
+// the operation wrote is the block body. The delimiter is the first
+// preset the content does not contain, so the body never collides with
+// its own closing marker. See TheoryOfInteractionRecording.
+func writeEventBlock(b *strings.Builder, op tree.Op) error {
+	delimiter, err := selectEventDelimiter(op.Content)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(b, "<<%s event:?%s\n", delimiter, eventMetadataQuery(op))
+	b.WriteString(op.Content)
+	if op.Content != "" && !strings.HasSuffix(op.Content, "\n") {
+		b.WriteString("\n")
+	}
+	b.WriteString(delimiter)
+	b.WriteString("\n")
+	return nil
 }
 
 // showSession writes the transcript of a session to output.
