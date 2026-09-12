@@ -1,9 +1,6 @@
 package main
 
 import (
-	"slices"
-
-	"github.com/clipperhouse/displaywidth"
 	"github.com/reusee/tai/taiui"
 )
 
@@ -15,36 +12,20 @@ Tab toolbar theory (cmd/tai):
   Output tab gets the section navigation and the sections collapse-all,
   the Tree tab the view cycling and the nodes collapse-all, and the Logs
   tab the session-level controls — the split toggle, the mouse-reporting
-  toggle, the help overlay, and quit. The two rightmost cells stay
-  unpainted, so the panel's dim title rule shows through as the row's
-  right margin.
-- Each button renders a single Han character as its label — two cells
-  wide — so the visible label spans the press target; adjacent buttons
-  carry no separator cells.
-- The labels tile the toolbar span with no gaps, so the panel title
-  row's dim strike-through rule does not show through; the reserved
-  cells stay outside the span, so the rule survives as the row's right
-  margin.
-- The renderer and the hit test share titleButtonLayout, so what is
-  drawn is what is pressed. A press on a button runs its action through
+  toggle, the help overlay, and quit. The reusable mechanism — the
+  right-to-left layout, the reserved margin, the press hit test, and
+  the hover highlight — lives in taiui (see taiui.TheoryOfToolbar).
+- The button labels are plain Han glyphs, so every terminal renders
+  them and the visible label spans its press target.
+- A press on a button runs the button's action through
   dispatchControlBar — the same action vocabulary the key dispatch
   uses, so a click and a keystroke mean the same thing — and preempts
   the ordinary press handling, so a press on a button never toggles or
   focuses the tab. A press on the title row outside the buttons keeps
-  the ordinary strip semantics. Hover renders the button reversed,
-  affordance only.
-- A tab too narrow for the buttons drops the buttons that do not fit,
-  rightmost first; the reserved cells stay.
+  the ordinary strip semantics.
 `
 
-// titleButton is one button of a tab title row: its unicode glyph and
-// the action the press runs. See TheoryOfToolbars.
-type titleButton struct {
-	Glyph  string
-	Action controlBarAction
-}
-
-// The button glyphs: plain, colorable characters. See TheoryOfToolbars.
+// The button labels: plain, colorable characters. See TheoryOfToolbars.
 const (
 	titleButtonPrev     = "上"
 	titleButtonNext     = "下"
@@ -59,74 +40,36 @@ const (
 // tabTitleButtons returns the title buttons of tab idx: one button per
 // operation that acts on the tab or on the session. The Logs tab
 // carries the session-level controls. See TheoryOfToolbars.
-func tabTitleButtons(idx int) []titleButton {
+func tabTitleButtons(idx int) []taiui.ToolbarButton {
 	switch idx {
 	case 0:
-		return []titleButton{
-			{Glyph: titleButtonPrev, Action: controlPrevSections},
-			{Glyph: titleButtonNext, Action: controlNextSections},
-			{Glyph: titleButtonCollapse, Action: controlCollapseAll},
+		return []taiui.ToolbarButton{
+			{Label: titleButtonPrev, Action: string(controlPrevSections)},
+			{Label: titleButtonNext, Action: string(controlNextSections)},
+			{Label: titleButtonCollapse, Action: string(controlCollapseAll)},
 		}
 	case 1:
-		return []titleButton{
-			{Glyph: titleButtonCycle, Action: controlTreeViewCycle},
-			{Glyph: titleButtonCollapse, Action: controlCollapseTree},
+		return []taiui.ToolbarButton{
+			{Label: titleButtonCycle, Action: string(controlTreeViewCycle)},
+			{Label: titleButtonCollapse, Action: string(controlCollapseTree)},
 		}
 	case 2:
-		return []titleButton{
-			{Glyph: titleButtonSplit, Action: controlSplitToggle},
-			{Glyph: titleButtonMouse, Action: controlMouseToggle},
-			{Glyph: titleButtonHelp, Action: controlHelpToggle},
-			{Glyph: titleButtonQuit, Action: controlQuit},
+		return []taiui.ToolbarButton{
+			{Label: titleButtonSplit, Action: string(controlSplitToggle)},
+			{Label: titleButtonMouse, Action: string(controlMouseToggle)},
+			{Label: titleButtonHelp, Action: string(controlHelpToggle)},
+			{Label: titleButtonQuit, Action: string(controlQuit)},
 		}
 	}
 	return nil
 }
 
-// titleReservedCells is the blank cells reserved at the title row's
-// right edge: the panel's dim rule shows through. See
-// TheoryOfToolbars.
-const titleReservedCells = 2
-
-// titleButtonSlot is one laid-out button: the buttons-slice index and
-// the title row's cell range [x0, x1).
-type titleButtonSlot struct {
-	index  int
-	x0, x1 int
-}
-
-// titleButtonLayout lays the buttons out right to left from the two
-// reserved cells, each slot spanning its label's cells; adjacent
-// buttons carry no separator cells. It is measured with the same
-// width options the renderer uses. It is pure: the renderer draws
-// from it and the hit test maps presses through it, so the two
-// cannot disagree. Buttons past the box's left edge are dropped. See
-// TheoryOfToolbars.
-func titleButtonLayout(box taiui.Box, options displaywidth.Options, buttons []titleButton) []titleButtonSlot {
-	if box.Height() <= 0 || box.Width() <= titleReservedCells {
-		return nil
-	}
-	var out []titleButtonSlot
-	x := box.Right - titleReservedCells
-	for i := len(buttons) - 1; i >= 0; i-- {
-		x0 := x - options.String(buttons[i].Glyph)
-		if x0 < box.Left {
-			break
-		}
-		out = append(out, titleButtonSlot{index: i, x0: x0, x1: x})
-		x = x0
-	}
-	slices.Reverse(out)
-	return out
-}
-
 // titleButtonsElement renders tab idx's title-row buttons as an
-// overlay over the panel: one label per slot, in the tab's label
-// colors, reversed under the pointer. The labels tile the toolbar
-// span, so the panel title row's dim strike-through rule does not
-// show through. It returns nil when the tab is collapsed, carries no
-// buttons, or the layout drops every button. The caller holds t.mu.
-// See TheoryOfToolbars.
+// overlay over the panel. The hover highlight requires mouse reporting
+// on: with reporting off the tracked pointer position is stale. It
+// returns nil when the tab is collapsed, carries no buttons, or the
+// layout drops every button. The caller holds t.mu. See
+// TheoryOfToolbars and taiui.TheoryOfToolbar.
 func (t *TUI) titleButtonsElement(idx int, box taiui.Box) taiui.Element {
 	if !t.tabs.Expanded[idx] {
 		return nil
@@ -135,48 +78,11 @@ func (t *TUI) titleButtonsElement(idx int, box taiui.Box) taiui.Element {
 	if len(buttons) == 0 {
 		return nil
 	}
-	slots := titleButtonLayout(box, taiui.DisplayWidthOptions(), buttons)
-	if len(slots) == 0 {
-		return nil
+	hover := -1
+	if t.ctlHover && t.mouseReporting {
+		hover = taiui.ToolbarHoverAt(box, buttons, t.ctlHoverX, t.ctlHoverY)
 	}
-	base := panelStyle.BaseBG
-	fg := panelStyle.LabelFG
-	if t.tabs.Focus == idx {
-		base = panelStyle.FocusBG
-		fg = panelStyle.FocusLabelFG
-	}
-	hover := t.titleButtonHoverLocked(box, slots)
-	var children []any
-	for _, slot := range slots {
-		specs := []any{
-			buttons[slot.index].Glyph,
-			taiui.Box{Top: box.Top, Left: slot.x0, Bottom: box.Top + 1, Right: slot.x1},
-			taiui.FGColor(fg),
-		}
-		if base != taiui.NoColor {
-			specs = append(specs, taiui.BGColor(base))
-		}
-		if slot.index == hover {
-			specs = append(specs, taiui.Reverse(true))
-		}
-		children = append(children, taiui.Text(specs...))
-	}
-	return taiui.Overlay(children...)
-}
-
-// titleButtonHoverLocked returns the slot the pointer hovers, or -1.
-// The highlight is affordance only. The caller holds t.mu. See
-// TheoryOfToolbars.
-func (t *TUI) titleButtonHoverLocked(box taiui.Box, slots []titleButtonSlot) int {
-	if !t.ctlHover || !t.mouseReporting || t.ctlHoverY != box.Top {
-		return -1
-	}
-	for _, slot := range slots {
-		if t.ctlHoverX >= slot.x0 && t.ctlHoverX < slot.x1 {
-			return slot.index
-		}
-	}
-	return -1
+	return taiui.ToolbarElement(box, buttons, panelStyle, t.tabs.Focus == idx, hover)
 }
 
 // titleButtonHitLocked maps a left press onto the title button it
@@ -195,12 +101,11 @@ func (t *TUI) titleButtonHitLocked(x, y int) (controlBarAction, bool) {
 			continue
 		}
 		buttons := tabTitleButtons(idx)
-		for _, slot := range titleButtonLayout(box, taiui.DisplayWidthOptions(), buttons) {
-			if x >= slot.x0 && x < slot.x1 {
-				return buttons[slot.index].Action, true
-			}
+		slot, ok := taiui.ToolbarButtonAt(box, buttons, x, y)
+		if !ok {
+			return "", false
 		}
-		return "", false
+		return controlBarAction(buttons[slot.Index].Action), true
 	}
 	return "", false
 }

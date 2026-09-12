@@ -601,42 +601,8 @@ func TestTabTitleButtons(t *testing.T) {
 	if got := tabTitleButtons(2); len(got) != 4 {
 		t.Fatalf("expected 4 Logs buttons, got %+v", got)
 	}
-	if got := tabTitleButtons(2)[3].Action; got != controlQuit {
+	if got := tabTitleButtons(2)[3].Action; got != string(controlQuit) {
 		t.Fatalf("the rightmost Logs button must run the quit action, got %q", got)
-	}
-}
-
-// TestTitleButtonLayout pins the right-to-left layout of the title
-// row's buttons: the two rightmost cells stay reserved, each button
-// occupies its two-cell label, adjacent buttons carry no separator
-// cells, and a box too narrow drops the buttons that do not fit. See
-// TheoryOfToolbars.
-func TestTitleButtonLayout(t *testing.T) {
-	buttons := tabTitleButtons(0)
-	slots := titleButtonLayout(taiui.Box{Top: 0, Left: 0, Bottom: 1, Right: 40},
-		displaywidth.Options{}, buttons)
-	want := []titleButtonSlot{
-		{index: 0, x0: 32, x1: 34},
-		{index: 1, x0: 34, x1: 36},
-		{index: 2, x0: 36, x1: 38},
-	}
-	if !slices.Equal(slots, want) {
-		t.Fatalf("unexpected layout: %+v", slots)
-	}
-
-	// A box five cells wide holds exactly one button.
-	slots = titleButtonLayout(taiui.Box{Top: 0, Left: 0, Bottom: 1, Right: 5},
-		displaywidth.Options{}, buttons)
-	if len(slots) != 1 || slots[0].x0 != 1 || slots[0].x1 != 3 {
-		t.Fatalf("unexpected narrow-box layout: %+v", slots)
-	}
-
-	// A box narrower than one button drops every button; the reserved
-	// cells stay.
-	slots = titleButtonLayout(taiui.Box{Top: 0, Left: 0, Bottom: 1, Right: 3},
-		displaywidth.Options{}, buttons)
-	if len(slots) != 0 {
-		t.Fatalf("expected no slots in a 3-wide box, got %+v", slots)
 	}
 }
 
