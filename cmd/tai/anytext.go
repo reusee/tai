@@ -21,10 +21,11 @@ targets keep full content. Binary files discovered by directory traversal
 are skipped: mimetype magic on the file header identifies them, and they
 are neither read fully, parsed, nor rendered into the context, while
 binary files named via -file are attached with begin and end markers (see
-anytexts.TheoryOfBinaryFileSkipping). It runs a single generation session
-followed by review of the applied changes, reusing the full generation
-pipeline — dynamic context, immediate apply, shell and continue blocks,
-and round statistics — wired through pipeline.Module in the dscope scope.
+anytexts.TheoryOfBinaryFileSkipping). It runs the unified generation
+loop — a chain of generations until the task is done — followed by review
+of the applied changes, reusing the full generation pipeline — dynamic
+context, immediate apply, shell and continue blocks, and round statistics
+— wired through pipeline.Module in the dscope scope.
 `
 
 var AnyTextCommand = apps.New("any_text", "",

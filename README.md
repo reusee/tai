@@ -2,9 +2,9 @@
 
 ## Core Philosophy
 
-**Single-shot context construction.** The system assembles all context the model needs — file contents, dependency graphs, system prompts, task instructions — before the first generation call. It does not discover context through multi-turn conversation. Pruning removes irrelevant files. Simplification strips function bodies and comments from non-focus packages. Token budgeting caps total input size. The model reasons over the complete picture in one pass and produces changes ready for human review.
+**Staged context, not single-shot construction.** The system does not assemble all context upfront. The initial context is an outline: `go doc` declaration surfaces for focus packages, theory constants and code comments that state design intent, system prompts, task instructions, and file listings. The model fetches the detail it needs with `go-src` and `ingest` blocks, and each fetch arrives as user content in the next round, so a task advances over multiple rounds — component rounds, continue blocks, retries, and plan-driven rounds — until it is done. Pruning removes irrelevant files, simplification assigns package-level visibility, and token budgeting caps how much one round carries.
 
-This is the opposite of the mainstream agentic pattern where context grows through dialogue. Growing context through dialogue wastes tokens on conversation overhead and produces non-deterministic results. Single-shot construction is deterministic: the same files and the same task always produce the same input to the model.
+The system still rejects dialogue-grown context: detail arrives through structured fetch blocks, never through accumulating conversation, so a run carries no conversational overhead and the outline stays cacheable. One generation also does far more than a tool call — the block protocol charges no round trip per block, so a single response may carry any number of blocks (changes, fetches, test runs, verification requests), and the outcomes arrive together in the next round. Batching keeps the total round count low.
 
 **Doc-first context with on-demand source.** Two poles bound the design space: full-source context misses no detail but is token-heavy and dilutes attention; agentic exploration via semantic search is cheap but misses details and never grasps the whole architecture. The system takes the middle path: focus packages enter the initial context as `go doc` documentation — the complete declaration surface — and the model pulls implementation source on demand with `go-src` blocks, targeted at symbols it can already see rather than found by search. No detail is unreachable; no token is spent on code the task never reads.
 
@@ -20,7 +20,7 @@ This is the opposite of the mainstream agentic pattern where context grows throu
 
 `tai` is a general-purpose AI tool. It sends context — files, user input, or arbitrary text — to an AI model and applies the model's output to your working tree. It supports multiple AI providers and runs in a sandboxed environment.
 
-The default command is auto-detected: inside a Go module it generates Go code via goal loops with the Go parts provider; outside one it generates changes for arbitrary text files. Subcommands cover interactive AI chat with persistent user profiles (`ai`), single-shot tasks on any input (`next`), and boundary-delimited diff application (`patch`). Not all of these involve code.
+The default command is auto-detected: inside a Go module it generates Go code via goal loops with the Go parts provider; outside one it generates changes for arbitrary text files. Subcommands cover interactive AI chat with persistent user profiles (`ai`), text-output tasks on any input (`next`), and boundary-delimited diff application (`patch`). Not all of these involve code.
 
 ## Installation
 
@@ -34,7 +34,7 @@ go install github.com/reusee/tai/cmd/tai@latest
 |---------|-------------|
 | `tai` (default) | Auto-detected: Go code generation via goal loops inside a Go module, arbitrary text file generation otherwise |
 | `tai ai` | Start an interactive AI chat session with memory |
-| `tai next` | Execute a single-shot task |
+| `tai next` | Answer a task from the assembled context (text output; no file changes) |
 | `tai patch` | Apply a boundary-delimited diff file to the working tree |
 | `tai ping` | Test whether a model is reachable |
 | `tai record` | List, show, and analyze recorded interaction sessions |
@@ -47,7 +47,7 @@ Interactive AI chat with persistent user profiles:
 tai ai -model gemini-pro
 ```
 
-Single-shot task on arbitrary input:
+Text-output task on arbitrary input:
 
 ```
 tai next -model gemini-pro chat "explain the difference between TCP and UDP"
@@ -66,7 +66,7 @@ Interactive AI session with memory and shell blocks:
 tai ai -model gemini-pro -shell
 ```
 
-Single-shot task execution:
+Text-output task execution:
 
 ```
 tai next -file main.go chat "explain the nil pointer dereference in the init function"

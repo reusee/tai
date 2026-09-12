@@ -162,9 +162,10 @@ file inclusion across requests. Function declarations from all sources — state
 layers, code/diff providers, and configuration files — are counted together
 and sorted by name before measuring their token cost. The input token budget
 is the full context window (or configured max tokens) without reserving space
-for max generate tokens, because most tasks complete in a single generation
-pass and reserving output space wastes context budget that could carry more
-file context.
+for max generate tokens: the generate limit is a separate parameter of the
+generator request, so reserving output space in the input budget would shrink
+the outline the model starts from without changing what it may generate. See
+TheoryOfContextPhilosophy.
 `
 
 func countFuncsTokens(funcs []generators.FuncDecl, count func(string) (int, error)) (int, error) {
@@ -510,9 +511,9 @@ ends with a blank line so the context starts a fresh paragraph
 at the head of the user content, so different chat inputs shift the file
 context in the request and forfeit user-content prefix reuse across
 tasks; comprehension is deliberately traded for cache. The next
-command's UserPrompt prepends the chat input the same way when given;
-its single-shot design has no trailing chat content, so the restate,
-when present, remains the last part.
+command's UserPrompt prepends the chat input the same way when given,
+and the command appends no trailing chat content of its own, so the
+restate, when present, remains the last part.
 `
 
 // GenerateWithResultWithStats runs the full codes generation pipeline and

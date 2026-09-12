@@ -20,22 +20,23 @@ const TheoryOfNextCommand = `
 The "next" subcommand identifies the most valuable next step to advance
 the user's goal. It is a text-output command: it uses the prompts.NextStep
 system prompt as its base, augmented with optional extra, focus, and
-ignore directives. Unlike the "ai" subcommand which supports multi-turn
-conversation with memory, shell, and continue blocks, "next" performs a
-single generation: it builds the system prompt and user prompt from file
-context, runs one generate-chat phase chain, and writes the result to
-stdout. This makes it the simplest entry point for autonomous, single-shot
-task execution.
+ignore directives. In the staged system (see
+pipeline.TheoryOfContextPhilosophy) it is the no-component command: the
+generate-chat chain serves one generation per user input from the context
+assembled upfront, and no block kind opens a further round. The staged
+commands — the auto-detected default's goal loops and the ai command's
+component rounds — fetch context and generate over multiple rounds;
+"next" answers from the context it was given.
 
 The next command never modifies files and processes no block kind: the
 system prompt carries a disabled-blocks notice
 (components.DisabledBlocksNotice) listing shell, continue, change,
-go-test, go-src, and ingest. The single-shot loop runs with no components
-and no change-block handler, so these kinds are never processed here;
-without the notice the model could emit them from habit and have them
-silently ignored while implying actions that never happened. The notice
-is static for this command, so it sits directly after the base prompt
-inside the stable prefix region. See components.TheoryOfDisabledBlocks.
+go-test, go-src, and ingest. The loop runs with no components and no
+change-block handler, so these kinds are never processed here; without the
+notice the model could emit them from habit and have them silently ignored
+while implying actions that never happened. The notice is static for this
+command, so it sits directly after the base prompt inside the stable
+prefix region. See components.TheoryOfDisabledBlocks.
 
 The -summarize-thoughts flag wires pipeline.NewThoughtsSummarize around the
 output layer, mirroring the ai command (see pipeline.TheoryOfThoughtsSummarize).

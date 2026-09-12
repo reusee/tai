@@ -20,15 +20,41 @@ import (
 )
 
 const TheoryOfContextPhilosophy = `
-The system provides all context the model needs in a single generation
-request, not through multi-turn conversation. This single-shot approach sets
-it apart from agentic agents that grow context via dialogue.
+Context and generation are staged. The initial context is an outline, the
+model fetches the detail it needs, and the task advances over multiple
+rounds: a generation is a unit of work, not the whole task.
 
-Upfront construction: file contents, dependency graphs, system prompts, and
-task instructions are assembled before the first call. Pruning removes
-irrelevant files; simplification strips function bodies and comments from
-non-focus packages; token budgeting caps input size. The model reasons over
-the complete picture into changes ready for human review.
+Outline-first construction: the initial context carries the declaration
+surface — go doc output for focus packages — together with theory
+constants and code comments that state design intent, system prompts, task
+instructions, and file name listings. Implementation bodies enter the
+initial context only where the visibility allocation admits them (see
+gotools.TheoryOfVisibilityAllocation), so the outline is an index from
+which every detail is reachable, not a summary that hides what it omits.
+
+On-demand context fetching: the model fetches the detail it needs. A
+go-src block resolves symbol declarations to source with a references
+report; an ingest block reads files, expands globs, queries the language
+server, or fetches network resources. Fetched content arrives as user
+content in the next round, so a fetch is one round of the staged path: the
+model descends from the known index into the implementation it needs, and
+the fetched material stays in the accumulated state for the later rounds
+of the run.
+
+Multi-round generation as the execution model: rounds are how the system
+works, not a fallback for oversized tasks. Component-triggered rounds
+(go-src, ingest, shell, go-test), continue blocks, retry rounds,
+plan-driven rounds, and idle rounds all advance the same run. The loop
+executes tasks; it is not a chatbot.
+
+One generation, many blocks: a single response may carry any number of
+blocks — change, shell, go-test, go-src, ingest, continue, and the other
+component kinds — because the block protocol is not a tool-call protocol.
+No round trip is paid per block: the model emits every block it intends in
+one response, the loop processes them all, and the outcomes arrive
+together in the next round's user content. Batching lets one generation do
+the work of many tool-call exchanges, so a run completes more per round
+and needs fewer rounds overall.
 
 Architectural constraints:
 
@@ -38,23 +64,19 @@ Architectural constraints:
   each turn sends the full accumulated context, not a compressed fragment.
 
 - No conversation compression. Old dialogue is never summarized to free
-  token budget; context is managed solely by pruning, AST-level
-  simplification, and deterministic file ordering. Handoff
-  (TheoryOfHandoff) condenses truncated output for one-shot error recovery,
-  not persistent history. Thought summarization (TheoryOfThoughtsSummarize)
-  writes to the user's screen for readability; it never feeds back as
-  compressed context.
+  token budget; context is managed solely by pruning, staging, and
+  deterministic file ordering. Handoff (TheoryOfHandoff) condenses
+  truncated output for one-shot error recovery, not persistent history.
+  Thought summarization (TheoryOfThoughtsSummarize) writes to the user's
+  screen for readability; it never feeds back as compressed context.
 
-- No blind exploration. The upfront context always carries the complete
-  declaration surface, so the model never starts from nothing; implementation
-  source is fetched on demand from that known surface, and ingest blocks
-  serve external resources unavailable at construction time (network
-  fetches, glob expansion), not as a substitute for upfront context. See
-  gotools.TheoryOfContextStrategy for the strategy.
-
-- Multi-round generation is task decomposition, not conversation. Continue
-  blocks split large tasks into bounded rounds; shell and go-test blocks run
-  autonomous verification. The loop executes tasks; it is not a chatbot.
+- No blind exploration. The initial context always carries the complete
+  declaration surface, so the model never starts from nothing;
+  implementation source is fetched on demand from that known surface, and
+  ingest blocks serve context unavailable at construction time (network
+  fetches, glob expansion, files outside the loaded set). A fetch is a
+  targeted pull from a known index, not a search in the dark. See
+  gotools.TheoryOfContextStrategy.
 
 Features assuming a long-conversation model — dialogue-grown context, turns
 summarized to free budget, conversation history as knowledge base — violate
@@ -226,12 +248,14 @@ const missingSummaryRetryPrefix = "[System note: Your previous response ended WI
 // RunOptions.StateDecorators.
 type StateDecorator func(generators.State) generators.State
 
-// Run executes generation generations in a loop. Each generation wraps
+// Run executes generations in a loop. Each generation wraps
 // the state with ParserState, executes the phase chain (retrying
 // incomplete attempts as further attempts within the generation),
 // processes blocks via components, and continues if a component
-// triggers a new generation. When Components is empty, the loop runs a
-// single generation (single-shot mode). The result is filled into
+// triggers a new generation. When Components is empty, no component
+// processes blocks and the loop ends after one generation, unless
+// correction feedback for unprocessable output continues the loop
+// (single-shot mode). The result is filled into
 // result as the run progresses; every notable occurrence — attempt
 // lifecycle (start, completion, truncation), request parameters,
 // retries and handoffs, synthesized completion summaries, attempt
@@ -1404,8 +1428,8 @@ type RunOptions struct {
 	// See StateDecorator.
 	StateDecorators []StateDecorator
 	// Components is the component set for block processing between
-	// generations. When empty, the loop runs a single generation
-	// (single-shot mode).
+	// generations. When empty, no component processes blocks
+	// (single-shot mode). See Run.
 	Components components.ComponentSet
 	// BlockHandler processes blocks during streaming. May be nil.
 	// If consumed is true, the block is not passed to ProcessComponents.

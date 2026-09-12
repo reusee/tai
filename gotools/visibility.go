@@ -101,6 +101,13 @@ unreachable, because the full surface precedes every fetch; no token is
 spent on bodies the task never reads. Start from the whole picture, and
 descend into detail on demand. TheoryOfGoSrcResolution describes the
 fetch mechanism.
+
+Descending is a round of the run, not a side query: fetched content
+arrives as user content in the next generation, and one response may
+carry many fetch blocks, because the block protocol charges no round
+trip per block. The staged path is the system's normal operating mode:
+the outline opens the run, fetches deepen it, and the changes follow in
+the same generation loop.
 `
 
 const TheoryOfVisibilityAllocation = `

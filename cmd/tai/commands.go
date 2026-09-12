@@ -11,7 +11,7 @@ Module.InGoModule walks up the directory tree from the working directory
 looking for a go.mod file. Inside a Go module the default is
 GoModuleCommand — the Go parts provider (gotools.PartsProvider) running
 goal mode; outside one it is AnyTextCommand — the anytexts.PartsProvider
-(with skeletons) running a single generation session with review.
+(with skeletons) running the unified generation loop with review.
 `
 
 // Command provides the default App when no subcommand is given,

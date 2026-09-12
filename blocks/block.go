@@ -41,13 +41,17 @@ where the risk concentrates.
 
 const TheoryOfDeferredExecution = `
 Blocks are a request protocol, not a tool-call protocol. The model emits
-blocks inside one response; the loop parses and processes them only after
-the response ends, and every outcome — shell and go-test output,
-ingest-block fetches, go-src sources, change-block apply results — is
-fed back as user content at the start of the next round. Nothing executes
-and nothing returns mid-response. Change blocks are the same: applied
-atomically after the round succeeds, with apply errors reported in the
-next round.
+blocks inside one response; every outcome reaches the model as user
+content at the start of the next round — shell and go-test output,
+ingest-block fetches, go-src sources, change-block apply errors — and
+nothing returns mid-response. Change blocks reach the working tree by the
+same rule: buffered in memory during streaming, flushed atomically after
+the round succeeds.
+
+No round trip is paid per block: a response may carry any number of
+blocks — of any kinds — and the next round delivers every outcome at
+once. A generation therefore does the work of many tool-call exchanges,
+and a run needs fewer rounds (see pipeline.TheoryOfContextPhilosophy).
 
 Parse-time prefetch is the one carve-out: a block kind whose computation
 is side-effect-free (components.Component.Compute) may start in a
