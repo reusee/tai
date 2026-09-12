@@ -21,14 +21,25 @@ func newTUIForTest() *TUI {
 	// Tests exercise the production layout, including the Logs tab's
 	// unfocused height cap. See logsMaxBoxHeight.
 	tabs.MaxSizes = []int{0, 0, logsMaxBoxHeight}
-	// The Output tab starts expanded and focused, matching the
-	// production default. See TheoryOfTUI.
+	// The Tree tab sits at index 0 and starts expanded and focused,
+	// matching the production default; the Output tab (index 1) and
+	// Logs tab (index 2) stay collapsed until their first content
+	// expands them. See TheoryOfTUI.
 	tabs.FocusTab(0)
 	return &TUI{
-		output:  taiui.NewLineBuffer(0),
-		logs:    taiui.NewStringBuffer(0),
-		tabs:    tabs,
-		scrolls: [3]taiui.ScrollState{{Follow: true}},
+		output: taiui.NewLineBuffer(0),
+		logs:   taiui.NewStringBuffer(0),
+		tabs:   tabs,
+		// The Tree and Output tabs start following the tail; the Logs
+		// tab's follow state begins when its first record arrives. The
+		// offsets start at zero for test determinism: tests that assert
+		// tail offsets either let the render's ScrollState.Update stick
+		// them or set the offset explicitly. See TheoryOfTUI.
+		scrolls: [3]taiui.ScrollState{
+			{Follow: true},
+			{Follow: true},
+			{},
+		},
 		// The Tree tab's elapsed timer counts from the test's start;
 		// timer assertions anchor on an explicitly set startTime. See
 		// TheoryOfTreeTab.
@@ -282,13 +293,13 @@ func TestDisplayChatInput(t *testing.T) {
 	if len(tui.outputSections) != 1 || tui.outputSections[0].letter != "Ｕ" {
 		t.Fatalf("expected one user-letter section, got %+v", tui.outputSections)
 	}
-	if !tui.tabs.Expanded[0] {
+	if !tui.tabs.Expanded[1] {
 		t.Fatal("output tab should auto-expand on chat input")
 	}
 	if tui.tabs.Focus != 0 {
-		t.Fatalf("expected focus on the output tab, got %d", tui.tabs.Focus)
+		t.Fatalf("chat input must not steal the Tree tab's focus, got %d", tui.tabs.Focus)
 	}
-	if !tui.scrolls[0].Follow {
+	if !tui.scrolls[1].Follow {
 		t.Fatal("output tab should follow the tail")
 	}
 }
@@ -301,10 +312,13 @@ func TestDisplayChatInputEmpty(t *testing.T) {
 	if len(tui.output.Lines()) != 0 {
 		t.Fatalf("expected no lines for empty chats, got %v", tui.output.Lines())
 	}
-	// Empty chats change nothing: the Output tab keeps its initial
-	// expanded focus.
+	// Empty chats change nothing: the Tree tab keeps its initial
+	// expanded, focused state and the Output tab stays collapsed.
 	if !tui.tabs.Expanded[0] || tui.tabs.Focus != 0 {
-		t.Fatalf("expected the output tab's initial state, got %+v", tui.tabs)
+		t.Fatalf("expected the tree tab's initial state, got %+v", tui.tabs)
+	}
+	if tui.tabs.Expanded[1] {
+		t.Fatal("empty chats must not expand the output tab")
 	}
 }
 
@@ -340,9 +354,9 @@ func TestDisplayChatInputCollapsibleSection(t *testing.T) {
 		t.Fatalf("expected 2 sections (chat input, thoughts), got %d", len(tui.outputSections))
 	}
 	tui.toggleOutputSectionLocked(0)
-	collapsed := displayTexts(wrappedDisplay(tui, 0, box))
+	collapsed := displayTexts(wrappedDisplay(tui, 1, box))
 	tui.toggleOutputSectionLocked(0)
-	expandedDisplay := wrappedDisplay(tui, 0, box)
+	expandedDisplay := wrappedDisplay(tui, 1, box)
 	expanded := displayTexts(expandedDisplay)
 	assertTexts(t, collapsed, "user request", "thought line one", "thought line two")
 	assertTexts(t, expanded, "user request", "", "thought line one", "thought line two")
@@ -745,8 +759,8 @@ func TestTuiShowThoughtsNotSuppressedBySummarizeThoughts(t *testing.T) {
 }
 
 func TestTuiStateSummaryTabTitle(t *testing.T) {
-	if tabNames[1] != "Tree" {
-		t.Fatalf("expected the tree tab title, got %q", tabNames[1])
+	if tabNames[0] != "Tree" {
+		t.Fatalf("expected the tree tab title, got %q", tabNames[0])
 	}
 }
 
@@ -886,15 +900,19 @@ func TestTUINumberKeySemantics(t *testing.T) {
 
 func TestTUIMousePress(t *testing.T) {
 	// The subtests drive the public behavior through handleMouseKey, the
-	// same path the session's key loop takes.
+	// same path the session's key loop takes. The tabs are indexed Tree
+	// (0) / Output (1) / Logs (2). See TheoryOfTUI.
 	t.Run("CollapsedStripExpandsAndFocuses", func(t *testing.T) {
 		tui := newTUIForTest()
 		tui.width, tui.height = 80, 45
+		// The Tree tab is expanded and focused; the Output tab's
+		// collapsed strip sits below it, the Logs strip at the bottom.
 		tui.tabs.Expanded = []bool{true, false, false}
 		tui.tabs.HasContent = []bool{true, false, false}
 		tui.tabs.Focus = 0
-		// Horizontal split: the output tab occupies rows 0..42, the
-		// collapsed summary tab row 43, the collapsed logs tab row 44.
+		// Vertical split: the Tree tab occupies rows 0..42, the
+		// collapsed Output strip row 43, the collapsed Logs strip row
+		// 44.
 		tui.handleMouseKey("mouse-left@5,43")
 		if !tui.tabs.Expanded[1] {
 			t.Fatal("pressing a collapsed tab's strip must expand it")
@@ -928,53 +946,55 @@ func TestTUIMousePress(t *testing.T) {
 		tui.tabs.Expanded = []bool{true, true, false}
 		tui.tabs.HasContent = []bool{true, true, false}
 		tui.tabs.Focus = 0
-		// The summary tab's label strip is its top row (row 33); the
-		// output tab occupies rows 0..32.
+		// The Tree and Output tabs split the space below the collapsed
+		// Logs strip by weight (1:3): the Tree tab occupies rows 0..10
+		// and the Output tab rows 11..43. A press in the Output pane
+		// focuses it without collapsing it.
 		tui.handleMouseKey("mouse-left@5,33")
 		if !tui.tabs.Expanded[1] {
-			t.Fatal("the summary tab must stay expanded")
+			t.Fatal("the output tab must stay expanded")
 		}
 		if tui.tabs.Focus != 1 {
-			t.Fatalf("expected the focus on the summary tab, got %d", tui.tabs.Focus)
+			t.Fatalf("expected the focus on the output tab, got %d", tui.tabs.Focus)
 		}
 	})
 
 	t.Run("ScrollAreaFocusesAndDragScrolls", func(t *testing.T) {
 		tui := newTUIForTest()
 		tui.width, tui.height = 80, 45
-		tui.tabs.Expanded = []bool{true, true, false}
-		tui.tabs.HasContent = []bool{true, true, false}
-		tui.tabs.Focus = 1
-		tui.scrolls[0].MaxOffset = 100
-		tui.scrolls[0].Offset = 10
+		// Only the Output tab (index 1) is expanded: it sits below the
+		// collapsed Tree strip and above the collapsed Logs strip, so
+		// it spans rows 1..43 with the input bar at row 43.
+		tui.tabs.Expanded = []bool{false, true, false}
+		tui.tabs.HasContent = []bool{false, true, false}
+		tui.tabs.Focus = 0
+		tui.scrolls[1].MaxOffset = 100
+		tui.scrolls[1].Offset = 10
 
-		// The output tab's box spans rows 0..10 and its bottom row (row
-		// 10) is the chat input bar, so the press anchors the drag
-		// inside the scroll area at row 5. See TheoryOfTUIChatInput.
 		tui.handleMouseKey("mouse-left@5,5")
-		if tui.tabs.Focus != 0 {
+		if tui.tabs.Focus != 1 {
 			t.Fatalf("expected the focus on the output tab, got %d", tui.tabs.Focus)
 		}
 		// Dragging up reveals earlier content.
 		tui.handleMouseKey("mouse-leftdrag@5,0")
-		if tui.scrolls[0].Offset != 15 {
-			t.Fatalf("expected offset 15 after dragging up, got %d", tui.scrolls[0].Offset)
+		if tui.scrolls[1].Offset != 15 {
+			t.Fatalf("expected offset 15 after dragging up, got %d", tui.scrolls[1].Offset)
 		}
 		// Dragging down reveals the tail.
 		tui.handleMouseKey("mouse-leftdrag@5,10")
-		if tui.scrolls[0].Offset != 5 {
-			t.Fatalf("expected offset 5 after dragging down, got %d", tui.scrolls[0].Offset)
+		if tui.scrolls[1].Offset != 5 {
+			t.Fatalf("expected offset 5 after dragging down, got %d", tui.scrolls[1].Offset)
 		}
 		// The drag offset clamps at the content extent.
 		tui.handleMouseKey("mouse-leftdrag@5,200")
-		if tui.scrolls[0].Offset != 0 {
-			t.Fatalf("expected offset 0 after clamping, got %d", tui.scrolls[0].Offset)
+		if tui.scrolls[1].Offset != 0 {
+			t.Fatalf("expected offset 0 after clamping, got %d", tui.scrolls[1].Offset)
 		}
 		tui.handleMouseKey("mouse-release@5,5")
 		// A drag after the release is a no-op.
 		tui.handleMouseKey("mouse-leftdrag@5,0")
-		if tui.scrolls[0].Offset != 0 {
-			t.Fatalf("expected the offset unchanged after release, got %d", tui.scrolls[0].Offset)
+		if tui.scrolls[1].Offset != 0 {
+			t.Fatalf("expected the offset unchanged after release, got %d", tui.scrolls[1].Offset)
 		}
 	})
 }
@@ -1162,10 +1182,12 @@ func TestTabPanelBoxClampMatchesScrollView(t *testing.T) {
 
 func TestTUISticksToTail(t *testing.T) {
 	tui := newTUIForTest()
-	tui.tabs.Expanded = []bool{true, false, false}
-	tui.tabs.HasContent = []bool{true, false, false}
-	tui.tabs.Focus = 0
-	tui.scrolls[0].Follow = true
+	// Only the Output tab (index 1) is expanded, so its box spans the
+	// screen above the two collapsed strips.
+	tui.tabs.Expanded = []bool{false, true, false}
+	tui.tabs.HasContent = []bool{false, true, false}
+	tui.tabs.Focus = 1
+	tui.scrolls[1].Follow = true
 	tui.screen = taiui.NewTerminalScreen(&strings.Builder{}, 80, 10)
 	tui.width = 80
 	tui.height = 10
@@ -1176,7 +1198,9 @@ func TestTUISticksToTail(t *testing.T) {
 	}
 	tui.write([]byte(sb.String()))
 	tui.render()
-	contentWidth := 79
+	// The content width is the box minus the control column and the
+	// scrollbar column. See TheoryOfOutputControls.
+	contentWidth := 77
 	display := taiui.WrapLinesColored(tui.output.Lines(), contentWidth)
 	// The pane is the tab box (8 rows after the two collapsed strips)
 	// minus the one-row label strip and the input bar row: 6 rows. See
@@ -1185,10 +1209,10 @@ func TestTUISticksToTail(t *testing.T) {
 	if want < 0 {
 		want = 0
 	}
-	if tui.scrolls[0].Offset != want {
-		t.Fatalf("expected topLeft %d, got %d", want, tui.scrolls[0].Offset)
+	if tui.scrolls[1].Offset != want {
+		t.Fatalf("expected topLeft %d, got %d", want, tui.scrolls[1].Offset)
 	}
-	if !tui.scrolls[0].Follow {
+	if !tui.scrolls[1].Follow {
 		t.Fatal("expected follow on the output tab")
 	}
 
@@ -1199,20 +1223,23 @@ func TestTUISticksToTail(t *testing.T) {
 	if want < 0 {
 		want = 0
 	}
-	if tui.scrolls[0].Offset != want {
-		t.Fatalf("expected topLeft %d after new output, got %d", want, tui.scrolls[0].Offset)
+	if tui.scrolls[1].Offset != want {
+		t.Fatalf("expected topLeft %d after new output, got %d", want, tui.scrolls[1].Offset)
 	}
-	if !tui.scrolls[0].Follow {
+	if !tui.scrolls[1].Follow {
 		t.Fatal("expected follow to persist on the output tab")
 	}
 }
 
 func TestTUIReopenResumesFollow(t *testing.T) {
 	tui := newTUIForTest()
-	tui.tabs.Expanded = []bool{true, false, false}
-	tui.tabs.HasContent = []bool{true, false, false}
-	tui.tabs.Focus = 0
-	tui.scrolls[0].Follow = true
+	// Only the Output tab (index 1) is expanded: it sits between the
+	// collapsed Tree strip and the collapsed Logs strip. See
+	// TheoryOfTUI.
+	tui.tabs.Expanded = []bool{false, true, false}
+	tui.tabs.HasContent = []bool{false, true, false}
+	tui.tabs.Focus = 1
+	tui.scrolls[1].Follow = true
 	tui.screen = taiui.NewTerminalScreen(&strings.Builder{}, 80, 10)
 	tui.width = 80
 	tui.height = 10
@@ -1225,53 +1252,55 @@ func TestTUIReopenResumesFollow(t *testing.T) {
 	tui.render()
 
 	tui.scroll(-1)
-	if tui.scrolls[0].Follow {
+	if tui.scrolls[1].Follow {
 		t.Fatal("expected follow false after scrolling away")
 	}
 
-	tui.toggleTab(0)
-	if tui.tabs.Expanded[0] {
+	tui.toggleTab(1)
+	if tui.tabs.Expanded[1] {
 		t.Fatal("expected output tab collapsed")
 	}
 	if tui.tabs.Focus != -1 {
 		t.Fatalf("expected focus -1 with no expanded tabs, got %d", tui.tabs.Focus)
 	}
-	tui.toggleTab(0)
-	if !tui.tabs.Expanded[0] {
+	tui.toggleTab(1)
+	if !tui.tabs.Expanded[1] {
 		t.Fatal("expected output tab re-expanded")
 	}
-	if tui.tabs.Focus != 0 {
-		t.Fatalf("expected focus 0 after re-expand, got %d", tui.tabs.Focus)
+	if tui.tabs.Focus != 1 {
+		t.Fatalf("expected focus 1 after re-expand, got %d", tui.tabs.Focus)
 	}
-	if !tui.scrolls[0].Follow {
+	if !tui.scrolls[1].Follow {
 		t.Fatal("expected follow true after re-expand")
 	}
 
 	tui.write([]byte("line 10\nline 11\n"))
 	tui.render()
-	contentWidth := 79
+	// The content width is the box minus the control column and the
+	// scrollbar column. See TheoryOfOutputControls.
+	contentWidth := 77
 	display := taiui.WrapLinesColored(tui.output.Lines(), contentWidth)
-	// The pane height shrinks by the label strip and the input bar row
-	// (tuiPaneHeight), so the tail offset is the display length minus
-	// 6. See TheoryOfTUIChatInput.
+	// The pane is 6 rows: the tab box (8 rows, the two collapsed strips
+	// above and below) minus the label strip and the input bar row. See
+	// TheoryOfTUIChatInput.
 	want := len(display) - 6
 	if want < 0 {
 		want = 0
 	}
-	if tui.scrolls[0].Offset != want {
-		t.Fatalf("expected topLeft %d after new content, got %d", want, tui.scrolls[0].Offset)
+	if tui.scrolls[1].Offset != want {
+		t.Fatalf("expected topLeft %d after new content, got %d", want, tui.scrolls[1].Offset)
 	}
-	if !tui.scrolls[0].Follow {
+	if !tui.scrolls[1].Follow {
 		t.Fatal("expected follow to persist after new content")
 	}
 }
 
 func TestTUIStopsFollowingWhenScrolledAway(t *testing.T) {
 	tui := newTUIForTest()
-	tui.tabs.Expanded = []bool{true, false, false}
-	tui.tabs.HasContent = []bool{true, false, false}
-	tui.tabs.Focus = 0
-	tui.scrolls[0].Follow = true
+	tui.tabs.Expanded = []bool{false, true, false}
+	tui.tabs.HasContent = []bool{false, true, false}
+	tui.tabs.Focus = 1
+	tui.scrolls[1].Follow = true
 	tui.screen = taiui.NewTerminalScreen(&strings.Builder{}, 80, 10)
 	tui.width = 80
 	tui.height = 10
@@ -1283,7 +1312,9 @@ func TestTUIStopsFollowingWhenScrolledAway(t *testing.T) {
 	tui.write([]byte(sb.String()))
 	tui.render()
 
-	contentWidth := 79
+	// The content width is the box minus the control column and the
+	// scrollbar column. See TheoryOfOutputControls.
+	contentWidth := 77
 	display := taiui.WrapLinesColored(tui.output.Lines(), contentWidth)
 	// The pane is 6 rows: the tab box (8) minus the label strip and the
 	// input bar row. See TheoryOfTUIChatInput.
@@ -1293,24 +1324,24 @@ func TestTUIStopsFollowingWhenScrolledAway(t *testing.T) {
 	}
 
 	tui.scroll(-3)
-	if tui.scrolls[0].Offset != initialMax-3 {
-		t.Fatalf("expected topLeft %d after scrolling up, got %d", initialMax-3, tui.scrolls[0].Offset)
+	if tui.scrolls[1].Offset != initialMax-3 {
+		t.Fatalf("expected topLeft %d after scrolling up, got %d", initialMax-3, tui.scrolls[1].Offset)
 	}
-	if tui.scrolls[0].Follow {
+	if tui.scrolls[1].Follow {
 		t.Fatal("expected follow cleared after scrolling away")
 	}
 
 	tui.write([]byte("more\n"))
 	tui.render()
-	if tui.scrolls[0].Offset != initialMax-3 {
-		t.Fatalf("expected view to stay at %d while scrolled away, got %d", initialMax-3, tui.scrolls[0].Offset)
+	if tui.scrolls[1].Offset != initialMax-3 {
+		t.Fatalf("expected view to stay at %d while scrolled away, got %d", initialMax-3, tui.scrolls[1].Offset)
 	}
-	if tui.scrolls[0].Follow {
+	if tui.scrolls[1].Follow {
 		t.Fatal("expected follow to stay cleared while scrolled away")
 	}
 
 	tui.scrollTo(1 << 30)
-	if !tui.scrolls[0].Follow {
+	if !tui.scrolls[1].Follow {
 		t.Fatal("expected follow restored at the end")
 	}
 	tui.write([]byte("tail\n"))
@@ -1320,20 +1351,20 @@ func TestTUIStopsFollowingWhenScrolledAway(t *testing.T) {
 	if want < 0 {
 		want = 0
 	}
-	if tui.scrolls[0].Offset != want {
-		t.Fatalf("expected topLeft %d after resuming follow, got %d", want, tui.scrolls[0].Offset)
+	if tui.scrolls[1].Offset != want {
+		t.Fatalf("expected topLeft %d after resuming follow, got %d", want, tui.scrolls[1].Offset)
 	}
-	if !tui.scrolls[0].Follow {
+	if !tui.scrolls[1].Follow {
 		t.Fatal("expected follow to persist after resuming")
 	}
 }
 
 func TestTUIPageScrollUsesPaneHeight(t *testing.T) {
 	tui := newTUIForTest()
-	tui.tabs.Expanded = []bool{true, false, false}
-	tui.tabs.HasContent = []bool{true, false, false}
-	tui.tabs.Focus = 0
-	tui.scrolls[0].Follow = false
+	tui.tabs.Expanded = []bool{false, true, false}
+	tui.tabs.HasContent = []bool{false, true, false}
+	tui.tabs.Focus = 1
+	tui.scrolls[1].Follow = false
 	tui.screen = taiui.NewTerminalScreen(&strings.Builder{}, 80, 10)
 	tui.width = 80
 	tui.height = 10
@@ -1344,39 +1375,39 @@ func TestTUIPageScrollUsesPaneHeight(t *testing.T) {
 	}
 	tui.write([]byte(sb.String()))
 	tui.render()
-	tui.scrolls[0].Offset = 0
-	tui.scrolls[0].Follow = false
+	tui.scrolls[1].Offset = 0
+	tui.scrolls[1].Follow = false
 
 	// The pane is 6 rows (label strip and input bar row included), so a
 	// page keeps one line of context and scrolls by 5. See
 	// TheoryOfTUIChatInput.
 	tui.pageScroll(1)
-	if tui.scrolls[0].Offset != 5 {
-		t.Fatalf("expected topLeft 5 after page down, got %d", tui.scrolls[0].Offset)
+	if tui.scrolls[1].Offset != 5 {
+		t.Fatalf("expected topLeft 5 after page down, got %d", tui.scrolls[1].Offset)
 	}
-	if tui.scrolls[0].Follow {
+	if tui.scrolls[1].Follow {
 		t.Fatal("expected follow cleared after page down from the top")
 	}
 
 	tui.pageScroll(-1)
-	if tui.scrolls[0].Offset != 0 {
-		t.Fatalf("expected topLeft 0 after page up, got %d", tui.scrolls[0].Offset)
+	if tui.scrolls[1].Offset != 0 {
+		t.Fatalf("expected topLeft 0 after page up, got %d", tui.scrolls[1].Offset)
 	}
 
-	tui.scrolls[0].Offset = 90
-	tui.scrolls[0].Follow = false
+	tui.scrolls[1].Offset = 90
+	tui.scrolls[1].Follow = false
 	tui.pageScroll(1)
-	if tui.scrolls[0].Offset != tui.scrolls[0].MaxOffset {
-		t.Fatalf("expected topLeft clamped to %d, got %d", tui.scrolls[0].MaxOffset, tui.scrolls[0].Offset)
+	if tui.scrolls[1].Offset != tui.scrolls[1].MaxOffset {
+		t.Fatalf("expected topLeft clamped to %d, got %d", tui.scrolls[1].MaxOffset, tui.scrolls[1].Offset)
 	}
 }
 
 func TestTUIDownAtEndKeepsFollow(t *testing.T) {
 	tui := newTUIForTest()
-	tui.tabs.Expanded = []bool{true, false, false}
-	tui.tabs.HasContent = []bool{true, false, false}
-	tui.tabs.Focus = 0
-	tui.scrolls[0].Follow = true
+	tui.tabs.Expanded = []bool{false, true, false}
+	tui.tabs.HasContent = []bool{false, true, false}
+	tui.tabs.Focus = 1
+	tui.scrolls[1].Follow = true
 	tui.screen = taiui.NewTerminalScreen(&strings.Builder{}, 80, 10)
 	tui.width = 80
 	tui.height = 10
@@ -1389,11 +1420,11 @@ func TestTUIDownAtEndKeepsFollow(t *testing.T) {
 	tui.render()
 
 	tui.scroll(1)
-	if !tui.scrolls[0].Follow {
+	if !tui.scrolls[1].Follow {
 		t.Fatal("down at the latest row must keep following")
 	}
-	if tui.scrolls[0].Offset != tui.scrolls[0].MaxOffset {
-		t.Fatalf("expected topLeft at max offset %d, got %d", tui.scrolls[0].MaxOffset, tui.scrolls[0].Offset)
+	if tui.scrolls[1].Offset != tui.scrolls[1].MaxOffset {
+		t.Fatalf("expected topLeft at max offset %d, got %d", tui.scrolls[1].MaxOffset, tui.scrolls[1].Offset)
 	}
 }
 
@@ -1493,15 +1524,20 @@ func TestTUIMouseWheel(t *testing.T) {
 }
 
 func TestTUIRenderBuildsViewFromState(t *testing.T) {
-	// render() forks the current TUI state values into a fresh dscope view
-	// scope on every call and lets the provider graph derive the panels;
-	// there is no cached scope or lazy initialization to manage. A second
-	// render after new output shows the updated content. See TheoryOfTUI.
+	// render() computes the wrapped display lines of every expanded tab
+	// from the current state and builds the element tree; there is no
+	// cached scope or lazy initialization to manage. The test expands
+	// and focuses the Output tab (index 1) explicitly, so the streamed
+	// output lands in a rendered pane. A second render after new output
+	// shows the updated content. See TheoryOfTUI.
 	var sb strings.Builder
 	tui := newTUIForTest()
 	tui.screen = taiui.NewTerminalScreen(&sb, 80, 10)
 	tui.width = 80
 	tui.height = 10
+	tui.tabs.Expanded = []bool{false, true, false}
+	tui.tabs.HasContent = []bool{false, true, false}
+	tui.tabs.Focus = 1
 	tui.write([]byte("hello\n"))
 	tui.render()
 	if !strings.Contains(sb.String(), "hello") {
@@ -1549,11 +1585,11 @@ func TestComputeTabBoxesAllCollapsed(t *testing.T) {
 func TestTuiStateAutoExpandTabs(t *testing.T) {
 	tui := newTUIForTest()
 	writeModelOutput(tui, "model output\n")
-	if !tui.tabs.Expanded[0] {
+	if !tui.tabs.Expanded[1] {
 		t.Fatal("output tab should auto-expand on streamed output")
 	}
 	if tui.tabs.Focus != 0 {
-		t.Fatalf("expected focus on the output tab, got %d", tui.tabs.Focus)
+		t.Fatalf("auto-expand must not change an established focus, got %d", tui.tabs.Focus)
 	}
 
 	tui.writeLogs([]byte("msg=\"log record\"\n"))
@@ -1570,7 +1606,7 @@ func TestTuiStateAutoExpandTabs(t *testing.T) {
 		t.Fatal(err)
 	}
 	tui.setTree(tr)
-	if !tui.tabs.Expanded[1] {
+	if !tui.tabs.Expanded[0] {
 		t.Fatal("tree tab should auto-expand on an event node")
 	}
 	if tui.tabs.Focus != 0 {
@@ -1582,20 +1618,23 @@ func TestTuiStateAutoExpandTabs(t *testing.T) {
 	}
 
 	tui2 := newTUIForTest()
-	tui2.tabs.Expanded = []bool{true, false, false}
-	tui2.tabs.HasContent = []bool{true, false, false}
-	tui2.tabs.Focus = 0
+	// Fold every tab so the Tree tab is collapsed: the attempt node's
+	// arrival must auto-expand it and take the focus, because no tab
+	// holds the focus.
+	tui2.tabs.Expanded = []bool{false, false, false}
+	tui2.tabs.HasContent = []bool{false, false, false}
+	tui2.tabs.Focus = -1
 	tr2, err := tree.New().Write("root", "attempt-1", tree.TypeAttempt, tree.AuthorProgram,
 		"attempt 1 (1/3)")
 	if err != nil {
 		t.Fatal(err)
 	}
 	tui2.setTree(tr2)
-	if !tui2.tabs.Expanded[1] {
+	if !tui2.tabs.Expanded[0] {
 		t.Fatal("tree tab should auto-expand on the attempt node")
 	}
 	if tui2.tabs.Focus != 0 {
-		t.Fatalf("auto-expand must not change an established focus, got %d", tui2.tabs.Focus)
+		t.Fatalf("the first auto-expanded tab takes the focus, got %d", tui2.tabs.Focus)
 	}
 }
 
@@ -1637,16 +1676,16 @@ func TestTuiStateEmptyWriteDoesNotExpandTabs(t *testing.T) {
 }
 
 // TestTUINewDefaultsOutputExpanded verifies the production default: the
-// Output tab starts expanded, focused, and following the tail, while
-// the other tabs stay collapsed until their first content arrives. See
-// TheoryOfTUI.
+// Tree tab (index 0) starts expanded, focused, and following the tail,
+// while the Output (index 1) and Logs (index 2) tabs stay collapsed
+// until their first content arrives. See TheoryOfTUI.
 func TestTUINewDefaultsOutputExpanded(t *testing.T) {
 	tui := newTUIForTest()
 	if !tui.tabs.Expanded[0] || tui.tabs.Focus != 0 {
-		t.Fatalf("the output tab must start expanded and focused, got %+v", tui.tabs)
+		t.Fatalf("the tree tab must start expanded and focused, got %+v", tui.tabs)
 	}
 	if !tui.scrolls[0].Follow {
-		t.Fatal("the output tab must start following the tail")
+		t.Fatal("the tree tab must start following the tail")
 	}
 	for i := 1; i < 3; i++ {
 		if tui.tabs.Expanded[i] {
@@ -1658,24 +1697,28 @@ func TestTUINewDefaultsOutputExpanded(t *testing.T) {
 func TestTuiStateAutoExpandOnlyFirstContent(t *testing.T) {
 	tui := newTUIForTest()
 	tui.write([]byte("first output\n"))
-	if !tui.tabs.Expanded[0] {
+	if !tui.tabs.Expanded[1] {
 		t.Fatal("output tab should be expanded on first content")
 	}
-	tui.toggleTab(0)
-	if tui.tabs.Expanded[0] {
+	// Pressing a tab's key collapses it only while it holds the focus:
+	// the Tree tab starts focused, so the first press focuses the Output
+	// tab and the second collapses it. See taiui.TheoryOfTabs.
+	tui.toggleTab(1)
+	tui.toggleTab(1)
+	if tui.tabs.Expanded[1] {
 		t.Fatal("output tab should be collapsed")
 	}
 	tui.write([]byte("more output\n"))
-	if tui.tabs.Expanded[0] {
+	if tui.tabs.Expanded[1] {
 		t.Fatal("output tab must not re-expand on subsequent content")
 	}
 	// The collapsed tab carries the unseen dot for the missed content,
 	// and re-expanding clears it.
-	if !tui.tabs.Unseen[0] {
+	if !tui.tabs.Unseen[1] {
 		t.Fatal("collapsed output tab must carry the unseen dot after new output")
 	}
-	tui.toggleTab(0)
-	if tui.tabs.Unseen[0] {
+	tui.toggleTab(1)
+	if tui.tabs.Unseen[1] {
 		t.Fatal("re-expanding must clear the unseen dot")
 	}
 }
@@ -2063,17 +2106,18 @@ func TestTUIJumpToTransition(t *testing.T) {
 	// and tail (20). Each section change inserts a blank separator line
 	// that belongs to the section it closes, so the section starts sit
 	// at display rows 0, 21, 23, 44, and 46, and the display holds 66
-	// rows. With the output pane reduced to 6 rows (the tab box of 8
-	// rows minus the one-row label strip and the input bar row), each
-	// boundary contributes an exit stop at boundary-6 and an entry stop
-	// at the boundary itself: 15, 21, 17, 23, 38, 44, 40, and 46. See
-	// TheoryOfTUIChatInput.
+	// rows. Only the Output tab (index 1) is expanded, so its box sits
+	// below the collapsed Tree strip and its pane is 6 rows (the tab box
+	// of 8 rows minus the one-row label strip and the input bar row);
+	// each boundary contributes an exit stop at boundary-6 and an entry
+	// stop at the boundary itself: 15, 21, 17, 23, 38, 44, 40, and 46.
+	// See TheoryOfTUIChatInput.
 	setupLong := func(t *testing.T) *TUI {
 		t.Helper()
 		tui := newTUIForTest()
-		tui.tabs.Expanded = []bool{true, false, false}
-		tui.tabs.HasContent = []bool{true, false, false}
-		tui.tabs.Focus = 0
+		tui.tabs.Expanded = []bool{false, true, false}
+		tui.tabs.HasContent = []bool{false, true, false}
+		tui.tabs.Focus = 1
 		tui.screen = taiui.NewTerminalScreen(&strings.Builder{}, 80, 10)
 		tui.width = 80
 		tui.height = 10
@@ -2094,7 +2138,7 @@ func TestTUIJumpToTransition(t *testing.T) {
 			fmt.Fprintf(&b, "tail %02d\n", i)
 		}
 		tui.writeOutputPart(generators.RoleModel, false, b.String())
-		tui.scrolls[0].Follow = false
+		tui.scrolls[1].Follow = false
 		return tui
 	}
 
@@ -2102,11 +2146,11 @@ func TestTUIJumpToTransition(t *testing.T) {
 		tui := setupLong(t)
 		for _, want := range []int{15, 17, 21, 23, 38, 40, 44, 46} {
 			tui.jumpToTransition(1)
-			if tui.scrolls[0].Offset != want {
-				t.Fatalf("expected offset %d at the next stop, got %d", want, tui.scrolls[0].Offset)
+			if tui.scrolls[1].Offset != want {
+				t.Fatalf("expected offset %d at the next stop, got %d", want, tui.scrolls[1].Offset)
 			}
 		}
-		if tui.tabs.Focus != 0 {
+		if tui.tabs.Focus != 1 {
 			t.Fatalf("expected the output tab focused after the jump, got %d", tui.tabs.Focus)
 		}
 		// Past the last stop no boundary lies ahead: the forward key
@@ -2115,29 +2159,29 @@ func TestTUIJumpToTransition(t *testing.T) {
 		// doing nothing. The display holds 66 rows and the pane shows
 		// 6, so the tail offset is 60.
 		tui.jumpToTransition(1)
-		if tui.scrolls[0].Offset != 60 {
-			t.Fatalf("expected offset 60 at the live tail past the last stop, got %d", tui.scrolls[0].Offset)
+		if tui.scrolls[1].Offset != 60 {
+			t.Fatalf("expected offset 60 at the live tail past the last stop, got %d", tui.scrolls[1].Offset)
 		}
 		tui.jumpToTransition(1)
-		if tui.scrolls[0].Offset != 60 {
-			t.Fatalf("expected the view to stay at the tail, got %d", tui.scrolls[0].Offset)
+		if tui.scrolls[1].Offset != 60 {
+			t.Fatalf("expected the view to stay at the tail, got %d", tui.scrolls[1].Offset)
 		}
 	})
 
 	t.Run("Previous", func(t *testing.T) {
 		tui := setupLong(t)
-		tui.scrolls[0].Offset = 60
+		tui.scrolls[1].Offset = 60
 		for _, want := range []int{46, 44, 40, 38, 23, 21, 17, 15, 0} {
 			tui.jumpToTransition(-1)
-			if tui.scrolls[0].Offset != want {
-				t.Fatalf("expected offset %d after the prev-jump, got %d", want, tui.scrolls[0].Offset)
+			if tui.scrolls[1].Offset != want {
+				t.Fatalf("expected offset %d after the prev-jump, got %d", want, tui.scrolls[1].Offset)
 			}
 		}
 		// At the very beginning no earlier stop exists; the view stays
 		// put instead of jumping anywhere.
 		tui.jumpToTransition(-1)
-		if tui.scrolls[0].Offset != 0 {
-			t.Fatalf("expected the view to stay at 0 at the very beginning, got %d", tui.scrolls[0].Offset)
+		if tui.scrolls[1].Offset != 0 {
+			t.Fatalf("expected the view to stay at 0 at the very beginning, got %d", tui.scrolls[1].Offset)
 		}
 	})
 
@@ -2146,68 +2190,69 @@ func TestTUIJumpToTransition(t *testing.T) {
 		// the jump clamps it against the fresh display so it anchors at
 		// the content end, and the previous jump lands on the last stop.
 		tui := setupLong(t)
-		tui.scrolls[0].Offset = 1 << 30
+		tui.scrolls[1].Offset = 1 << 30
 		tui.jumpToTransition(-1)
-		if tui.scrolls[0].Offset != 46 {
-			t.Fatalf("expected the last stop when jumping back from the tail, got %d", tui.scrolls[0].Offset)
+		if tui.scrolls[1].Offset != 46 {
+			t.Fatalf("expected the last stop when jumping back from the tail, got %d", tui.scrolls[1].Offset)
 		}
 	})
 
 	t.Run("ExpandsCollapsedTab", func(t *testing.T) {
 		tui := setupLong(t)
-		tui.tabs.Toggle(0) // collapse the focused output tab
-		if tui.tabs.Expanded[0] {
+		tui.tabs.Toggle(1) // collapse the focused output tab
+		if tui.tabs.Expanded[1] {
 			t.Fatal("expected the output tab collapsed")
 		}
 		tui.jumpToTransition(1)
-		if !tui.tabs.Expanded[0] {
+		if !tui.tabs.Expanded[1] {
 			t.Fatal("the jump must expand a collapsed output tab")
 		}
-		if tui.tabs.Focus != 0 {
+		if tui.tabs.Focus != 1 {
 			t.Fatalf("expected the output tab focused after the jump, got %d", tui.tabs.Focus)
 		}
-		if tui.scrolls[0].Offset != 15 {
-			t.Fatalf("expected offset 15 after the jump, got %d", tui.scrolls[0].Offset)
+		if tui.scrolls[1].Offset != 15 {
+			t.Fatalf("expected offset 15 after the jump, got %d", tui.scrolls[1].Offset)
 		}
 	})
 
 	t.Run("TakesFocusFromAnotherTab", func(t *testing.T) {
 		tui := setupLong(t)
+		// The Tree tab (index 0) and the Output tab are both expanded:
+		// they split the screen below the collapsed Logs strip by weight
+		// (1:3), so the Output pane is 5 rows and the first stop sits at
+		// boundary 21 minus 5.
 		tui.tabs.Expanded = []bool{true, true, false}
 		tui.tabs.HasContent = []bool{true, true, false}
-		tui.tabs.Focus = 1
+		tui.tabs.Focus = 0
 		tui.jumpToTransition(1)
-		if tui.tabs.Focus != 0 {
+		if tui.tabs.Focus != 1 {
 			t.Fatalf("the jump must take the focus on the output tab, got %d", tui.tabs.Focus)
 		}
-		// The output pane is smaller here (box height 6, pane height 4
-		// after the label strip and the input bar row), so the first
-		// stop sits at boundary 21 minus 4.
-		if tui.scrolls[0].Offset != 17 {
-			t.Fatalf("expected offset 17 after the jump, got %d", tui.scrolls[0].Offset)
+		if tui.scrolls[1].Offset != 16 {
+			t.Fatalf("expected offset 16 after the jump, got %d", tui.scrolls[1].Offset)
 		}
 	})
 
 	t.Run("EmptyContent", func(t *testing.T) {
 		tui := newTUIForTest()
-		tui.tabs.Expanded = []bool{true, false, false}
-		tui.tabs.HasContent = []bool{true, false, false}
-		tui.tabs.Focus = 0
-		tui.scrolls[0].Offset = 0
+		tui.tabs.Expanded = []bool{false, true, false}
+		tui.tabs.HasContent = []bool{false, true, false}
+		tui.tabs.Focus = 1
+		tui.scrolls[1].Offset = 0
 		tui.screen = taiui.NewTerminalScreen(&strings.Builder{}, 80, 10)
 		tui.width = 80
 		tui.height = 10
 		tui.jumpToTransition(1)
-		if tui.scrolls[0].Offset != 0 {
-			t.Fatalf("expected the view unchanged without content, got %d", tui.scrolls[0].Offset)
+		if tui.scrolls[1].Offset != 0 {
+			t.Fatalf("expected the view unchanged without content, got %d", tui.scrolls[1].Offset)
 		}
 	})
 
 	t.Run("SingleSection", func(t *testing.T) {
 		tui := newTUIForTest()
-		tui.tabs.Expanded = []bool{true, false, false}
-		tui.tabs.HasContent = []bool{true, false, false}
-		tui.tabs.Focus = 0
+		tui.tabs.Expanded = []bool{false, true, false}
+		tui.tabs.HasContent = []bool{false, true, false}
+		tui.tabs.Focus = 1
 		tui.screen = taiui.NewTerminalScreen(&strings.Builder{}, 80, 10)
 		tui.width = 80
 		tui.height = 10
@@ -2220,15 +2265,15 @@ func TestTUIJumpToTransition(t *testing.T) {
 			fmt.Fprintf(&b, "line %02d\n", i)
 		}
 		tui.writeOutputPart(generators.RoleModel, false, b.String())
-		tui.scrolls[0].Offset = 0
+		tui.scrolls[1].Offset = 0
 		tui.jumpToTransition(1)
-		if tui.scrolls[0].Offset != 14 {
-			t.Fatalf("expected the ] key to reach the live tail in a single section, got %d", tui.scrolls[0].Offset)
+		if tui.scrolls[1].Offset != 14 {
+			t.Fatalf("expected the ] key to reach the live tail in a single section, got %d", tui.scrolls[1].Offset)
 		}
-		tui.scrolls[0].Offset = 5
+		tui.scrolls[1].Offset = 5
 		tui.jumpToTransition(-1)
-		if tui.scrolls[0].Offset != 0 {
-			t.Fatalf("expected the [ key to reach the very beginning in a single section, got %d", tui.scrolls[0].Offset)
+		if tui.scrolls[1].Offset != 0 {
+			t.Fatalf("expected the [ key to reach the very beginning in a single section, got %d", tui.scrolls[1].Offset)
 		}
 	})
 }
@@ -2340,19 +2385,19 @@ func TestTUIWrappedDisplayCache(t *testing.T) {
 	box := taiui.Box{Top: 0, Left: 0, Bottom: 10, Right: 40}
 
 	tui.write([]byte("hello\n"))
-	display1 := wrappedDisplay(tui, 0, box)
+	display1 := wrappedDisplay(tui, 1, box)
 	if len(display1) != 1 || display1[0].Text != "hello" {
 		t.Fatalf("unexpected display1: %v", display1)
 	}
 
 	tui.write([]byte("partial text"))
-	display2 := wrappedDisplay(tui, 0, box)
+	display2 := wrappedDisplay(tui, 1, box)
 	if len(display2) != 2 || display2[1].Text != "partial text" {
 		t.Fatalf("unexpected display2: %v", display2)
 	}
 
 	tui.write([]byte("\nworld\n"))
-	display3 := wrappedDisplay(tui, 0, box)
+	display3 := wrappedDisplay(tui, 1, box)
 	if len(display3) != 3 || display3[1].Text != "partial text" || display3[2].Text != "world" {
 		t.Fatalf("unexpected display3: %v", display3)
 	}
@@ -2360,7 +2405,7 @@ func TestTUIWrappedDisplayCache(t *testing.T) {
 	// Width resize re-wraps the whole content; the incremental cache
 	// internals are covered by taiui's own tests.
 	boxWider := taiui.Box{Top: 0, Left: 0, Bottom: 10, Right: 80}
-	displayWider := wrappedDisplay(tui, 0, boxWider)
+	displayWider := wrappedDisplay(tui, 1, boxWider)
 	if len(displayWider) != 3 {
 		t.Fatalf("expected 3 lines after resize, got %d", len(displayWider))
 	}
@@ -2374,14 +2419,14 @@ func TestTUIWrappedDisplayLargeOutputPerformance(t *testing.T) {
 		tui.output.Append(taiui.NoColor, fmt.Sprintf("line %d\n", i))
 	}
 
-	display := wrappedDisplay(tui, 0, box)
+	display := wrappedDisplay(tui, 1, box)
 	if len(display) != 50000 {
 		t.Fatalf("expected 50000 display lines, got %d", len(display))
 	}
 
 	// Appending one new line wraps incrementally.
 	tui.output.Append(taiui.NoColor, "new final line\n")
-	display2 := wrappedDisplay(tui, 0, box)
+	display2 := wrappedDisplay(tui, 1, box)
 	if len(display2) != 50001 {
 		t.Fatalf("expected 50001 display lines, got %d", len(display2))
 	}

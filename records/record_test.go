@@ -90,17 +90,19 @@ func TestRecorderWritesTreeOperations(t *testing.T) {
 		// Each event renders as a boundary-delimited block of kind
 		// "event": the operation's metadata is the URI query of the
 		// opening header, the content the operation wrote is the block
-		// body. The delimiter is drawn at random per event, so the
+		// body. The node types are the structured "prefix::name" form,
+		// whose ':' separators are percent-encoded (%3A) by the query
+		// encoder. The delimiter is drawn at random per event, so the
 		// assertions match the header from its kind onward. See
-		// TheoryOfInteractionRecording.
+		// tree.TheoryOfTree and TheoryOfInteractionRecording.
 		for _, want := range []string{
 			"=== Session", "command=test-command", "status=success",
 			"operations=3",
-			"event:?name=user-1&kind=write&type=user&author=user&parent=root&time=",
+			"event:?name=user-1&kind=write&type=message%3A%3Auser&author=user&parent=root&time=",
 			"\nhello\nworld\n",
 			"name=user-1&kind=modify",
 			"\nhello again\n",
-			"name=model-1&kind=write&type=model&author=model&parent=user-1&time=",
+			"name=model-1&kind=write&type=message%3A%3Amodel&author=model&parent=user-1&time=",
 			"\nthe answer\n",
 		} {
 			if !strings.Contains(text, want) {
@@ -261,7 +263,9 @@ func TestSessionNotFound(t *testing.T) {
 // TestTranscriptCarriesNodeMetadata verifies that the transcript renders
 // each write event's complete metadata: the write's insert time survives
 // the record-render round trip and appears in the event block's URI
-// query alongside the parent, type, and author.
+// query alongside the parent, type, and author. The node type carries
+// the structured "prefix::name" form, whose ':' separators are
+// percent-encoded by the query encoder. See tree.TheoryOfTree.
 func TestTranscriptCarriesNodeMetadata(t *testing.T) {
 	withRecorder(t, true, func(recorder *Recorder) {
 		recorder.StartSession("test")
@@ -290,7 +294,7 @@ func TestTranscriptCarriesNodeMetadata(t *testing.T) {
 		}
 		// The delimiter is drawn at random per event, so the assertion
 		// matches the header from its kind onward.
-		want := "event:?name=user-1&kind=write&type=user&author=user&parent=root&time=" +
+		want := "event:?name=user-1&kind=write&type=message%3A%3Auser&author=user&parent=root&time=" +
 			percentEncodeEventValue(insertTime.Format(time.RFC3339Nano))
 		if !strings.Contains(text, want) {
 			t.Fatalf("transcript must carry the event's complete metadata, got:\n%s", text)
@@ -303,7 +307,9 @@ func TestTranscriptCarriesNodeMetadata(t *testing.T) {
 // write event carries its content, the deleted node's write event
 // carries the content it had when written, and the delete itself
 // renders as a delete event, so the transcript shows the applied
-// history rather than the tree's final state.
+// history rather than the tree's final state. The node type carries
+// the structured form, percent-encoded in the query. See
+// tree.TheoryOfTree.
 func TestTranscriptRendersDeleteEvents(t *testing.T) {
 	withRecorder(t, true, func(recorder *Recorder) {
 		recorder.StartSession("test")
@@ -331,7 +337,7 @@ func TestTranscriptRendersDeleteEvents(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(text, "event:?name=user-1&kind=write&type=user&author=user&parent=root") || !strings.Contains(text, "\nkept\n") {
+		if !strings.Contains(text, "event:?name=user-1&kind=write&type=message%3A%3Auser&author=user&parent=root") || !strings.Contains(text, "\nkept\n") {
 			t.Fatalf("the surviving node's write event must carry its content, got:\n%s", text)
 		}
 		if !strings.Contains(text, "name=user-2&kind=write") || !strings.Contains(text, "\nremoved\n") {
@@ -394,7 +400,9 @@ func TestTranscriptEventStreamOrder(t *testing.T) {
 // blocks.ParseBlocks recovers every event's metadata and content in
 // application order. Every event's delimiter is a Han pair absent from
 // its body, so Han-heavy content never collides with its own closing
-// marker. See TheoryOfInteractionRecording.
+// marker. The parsed attributes are decoded, so the type value is the
+// structured "prefix::name" string. See TheoryOfInteractionRecording
+// and tree.TheoryOfTree.
 func TestTranscriptEventsParseAsBlocks(t *testing.T) {
 	withRecorder(t, true, func(recorder *Recorder) {
 		recorder.StartSession("test")
@@ -432,7 +440,7 @@ func TestTranscriptEventsParseAsBlocks(t *testing.T) {
 			}
 		}
 		if first.Attributes["name"] != "user-1" || first.Attributes["kind"] != "write" ||
-			first.Attributes["type"] != "user" || first.Attributes["author"] != "user" ||
+			first.Attributes["type"] != "message::user" || first.Attributes["author"] != "user" ||
 			first.Attributes["parent"] != "root" {
 			t.Fatalf("first block metadata mismatch: %v", first.Attributes)
 		}

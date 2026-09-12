@@ -32,7 +32,9 @@ func assertTexts(t *testing.T, got []string, want ...string) {
 
 // TestOutputSectionCollapseShowsFirstLine verifies the per-section
 // projection: collapsing a section reduces it to its first source line
-// while every other section renders in full. See TheoryOfOutputControls.
+// while every other section renders in full. The Output tab is index 1
+// after the tab-order swap (Tree 0 / Output 1 / Logs 2). See
+// TheoryOfOutputControls.
 func TestOutputSectionCollapseShowsFirstLine(t *testing.T) {
 	tui := newTUIForTest()
 	box := taiui.Box{Top: 0, Left: 0, Bottom: 20, Right: 40}
@@ -44,7 +46,7 @@ func TestOutputSectionCollapseShowsFirstLine(t *testing.T) {
 
 	tui.mu.Lock()
 	tui.toggleOutputSectionLocked(1)
-	display := wrappedDisplay(tui, 0, box)
+	display := wrappedDisplay(tui, 1, box)
 	tui.mu.Unlock()
 	assertTexts(t, displayTexts(display),
 		"question", "", "thought line one", "answer")
@@ -68,15 +70,15 @@ func TestOutputSectionCollapseStreaming(t *testing.T) {
 	tui.mu.Lock()
 	tui.toggleOutputSectionLocked(0)
 	tui.mu.Unlock()
-	assertTexts(t, displayTexts(wrappedDisplay(tui, 0, box)), "thinking first")
+	assertTexts(t, displayTexts(wrappedDisplay(tui, 1, box)), "thinking first")
 
 	// New output moves the collapsed row to the newest completed line.
 	tui.writeOutputPart(generators.RoleModel, true, "thinking second\n")
-	assertTexts(t, displayTexts(wrappedDisplay(tui, 0, box)), "thinking second")
+	assertTexts(t, displayTexts(wrappedDisplay(tui, 1, box)), "thinking second")
 
 	// The trailing partial line is the newest output: the row shows it.
 	tui.writeOutputPart(generators.RoleModel, true, "partial thi")
-	assertTexts(t, displayTexts(wrappedDisplay(tui, 0, box)), "partial thi")
+	assertTexts(t, displayTexts(wrappedDisplay(tui, 1, box)), "partial thi")
 }
 
 // TestOutputSectionTogglePreservesContent verifies that collapsing is a
@@ -93,11 +95,11 @@ func TestOutputSectionTogglePreservesContent(t *testing.T) {
 
 	tui.mu.Lock()
 	tui.toggleOutputSectionLocked(1)
-	collapsed := displayTexts(wrappedDisplay(tui, 0, box))
+	collapsed := displayTexts(wrappedDisplay(tui, 1, box))
 	tui.toggleOutputSectionLocked(1)
-	expanded := displayTexts(wrappedDisplay(tui, 0, box))
+	expanded := displayTexts(wrappedDisplay(tui, 1, box))
 	tui.toggleOutputSectionLocked(1)
-	again := displayTexts(wrappedDisplay(tui, 0, box))
+	again := displayTexts(wrappedDisplay(tui, 1, box))
 	tui.mu.Unlock()
 	assertTexts(t, collapsed, "question", "", "thought one", "answer")
 	assertTexts(t, expanded, "question", "", "thought one", "thought two", "", "answer")
@@ -116,8 +118,8 @@ func TestOutputSectionWidthChangeRewraps(t *testing.T) {
 	tui.writeOutputPart(generators.RoleModel, false, "answer\n")
 	tui.mu.Lock()
 	tui.toggleOutputSectionLocked(0)
-	narrow := displayTexts(wrappedDisplay(tui, 0, taiui.Box{Top: 0, Left: 0, Bottom: 20, Right: 40}))
-	wide := displayTexts(wrappedDisplay(tui, 0, taiui.Box{Top: 0, Left: 0, Bottom: 20, Right: 80}))
+	narrow := displayTexts(wrappedDisplay(tui, 1, taiui.Box{Top: 0, Left: 0, Bottom: 20, Right: 40}))
+	wide := displayTexts(wrappedDisplay(tui, 1, taiui.Box{Top: 0, Left: 0, Bottom: 20, Right: 80}))
 	tui.mu.Unlock()
 	if !slices.Equal(wide, narrow) {
 		t.Fatalf("expected the same rows after the width change, got %q vs %q", wide, narrow)
@@ -134,7 +136,7 @@ func TestOutputSectionCollapsedRowTruncatedToWidth(t *testing.T) {
 	tui.writeOutputPart(generators.RoleModel, true, strings.Repeat("x", 100)+"\n")
 	tui.mu.Lock()
 	tui.toggleOutputSectionLocked(0)
-	display := wrappedDisplay(tui, 0, box)
+	display := wrappedDisplay(tui, 1, box)
 	tui.mu.Unlock()
 	if len(display) != 1 {
 		t.Fatalf("expected one collapsed row, got %d: %v", len(display), display)
@@ -181,7 +183,7 @@ func TestCollapseAllSections(t *testing.T) {
 
 	tui.collapseAllSections()
 	tui.mu.Lock()
-	display := wrappedDisplay(tui, 0, box)
+	display := wrappedDisplay(tui, 1, box)
 	tui.mu.Unlock()
 	assertTexts(t, displayTexts(display), "question", "thought one", "answer")
 
@@ -189,7 +191,7 @@ func TestCollapseAllSections(t *testing.T) {
 	// separator blank line inside its span renders with them.
 	tui.mu.Lock()
 	tui.toggleOutputSectionLocked(1)
-	display = wrappedDisplay(tui, 0, box)
+	display = wrappedDisplay(tui, 1, box)
 	tui.mu.Unlock()
 	assertTexts(t, displayTexts(display),
 		"question", "thought one", "thought two", "thought three", "", "answer")
@@ -197,7 +199,7 @@ func TestCollapseAllSections(t *testing.T) {
 	// Collapsing again folds back to the header.
 	tui.mu.Lock()
 	tui.toggleOutputSectionLocked(1)
-	display = wrappedDisplay(tui, 0, box)
+	display = wrappedDisplay(tui, 1, box)
 	tui.mu.Unlock()
 	assertTexts(t, displayTexts(display), "question", "thought one", "answer")
 
@@ -205,7 +207,7 @@ func TestCollapseAllSections(t *testing.T) {
 	// newest line.
 	tui.writeOutputPart(generators.RoleModel, false, "answer two\n")
 	tui.mu.Lock()
-	display = wrappedDisplay(tui, 0, box)
+	display = wrappedDisplay(tui, 1, box)
 	tui.mu.Unlock()
 	assertTexts(t, displayTexts(display), "question", "thought one", "answer two")
 }
@@ -226,7 +228,7 @@ func TestCollapseAllSectionsRestore(t *testing.T) {
 	// First press folds everything to one row per section.
 	tui.collapseAllSections()
 	tui.mu.Lock()
-	display := wrappedDisplay(tui, 0, box)
+	display := wrappedDisplay(tui, 1, box)
 	tui.mu.Unlock()
 	assertTexts(t, displayTexts(display), "question", "thought one", "answer")
 
@@ -237,7 +239,7 @@ func TestCollapseAllSectionsRestore(t *testing.T) {
 	tui.mu.Unlock()
 	tui.collapseAllSections()
 	tui.mu.Lock()
-	display = wrappedDisplay(tui, 0, box)
+	display = wrappedDisplay(tui, 1, box)
 	tui.mu.Unlock()
 	assertTexts(t, displayTexts(display), "question", "thought one", "answer")
 
@@ -245,7 +247,7 @@ func TestCollapseAllSectionsRestore(t *testing.T) {
 	// the last fold — section 1 expanded, the others collapsed.
 	tui.collapseAllSections()
 	tui.mu.Lock()
-	display = wrappedDisplay(tui, 0, box)
+	display = wrappedDisplay(tui, 1, box)
 	tui.mu.Unlock()
 	assertTexts(t, displayTexts(display),
 		"question", "thought one", "thought two", "thought three", "", "answer")
@@ -254,7 +256,7 @@ func TestCollapseAllSectionsRestore(t *testing.T) {
 	tui.collapseAllSections()
 	tui.collapseAllSections()
 	tui.mu.Lock()
-	display = wrappedDisplay(tui, 0, box)
+	display = wrappedDisplay(tui, 1, box)
 	tui.mu.Unlock()
 	assertTexts(t, displayTexts(display),
 		"question", "thought one", "thought two", "thought three", "", "answer")
@@ -274,7 +276,7 @@ func TestOutputControlRowsPinned(t *testing.T) {
 
 	tui.mu.Lock()
 	defer tui.mu.Unlock()
-	display := wrappedDisplay(tui, 0, box)
+	display := wrappedDisplay(tui, 1, box)
 	// The pane is 8 rows (the box minus the label strip and the input
 	// bar row), so the viewport at offset 0 covers display rows 0..7.
 	// The projection holds s0 (2 rows), s1 (30 rows), s2 (1 row);
@@ -304,23 +306,30 @@ func TestOutputControlRowsPinned(t *testing.T) {
 func TestToggleControlAtClick(t *testing.T) {
 	tui := newTUIForTest()
 	tui.width, tui.height = 40, 10
+	// The Output tab (index 1) must be expanded for its control column
+	// to exist. See TheoryOfTUI.
+	tui.tabs.Expanded = []bool{false, true, false}
+	tui.tabs.HasContent = []bool{false, true, false}
+	tui.tabs.Focus = 1
 
 	tui.writeOutputPart(generators.RoleUser, false, "q\n")
 	tui.writeOutputPart(generators.RoleModel, true, "t1\nt2\n")
 	tui.writeOutputPart(generators.RoleModel, false, "answer\n")
 
-	box := tui.tabs.Boxes(40, 10)[0]
+	box := tui.tabs.Boxes(40, 10)[1]
 	tui.mu.Lock()
-	display := wrappedDisplay(tui, 0, box)
+	display := wrappedDisplay(tui, 1, box)
 	rows := tui.outputControlRows(box, display, 0)
 	tui.mu.Unlock()
 	// The pane is 6 rows (the box minus the label strip and the input
 	// bar row); the projection holds 6 display rows — s0 2 rows, s1 3
-	// rows, s2 1 row — with controls at pane rows 1, 3, and 6.
+	// rows, s2 1 row — with controls at pane rows 1, 3, and 6. The box
+	// sits below the collapsed Tree strip, so its top row is 1 and the
+	// second control renders at box.Top+3.
 	if len(rows) != 3 {
 		t.Fatalf("expected 3 control rows in the pane, got %+v", rows)
 	}
-	if rows[1].section != 1 || rows[1].row != 3 {
+	if rows[1].section != 1 || rows[1].row != box.Top+3 {
 		t.Fatalf("unexpected second control row: %+v", rows[1])
 	}
 
@@ -361,12 +370,15 @@ func TestToggleControlAtClick(t *testing.T) {
 func TestClickExpandsCollapsedSection(t *testing.T) {
 	tui := newTUIForTest()
 	tui.width, tui.height = 40, 10
+	tui.tabs.Expanded = []bool{false, true, false}
+	tui.tabs.HasContent = []bool{false, true, false}
+	tui.tabs.Focus = 1
 
 	tui.writeOutputPart(generators.RoleUser, false, "q\n")
 	tui.writeOutputPart(generators.RoleModel, true, "t1\nt2\nt3\n")
 	tui.writeOutputPart(generators.RoleModel, false, "answer\n")
 
-	box := tui.tabs.Boxes(40, 10)[0]
+	box := tui.tabs.Boxes(40, 10)[1]
 	tui.mu.Lock()
 	tui.toggleOutputSectionLocked(1)
 	tui.mu.Unlock()
@@ -374,7 +386,8 @@ func TestClickExpandsCollapsedSection(t *testing.T) {
 	// The press maps onto section 1's collapsed display row: the
 	// projection holds section 0 in full — 2 rows, including the
 	// separator blank line inside its span — so the collapsed row sits
-	// at display index 2, pane row box.Top+3.
+	// at display index 2. The Output box occupies row 1; the display is
+	// indented one row below the title, so the press row is box.Top+3.
 	tui.mu.Lock()
 	ok := tui.expandCollapsedSectionAtClick(box.Left+5, box.Top+3)
 	expanded := !tui.outputSections[1].collapsed
@@ -400,6 +413,9 @@ func TestClickExpandsCollapsedSection(t *testing.T) {
 func TestExpandSectionScrollsToItsStart(t *testing.T) {
 	tui := newTUIForTest()
 	tui.width, tui.height = 40, 10
+	tui.tabs.Expanded = []bool{false, true, false}
+	tui.tabs.HasContent = []bool{false, true, false}
+	tui.tabs.Focus = 1
 
 	tui.writeOutputPart(generators.RoleUser, false,
 		"question one\nquestion two\nquestion three\n")
@@ -410,27 +426,27 @@ func TestExpandSectionScrollsToItsStart(t *testing.T) {
 			"answer six\nanswer seven\nanswer eight\nanswer nine\n"+
 			"answer ten\nanswer eleven\nanswer twelve\n")
 
-	box := tui.tabs.Boxes(40, 10)[0]
+	box := tui.tabs.Boxes(40, 10)[1]
 
 	// Collapse the last section while the view follows the tail.
 	tui.mu.Lock()
 	tui.toggleOutputSectionLocked(2)
-	display := wrappedDisplay(tui, 0, box)
-	tui.scrolls[0].Follow = true
-	tui.scrolls[0].Update(len(display), tui.tuiPaneHeight(0, box))
-	before := tui.scrolls[0].Offset
+	display := wrappedDisplay(tui, 1, box)
+	tui.scrolls[1].Follow = true
+	tui.scrolls[1].Update(len(display), tui.tuiPaneHeight(1, box))
+	before := tui.scrolls[1].Offset
 	tui.mu.Unlock()
 
 	// The press expands the section and scrolls the view so the
 	// section's first display row lands at the pane top.
 	tui.mu.Lock()
 	collapsedRow := tui.outputSectionOffset(2)
-	y := box.Top + 1 + (collapsedRow - tui.scrolls[0].Offset)
+	y := box.Top + 1 + (collapsedRow - tui.scrolls[1].Offset)
 	ok := tui.expandCollapsedSectionAtClick(box.Left+5, y)
 	expanded := !tui.outputSections[2].collapsed
 	start := tui.outputSectionOffset(2)
-	scrolled := tui.scrolls[0].Offset
-	follow := tui.scrolls[0].Follow
+	scrolled := tui.scrolls[1].Offset
+	follow := tui.scrolls[1].Follow
 	tui.mu.Unlock()
 	if before == start {
 		t.Fatalf("precondition: the view already sat at the section start (%d)", before)
@@ -447,7 +463,7 @@ func TestExpandSectionScrollsToItsStart(t *testing.T) {
 
 	// The pane top row shows the section's first source line.
 	tui.mu.Lock()
-	top := displayTexts(wrappedDisplay(tui, 0, box))[start]
+	top := displayTexts(wrappedDisplay(tui, 1, box))[start]
 	tui.mu.Unlock()
 	if top != "answer one" {
 		t.Fatalf("the section start row shows %q, want %q", top, "answer one")
@@ -456,9 +472,9 @@ func TestExpandSectionScrollsToItsStart(t *testing.T) {
 	// The control-column toggle expands the same way.
 	tui.mu.Lock()
 	tui.toggleOutputSectionLocked(2)
-	display = wrappedDisplay(tui, 0, box)
-	tui.scrolls[0].Update(len(display), tui.tuiPaneHeight(0, box))
-	rows := tui.outputControlRows(box, display, tui.scrolls[0].Offset)
+	display = wrappedDisplay(tui, 1, box)
+	tui.scrolls[1].Update(len(display), tui.tuiPaneHeight(1, box))
+	rows := tui.outputControlRows(box, display, tui.scrolls[1].Offset)
 	controlRow := -1
 	for _, row := range rows {
 		if row.section == 2 {
@@ -472,7 +488,7 @@ func TestExpandSectionScrollsToItsStart(t *testing.T) {
 	tui.mu.Lock()
 	ok = tui.toggleControlAtClick(box.Left, controlRow)
 	expanded = !tui.outputSections[2].collapsed
-	scrolled = tui.scrolls[0].Offset
+	scrolled = tui.scrolls[1].Offset
 	tui.mu.Unlock()
 	if !ok || !expanded {
 		t.Fatalf("expected the control press to expand section 2, ok=%v expanded=%v", ok, expanded)
@@ -485,12 +501,14 @@ func TestExpandSectionScrollsToItsStart(t *testing.T) {
 // TestOutputControlColumnBesideContent pins the control column's place
 // in the layout: the column paints only the content rows, the title
 // row spans the full tab width with a centered label, and the content
-// is indented past the column. See TheoryOfOutputControls.
+// is indented past the column. The tab order is Tree (0) / Output (1)
+// / Logs (2); the Output tab sits below the collapsed Tree strip. See
+// TheoryOfOutputControls.
 func TestOutputControlColumnBesideContent(t *testing.T) {
 	tui := newTUIForTest()
-	tui.tabs.Expanded = []bool{true, false, false}
-	tui.tabs.HasContent = []bool{true, false, false}
-	tui.tabs.Focus = 0
+	tui.tabs.Expanded = []bool{false, true, false}
+	tui.tabs.HasContent = []bool{false, true, false}
+	tui.tabs.Focus = 1
 	tui.interactive = false
 	tui.width, tui.height = 40, 10
 
@@ -498,21 +516,22 @@ func TestOutputControlColumnBesideContent(t *testing.T) {
 	tui.writeOutputPart(generators.RoleModel, true, "t1\nt2\n")
 	tui.writeOutputPart(generators.RoleModel, false, "answer\n")
 
-	box := tui.tabs.Boxes(40, 10)[0]
+	box := tui.tabs.Boxes(40, 10)[1]
 	tui.mu.Lock()
-	display := wrappedDisplay(tui, 0, box)
+	display := wrappedDisplay(tui, 1, box)
 	rows := tui.outputControlRows(box, display, 0)
 	tui.mu.Unlock()
 
 	screen := &panelTestScreen{width: 40, height: 10}
-	taiui.Render(buildRoot(tui, 40, 10, [3][]taiui.Line{display, nil, nil}), screen)
+	taiui.Render(buildRoot(tui, 40, 10, [3][]taiui.Line{nil, display, nil}), screen)
 	frame := screen.frames[len(screen.frames)-1]
 
 	// The title row spans the full tab width: the 6-wide label centers
 	// at column 17 in the 40-wide box, not inside a column-shifted
-	// panel.
-	if cell := frame.Cells[17]; cell.Rune != 'O' {
-		t.Fatalf("expected the centered title 'O' at (17,0), got %q", string(cell.Rune))
+	// panel. The Output tab sits at row 1 (row 0 hosts the collapsed
+	// Tree strip). See TheoryOfTUI.
+	if cell := frame.Cells[1*frame.Width+17]; cell.Rune != 'O' {
+		t.Fatalf("expected the centered title 'O' at (17,1), got %q", string(cell.Rune))
 	}
 	// The control column covers the content rows only: the first
 	// section's fold glyph sits in the column on its control row.
@@ -525,9 +544,9 @@ func TestOutputControlColumnBesideContent(t *testing.T) {
 		t.Fatalf("expected the fold glyph at (%d,0), got %q", first.row, string(cell.Rune))
 	}
 	// The content is indented past the column: the first display line
-	// starts at column 2 on the row below the title.
-	if cell := frame.Cells[1*frame.Width+controlColumnWidth]; cell.Rune != 'q' {
-		t.Fatalf("expected indented content at (2,1), got %q", string(cell.Rune))
+	// starts at column 2 on the row below the title (row 2).
+	if cell := frame.Cells[2*frame.Width+controlColumnWidth]; cell.Rune != 'q' {
+		t.Fatalf("expected indented content at (2,2), got %q", string(cell.Rune))
 	}
 }
 
@@ -540,14 +559,17 @@ func TestOutputControlColumnShowsTypeLetters(t *testing.T) {
 	tui := newTUIForTest()
 	tui.interactive = false
 	tui.width, tui.height = 40, 10
+	tui.tabs.Expanded = []bool{false, true, false}
+	tui.tabs.HasContent = []bool{false, true, false}
+	tui.tabs.Focus = 1
 
 	tui.writeOutputPart(generators.RoleUser, false, "q\n")
 	tui.writeOutputPart(generators.RoleModel, true, "t1\nt2\n")
 	tui.writeOutputPart(generators.RoleModel, false, "answer\n")
 
-	box := tui.tabs.Boxes(40, 10)[0]
+	box := tui.tabs.Boxes(40, 10)[1]
 	tui.mu.Lock()
-	display := wrappedDisplay(tui, 0, box)
+	display := wrappedDisplay(tui, 1, box)
 	rows := tui.outputControlRows(box, display, 0)
 	tui.mu.Unlock()
 	if len(rows) != 3 {
@@ -555,7 +577,7 @@ func TestOutputControlColumnShowsTypeLetters(t *testing.T) {
 	}
 
 	screen := &panelTestScreen{width: 40, height: 10}
-	taiui.Render(buildRoot(tui, 40, 10, [3][]taiui.Line{display, nil, nil}), screen)
+	taiui.Render(buildRoot(tui, 40, 10, [3][]taiui.Line{nil, display, nil}), screen)
 	frame := screen.frames[len(screen.frames)-1]
 
 	// The user and thoughts sections span two or more display rows, so
@@ -586,17 +608,64 @@ func TestControlStripText(t *testing.T) {
 	}
 }
 
-// TestTabTitleButtons verifies the per-tab button sets: the Output tab
-// carries the section navigation and the sections collapse-all, the
-// Tree tab the view cycling and the nodes collapse-all, and the Logs
-// tab the session-level controls — split, mouse reporting, help, and
-// quit. See TheoryOfToolbars.
-func TestTabTitleButtons(t *testing.T) {
-	if got := tabTitleButtons(0); len(got) != 3 {
-		t.Fatalf("expected 3 Output buttons, got %+v", got)
+// TestOutputControlHoverRendersReversed pins the control column's hover
+// affordance: hovering a control's row renders the control under the
+// pointer with an attribute applied, so the press target is visible
+// before any press, while the unhovered column carries the plain style.
+// See TheoryOfOutputControls.
+func TestOutputControlHoverRendersReversed(t *testing.T) {
+	tui := newTUIForTest()
+	tui.tabs.Expanded = []bool{false, true, false}
+	tui.tabs.HasContent = []bool{false, true, false}
+	tui.tabs.Focus = 1
+	tui.interactive = false
+	tui.width, tui.height = 40, 10
+	tui.writeOutputPart(generators.RoleUser, false, "q\n")
+
+	box := tui.tabs.Boxes(40, 10)[1]
+	tui.mu.Lock()
+	display := wrappedDisplay(tui, 1, box)
+	rows := tui.outputControlRows(box, display, 0)
+	tui.mu.Unlock()
+	if len(rows) == 0 {
+		t.Fatal("expected a control row")
 	}
-	if got := tabTitleButtons(1); len(got) != 2 {
+	row := rows[0].row
+
+	screen := &panelTestScreen{width: 40, height: 10}
+	taiui.Render(buildRoot(tui, 40, 10, [3][]taiui.Line{nil, display, nil}), screen)
+	frame := screen.frames[len(screen.frames)-1]
+	cell := frame.Cells[row*frame.Width]
+	if cell.Style.Attr() != 0 {
+		t.Fatalf("expected the plain control cell, got attr %d", cell.Style.Attr())
+	}
+
+	// The hover needs mouse reporting on: with reporting off the tracked
+	// pointer position is stale.
+	tui.mu.Lock()
+	tui.setControlHoverLocked(box.Left, row)
+	tui.mouseReporting = true
+	tui.mu.Unlock()
+	taiui.Render(buildRoot(tui, 40, 10, [3][]taiui.Line{nil, display, nil}), screen)
+	frame = screen.frames[len(screen.frames)-1]
+	cell = frame.Cells[row*frame.Width]
+	if cell.Style.Attr() == 0 {
+		t.Fatal("expected the hovered control to render reversed")
+	}
+}
+
+// TestTabTitleButtons verifies the per-tab button sets under the tab
+// order Tree (0) / Output (1) / Logs (2): the Tree tab carries the view
+// cycling and the nodes collapse-all, the Output tab the section
+// navigation and the sections collapse-all, and the Logs tab the
+// session-level controls — split, mouse reporting, help, and quit.
+// See TheoryOfToolbars.
+func TestTabTitleButtons(t *testing.T) {
+	if got := tabTitleButtons(0); len(got) != 2 {
 		t.Fatalf("expected 2 Tree buttons, got %+v", got)
+	}
+	if got := tabTitleButtons(1); len(got) != 3 {
+		t.Fatalf("expected 3 Output buttons, got %+v", got)
 	}
 	if got := tabTitleButtons(2); len(got) != 4 {
 		t.Fatalf("expected 4 Logs buttons, got %+v", got)
@@ -613,9 +682,14 @@ func TestTabTitleButtons(t *testing.T) {
 func TestTitleButtonsRendering(t *testing.T) {
 	tui := newTUIForTest()
 	tui.interactive = false
+	// The Output tab (index 1) must be expanded to carry title buttons.
+	// See TheoryOfTUI.
+	tui.tabs.Expanded = []bool{false, true, false}
+	tui.tabs.HasContent = []bool{false, true, false}
+	tui.tabs.Focus = 1
 	box := taiui.Box{Top: 0, Left: 0, Bottom: 1, Right: 40}
 	tui.mu.Lock()
-	el := tui.titleButtonsElement(0, box)
+	el := tui.titleButtonsElement(1, box)
 	tui.mu.Unlock()
 	if el == nil {
 		t.Fatal("expected the Output tab's title buttons element")
@@ -642,7 +716,7 @@ func TestTitleButtonsRendering(t *testing.T) {
 	tui.ctlHoverY = 0
 	tui.mu.Unlock()
 	tui.mu.Lock()
-	el = tui.titleButtonsElement(0, box)
+	el = tui.titleButtonsElement(1, box)
 	tui.mu.Unlock()
 	screen = &panelTestScreen{width: 40, height: 1}
 	taiui.Render(el, screen)
@@ -663,16 +737,21 @@ func TestTUITitleButtonClicks(t *testing.T) {
 		tui := newTUIForTest()
 		tui.interactive = false
 		tui.width, tui.height = 40, 10
+		// The Output tab (index 1) is expanded so its title row renders
+		// the buttons. See TheoryOfTUI.
+		tui.tabs.Expanded = []bool{false, true, false}
+		tui.tabs.HasContent = []bool{false, true, false}
+		tui.tabs.Focus = 1
 		tui.writeOutputPart(generators.RoleUser, false, "q\n")
 		tui.writeOutputPart(generators.RoleModel, true, "t1\nt2\n")
 		tui.writeOutputPart(generators.RoleModel, false, "answer\n")
-		box := tui.tabs.Boxes(40, 10)[0]
+		box := tui.tabs.Boxes(40, 10)[1]
 		// The collapse-all button occupies [Right-10, Right-2).
 		tui.handleMouseKey(fmt.Sprintf("mouse-left@%d,%d", box.Right-3, box.Top))
 		tui.mu.Lock()
 		collapsed := tui.outputSections[0].collapsed &&
 			tui.outputSections[1].collapsed && tui.outputSections[2].collapsed
-		expanded := tui.tabs.Expanded[0]
+		expanded := tui.tabs.Expanded[1]
 		tui.mu.Unlock()
 		if !collapsed {
 			t.Fatal("expected the press on the collapse-all button to fold the sections")
@@ -694,23 +773,26 @@ func TestTUITitleButtonClicks(t *testing.T) {
 		tui := newTUIForTest()
 		tui.interactive = false
 		tui.width, tui.height = 80, 10
+		tui.tabs.Expanded = []bool{false, true, false}
+		tui.tabs.HasContent = []bool{false, true, false}
+		tui.tabs.Focus = 1
 		var b strings.Builder
 		for i := 0; i < 20; i++ {
 			fmt.Fprintf(&b, "line %02d\n", i)
 		}
 		tui.writeOutputPart(generators.RoleModel, false, b.String())
 		tui.writeOutputPart(generators.RoleModel, true, "a thought\n")
-		tui.scrolls[0].Follow = true
-		box := tui.tabs.Boxes(80, 10)[0]
+		tui.scrolls[1].Follow = true
+		box := tui.tabs.Boxes(80, 10)[1]
 		// The next-section button occupies [Right-14, Right-10).
 		tui.handleMouseKey(fmt.Sprintf("mouse-left@%d,%d", box.Right-12, box.Top))
 		tui.mu.Lock()
 		defer tui.mu.Unlock()
-		if tui.scrolls[0].Follow {
+		if tui.scrolls[1].Follow {
 			t.Fatal("the next-section button must stop following the tail")
 		}
-		tail := taiui.ClampOffset(1<<30, len(wrappedDisplay(tui, 0, box)), tui.tuiPaneHeight(0, box))
-		if tui.scrolls[0].Offset == tail {
+		tail := taiui.ClampOffset(1<<30, len(wrappedDisplay(tui, 1, box)), tui.tuiPaneHeight(1, box))
+		if tui.scrolls[1].Offset == tail {
 			t.Fatal("the next-section button must move the view off the tail")
 		}
 	})
@@ -721,14 +803,14 @@ func TestTUITitleButtonClicks(t *testing.T) {
 		tui.width, tui.height = 40, 10
 		tui.tabs.Expanded = []bool{true, true, false}
 		tui.tabs.HasContent = []bool{true, true, false}
-		tui.tabs.Focus = 1
+		tui.tabs.Focus = 0
 		tr, err := tree.New().Write("root", "finish-1", tree.TypeFinish, tree.AuthorProgram, "finish: stop")
 		if err != nil {
 			t.Fatal(err)
 		}
 		tui.setTree(tr)
 		before := tui.treeTab.mode
-		box := tui.tabs.Boxes(40, 10)[1]
+		box := tui.tabs.Boxes(40, 10)[0]
 		// The cycle button occupies [Right-16, Right-10): the layout
 		// lays the buttons right to left, so collapse sits right of
 		// cycle.
@@ -744,13 +826,13 @@ func TestTUITitleButtonClicks(t *testing.T) {
 		tui := newTUIForTest()
 		tui.interactive = false
 		tui.width, tui.height = 40, 10
-		tui.tabs.Expanded = []bool{true, false, false}
-		tui.tabs.HasContent = []bool{true, false, false}
-		tui.tabs.Focus = 0
+		tui.tabs.Expanded = []bool{false, true, false}
+		tui.tabs.HasContent = []bool{false, true, false}
+		tui.tabs.Focus = 1
 		// A press on the reserved cells is not a button: the ordinary
 		// strip semantics toggle the focused tab.
-		tui.handleMouseKey("mouse-left@39,0")
-		if tui.tabs.Expanded[0] {
+		tui.handleMouseKey("mouse-left@39,1")
+		if tui.tabs.Expanded[1] {
 			t.Fatal("expected the press outside the buttons to keep the strip semantics")
 		}
 	})

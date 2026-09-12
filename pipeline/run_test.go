@@ -702,8 +702,8 @@ func TestRunAppliedChangeBlocksInOutline(t *testing.T) {
 		// change block is a change node, the shell block a shell node.
 		// See TheoryOfSessionTree.
 		assertUserTextContains(t, result,
-			"change-1 [change/model] MODIFY Foo in /x/a.go",
-			"result-1 [block-result/program] applied",
+			"change-1 [block::change/model] MODIFY Foo in /x/a.go",
+			"result-1 [block::block-result/program] applied",
 		)
 		var userText string
 		for c := range result.FinalState.Contents() {
@@ -1069,7 +1069,7 @@ func TestRunRetryFeedback(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			assertFeedback(t, result.FinalState, "retry attempt 1 of 1", "Re-emit every block", "[Session tree]", "user-1 [user/user]")
+			assertFeedback(t, result.FinalState, "retry attempt 1 of 1", "Re-emit every block", "[Session tree]", "user-1 [message::user/user]")
 		})
 
 		t.Run("Error", func(t *testing.T) {
@@ -1097,7 +1097,7 @@ func TestRunRetryFeedback(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			assertFeedback(t, result.FinalState, "retry attempt 1 of 1", "Re-emit every block", "[Session tree]", "user-1 [user/user]")
+			assertFeedback(t, result.FinalState, "retry attempt 1 of 1", "Re-emit every block", "[Session tree]", "user-1 [message::user/user]")
 		})
 
 		t.Run("ApplyErrorContinuesTask", func(t *testing.T) {
@@ -1125,7 +1125,7 @@ func TestRunRetryFeedback(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			assertFeedback(t, result.FinalState, "continue the ORIGINAL task", "Re-emit every block", "[Session tree]", "user-1 [user/user]")
+			assertFeedback(t, result.FinalState, "continue the ORIGINAL task", "Re-emit every block", "[Session tree]", "user-1 [message::user/user]")
 		})
 	})
 }
@@ -2460,7 +2460,7 @@ func TestRunContinueReasonDescribesTrigger(t *testing.T) {
 				lastTree = tr
 			}
 			var detail string
-			for _, n := range lastTree.ByCategory(tree.CategoryEvent) {
+			for _, n := range lastTree.Filter(func(n *tree.Node) bool { return n.Type.Prefix() == "event" }) {
 				if strings.HasPrefix(n.Name, "continue") {
 					detail = n.Content
 				}
@@ -2509,7 +2509,7 @@ func TestRunContinueReasonDescribesTrigger(t *testing.T) {
 				lastTree = tr
 			}
 			var detail string
-			for _, n := range lastTree.ByCategory(tree.CategoryEvent) {
+			for _, n := range lastTree.Filter(func(n *tree.Node) bool { return n.Type.Prefix() == "event" }) {
 				if strings.HasPrefix(n.Name, "continue") {
 					detail = n.Content
 				}

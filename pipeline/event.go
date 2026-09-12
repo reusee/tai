@@ -127,19 +127,25 @@ the session before the loop. The tree is therefore both the record and
 the in-band channel a live consumer observes during the run.
 `
 
-// writeEventNode records one loop occurrence as a session-tree node
-// of the given type and yields the full tree to the consumer. The
-// node name carries the type as a prefix, made unique by AutoName, so
-// the node keeps its kind in its name. The node hangs under the
-// current attempt node: the attempt's occurrences are its record.
-// The node is written even after the consumer has stopped — the tree
-// is the run's record — while the yield is dropped. See
-// TheoryOfLoopEvents.
+// writeEventNode records one loop occurrence as a session-tree node of
+// the given type and yields the full tree to the consumer. A type that
+// carries no prefix names an event subtype: the node type is completed to
+// EventType(name), so the loop's call sites pass the bare subtype names
+// ("retry", "usage") and the full types where the occurrence is not an
+// event (message::finish, message::thoughts). The node name carries the
+// type's name segment as a prefix, made unique by AutoName, so typed event
+// nodes carry their kind in their names. The node hangs under the current
+// attempt node: the attempt's occurrences are its record. The node is
+// written even after the consumer has stopped — the tree is the run's
+// record — while the yield is dropped. See TheoryOfLoopEvents.
 func (ls *loopState) writeEventNode(typ tree.Type, content string) {
 	if ls.sessionTree == nil {
 		return
 	}
-	next, _, err := ls.sessionTree.WriteAuto(ls.attemptParent(), string(typ), typ, tree.AuthorProgram, content)
+	if typ.Prefix() == string(typ) {
+		typ = tree.EventType(string(typ))
+	}
+	next, _, err := ls.sessionTree.WriteAuto(ls.attemptParent(), typ.Name(), typ, tree.AuthorProgram, content)
 	if err != nil {
 		return
 	}

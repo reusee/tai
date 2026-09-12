@@ -102,7 +102,11 @@ Output tab control column theory (cmd/tai):
   control per row; when the pointer hovers the control column on a
   control's row, all of the section's controls display horizontally,
   one Han-width slot each, and a press maps its column onto the slot.
-  The pointer's no-button motion events (mode 1003) drive the hover.
+  The control under the pointer renders reversed, the same affordance
+  the Tree fold column shows, so the press target is visible before
+  any press; the affordance needs mouse reporting on, because the
+  tracked pointer position is otherwise stale. The pointer's no-button
+  motion events (mode 1003) drive the hover.
 - The projection is incremental: each completed source line wraps at
   most once per content width behind a left-to-right pointer, the
   trailing partial line re-wraps fresh every frame, and a section
@@ -527,10 +531,12 @@ func (t *TUI) outputSectionAtOffset(offset int) int {
 // view: one row per section with at least one visible display row,
 // pinned to the section's first display row or the viewport top when
 // that row scrolled above it. Sections tile the content disjointly, so
-// two controls never pin to the same row. The caller holds t.mu. See
+// two controls never pin to the same row. The Output tab is index 1,
+// so the pane height uses that index and reserves the interactive input
+// bar row when the session renders one. The caller holds t.mu. See
 // TheoryOfOutputControls.
 func (t *TUI) outputControlRows(box taiui.Box, display []taiui.Line, offset int) []outputControlRow {
-	paneHeight := t.tuiPaneHeight(0, box)
+	paneHeight := t.tuiPaneHeight(1, box)
 	var rows []outputControlRow
 	for i := range t.outputSections {
 		count := 0
@@ -586,10 +592,10 @@ func (t *TUI) outputTypeRow(box taiui.Box, row outputControlRow, offset int) (in
 // no sections and no controls, so nothing consumes the press. The
 // caller holds t.mu. See TheoryOfOutputControls.
 func (t *TUI) toggleControlAtClick(x, y int) bool {
-	if !t.tabs.Expanded[0] || t.output == nil {
+	if !t.tabs.Expanded[1] || t.output == nil {
 		return false
 	}
-	box := t.tabs.Boxes(t.width, t.height)[0]
+	box := t.tabs.Boxes(t.width, t.height)[1]
 	if box.Width() <= controlColumnWidth || box.Height() <= 0 {
 		return false
 	}
@@ -608,11 +614,11 @@ func (t *TUI) toggleControlAtClick(x, y int) bool {
 			return false
 		}
 	}
-	display := wrappedDisplay(t, 0, box)
+	display := wrappedDisplay(t, 1, box)
 	if len(display) == 0 {
 		return false
 	}
-	offset := taiui.ClampOffset(t.scrolls[0].Offset, len(display), t.tuiPaneHeight(0, box))
+	offset := taiui.ClampOffset(t.scrolls[1].Offset, len(display), t.tuiPaneHeight(1, box))
 	for _, row := range t.outputControlRows(box, display, offset) {
 		if row.row != y {
 			continue
@@ -667,10 +673,10 @@ func (t *TUI) setControlHoverLocked(x, y int) {
 // press expanded a section. The caller holds t.mu. See
 // TheoryOfOutputControls.
 func (t *TUI) expandCollapsedSectionAtClick(x, y int) bool {
-	if !t.tabs.Expanded[0] || t.output == nil {
+	if !t.tabs.Expanded[1] || t.output == nil {
 		return false
 	}
-	box := t.tabs.Boxes(t.width, t.height)[0]
+	box := t.tabs.Boxes(t.width, t.height)[1]
 	if x < box.Left || x >= box.Right {
 		return false
 	}
@@ -681,19 +687,19 @@ func (t *TUI) expandCollapsedSectionAtClick(x, y int) bool {
 	if y < box.Top+1 || y >= panelBottom {
 		return false
 	}
-	display := wrappedDisplay(t, 0, box)
+	display := wrappedDisplay(t, 1, box)
 	if len(display) == 0 {
 		return false
 	}
-	offset := taiui.ClampOffset(t.scrolls[0].Offset, len(display), t.tuiPaneHeight(0, box))
+	offset := taiui.ClampOffset(t.scrolls[1].Offset, len(display), t.tuiPaneHeight(1, box))
 	idx := t.outputSectionAtOffset(offset + (y - box.Top - 1))
 	if idx < 0 || !t.outputSections[idx].collapsed {
 		return false
 	}
 	t.outputSections[idx].collapsed = false
 	t.resetProjectionLocked()
-	if t.tabs.Focus != 0 {
-		t.tabs.FocusTab(0)
+	if t.tabs.Focus != 1 {
+		t.tabs.FocusTab(1)
 	}
 	t.scrollToOutputSection(idx)
 	return true
@@ -771,8 +777,8 @@ func (t *TUI) showOutputSection(idx int) {
 	if idx < 0 || idx >= len(t.outputSections) {
 		return
 	}
-	if !t.tabs.Expanded[0] || t.tabs.Focus != 0 {
-		t.tabs.Toggle(0)
+	if !t.tabs.Expanded[1] || t.tabs.Focus != 1 {
+		t.tabs.Toggle(1)
 	}
 	t.scrollToOutputSection(idx)
 }
@@ -788,16 +794,16 @@ func (t *TUI) scrollToOutputSection(idx int) {
 		return
 	}
 	boxes := t.tabs.Boxes(t.width, t.height)
-	box := boxes[0]
+	box := boxes[1]
 	if box.Width() <= 0 || box.Height() <= 0 {
 		return
 	}
-	display := wrappedDisplay(t, 0, box)
+	display := wrappedDisplay(t, 1, box)
 	if len(display) == 0 {
 		return
 	}
 	// The projected display records each section's row count, so the
 	// offset derives from the projection. See TheoryOfTUIOutputSections.
-	t.scrolls[0].Offset = taiui.ClampOffset(t.outputSectionOffset(idx), len(display), t.tuiPaneHeight(0, box))
-	t.scrolls[0].Follow = false
+	t.scrolls[1].Offset = taiui.ClampOffset(t.outputSectionOffset(idx), len(display), t.tuiPaneHeight(1, box))
+	t.scrolls[1].Follow = false
 }

@@ -60,31 +60,29 @@ tree theory: writes and transforms on immutable path-copying trees.
 - A block node without children is an unprocessed block, except blocks that
   need no processing (done, summary). Block execution results are written
   as block-result child nodes by the program.
-- Node kinds form two layers. Type is the fine-grained kind: structure
-  nodes (root, loop, attempt, goal, plan), message content (system, user,
-  model, finish, thoughts, done, abort — finish and thoughts carry the
-  model output's finish reason and reasoning trace), per-occurrence event
-  subtypes (generator, usage, truncated, retry, handoff-start, handoff,
-  synthesized-summary, thought-summary, continue, idle, run-error,
-  context, api_error), block execution (block-result and summary, plus
-  the block kinds — a block node's type is the kind of the block it
-  records, so unknown kinds form types dynamically), and error. Category
-  is the coarse layer derived from the type (Node.Category): structure,
-  message, event, block, error. Category is never written — it is a pure
-  function of Type — so the write surface, merge identity, and chronology
-  stay type-only, and consumers select whole families with ByCategory.
-  A plan node is structure, not message: the plan tree is the flow
-  definition of a loop.
-  Every event subtype's string equals the event node name prefix the
-  pipeline writes, so typed event nodes carry their kind in their names.
-  A block kind sharing a string with an event subtype (continue) derives
-  to that subtype's category; every other unknown string derives to block.
-  Summary is a block kind: it records the response's summary block, not a
-  message.
-- Type.Emoji and Category.Emoji supply the display glyphs of user-facing
-  trees. Built-in block kinds carry predefined glyphs; any other kind,
-  and any unknown type, falls back to the brick glyph. They are
-  presentation metadata, never identity: writes and merges ignore them.
+- Type is one structured string of the form "<prefix>::<name>": the prefix
+  classifies the node, the name marks its kind. There is no separate
+  category field — the prefix is part of the type and Type.Prefix derives
+  it — so the write surface, merge identity, and chronology stay type-only.
+  The prefixes are structure (root, loop, attempt, goal, plan), message
+  (system, user, model, finish, thoughts, done, abort — finish and thoughts
+  carry the model output's finish reason and reasoning trace), event (one
+  subtype per recorded occurrence: generator, usage, truncated, retry,
+  handoff-start, handoff, synthesized-summary, thought-summary, continue,
+  idle, run-error, context, api_error), block (block-result, summary, and
+  the block kinds: a block node's type is BlockType(kind), so a shell block
+  is block::shell, and a kind the program has never seen forms
+  block::<kind> dynamically), and error. Every event subtype's name equals
+  the event node name prefix the pipeline writes, so typed event nodes
+  carry their kind in their names. A plan node is structure, not message:
+  the plan tree is the flow definition of a loop. Summary is a block kind:
+  it records the response's summary block, not a message.
+- Type.Emoji supplies the display glyphs of user-facing trees. The
+  glyph is keyed by the type's first part — its prefix — so every type
+  of one family (structure, message, event, block, error) carries the
+  family's glyph, and a type with an unknown prefix falls back to the
+  question glyph. It is presentation metadata, never identity: writes
+  and merges ignore it.
 `
 
 const TheoryOfSubtree = `
@@ -96,238 +94,139 @@ Subtree extraction theory:
   previews. The handoff content, the per-round tree outline fed back to
   the model, and review views are all subtree projections.
 - ByType, ByAuthor, and Filter select nodes across the whole tree so
-  consumers compose projections without walking the tree themselves.
+  consumers compose projections without walking the tree themselves;
+  Filter also selects a whole family through Type.Prefix, so a consumer
+  that wants the event nodes writes one predicate instead of enumerating
+  every subtype.
 - Extract projects the nodes matching a predicate, plus every ancestor
   above them, onto a new immutable tree: the projection keeps its path
   context, prunes everything else, preserves insert times, and composes
   with Merge, so concurrently processed subtrees rejoin into one tree.
 `
 
-// Type classifies a node's role in the session.
+// Type is one node's structured type: a "<prefix>::<name>" string whose
+// prefix classifies the node and whose name marks its kind. There is no
+// separate category field. See TheoryOfTree.
 type Type string
 
+// Structure types describe the session's shape: the tree root, the loops
+// of a goal run, the attempts of a session, the goal runner's verdicts,
+// and the plan tree.
 const (
-	TypeRoot        Type = "root"
-	TypeSystem      Type = "system"
-	TypeUser        Type = "user"
-	TypeModel       Type = "model"
-	TypePlan        Type = "plan"
-	TypeBlockResult Type = "block-result"
-	TypeError       Type = "error"
-	TypeSummary     Type = "summary"
-	TypeDone        Type = "done"
-	TypeAbort       Type = "abort"
+	TypeRoot    Type = "structure::root"
+	TypeLoop    Type = "structure::loop"
+	TypeAttempt Type = "structure::attempt"
+	TypeGoal    Type = "structure::goal"
+	TypePlan    Type = "structure::plan"
 )
 
-// Finish and thoughts carry the model output's finish reason and
-// reasoning trace; both derive to CategoryMessage. See TheoryOfTree.
+// Message types carry session messages. Finish and thoughts carry the
+// model output's finish reason and reasoning trace. See TheoryOfTree.
 const (
-	TypeFinish   Type = "finish"
-	TypeThoughts Type = "thoughts"
+	TypeSystem   Type = "message::system"
+	TypeUser     Type = "message::user"
+	TypeModel    Type = "message::model"
+	TypeFinish   Type = "message::finish"
+	TypeThoughts Type = "message::thoughts"
+	TypeDone     Type = "message::done"
+	TypeAbort    Type = "message::abort"
 )
-
-// TypeLoop marks one loop of a goal run: the run's tree carries one
-// loop node per loop, and the loop's session nodes hang under it.
-// See pipeline.TheoryOfSessionTree and pipeline.TheoryOfGoalMode.
-const TypeLoop Type = "loop"
-
-// TypeAttempt marks one attempt of a generation session: one pass
-// through the phase chain. The pipeline writes one attempt node per
-// attempt under the session parent — the goal loop's loop node for a
-// continued run, the tree root for a fresh one — and the attempt's
-// response, summaries, blocks, errors, and events hang under it. The
-// session's system node stays the attempt nodes' sibling; the initial
-// user input hangs under the first attempt node. See
-// pipeline.TheoryOfSessionTree.
-const TypeAttempt Type = "attempt"
-
-// TypeGoal marks one verdict or failure note the goal runner records
-// under the tree root: the run's progress, aligned with the loop nodes
-// it annotates. See pipeline.TheoryOfGoalMode.
-const TypeGoal Type = "goal"
-
-// TypeContext marks one context-assembly diagnostic — the token
-// composition summaries gotools records — replayed into the tree by
-// the generation loop at startup. See TheoryOfTree.
-const TypeContext Type = "context"
-
-// TypeGenerator marks one recorded generation request: the node
-// content is the generator spec the attempt runs on — the resolved
-// spec path, the model identity, and the effective parameters. See
-// TheoryOfTree.
-const TypeGenerator Type = "generator"
 
 // The event subtypes classify one recorded occurrence each: one type per
-// occurrence kind of a run. Every constant's string equals the event node name
-// prefix the pipeline writes, so typed event nodes carry their kind in their
-// names. All of them derive to CategoryEvent. See TheoryOfTree.
+// occurrence kind of a run. Every constant's name segment equals the event
+// node name prefix the pipeline writes, so typed event nodes carry their
+// kind in their names. See TheoryOfTree.
 const (
-	TypeUsage        Type = "usage"
-	TypeTruncated    Type = "truncated"
-	TypeRetry        Type = "retry"
-	TypeHandoffStart Type = "handoff-start"
-	TypeHandoff      Type = "handoff"
+	TypeUsage        Type = "event::usage"
+	TypeTruncated    Type = "event::truncated"
+	TypeRetry        Type = "event::retry"
+	TypeHandoffStart Type = "event::handoff-start"
+	TypeHandoff      Type = "event::handoff"
 
-	TypeSynthesizedSummary Type = "synthesized-summary"
-	TypeThoughtSummary     Type = "thought-summary"
+	TypeSynthesizedSummary Type = "event::synthesized-summary"
+	TypeThoughtSummary     Type = "event::thought-summary"
 
-	TypeContinue Type = "continue"
-	TypeIdle     Type = "idle"
-	TypeRunError Type = "run-error"
+	TypeContinue Type = "event::continue"
+	TypeIdle     Type = "event::idle"
+	TypeRunError Type = "event::run-error"
 
-	TypeAPIError Type = "api_error"
+	TypeContext Type = "event::context"
+
+	TypeGenerator Type = "event::generator"
+
+	TypeAPIError Type = "event::api_error"
 )
 
-// Category is the coarse classification layer above Type: a pure
-// function of the type, never a written field. Consumers select whole
-// families of nodes with it; the TUI's collapsed rows show it instead
-// of the node name and author. See TheoryOfTree.
-type Category string
-
+// Block types describe block execution: block-result carries one block's
+// output and summary records the response's summary block. Every other
+// block node's type is BlockType(kind).
 const (
-	CategoryStructure Category = "structure"
-	CategoryMessage   Category = "message"
-	CategoryEvent     Category = "event"
-	CategoryBlock     Category = "block"
-	CategoryError     Category = "error"
+	TypeBlockResult Type = "block::block-result"
+	TypeSummary     Type = "block::summary"
 )
 
-// Category returns the category the type belongs to. A plan node is
-// structure: the plan tree is the flow definition of a loop, not a
-// message. See TheoryOfTree.
-func (t Type) Category() Category {
-	switch t {
-	case TypeRoot, TypeLoop, TypeAttempt, TypeGoal, TypePlan:
-		return CategoryStructure
-	case TypeSystem, TypeUser, TypeModel,
-		TypeDone, TypeAbort, TypeFinish, TypeThoughts:
-		return CategoryMessage
-	case TypeContext, TypeGenerator, TypeUsage,
-		TypeTruncated, TypeRetry, TypeHandoffStart, TypeHandoff,
-		TypeSynthesizedSummary, TypeThoughtSummary,
-		TypeContinue, TypeIdle, TypeRunError,
-		TypeAPIError:
-		return CategoryEvent
-	case TypeBlockResult, TypeSummary:
-		return CategoryBlock
-	case TypeError:
-		return CategoryError
-	default:
-		// Any other type string is a block kind: a block node's type
-		// is the kind of the block it records. See TheoryOfTree.
-		return CategoryBlock
+// TypeError marks a recorded error. See TheoryOfTree.
+const TypeError Type = "error::error"
+
+// BlockType returns the type of a block node of the given block kind: the
+// kind's structured type in the block family. A block node's type is the
+// block kind it records, so a kind the program has never seen forms a type
+// dynamically. See TheoryOfTree.
+func BlockType(kind string) Type {
+	return Type("block::" + kind)
+}
+
+// EventType returns the type of an event node of the given event subtype
+// name, so a generator-level event such as "api_error" joins the session
+// tree as event::api_error. See TheoryOfTree.
+func EventType(name string) Type {
+	return Type("event::" + name)
+}
+
+// Prefix returns the type's prefix: the text before the first "::"
+// separator. A type without a separator is its own prefix. Consumers select
+// whole families of nodes with it — the event nodes of a tree, for example
+// — without a separate category field. See TheoryOfTree.
+func (t Type) Prefix() string {
+	s := string(t)
+	if i := strings.Index(s, "::"); i >= 0 {
+		return s[:i]
 	}
+	return s
+}
+
+// Name returns the type's name segment: the text after the first "::"
+// separator, or the whole string when there is none. Node names use it as
+// their prefix, so an event node's name carries its kind. See TheoryOfTree.
+func (t Type) Name() string {
+	s := string(t)
+	if i := strings.Index(s, "::"); i >= 0 {
+		return s[i+2:]
+	}
+	return s
 }
 
 // Emoji returns the display glyph decorating the type in user-facing
-// trees. Presentation metadata, never identity: writes and merges
-// ignore it. Built-in block kinds carry predefined glyphs; any other
-// kind falls back to the brick. See TheoryOfTree.
+// trees. The glyph is keyed by the type's first part, so every type of
+// one family — structure, message, event, block, error — carries the
+// family's glyph, and a type with an unknown prefix falls back to the
+// question glyph. Presentation metadata, never identity: writes and
+// merges ignore it. See TheoryOfTree.
 func (t Type) Emoji() string {
-	switch t {
-	case TypeRoot:
+	switch t.Prefix() {
+	case "structure":
 		return "🌳"
-	case TypeLoop:
-		return "🔁"
-	case TypeAttempt:
-		return "⏱️"
-	case TypeGoal:
-		return "🎯"
-	case TypeSystem:
-		return "📜"
-	case TypeUser:
+	case "message":
 		return "💬"
-	case TypeModel:
-		return "🤖"
-	case TypePlan:
-		return "🗺️"
-	case TypeSummary:
-		return "📝"
-	case TypeDone:
-		return "✅"
-	case TypeAbort:
-		return "🚫"
-	case TypeContext:
-		return "📊"
-	case TypeGenerator:
-		return "📤"
-	case TypeFinish:
-		return "🏁"
-	case TypeUsage:
-		return "🔢"
-	case TypeTruncated:
-		return "✂️"
-	case TypeRetry:
-		return "🔄"
-	case TypeHandoffStart:
-		return "🤲"
-	case TypeHandoff:
-		return "🤝"
-	case TypeSynthesizedSummary:
-		return "🧩"
-	case TypeThoughtSummary:
-		return "💭"
-	case TypeThoughts:
-		return "🤔"
-	case TypeAPIError:
-		return "🚨"
-	case TypeContinue:
-		return "➡️"
-	case TypeIdle:
-		return "⏸️"
-	case TypeRunError:
-		return "❌"
-	// Built-in block kinds: a block node's type is its block kind.
-	case Type("change"):
-		return "🔧"
-	case Type("shell"):
-		return "🐚"
-	case Type("go-test"):
-		return "🧪"
-	case Type("go-src"):
-		return "🔍"
-	case Type("ingest"):
-		return "📥"
-	case Type("new-plan"):
-		return "📋"
-	case Type("response"):
-		return "📨"
-	case Type("memory"):
-		return "🧠"
-	case TypeBlockResult:
-		return "📎"
-	case TypeError:
+	case "event":
+		return "⚡"
+	case "block":
+		return "🧱"
+	case "error":
 		return "⚠️"
 	default:
-		// Fallback glyph for block kinds without a predefined one.
-		return "🧱"
+		return "❔"
 	}
-}
-
-// Emoji returns the display glyph decorating the category in
-// user-facing trees. Presentation metadata, never identity. See
-// TheoryOfTree.
-func (c Category) Emoji() string {
-	switch c {
-	case CategoryStructure:
-		return "🗂️"
-	case CategoryMessage:
-		return "✉️"
-	case CategoryEvent:
-		return "📡"
-	case CategoryBlock:
-		return "🔨"
-	case CategoryError:
-		return "🚨"
-	default:
-		return "•"
-	}
-}
-
-// Category returns the node's category, derived from its type. See
-// TheoryOfTree.
-func (n *Node) Category() Category {
-	return n.Type.Category()
 }
 
 // Author identifies who wrote a node.
@@ -878,12 +777,6 @@ func (t *Tree) ByType(typ Type) []*Node {
 // ByAuthor returns every node written by the given author.
 func (t *Tree) ByAuthor(author Author) []*Node {
 	return t.Filter(func(n *Node) bool { return n.Author == author })
-}
-
-// ByCategory returns every node whose type belongs to the given
-// category. See TheoryOfTree.
-func (t *Tree) ByCategory(cat Category) []*Node {
-	return t.Filter(func(n *Node) bool { return n.Category() == cat })
 }
 
 // Extract returns a new tree carrying every node matching pred together

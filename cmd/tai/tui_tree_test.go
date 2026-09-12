@@ -60,7 +60,7 @@ func TestSetTreeConsumesSignals(t *testing.T) {
 	if tui.generating {
 		t.Fatal("expected the finish node to clear the generating hint")
 	}
-	if !tui.tabs.Expanded[1] {
+	if !tui.tabs.Expanded[0] {
 		t.Fatal("the tree tab should auto-expand on consumed nodes")
 	}
 	// Re-arm the signals, release the lock, and re-deliver the same tree:
@@ -135,6 +135,57 @@ func TestTreeNodeCollapsedByDefault(t *testing.T) {
 	display2 := tui.treeDisplay(120, panelStyle.BaseBG)
 	if len(display2) != 5 {
 		t.Fatalf("a body press must not fold the expanded node, got %d rows", len(display2))
+	}
+}
+
+// TestTreeSummaryNodesExpandedByDefault verifies the reading default: a
+// block::summary node renders its full content without a click, while
+// every other type starts collapsed; the fold control still folds it,
+// and a single-line summary — which hides nothing — keeps the one-row
+// index form. See TheoryOfTreeTab.
+func TestTreeSummaryNodesExpandedByDefault(t *testing.T) {
+	tui := newTUIForTest()
+	tr, err := tree.New().WriteAll(
+		tree.WriteOp{Parent: "root", Name: "summary-1", Type: tree.TypeSummary, Author: tree.AuthorModel, Content: "head\nline one\nline two"},
+		tree.WriteOp{Parent: "root", Name: "summary-2", Type: tree.TypeSummary, Author: tree.AuthorModel, Content: "one line only"},
+		tree.WriteOp{Parent: "root", Name: "handoff-1", Type: tree.TypeHandoff, Author: tree.AuthorProgram, Content: "head\nbody"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tui.setTree(tr)
+	tui.mu.Lock()
+	defer tui.mu.Unlock()
+	display := tui.treeDisplay(120, panelStyle.BaseBG)
+	// The multi-line summary expands to its header plus three content
+	// rows, the single-line summary stays one row, and the handoff node
+	// starts collapsed.
+	if len(display) != 6 {
+		t.Fatalf("expected 6 rows, got %d: %v", len(display), displayTexts(display))
+	}
+	found := false
+	for _, line := range display {
+		if strings.Contains(line.Text, "line two") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("the summary node must render its content expanded, got %v", displayTexts(display))
+	}
+	// The fold control still folds it back to the one-row index form.
+	summaryRow := -1
+	for _, r := range tui.treeTab.rows {
+		if r.name == "summary-1" {
+			summaryRow = r.startRow
+		}
+	}
+	if summaryRow < 0 {
+		t.Fatal("expected summary-1 in the display rows")
+	}
+	tui.toggleTreeNodeAtRow(summaryRow)
+	display = tui.treeDisplay(120, panelStyle.BaseBG)
+	if len(display) != 3 {
+		t.Fatalf("expected the folded summary at one row, got %d rows: %v", len(display), displayTexts(display))
 	}
 }
 
@@ -277,7 +328,7 @@ func TestTreeCollapseAllToggle(t *testing.T) {
 	tui.mu.Lock()
 	tui.toggleTreeNodeByName("wide-1")
 	tui.width, tui.height = 80, 25
-	tui.tabs.Expanded[1] = true
+	tui.tabs.Expanded[0] = true
 	tui.mu.Unlock()
 	tui.collapseAllTreeNodes()
 	tui.mu.Lock()
@@ -344,7 +395,8 @@ func TestTreeCollapseAllToggle(t *testing.T) {
 // the view anchored: the node that held the pane's top row before the
 // fold stays the first visible row after it, so the items the user
 // was reading remain in view instead of the list jumping to the top.
-// See TheoryOfTreeTab.
+// The tab order is Tree (0) / Output (1) / Logs (2). See
+// TheoryOfTreeTab.
 func TestTreeCollapseAllKeepsAnchor(t *testing.T) {
 	tui := newTUIForTest()
 	// Twelve multi-line nodes: 36 display rows when all expanded (one
@@ -365,18 +417,35 @@ func TestTreeCollapseAllKeepsAnchor(t *testing.T) {
 	tui.treeView = tr
 	tui.mu.Lock()
 	tui.width, tui.height = 80, 8
-	tui.tabs.Expanded[1] = true
+	// The Tree tab (index 0) is expanded and focused by default; every
+	// node is expanded so the display has 36 rows and the pane scrolls.
+	tui.tabs.Expanded[0] = true
+	tui.tabs.Focus = 0
 	for i := 0; i < 12; i++ {
 		tui.toggleTreeNodeByName(string(rune('a' + i)))
 	}
-	// Scroll node f — the sixth node — to the pane top through the
-	// ordinary scroll path, so the offset and the recorded rows agree.
-	tui.scrollToTreeNode("f")
+	// Record the expanded display's rows and start the view on node f:
+	// the fold's anchor lookup reads the rows the view renders with, so
+	// the offset and the recorded rows must agree.
+	box := tui.tabs.Boxes(80, 8)[0]
+	tui.treeDisplay(treeContentWidth(box.Width()), panelStyle.BaseBG)
+	anchor := -1
+	for _, r := range tui.treeTab.rows {
+		if r.name == "f" {
+			anchor = r.startRow
+		}
+	}
+	if anchor < 0 {
+		t.Fatal("expected node f in the expanded display")
+	}
+	tui.scrolls[0].Offset = anchor
+	tui.scrolls[0].Follow = false
 	tui.mu.Unlock()
+
 	tui.collapseAllTreeNodes()
 	tui.mu.Lock()
 	display := tui.treeDisplay(120, panelStyle.BaseBG)
-	offset := tui.scrolls[1].Offset
+	offset := tui.scrolls[0].Offset
 	anchorStart := -1
 	for _, r := range tui.treeTab.rows {
 		if r.name == "f" {
@@ -482,10 +551,10 @@ func TestTreeExpandScrollsToNodeStart(t *testing.T) {
 	tui.treeView = tr
 	tui.mu.Lock()
 	tui.width, tui.height = 80, 25
-	tui.tabs.Expanded[1] = true
-	tui.scrolls[1].Offset = 0
-	tui.scrolls[1].Follow = true
-	box := tui.tabs.Boxes(tui.width, tui.height)[1]
+	tui.tabs.Expanded[0] = true
+	tui.scrolls[0].Offset = 0
+	tui.scrolls[0].Follow = true
+	box := tui.tabs.Boxes(tui.width, tui.height)[0]
 	display := tui.treeDisplay(treeContentWidth(box.Width()), panelStyle.BaseBG)
 	if len(display) != 6 {
 		t.Fatalf("expected 6 collapsed rows, got %d", len(display))
@@ -496,8 +565,8 @@ func TestTreeExpandScrollsToNodeStart(t *testing.T) {
 	// to its first display row.
 	tui.mu.Lock()
 	tui.toggleTreeNodeAtRow(5)
-	offset := tui.scrolls[1].Offset
-	follow := tui.scrolls[1].Follow
+	offset := tui.scrolls[0].Offset
+	follow := tui.scrolls[0].Follow
 	expanded := tui.treeTab.expanded["wide-1"]
 	tui.mu.Unlock()
 	if !expanded {
@@ -511,7 +580,7 @@ func TestTreeExpandScrollsToNodeStart(t *testing.T) {
 	tui.toggleLastTreeExpandable()
 	tui.mu.Lock()
 	collapsed := !tui.treeTab.expanded["wide-1"]
-	collapseOffset := tui.scrolls[1].Offset
+	collapseOffset := tui.scrolls[0].Offset
 	tui.mu.Unlock()
 	if !collapsed || collapseOffset != 5 {
 		t.Fatalf("collapsing must not scroll, got collapsed=%v offset=%d", collapsed, collapseOffset)
@@ -521,7 +590,7 @@ func TestTreeExpandScrollsToNodeStart(t *testing.T) {
 	tui.toggleLastTreeExpandable()
 	tui.mu.Lock()
 	reexpanded := tui.treeTab.expanded["wide-1"]
-	reoffset := tui.scrolls[1].Offset
+	reoffset := tui.scrolls[0].Offset
 	tui.mu.Unlock()
 	if !reexpanded || reoffset != 5 {
 		t.Fatalf("re-expanding must scroll to the node's first row, got expanded=%v offset=%d", reexpanded, reoffset)
@@ -616,39 +685,51 @@ func TestTreeLineColorRules(t *testing.T) {
 		t.Fatalf("no rules: color = %v, want NoColor", got)
 	}
 
+	// A rule's type field matches the full structured type or its name
+	// segment, and the first matching rule wins.
 	treeColorRules = []treeColorRule{
-		{category: "error", color: taiui.HexColor(0xff0000)},
+		{nodeType: "error", color: taiui.HexColor(0xff0000)},
 		{author: "user", color: taiui.HexColor(0x00ff00)},
 	}
 	if got := treeLineColor(node); got != taiui.HexColor(0xff0000) {
-		t.Fatalf("category match: color = %v, want red", got)
+		t.Fatalf("type match: color = %v, want red", got)
 	}
-	user := &tree.Node{Author: tree.AuthorUser}
+	user := &tree.Node{Type: tree.TypeUser, Author: tree.AuthorUser}
 	if got := treeLineColor(user); got != taiui.HexColor(0x00ff00) {
 		t.Fatalf("author match: color = %v, want green", got)
 	}
 
 	treeColorRules = []treeColorRule{
-		{category: "message", color: taiui.HexColor(0x0000ff)},
+		{nodeType: "message", color: taiui.HexColor(0x0000ff)},
 		{author: "user", color: taiui.HexColor(0x00ff00)},
 	}
 	if got := treeLineColor(user); got != taiui.HexColor(0x00ff00) {
-		t.Fatalf("category mismatch falls through: color = %v, want green", got)
+		t.Fatalf("type mismatch falls through: color = %v, want green", got)
 	}
-	model := &tree.Node{Author: tree.AuthorModel}
+	model := &tree.Node{Type: tree.TypeModel, Author: tree.AuthorModel}
 	if got := treeLineColor(model); got != taiui.NoColor {
 		t.Fatalf("no match: color = %v, want NoColor", got)
 	}
+
+	// A full structured type matches exactly and never a sibling kind.
+	treeColorRules = []treeColorRule{{nodeType: "event::usage", color: taiui.HexColor(0x00ffff)}}
+	usage := &tree.Node{Type: tree.TypeUsage}
+	if got := treeLineColor(usage); got != taiui.HexColor(0x00ffff) {
+		t.Fatalf("full type match: color = %v, want cyan", got)
+	}
+	if got := treeLineColor(model); got != taiui.NoColor {
+		t.Fatalf("a full-type rule must not match another type: color = %v", got)
+	}
 }
 
-// TestTreeHeaderAlignment verifies the global column alignment: every
-// header pads its category fragment to the widest visible category
-// fragment and its type fragment to the widest visible type fragment,
-// across every indent level, so the type fragments and the content
-// previews start at the same display column on every row — the
-// content column never interleaves with the category/type columns.
-// Emoji fragments differ in byte length, so the columns are measured
-// in display width, the same measurement the renderer pads with. See
+// TestTreeHeaderAlignment verifies the global column alignment: the
+// type text carries the type's first and second parts separated by
+// aligned whitespace in place of the "::" separator, so the second
+// parts start at the same display column on every row of the same
+// indent — a deeper row shifts them right by one indent — while the
+// content column stays at one fixed display column on every row. Emoji
+// fragments differ in byte length, so the columns are measured in
+// display width, the same measurement the renderer pads with. See
 // TheoryOfTreeTab.
 func TestTreeHeaderAlignment(t *testing.T) {
 	tui := newTUIForTest()
@@ -678,23 +759,30 @@ func TestTreeHeaderAlignment(t *testing.T) {
 		}
 		return options.String(line.Text[:idx]), true
 	}
-	catCol0, ok0 := columnOf(display[0], "💬")
-	catCol1, ok1 := columnOf(display[1], "🔁")
-	if !ok0 || !ok1 || catCol0 != catCol1 {
-		t.Fatalf("expected aligned category columns, got %q and %q", display[0].Text, display[1].Text)
+	// The type text carries no "::": the second part follows the first
+	// after aligned whitespace.
+	if strings.Contains(display[0].Text, "::") {
+		t.Fatalf("the type text must not carry the :: separator, got %q", display[0].Text)
 	}
-	typeCol0, ok0 := columnOf(display[0], "user")
-	typeCol1, ok1 := columnOf(display[1], "loop")
-	if !ok0 || !ok1 || typeCol0 != typeCol1 {
-		t.Fatalf("expected aligned type columns, got %q and %q", display[0].Text, display[1].Text)
+	// The second parts line up on the two depth-0 rows.
+	nameCol0, ok0 := columnOf(display[0], "user")
+	nameCol1, ok1 := columnOf(display[1], "loop")
+	if !ok0 || !ok1 || nameCol0 != nameCol1 {
+		t.Fatalf("expected aligned type name columns, got %q and %q", display[0].Text, display[1].Text)
 	}
+	// The deeper node indents its whole type text: its second part sits
+	// one indent right and lines up with the other second parts at that
+	// indent.
+	nameCol2, ok2 := columnOf(display[2], "user")
+	if !ok2 || nameCol2 != nameCol0+treeIndentWidth {
+		t.Fatalf("expected the deep node's type name one indent right, got %q", display[2].Text)
+	}
+	// The content column stays at one fixed display column on every row.
 	contentCol0, ok0 := columnOf(display[0], "x")
 	contentCol1, ok1 := columnOf(display[1], "y")
 	if !ok0 || !ok1 || contentCol0 != contentCol1 {
 		t.Fatalf("expected aligned content columns, got %q and %q", display[0].Text, display[1].Text)
 	}
-	// The deeper node's fragment sits right of the shallower ones, and
-	// its content still starts at the one fixed content column.
 	contentCol2, ok2 := columnOf(display[2], "z")
 	if !ok2 || contentCol2 != contentCol0 {
 		t.Fatalf("expected the deep node's content at the fixed content column, got %q", display[2].Text)
@@ -702,13 +790,13 @@ func TestTreeHeaderAlignment(t *testing.T) {
 }
 
 func TestUIStyleTreeColors(t *testing.T) {
-	style := UIStyle{TreeColors: []TreeColorRule{{Category: "event", Color: "red"}}}
+	style := UIStyle{TreeColors: []TreeColorRule{{Type: "event", Color: "red"}}}
 	merged := UIStyle{}.fillFrom(style)
-	if len(merged.TreeColors) != 1 || merged.TreeColors[0].Category != "event" {
+	if len(merged.TreeColors) != 1 || merged.TreeColors[0].Type != "event" {
 		t.Fatalf("fillFrom lost tree colors: %+v", merged.TreeColors)
 	}
 	rules := style.treeColorRulesOf()
-	if len(rules) != 1 || rules[0].category != "event" {
+	if len(rules) != 1 || rules[0].nodeType != "event" {
 		t.Fatalf("treeColorRulesOf = %+v", rules)
 	}
 	if rules[0].color == taiui.NoColor || !rules[0].color.Valid() {
@@ -754,7 +842,7 @@ func TestTreeTitleStatus(t *testing.T) {
 			attemptRow = r.startRow
 		}
 	}
-	tui.scrolls[1].Offset = attemptRow
+	tui.scrolls[0].Offset = attemptRow
 	if status := tui.treeTitleStatus(); status != "loop 2 / attempt 2" {
 		t.Fatalf("expected the loop and attempt status, got %q", status)
 	}
@@ -787,7 +875,7 @@ func TestTreeTitleStatusFreshRun(t *testing.T) {
 			attemptRow = r.startRow
 		}
 	}
-	tui.scrolls[1].Offset = attemptRow
+	tui.scrolls[0].Offset = attemptRow
 	if status := tui.treeTitleStatus(); status != "attempt 1" {
 		t.Fatalf("expected the attempt-only status, got %q", status)
 	}
@@ -951,11 +1039,10 @@ func TestTreeExpandedContentSkipsLeadingBlankLines(t *testing.T) {
 
 // TestTreeFoldColumnToggles verifies the fold column's contract: an
 // expandable node carries the fold glyph in its fold slot on the
-// header row, right of the category/type columns; a press on the fold
-// column's cells toggles the node and scrolls the view to its first
-// row; a single-line node carries a blank slot; and the content
-// column starts at one fixed display column on every row. See
-// TheoryOfTreeTab.
+// header row, right of the type column; a press on the fold column's
+// cells toggles the node and scrolls the view to its first row; a
+// single-line node carries a blank slot; and the content column starts
+// at one fixed display column on every row. See TheoryOfTreeTab.
 func TestTreeFoldColumnToggles(t *testing.T) {
 	tui := newTUIForTest()
 	tr, err := tree.New().WriteAll(
@@ -968,9 +1055,9 @@ func TestTreeFoldColumnToggles(t *testing.T) {
 	tui.treeView = tr
 	tui.mu.Lock()
 	tui.width, tui.height = 80, 25
-	tui.tabs.Expanded[1] = true
-	tui.scrolls[1].Offset = 0
-	box := tui.tabs.Boxes(tui.width, tui.height)[1]
+	tui.tabs.Expanded[0] = true
+	tui.scrolls[0].Offset = 0
+	box := tui.tabs.Boxes(tui.width, tui.height)[0]
 	display := tui.treeDisplay(treeContentWidth(box.Width()), panelStyle.BaseBG)
 	rows := tui.treeTab.rows
 	if len(rows) != 2 || !rows[0].expandable || rows[1].expandable {
@@ -1009,7 +1096,7 @@ func TestTreeFoldColumnToggles(t *testing.T) {
 	tui.mu.Lock()
 	consumed := tui.toggleTreeControlAtClick(foldPressX, foldPressY)
 	expanded := tui.treeTab.expanded["wide-1"]
-	offset := tui.scrolls[1].Offset
+	offset := tui.scrolls[0].Offset
 	tui.mu.Unlock()
 	if !consumed || !expanded {
 		t.Fatalf("the fold press must toggle wide-1, got consumed=%v expanded=%v", consumed, expanded)
@@ -1067,15 +1154,15 @@ func TestTreeFoldControlFloats(t *testing.T) {
 	tui.mu.Lock()
 	defer tui.mu.Unlock()
 	tui.width, tui.height = 80, 25
-	tui.tabs.Expanded[1] = true
+	tui.tabs.Expanded[0] = true
 	tui.treeTab.expanded = map[string]bool{"wide-1": true}
-	box := tui.tabs.Boxes(tui.width, tui.height)[1]
+	box := tui.tabs.Boxes(tui.width, tui.height)[0]
 	contentWidth := treeContentWidth(box.Width())
 	display := tui.treeDisplay(contentWidth, panelStyle.BaseBG)
 	// Scroll the header row (display row 0) above the viewport top.
-	tui.scrolls[1].Offset = 1
-	tui.scrolls[1].Follow = false
-	paneHeight := tui.tuiPaneHeight(1, box)
+	tui.scrolls[0].Offset = 1
+	tui.scrolls[0].Follow = false
+	paneHeight := tui.tuiPaneHeight(0, box)
 	offset := taiui.ClampOffset(1, len(display), paneHeight)
 	if offset != 1 {
 		t.Fatalf("expected the viewport top at display row 1, got %d", offset)
@@ -1131,7 +1218,7 @@ func TestCollapseAllKeyDispatchesByFocus(t *testing.T) {
 	// The Output tab's focus folds the output sections; the tree node
 	// stays expanded.
 	tui.mu.Lock()
-	tui.tabs.Focus = 0
+	tui.tabs.Focus = 1
 	tui.mu.Unlock()
 	tui.handleKey("c")
 	tui.mu.Lock()
@@ -1143,7 +1230,7 @@ func TestCollapseAllKeyDispatchesByFocus(t *testing.T) {
 
 	// The Tree tab's focus folds the tree nodes.
 	tui.mu.Lock()
-	tui.tabs.Focus = 1
+	tui.tabs.Focus = 0
 	tui.mu.Unlock()
 	tui.handleKey("c")
 	tui.mu.Lock()
@@ -1178,9 +1265,9 @@ func TestTreeSingleLineTruncatedExpands(t *testing.T) {
 	tui.mu.Lock()
 	defer tui.mu.Unlock()
 	tui.width, tui.height = 80, 25
-	tui.tabs.Expanded[1] = true
-	tui.scrolls[1].Offset = 0
-	box := tui.tabs.Boxes(tui.width, tui.height)[1]
+	tui.tabs.Expanded[0] = true
+	tui.scrolls[0].Offset = 0
+	box := tui.tabs.Boxes(tui.width, tui.height)[0]
 	contentWidth := treeContentWidth(box.Width())
 	display := tui.treeDisplay(contentWidth, panelStyle.BaseBG)
 	rows := tui.treeTab.rows
@@ -1336,9 +1423,9 @@ func TestTreeDoubleClickTogglesText(t *testing.T) {
 	tui.treeView = tr
 	tui.mu.Lock()
 	tui.width, tui.height = 80, 25
-	tui.tabs.Expanded[1] = true
-	tui.scrolls[1].Offset = 0
-	box := tui.tabs.Boxes(tui.width, tui.height)[1]
+	tui.tabs.Expanded[0] = true
+	tui.scrolls[0].Offset = 0
+	box := tui.tabs.Boxes(tui.width, tui.height)[0]
 	tui.treeDisplay(treeContentWidth(box.Width()), panelStyle.BaseBG)
 	// Column 5 sits in the text area, clear of the fold column; the
 	// row below the title is the node's header row.

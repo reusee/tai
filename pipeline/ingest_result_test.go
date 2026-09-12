@@ -18,7 +18,9 @@ import (
 // content, so expanding the node in the Tree tab showed nothing. The
 // ingest component must deliver its fetch results through
 // ProcessResult.Parts, so the component output's parts reach both the
-// round's user content and the block-result node's content.
+// round's user content and the block-result node's content. The ingest
+// block node's type is BlockType("ingest") — the block kind expressed as
+// a structured type. See tree.TheoryOfTree.
 func TestRunIngestResultNodeCarriesContent(t *testing.T) {
 	withRun(t, func(run Run) {
 		dir := t.TempDir()
@@ -57,7 +59,7 @@ func TestRunIngestResultNodeCarriesContent(t *testing.T) {
 			t.Fatal("expected the result to carry the session tree")
 		}
 		var ingestNode *tree.Node
-		for _, n := range result.SessionTree.ByType(tree.Type("ingest")) {
+		for _, n := range result.SessionTree.ByType(tree.BlockType("ingest")) {
 			if strings.Contains(n.Content, `file path="a.txt"`) {
 				ingestNode = n
 			}

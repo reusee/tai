@@ -36,14 +36,16 @@ func TestTUISubmitGlyphClick(t *testing.T) {
 	tui := newTUIForTest()
 	tui.width, tui.height = 80, 24
 	tui.interactive = true
-	tui.tabs.Expanded[0] = true
-	tui.tabs.Focus = 0
+	// The Output tab (index 1) is expanded and focused so it renders the
+	// input bar and its submit glyph. See TheoryOfTUI.
+	tui.tabs.Expanded[1] = true
+	tui.tabs.Focus = 1
 
 	ch := make(chan chatInputResult, 1)
 	tui.mu.Lock()
 	tui.inputBar.Prompt = ">> "
 	tui.inputResult = ch
-	box := tui.tabs.Boxes(tui.width, tui.height)[0]
+	box := tui.tabs.Boxes(tui.width, tui.height)[1]
 	tui.mu.Unlock()
 	tui.handleMouseKey(fmt.Sprintf("mouse-left@%d,%d", box.Right-1, box.Bottom-1))
 	res := <-ch

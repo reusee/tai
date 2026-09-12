@@ -50,7 +50,11 @@ func waitChatInputWaiting(t *testing.T, tu *TUI) {
 func TestTUIChatInputSubmitsTypedLine(t *testing.T) {
 	tu := newChatInputTestTUI()
 	tu.width, tu.height = 80, 24
-	tu.tabs.FocusTab(0)
+	// The Output tab (index 1) is expanded and focused so its box holds
+	// the input bar; the collapsed Tree strip (row 0) sits above it and
+	// the collapsed Logs strip (row 23) below, so the input row is 22.
+	// See TheoryOfTUI.
+	tu.tabs.FocusTab(1)
 	type result struct {
 		line string
 		err  error
@@ -62,7 +66,7 @@ func TestTUIChatInputSubmitsTypedLine(t *testing.T) {
 	}()
 	waitChatInputWaiting(t, tu)
 	// Focus is click-driven: click the bar's row before typing.
-	tu.handleMouseKey("mouse-left@5,21")
+	tu.handleMouseKey("mouse-left@5,22")
 
 	// "he", cursor left, insert "x" → "hxe"; a trailing space is typed
 	// and removed again so both keys are exercised.
@@ -94,7 +98,7 @@ func TestTUIChatInputSubmitsTypedLine(t *testing.T) {
 func TestTUIChatInputCtrlCUnfocusesWithoutCancelling(t *testing.T) {
 	tu := newChatInputTestTUI()
 	tu.width, tu.height = 80, 24
-	tu.tabs.FocusTab(0)
+	tu.tabs.FocusTab(1)
 	done := make(chan error, 1)
 	go func() {
 		_, err := tu.ChatInput(">> ")
@@ -103,7 +107,7 @@ func TestTUIChatInputCtrlCUnfocusesWithoutCancelling(t *testing.T) {
 	waitChatInputWaiting(t, tu)
 	// Focus is click-driven: click the bar's row so Ctrl-C has a focus
 	// to release.
-	tu.handleMouseKey("mouse-left@5,21")
+	tu.handleMouseKey("mouse-left@5,22")
 	tu.handleKey("ctrl-c")
 	tu.mu.Lock()
 	focused := tu.inputFocused
@@ -144,13 +148,13 @@ func TestTUIChatInputTypingKeepsNavigation(t *testing.T) {
 	tu.width, tu.height = 80, 24
 	// An expanded, focused Output tab with a scrollable view makes the
 	// arrow keys observable. The clicks below run while only the Output
-	// tab is expanded, so its box spans the full height minus the two
-	// collapsed strips and the input row is the fixed row 21; the Logs
-	// tab is expanded afterwards to make the tab key's focus cycling
-	// observable.
-	tu.tabs.FocusTab(0)
-	tu.scrolls[0].MaxOffset = 100
-	tu.scrolls[0].Offset = 50
+	// tab is expanded: the collapsed Tree strip occupies row 0 and the
+	// collapsed Logs strip row 23, so the Output box spans rows 1..22
+	// and its input row is 22. The Logs tab is expanded afterwards to
+	// make the tab key's focus cycling observable. See TheoryOfTUI.
+	tu.tabs.FocusTab(1)
+	tu.scrolls[1].MaxOffset = 100
+	tu.scrolls[1].Offset = 50
 
 	done := make(chan struct{})
 	go func() {
@@ -159,7 +163,7 @@ func TestTUIChatInputTypingKeepsNavigation(t *testing.T) {
 	}()
 	waitChatInputWaiting(t, tu)
 	// Focus is click-driven: click the bar's row before typing.
-	tu.handleMouseKey("mouse-left@5,21")
+	tu.handleMouseKey("mouse-left@5,22")
 
 	// Number keys type into the line instead of toggling tabs.
 	if quit := tu.handleKey("1"); quit {
@@ -177,7 +181,7 @@ func TestTUIChatInputTypingKeepsNavigation(t *testing.T) {
 	// the input focus. See TheoryOfTUIChatInput.
 	tu.handleKey("up")
 	tu.mu.Lock()
-	offset := tu.scrolls[0].Offset
+	offset := tu.scrolls[1].Offset
 	focused := tu.inputFocused
 	tu.mu.Unlock()
 	if offset != 49 {
@@ -189,7 +193,7 @@ func TestTUIChatInputTypingKeepsNavigation(t *testing.T) {
 
 	// A click regains the focus, and Esc releases it again without
 	// cancelling the waiting ChatInput.
-	tu.handleMouseKey("mouse-left@5,21")
+	tu.handleMouseKey("mouse-left@5,22")
 	tu.handleKey("esc")
 	tu.mu.Lock()
 	focused = tu.inputFocused
@@ -203,13 +207,13 @@ func TestTUIChatInputTypingKeepsNavigation(t *testing.T) {
 	}
 
 	// With the focus released, keys drive the TUI: down scrolls back,
-	// tab cycles the focus to the expanded Logs tab, and 2 expands the
-	// Events tab instead of typing.
+	// tab cycles the focus to the expanded Logs tab, and 1 expands the
+	// Events/Tree tab instead of typing.
 	tu.tabs.Expanded[2] = true
 	tu.tabs.HasContent[2] = true
 	tu.handleKey("down")
 	tu.mu.Lock()
-	offset = tu.scrolls[0].Offset
+	offset = tu.scrolls[1].Offset
 	tu.mu.Unlock()
 	if offset != 50 {
 		t.Fatalf("down must scroll the focused pane, got offset %d", offset)
@@ -221,12 +225,12 @@ func TestTUIChatInputTypingKeepsNavigation(t *testing.T) {
 	if focus != 2 {
 		t.Fatalf("tab must cycle the tab focus, got %d", focus)
 	}
-	tu.handleKey("2")
+	tu.handleKey("1")
 	tu.mu.Lock()
-	expanded := tu.tabs.Expanded[1]
+	expanded := tu.tabs.Expanded[0]
 	tu.mu.Unlock()
 	if !expanded {
-		t.Fatal("key 2 must expand the Events tab once the input is unfocused")
+		t.Fatal("key 1 must expand the Tree tab once the input is unfocused")
 	}
 	select {
 	case <-done:
@@ -245,13 +249,14 @@ func TestTUIChatInputTypingKeepsNavigation(t *testing.T) {
 func TestTUIChatInputEnterWaitsForIdle(t *testing.T) {
 	tu := newChatInputTestTUI()
 	tu.width, tu.height = 80, 24
-	tu.tabs.FocusTab(0)
+	tu.tabs.FocusTab(1)
 
 	// Click the input row — the bottom row of the expanded Output tab's
-	// box; the two collapsed strips leave rows 0..21, so the input row
-	// is 21 — to focus the bar without a waiting ChatInput, the state
-	// during generation.
-	tu.handleMouseKey("mouse-left@5,21")
+	// box; the collapsed Tree strip above and the collapsed Logs strip
+	// below leave rows 1..22 for the Output box, so the input row is
+	// 22 — to focus the bar without a waiting ChatInput, the state
+	// during generation. See TheoryOfTUI.
+	tu.handleMouseKey("mouse-left@5,22")
 	tu.mu.Lock()
 	focused := tu.inputFocused
 	tu.mu.Unlock()
@@ -314,11 +319,12 @@ func TestTUIChatInputEnterWaitsForIdle(t *testing.T) {
 func TestTUIChatInputMouseFocusAndBlur(t *testing.T) {
 	tu := newChatInputTestTUI()
 	tu.width, tu.height = 80, 24
-	tu.tabs.FocusTab(0)
+	tu.tabs.FocusTab(1)
 
 	// A press on the input row focuses the bar and typing goes into
-	// the line.
-	tu.handleMouseKey("mouse-left@5,21")
+	// the line. The Output box spans rows 1..22 (the two collapsed
+	// strips above and below), so the input row is 22.
+	tu.handleMouseKey("mouse-left@5,22")
 	tu.handleKey("a")
 	tu.mu.Lock()
 	focused := tu.inputFocused
@@ -344,14 +350,14 @@ func TestTUIChatInputMouseFocusAndBlur(t *testing.T) {
 	}
 
 	// Wheel events never change the focus in either direction.
-	tu.handleMouseKey("mouse-wheel-up@5,21")
+	tu.handleMouseKey("mouse-wheel-up@5,22")
 	tu.mu.Lock()
 	focused = tu.inputFocused
 	tu.mu.Unlock()
 	if focused {
 		t.Fatal("wheel events must not focus the input bar")
 	}
-	tu.handleMouseKey("mouse-left@5,21")
+	tu.handleMouseKey("mouse-left@5,22")
 	tu.handleMouseKey("mouse-wheel-up@5,5")
 	tu.mu.Lock()
 	focused = tu.inputFocused
@@ -369,21 +375,21 @@ func TestTUIChatInputMouseFocusAndBlur(t *testing.T) {
 func TestTUIChatInputNavBlurOnViewChange(t *testing.T) {
 	tu := newChatInputTestTUI()
 	tu.width, tu.height = 80, 24
-	tu.tabs.FocusTab(0)
-	tu.scrolls[0].MaxOffset = 100
-	tu.scrolls[0].Offset = 50
-	tu.scrolls[0].Follow = false
+	tu.tabs.FocusTab(1)
+	tu.scrolls[1].MaxOffset = 100
+	tu.scrolls[1].Offset = 50
+	tu.scrolls[1].Follow = false
 
 	// Click the input row — the bottom row of the expanded Output tab's
-	// box; the two collapsed strips leave rows 0..21, so the input row
-	// is 21 — to focus the bar.
-	tu.handleMouseKey("mouse-left@5,21")
+	// box; the two collapsed strips leave rows 1..22, so the input row
+	// is 22 — to focus the bar.
+	tu.handleMouseKey("mouse-left@5,22")
 
 	// A page-up that moves the offset changes other elements and must
 	// release the focus.
 	tu.handleKey("pageup")
 	tu.mu.Lock()
-	offset := tu.scrolls[0].Offset
+	offset := tu.scrolls[1].Offset
 	focused := tu.inputFocused
 	tu.mu.Unlock()
 	if offset == 50 {
@@ -394,14 +400,14 @@ func TestTUIChatInputNavBlurOnViewChange(t *testing.T) {
 	}
 
 	// A page-up already at the top changes nothing and keeps the focus.
-	tu.handleMouseKey("mouse-left@5,21")
+	tu.handleMouseKey("mouse-left@5,22")
 	tu.mu.Lock()
-	tu.scrolls[0].Offset = 0
-	tu.scrolls[0].Follow = false
+	tu.scrolls[1].Offset = 0
+	tu.scrolls[1].Follow = false
 	tu.mu.Unlock()
 	tu.handleKey("pageup")
 	tu.mu.Lock()
-	offset = tu.scrolls[0].Offset
+	offset = tu.scrolls[1].Offset
 	focused = tu.inputFocused
 	tu.mu.Unlock()
 	if offset != 0 {
@@ -418,9 +424,9 @@ func TestTUIChatInputNavBlurOnViewChange(t *testing.T) {
 // cursor. See TheoryOfTUIChatInput.
 func TestTUIChatInputBarBottomRowOfOutputTab(t *testing.T) {
 	tui := newTUIForTest()
-	tui.tabs.Expanded = []bool{true, false, false}
-	tui.tabs.HasContent = []bool{true, false, false}
-	tui.tabs.Focus = 0
+	tui.tabs.Expanded = []bool{false, true, false}
+	tui.tabs.HasContent = []bool{false, true, false}
+	tui.tabs.Focus = 1
 
 	renderRoot := func(focused bool) taiui.Frame {
 		tui.inputFocused = focused
@@ -432,12 +438,14 @@ func TestTUIChatInputBarBottomRowOfOutputTab(t *testing.T) {
 		return screen.frames[len(screen.frames)-1]
 	}
 
-	// The two collapsed strips leave the Output tab rows 0..7, so the
-	// input bar is the tab's bottom row (row 7) and carries the prompt.
+	// The collapsed Tree strip holds row 0 and the collapsed Logs strip
+	// row 9, so the Output tab occupies rows 1..8 and the input bar is
+	// its bottom row (row 8). The bar carries the prompt at the left
+	// edge.
 	frame := renderRoot(false)
-	cell := frame.Cells[7*frame.Width+0]
+	cell := frame.Cells[8*frame.Width+0]
 	if !cell.Set || cell.Rune != '>' {
-		t.Fatalf("expected the input bar prompt at (0,7), got %+v", cell)
+		t.Fatalf("expected the input bar prompt at (0,8), got %+v", cell)
 	}
 	if frame.CursorSet {
 		t.Fatal("an unfocused input bar must not carry the terminal cursor")
@@ -449,8 +457,8 @@ func TestTUIChatInputBarBottomRowOfOutputTab(t *testing.T) {
 	if !focusedFrame.CursorSet {
 		t.Fatal("a focused input bar must carry the terminal cursor")
 	}
-	if focusedFrame.CursorY != 7 {
-		t.Fatalf("expected the cursor on the input bar row 7, got %d", focusedFrame.CursorY)
+	if focusedFrame.CursorY != 8 {
+		t.Fatalf("expected the cursor on the input bar row 8, got %d", focusedFrame.CursorY)
 	}
 	if focusedFrame.CursorX != 3 {
 		t.Fatalf("expected the cursor after the %q prompt, got x %d", ">> ", focusedFrame.CursorX)
@@ -509,13 +517,13 @@ func TestTUIChatInputBarBackgroundFollowsTabFocus(t *testing.T) {
 		return taiui.FrameCell{}
 	}
 
-	focusedCell := renderBarCell(0)
+	focusedCell := renderBarCell(1)
 	wantR, wantG, wantB := panelStyle.FocusBG.RGB()
 	if r, g, b := focusedCell.Style.Bg().RGB(); r != wantR || g != wantG || b != wantB {
 		t.Fatalf("expected the focused tab background on the input bar, got %#x %#x %#x", r, g, b)
 	}
 
-	unfocusedCell := renderBarCell(1)
+	unfocusedCell := renderBarCell(0)
 	wantR, wantG, wantB = panelStyle.BaseBG.RGB()
 	if r, g, b := unfocusedCell.Style.Bg().RGB(); r != wantR || g != wantG || b != wantB {
 		t.Fatalf("expected the unfocused tab background on the input bar, got %#x %#x %#x", r, g, b)
@@ -529,38 +537,41 @@ func TestTUIChatInputBarBackgroundFollowsTabFocus(t *testing.T) {
 // input bar. See TheoryOfTUIChatInput.
 func TestTUINonInteractivePaneAndInput(t *testing.T) {
 	tui := newTUIForTest()
-	tui.tabs.Expanded = []bool{true, false, false}
-	tui.tabs.HasContent = []bool{true, false, false}
-	tui.tabs.Focus = 0
+	tui.tabs.Expanded = []bool{false, true, false}
+	tui.tabs.HasContent = []bool{false, true, false}
+	tui.tabs.Focus = 1
 	tui.width, tui.height = 80, 24
 
-	box := tui.tabs.Boxes(80, 24)[0]
+	box := tui.tabs.Boxes(80, 24)[1]
 	tui.interactive = false
-	if got := tui.tuiPaneHeight(0, box); got != taiui.PaneHeight(box) {
+	if got := tui.tuiPaneHeight(1, box); got != taiui.PaneHeight(box) {
 		t.Fatalf("non-interactive Output pane must keep the full height %d, got %d", taiui.PaneHeight(box), got)
 	}
 	tui.interactive = true
-	if got := tui.tuiPaneHeight(0, box); got != taiui.PaneHeight(box)-1 {
+	if got := tui.tuiPaneHeight(1, box); got != taiui.PaneHeight(box)-1 {
 		t.Fatalf("interactive Output pane must reserve the bar row (%d), got %d", taiui.PaneHeight(box)-1, got)
 	}
 
-	// The two collapsed strips leave the Output tab rows 0..21, so row
-	// 21 is the tab's bottom row — the input bar's row in interactive
-	// sessions. In a non-interactive session the press anchors an
-	// ordinary drag scroll and never focuses the input.
+	// The collapsed Tree strip holds row 0 and the collapsed Logs strip
+	// row 23, so the Output box spans rows 1..22 and its bottom row is
+	// 22 — the input bar's row in interactive sessions. In a
+	// non-interactive session the press anchors an ordinary drag scroll
+	// and never focuses the input.
 	tui.interactive = false
-	tui.scrolls[0].MaxOffset = 100
-	tui.scrolls[0].Offset = 10
-	tui.handleMouseKey("mouse-left@5,21")
+	tui.scrolls[1].MaxOffset = 100
+	tui.scrolls[1].Offset = 10
+	tui.handleMouseKey("mouse-left@5,22")
 	tui.mu.Lock()
 	focused := tui.inputFocused
 	tui.mu.Unlock()
 	if focused {
 		t.Fatal("a press on the bottom row must not focus the absent input bar")
 	}
+	// Dragging from the press row (22) to row 15 moves the view by 7
+	// rows, so the offset reaches 17.
 	tui.handleMouseKey("mouse-leftdrag@5,15")
-	if tui.scrolls[0].Offset != 16 {
-		t.Fatalf("expected the bottom-row press to anchor an ordinary drag scroll to offset 16, got %d", tui.scrolls[0].Offset)
+	if tui.scrolls[1].Offset != 17 {
+		t.Fatalf("expected the bottom-row press to anchor an ordinary drag scroll to offset 17, got %d", tui.scrolls[1].Offset)
 	}
 }
 
@@ -587,21 +598,23 @@ func TestTUIChatInputQuitReleasesWaiter(t *testing.T) {
 // without the bar the Output pane keeps its full height, the tab's
 // bottom row shows the control column at the left edge and the scroll
 // content beside it, and an interactive session shows the input prompt
-// there instead. See TheoryOfTUIChatInput and TheoryOfOutputControls.
+// there instead. The tab order is Tree (0) / Output (1) / Logs (2).
+// See TheoryOfTUIChatInput and TheoryOfOutputControls.
 func TestTUINonInteractiveHidesInputBar(t *testing.T) {
 	tui := newTUIForTest()
-	tui.tabs.Expanded = []bool{true, false, false}
-	tui.tabs.HasContent = []bool{true, false, false}
-	tui.tabs.Focus = 0
+	tui.tabs.Expanded = []bool{false, true, false}
+	tui.tabs.HasContent = []bool{false, true, false}
+	tui.tabs.Focus = 1
 	tui.width, tui.height = 40, 10
 
 	display := make([]taiui.Line, 10)
 	for i := range display {
 		display[i] = taiui.Line{Text: fmt.Sprintf("%d", i)}
 	}
-	// The bottom row is read in two columns: column 0 is the control
-	// column, column 2 the panel's first content column. See
-	// TheoryOfOutputControls.
+	// The Output tab (index 1) spans rows 1..8: row 0 hosts the
+	// collapsed Tree strip, row 9 the collapsed Logs strip. The bottom
+	// row is 8. Column 0 is the control column, column 2 the panel's
+	// first content column. See TheoryOfOutputControls.
 	renderBottomRow := func(interactive bool) [2]taiui.FrameCell {
 		tui.interactive = interactive
 		// Ten display lines: the non-interactive pane (7 rows) shows
@@ -611,18 +624,17 @@ func TestTUINonInteractiveHidesInputBar(t *testing.T) {
 		if !interactive {
 			offset = 3
 		}
-		tui.scrolls[0] = taiui.ScrollState{Offset: offset}
+		tui.scrolls[1] = taiui.ScrollState{Offset: offset}
 		screen := &panelTestScreen{width: 40, height: 10}
-		taiui.Render(buildRoot(tui, 40, 10, [3][]taiui.Line{display, nil, nil}), screen)
+		taiui.Render(buildRoot(tui, 40, 10, [3][]taiui.Line{nil, display, nil}), screen)
 		if len(screen.frames) == 0 {
 			t.Fatal("expected a rendered frame")
 		}
 		frame := screen.frames[len(screen.frames)-1]
-		// The two collapsed strips leave the Output tab rows 0..7, so
-		// row 7 is the tab's bottom row.
+		// Row 8 is the tab's bottom row.
 		return [2]taiui.FrameCell{
-			frame.Cells[7*frame.Width+0],
-			frame.Cells[7*frame.Width+controlColumnWidth],
+			frame.Cells[8*frame.Width+0],
+			frame.Cells[8*frame.Width+controlColumnWidth],
 		}
 	}
 

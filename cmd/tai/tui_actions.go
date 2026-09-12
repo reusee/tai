@@ -127,10 +127,10 @@ func (t *TUI) helpPressLocked(x, y int) bool {
 // bar's submit glyph: the rightmost two cells of the bar's row. The
 // caller holds t.mu. See TheoryOfSessionActions.
 func (t *TUI) submitGlyphHitLocked(x, y int) bool {
-	if !t.interactive || !t.tabs.Expanded[0] {
+	if !t.interactive || !t.tabs.Expanded[1] {
 		return false
 	}
-	box := t.tabs.Boxes(t.width, t.height)[0]
+	box := t.tabs.Boxes(t.width, t.height)[1]
 	if box.Height() <= 1 || box.Width() < 2 {
 		return false
 	}

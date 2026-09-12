@@ -56,8 +56,8 @@ func TestRunDrainsTreeEventSink(t *testing.T) {
 		if nodes[0].Parent != "root" {
 			t.Fatalf("expected the context node under the session root, got parent %q", nodes[0].Parent)
 		}
-		if nodes[0].Category() != tree.CategoryEvent {
-			t.Fatalf("expected the context node in the event category, got %v", nodes[0].Category())
+		if nodes[0].Type.Prefix() != "event" {
+			t.Fatalf("expected the context node in the event family, got %v", nodes[0].Type)
 		}
 	})
 }

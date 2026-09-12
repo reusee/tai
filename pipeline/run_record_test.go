@@ -42,17 +42,20 @@ func withRecorderRun(t *testing.T, extra []any, fn func(run Run, recorder *recor
 	})
 }
 
+// TestRunRecordsFreshSession verifies that a fresh run owns its
+// recording session: it opens the session through the resolved
+// recorder, attaches the sink to the run's tree, and ends the session
+// with the run's outcome. The recorded stream is the run's tree
+// operations, so the transcript renders them as an event stream: one
+// boundary-delimited event block per applied operation, its metadata
+// percent-encoded into the opening header's URI query, the content it
+// wrote as the block body. The node types carry the structured
+// "<prefix>::<name>" form, whose ':' separators are percent-encoded
+// (%3A) by the query encoder, so the assertions match the encoded
+// value. The delimiter is drawn at random per event, so the assertions
+// match the header from its kind onward. See tree.TheoryOfTree and
+// records.TheoryOfInteractionRecording.
 func TestRunRecordsFreshSession(t *testing.T) {
-	// A fresh run owns its recording session: it opens the session
-	// through the resolved recorder, attaches the sink to the run's
-	// tree, and ends the session with the run's outcome. The recorded
-	// stream is the run's tree operations, so the transcript renders
-	// them as an event stream: one boundary-delimited event block per
-	// applied operation, its metadata percent-encoded into the opening
-	// header's URI query, the content it wrote as the block body. The
-	// delimiter is drawn at random per event, so the assertions match
-	// the header from its kind onward. See
-	// records.TheoryOfInteractionRecording.
 	withRecorderRun(t, nil, func(run Run, recorder *records.Recorder) {
 		result, err := runOnce(run, RunOptions{
 			Generator: nil,
@@ -80,13 +83,13 @@ func TestRunRecordsFreshSession(t *testing.T) {
 			"command=test-command",
 			"command_line=",
 			"status=success",
-			"event:?name=system-1&kind=write&type=system&author=program",
+			"event:?name=system-1&kind=write&type=message%3A%3Asystem&author=program",
 			"\nsys prompt\n",
-			"name=attempt-1&kind=write&type=attempt&author=program",
-			"name=user-1&kind=write&type=user&author=user",
+			"name=attempt-1&kind=write&type=structure%3A%3Aattempt&author=program",
+			"name=user-1&kind=write&type=message%3A%3Auser&author=user",
 			"\ntask\n",
-			"name=model-1&kind=write&type=model&author=model",
-			"name=summary-1&kind=write&type=summary&author=model",
+			"name=model-1&kind=write&type=message%3A%3Amodel&author=model",
+			"name=summary-1&kind=write&type=block%3A%3Asummary&author=model",
 			"\nDone.\n",
 		} {
 			if !strings.Contains(text, want) {

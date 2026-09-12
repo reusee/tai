@@ -37,25 +37,24 @@ session tree pipeline.Run yields is rendered by the Tree tab
 (TheoryOfTreeTab), and the request lifecycle is tracked by
 isGeneratingLog and outputTabLabel.
 
-The TUI interface replaces stdout with a three-tab terminal UI: the
-Output tab streams the model output, the Tree tab renders the session
-tree the pipeline writes — every node the run records: user inputs,
-responses and their summaries, blocks and their results, the attempt
-structure nodes, the loop's own event nodes (generator specs,
-per-attempt usage, truncations, retries, handoffs, synthesized
-completions, component and idle continuations, thought summaries, API
-errors, and the terminal error), the finish and thoughts message
-nodes carrying the model output's finish reason and reasoning trace,
-and the goal runner's verdict nodes in goal mode —
-and the Logs tab collects log records. The Tree tab renders the SAME
-tree the pipeline writes and cycles projections with the v key; the
-walk, the projection modes, and the jump marker live in TheoryOfTreeTab
-(see also pipeline.TheoryOfLoopEvents). A
-finish message node clears the Output tab's "generating..." hint. The
-Logs tab renders consecutive lines with alternating background shades
-(taiui.TheoryOfLines owns the alternation and its inert default); the
-two shades derive from whatever backgrounds the
-tui config section sets. Model output is captured from the
+The TUI interface replaces stdout with a three-tab terminal UI ordered
+Tree, Output, Logs: the Tree tab renders the session tree the pipeline
+writes — every node the run records: user inputs, responses and their
+summaries, blocks and their results, the attempt structure nodes, the
+loop's own event nodes (generator specs, per-attempt usage, truncations,
+retries, handoffs, synthesized completions, component and idle
+continuations, thought summaries, API errors, and the terminal error),
+the finish and thoughts message nodes carrying the model output's finish
+reason and reasoning trace, and the goal runner's verdict nodes in goal
+mode — the Output tab streams the model output, and the Logs tab
+collects log records. The Tree tab renders the SAME tree the pipeline
+writes and cycles projections with the v key; the walk, the projection
+modes, and the jump marker live in TheoryOfTreeTab (see also
+pipeline.TheoryOfLoopEvents). A finish message node clears the Output
+tab's "generating..." hint. The Logs tab renders consecutive lines with
+alternating background shades (taiui.TheoryOfLines owns the alternation
+and its inert default); the two shades derive from whatever backgrounds
+the tui config section sets. Model output is captured from the
 generation state by the tuiOutputState decorator, passed through
 RunOptions.StateDecorators by runWithTUI: text parts stream to the Output
 tab, thoughts are separated from non-thought content by a blank line,
@@ -68,7 +67,7 @@ the thought-summary event nodes (see
 pipeline.TheoryOfThoughtsSummarize), and the
 per-attempt usage lines render from the usage event nodes (see
 pipeline.TheoryOfUsageLogging). Suppressing the raw stream under
--summarize-thoughts would blank the focused Output tab during long
+-summarize-thoughts would blank the Output tab during long
 thinking phases — leaving no live feedback and making the session look
 stalled — so the two tabs show both streams concurrently. The tuiOutputState's Flush
 terminates a partial last line of the Output tab: streamed model output
@@ -97,16 +96,16 @@ no role color: each section states its content type with the full-width
 letter its control column draws below the fold glyph (see
 TheoryOfOutputControls), so type never competes with the text for
 attention. The keys
-1, 2, and 3 select the corresponding tab (Output, Tree, Logs
+1, 2, and 3 select the corresponding tab (Tree, Output, Logs
 respectively); the number-key collapse/expand and focus-handoff semantics,
 first-content auto-expansion, the unseen dot on collapsed strips, and
 the weighted layout (the focused tab weighs 3, every other expanded tab 1)
 are the taiui tab state machine's (taiui.TheoryOfTabs) and are not
-repeated here. The Output
+repeated here. The Tree
 tab starts expanded and focused, following the
-live tail — the model's stream is the pane the user watches, so it is open
-from the first frame — while the Tree and Logs tabs stay collapsed and
-expand on their first content (the Tree tab on its first node,
+live tail — the session's structure is the pane the user watches, so it is
+open from the first frame — while the Output and Logs tabs stay collapsed
+and expand on their first content (the Output tab on streamed output,
 the Logs tab on any log record), so the interface surfaces panes
 only when they have something to show. The Logs tab caps its box at
 logsMaxBoxHeight rows while expanded but not focused — logs are internal
@@ -495,8 +494,8 @@ func (t *TUI) writeColored(color taiui.Color, p []byte) {
 	if len(p) == 0 {
 		return
 	}
-	if t.tabs.AutoExpand(0) {
-		t.scrolls[0].Follow = true
+	if t.tabs.AutoExpand(1) {
+		t.scrolls[1].Follow = true
 	}
 	t.output.Append(color, string(p))
 }
@@ -748,8 +747,10 @@ func newTUI() (*TUI, error) {
 	// The Logs tab caps its box height while expanded but not focused;
 	// see logsMaxBoxHeight.
 	tabs.MaxSizes = []int{0, 0, logsMaxBoxHeight}
-	// The Output tab starts expanded and focused: the model's stream is
-	// the pane the user watches, so it is open from the first frame.
+	// The Tree tab starts expanded and focused: the session's structure
+	// is the pane the user watches, so it is open from the first frame.
+	// The tab machine lays out tabs in index order, so index 0 is the
+	// Tree tab, index 1 the Output tab, and index 2 the Logs tab.
 	// See TheoryOfTUI.
 	tabs.FocusTab(0)
 	// No screen row is reserved: every action is reachable through the
@@ -764,14 +765,15 @@ func newTUI() (*TUI, error) {
 		output: taiui.NewLineBuffer(0),
 		logs:   taiui.NewStringBuffer(0),
 		tabs:   tabs,
-		// The Output tab starts expanded, focused, and following the
-		// tail; the other tabs stay collapsed and expand automatically
-		// the first time content for them arrives. The scroll offsets
-		// start at the tail sentinel so the first render sticks to the
-		// latest content. See TheoryOfTUI.
+		// The Tree tab starts expanded, focused, and following the
+		// tail; the Output and Logs tabs stay collapsed and expand
+		// automatically the first time content for them arrives, and
+		// the Output tab follows the tail once it does. The scroll
+		// offsets start at the tail sentinel so the first render sticks
+		// to the latest content. See TheoryOfTUI.
 		scrolls: [3]taiui.ScrollState{
 			{Offset: 1 << 30, Follow: true},
-			{Offset: 1 << 30},
+			{Offset: 1 << 30, Follow: true},
 			{Offset: 1 << 30},
 		},
 		// The Tree tab's elapsed-time timer counts from the session's
@@ -875,8 +877,8 @@ func (t *TUI) cancelChatInput() {
 func (t *TUI) focusInputLocked() {
 	t.inputFocused = true
 	t.quit.Cancel()
-	if t.tabs.Focus != 0 {
-		t.tabs.FocusTab(0)
+	if t.tabs.Focus != 1 {
+		t.tabs.FocusTab(1)
 	}
 }
 
@@ -900,10 +902,10 @@ type chatInputViewSnapshot struct {
 // through to ordinary tab interaction. The caller holds t.mu. See
 // TheoryOfTUIChatInput.
 func (t *TUI) inputRowHit(x, y int) bool {
-	if !t.interactive || !t.tabs.Expanded[0] {
+	if !t.interactive || !t.tabs.Expanded[1] {
 		return false
 	}
-	box := t.tabs.Boxes(t.width, t.height)[0]
+	box := t.tabs.Boxes(t.width, t.height)[1]
 	if box.Height() <= 1 || box.Width() <= 0 {
 		return false
 	}
@@ -1194,7 +1196,7 @@ func (t *TUI) handleKey(key string) bool {
 		// The c key folds the focused tab's structure: the Tree tab's
 		// nodes, or — every other focus — the Output tab's sections.
 		// See TheoryOfTreeTab and TheoryOfOutputControls.
-		if t.tabs.Focus == 1 {
+		if t.tabs.Focus == 0 {
 			t.collapseAllTreeNodes()
 		} else {
 			t.collapseAllSections()
@@ -1503,15 +1505,15 @@ func (t *TUI) jumpToTransition(direction int) {
 	// collapsed and take the focus so the view switches to it. Toggle
 	// on an expanded non-focused tab switches the focus without
 	// collapsing.
-	if !t.tabs.Expanded[0] || t.tabs.Focus != 0 {
-		t.tabs.Toggle(0)
+	if !t.tabs.Expanded[1] || t.tabs.Focus != 1 {
+		t.tabs.Toggle(1)
 	}
 	boxes := t.tabs.Boxes(t.width, t.height)
-	box := boxes[0]
+	box := boxes[1]
 	if box.Width() <= 0 || box.Height() <= 0 {
 		return
 	}
-	display := wrappedDisplay(t, 0, box)
+	display := wrappedDisplay(t, 1, box)
 	if len(display) == 0 {
 		return
 	}
@@ -1521,8 +1523,8 @@ func (t *TUI) jumpToTransition(direction int) {
 	// minus its one-row label strip and the interactive Output tab's
 	// input bar row, matching render's scroll updates. See
 	// TheoryOfTUIChatInput.
-	paneHeight := t.tuiPaneHeight(0, box)
-	offset := taiui.ClampOffset(t.scrolls[0].Offset, len(display), paneHeight)
+	paneHeight := t.tuiPaneHeight(1, box)
+	offset := taiui.ClampOffset(t.scrolls[1].Offset, len(display), paneHeight)
 	// The stops derive from the section structure — each section
 	// boundary contributes the exit stop and the entry stop — and the
 	// selection, including the backward fallback to the very beginning
@@ -1549,8 +1551,8 @@ func (t *TUI) jumpToTransition(direction int) {
 	// the bottom of the final view. The jump is a deliberate navigation
 	// away from the live tail: following resumes only when the view
 	// reaches the latest row (see ScrollState.Update).
-	t.scrolls[0].Offset = taiui.ClampOffset(target, len(display), paneHeight)
-	t.scrolls[0].Follow = false
+	t.scrolls[1].Offset = taiui.ClampOffset(target, len(display), paneHeight)
+	t.scrolls[1].Follow = false
 }
 
 func (t *TUI) render() {
@@ -1591,7 +1593,7 @@ func (t *TUI) render() {
 	// collapsible while scrolled. Runs after the scroll updates so the
 	// float reads the offsets the panels render with. See
 	// TheoryOfTreeTab.
-	t.floatTreeControls(boxes[1], displays[1])
+	t.floatTreeControls(boxes[0], displays[0])
 
 	taiui.Render(buildRoot(t, width, height, displays), t.screen)
 
@@ -1613,7 +1615,10 @@ func (t *TUI) render() {
 }
 
 var (
-	tabNames = [...]string{"Output", "Tree", "Logs"}
+	// tabNames lists the tabs in display order: the tab machine lays out
+	// tabs in index order, so index 0 is the Tree tab, index 1 the
+	// Output tab, and index 2 the Logs tab. See TheoryOfTUI.
+	tabNames = [...]string{"Tree", "Output", "Logs"}
 )
 
 // withTUIOutputObserver connects a pipeline.Run to the TUI: it wraps

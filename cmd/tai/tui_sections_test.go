@@ -47,8 +47,10 @@ func TestTUIEventClickJumpsToOutputSection(t *testing.T) {
 		width:  100,
 		height: 40,
 	}
-	tu.tabs.FocusTab(0)
-	tu.tabs.Toggle(1)
+	// The Output tab (index 1) is expanded and focused; the Tree tab
+	// (index 0) stays collapsed so the output section offsets stay
+	// independent of the tree pane. See TheoryOfTUI.
+	tu.tabs.FocusTab(1)
 	tu.writeOutputPart(generators.RoleUser, false, "hi\n")
 	tu.mu.Lock()
 	tu.pendingOwner = &outputSectionOwner{attempt: 1}
@@ -73,10 +75,11 @@ func TestTUIEventClickJumpsToOutputSection(t *testing.T) {
 	tu.eventSections = map[outputSectionOwner]int{{attempt: 1}: 1}
 
 	boxes := tu.tabs.Boxes(tu.width, tu.height)
-	box := boxes[1]
-	// The display lines render at the box's left edge, so the press
-	// columns map directly onto the line's display columns. See
-	// TheoryOfTreeTab.
+	// The Tree tab is at index 0: the press maps onto its box.
+	box := boxes[0]
+	if !tu.tabs.Expanded[0] {
+		tu.tabs.Expanded[0] = true
+	}
 	contentLeft := box.Left
 	display := tu.treeDisplay(treeContentWidth(box.Width()), panelStyle.BaseBG)
 	row := -1
@@ -108,21 +111,21 @@ func TestTUIEventClickJumpsToOutputSection(t *testing.T) {
 	if want <= 0 {
 		t.Fatal("section top must be below the content start")
 	}
-	if tu.scrolls[0].Offset != want {
-		t.Fatalf("output offset %d, want %d", tu.scrolls[0].Offset, want)
+	if tu.scrolls[1].Offset != want {
+		t.Fatalf("output offset %d, want %d", tu.scrolls[1].Offset, want)
 	}
-	if tu.scrolls[0].Follow {
+	if tu.scrolls[1].Follow {
 		t.Fatal("jump must stop following the tail")
 	}
-	if tu.tabs.Focus != 0 || !tu.tabs.Expanded[0] {
+	if tu.tabs.Focus != 1 || !tu.tabs.Expanded[1] {
 		t.Fatal("jump must focus the expanded Output tab")
 	}
 
 	// A press off the marker and a press on another node never jump.
-	tu.scrolls[0].Offset = 0
-	tu.scrolls[0].Follow = true
+	tu.scrolls[1].Offset = 0
+	tu.scrolls[1].Follow = true
 	tu.treeAtClick(contentLeft+2, y)
-	if tu.scrolls[0].Offset != 0 || !tu.scrolls[0].Follow {
+	if tu.scrolls[1].Offset != 0 || !tu.scrolls[1].Follow {
 		t.Fatal("a press off the marker must not jump")
 	}
 	usageRow := -1
@@ -136,7 +139,7 @@ func TestTUIEventClickJumpsToOutputSection(t *testing.T) {
 		t.Fatal("usage row not found")
 	}
 	tu.treeAtClick(contentLeft+2, box.Top+1+usageRow)
-	if tu.scrolls[0].Offset != 0 || !tu.scrolls[0].Follow {
+	if tu.scrolls[1].Offset != 0 || !tu.scrolls[1].Follow {
 		t.Fatal("a press on another node must not jump")
 	}
 }

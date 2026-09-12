@@ -431,17 +431,17 @@ func blockNodeContent(block blocks.Block) string {
 
 // writeBlockNode writes one auto-named block node; a failed write keeps
 // the tree and yields no name, so the caller skips dependent nodes.
-// The node's type and auto-name prefix are the block kind — a shell
-// block is a shell node — and the content comes from
-// blockNodeContent, so a change block's outline preview identifies its
-// op, target, and file. A kindless block falls back to the "block"
-// prefix. See TheoryOfSessionTree.
+// The node's type is the block kind it records, expressed as the kind's
+// structured block type — a shell block is block::shell — and the content
+// comes from blockNodeContent, so a change block's outline preview
+// identifies its op, target, and file. A kindless block falls back to the
+// "block" prefix. See TheoryOfSessionTree.
 func writeBlockNode(tr *tree.Tree, parent string, block blocks.Block) (*tree.Tree, string) {
 	prefix := block.Kind
 	if prefix == "" {
 		prefix = "block"
 	}
-	next, name, err := tr.WriteAuto(parent, prefix, tree.Type(block.Kind), tree.AuthorModel, blockNodeContent(block))
+	next, name, err := tr.WriteAuto(parent, prefix, tree.BlockType(block.Kind), tree.AuthorModel, blockNodeContent(block))
 	if err != nil || name == "" {
 		return tr, ""
 	}
@@ -580,37 +580,39 @@ func joinTextParts(parts []generators.Part) string {
 // the session structure without the nodes' full content. The outline
 // is always the current loop's subtree, rendered from the session
 // root, projected onto the model-facing nodes — the loop's own event
-// nodes are program bookkeeping and are excluded by category — so
-// each round's feedback volume stays independent of the run's length
-// and of other loops' content. The leading newline keeps the outline
-// on its own line: parts concatenate verbatim, and the content before
-// it may end without a line break. See TheoryOfSessionTree.
+// nodes are program bookkeeping and are excluded by their type prefix
+// — so each round's feedback volume stays independent of the run's
+// length and of other loops' content. The leading newline keeps the
+// outline on its own line: parts concatenate verbatim, and the content
+// before it may end without a line break. See TheoryOfSessionTree.
 func treeOutlinePart(tr *tree.Tree, parent string) generators.Text {
 	if tr == nil {
 		return generators.Text("")
 	}
-	proj := tr.Extract(func(n *tree.Node) bool { return n.Category() != tree.CategoryEvent })
+	proj := tr.Extract(func(n *tree.Node) bool { return n.Type.Prefix() != "event" })
 	return generators.Text("\n[Session tree]\n" + sessionOutline(proj, parent) + "\n")
 }
 
 // handoffOutlinePart renders the handoff's tree outline: the projection
 // of the session's tree onto its decision-level nodes — every node
-// outside the block and event categories, plus summary nodes, which
-// are block kinds but carry the earlier summaries the handoff must
-// preserve — rendered from the session root, so the handoff summary
-// carries the session's plans, decisions, and earlier summaries
-// without execution detail and without other loops' content. See
-// TheoryOfSessionTree and tree.TheoryOfSubtree.
+// outside the block and event families, plus summary nodes, which are
+// block types but carry the earlier summaries the handoff must preserve
+// — rendered from the session root, so the handoff summary carries the
+// session's plans, decisions, and earlier summaries without execution
+// detail and without other loops' content. See TheoryOfSessionTree and
+// tree.TheoryOfSubtree.
 func handoffOutlinePart(tr *tree.Tree, parent string) string {
 	if tr == nil {
 		return ""
 	}
 	proj := tr.Extract(func(n *tree.Node) bool {
-		cat := n.Category()
-		if cat == tree.CategoryBlock {
+		switch n.Type.Prefix() {
+		case "event":
+			return false
+		case "block":
 			return n.Type == tree.TypeSummary
 		}
-		return cat != tree.CategoryEvent
+		return true
 	})
 	return "[Session tree]\n" + sessionOutline(proj, parent) + "\n"
 }

@@ -305,7 +305,7 @@ func TestWriteBlockNodesCollectedAndHandled(t *testing.T) {
 	if len(names) != 1 || names[0] == "" {
 		t.Fatalf("expected one collected block name, got %v", names)
 	}
-	if block, ok := tr.Node(names[0]); !ok || block.Parent != respName || block.Type != tree.Type("shell") {
+	if block, ok := tr.Node(names[0]); !ok || block.Parent != respName || block.Type != tree.BlockType("shell") {
 		t.Fatalf("collected block must hang under the current response: %+v", block)
 	}
 	handledNode, ok := tr.Node("change-1")
@@ -317,13 +317,15 @@ func TestWriteBlockNodesCollectedAndHandled(t *testing.T) {
 		t.Fatalf("handled block must carry an applied result child, got %+v", kids)
 	}
 
-	// A done block becomes a done node.
+	// A done block becomes a block::done node: a block node's type is
+	// BlockType(kind), distinct from the message::done plan mark written
+	// by the plan-op component. See TheoryOfSessionTree and TheoryOfPlan.
 	doneNames, _, _, doneTree := writeBlockNodes(tr, respName, nil, []blocks.Block{{Kind: "done", Body: "goal achieved"}})
 	if len(doneNames) != 1 || doneNames[0] == "" {
 		t.Fatalf("expected a done node name, got %v", doneNames)
 	}
-	if node, ok := doneTree.Node(doneNames[0]); !ok || node.Type != tree.TypeDone {
-		t.Fatalf("expected a done node, got %+v", node)
+	if node, ok := doneTree.Node(doneNames[0]); !ok || node.Type != tree.BlockType("done") {
+		t.Fatalf("expected a block::done node, got %+v", node)
 	}
 
 	// A new-plan block without the parent header parameter discards the
@@ -549,7 +551,7 @@ func TestRunErrorNodesRecorded(t *testing.T) {
 				}
 			}
 			for _, want := range []string{
-				"error-1 [error/program]",
+				"error-1 [error::error/program]",
 				"malformed block",
 			} {
 				if !strings.Contains(userText, want) {
@@ -590,7 +592,7 @@ func TestRunErrorNodesRecorded(t *testing.T) {
 				}
 			}
 			for _, want := range []string{
-				"error-1 [error/program]",
+				"error-1 [error::error/program]",
 				"unavailable kind",
 			} {
 				if !strings.Contains(userText, want) {
@@ -803,7 +805,7 @@ func TestTreeOutlinePart(t *testing.T) {
 	if !strings.HasPrefix(got, "\n[Session tree]") {
 		t.Fatalf("the outline part must start on its own line, got %q", got)
 	}
-	if !strings.Contains(got, "root [root/]") {
+	if !strings.Contains(got, "root [structure::root/]") {
 		t.Fatalf("unexpected outline part: %q", got)
 	}
 }
@@ -902,7 +904,7 @@ func TestHandoffInputPrunesExecutionNodes(t *testing.T) {
 		tree.WriteOp{Parent: "root", Name: "user-1", Type: tree.TypeUser, Author: tree.AuthorUser, Content: "task"},
 		tree.WriteOp{Parent: "root", Name: "model-1", Type: tree.TypeModel, Author: tree.AuthorModel, Content: "resp"},
 		tree.WriteOp{Parent: "model-1", Name: "summary-1", Type: tree.TypeSummary, Author: tree.AuthorModel, Content: "sum"},
-		tree.WriteOp{Parent: "model-1", Name: "block-1", Type: tree.Type("change"), Author: tree.AuthorModel, Content: "change"},
+		tree.WriteOp{Parent: "model-1", Name: "block-1", Type: tree.BlockType("change"), Author: tree.AuthorModel, Content: "change"},
 		tree.WriteOp{Parent: "block-1", Name: "result-1", Type: tree.TypeBlockResult, Author: tree.AuthorProgram, Content: "applied"},
 	)
 	if err != nil {
@@ -910,9 +912,9 @@ func TestHandoffInputPrunesExecutionNodes(t *testing.T) {
 	}
 	out := handoffInput("incomplete output", tr, "root")
 	for _, want := range []string{
-		"user-1 [user/user]",
-		"model-1 [model/model]",
-		"summary-1 [summary/model]",
+		"user-1 [message::user/user]",
+		"model-1 [message::model/model]",
+		"summary-1 [block::summary/model]",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("expected %q in the handoff outline, got: %s", want, out)
@@ -939,7 +941,7 @@ func TestHandoffInputPrunesExecutionNodes(t *testing.T) {
 		t.Fatal(err)
 	}
 	out = handoffInput("incomplete output", oneRun, "loop-2")
-	if !strings.Contains(out, "model-3 [model/model] loop two") {
+	if !strings.Contains(out, "model-3 [message::model/model] loop two") {
 		t.Fatalf("expected the session's own response node in the handoff outline, got: %s", out)
 	}
 	if strings.Contains(out, "loop one") || strings.Contains(out, "model-2") {
@@ -1035,10 +1037,10 @@ func TestRunFeedbackCarriesTreeOutline(t *testing.T) {
 		// as the component's parts. See TheoryOfSessionTree.
 		for _, want := range []string{
 			"[Session tree]",
-			"model-1 [model/model]",
-			"summary-1 [summary/model]",
-			"shell-1 [shell/model]",
-			"result-1 [block-result/program]",
+			"model-1 [message::model/model]",
+			"summary-1 [block::summary/model]",
+			"shell-1 [block::shell/model]",
+			"result-1 [block::block-result/program]",
 		} {
 			if !strings.Contains(userText, want) {
 				t.Fatalf("expected %q in the feedback's tree outline, got: %s", want, userText)
@@ -1088,7 +1090,7 @@ func TestRunInertProcessAttachesBlockResult(t *testing.T) {
 			t.Fatal("expected the result to carry the session tree")
 		}
 		var memNode *tree.Node
-		for _, n := range result.SessionTree.ByType(tree.Type("memory")) {
+		for _, n := range result.SessionTree.ByType(tree.BlockType("memory")) {
 			if strings.Contains(n.Content, "memory-item") {
 				memNode = n
 			}

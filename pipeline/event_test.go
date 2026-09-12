@@ -64,7 +64,7 @@ func TestRunRecordsEventNodes(t *testing.T) {
 			t.Fatal("expected the run to yield trees")
 		}
 
-		nodes := lastTree.ByCategory(tree.CategoryEvent)
+		nodes := lastTree.Filter(func(n *tree.Node) bool { return n.Type.Prefix() == "event" })
 		wantPrefixes := []string{
 			"truncated", "handoff-start", "handoff",
 			"usage",
@@ -186,7 +186,7 @@ func TestRunGeneratorNodeContent(t *testing.T) {
 			t.Fatalf("unexpected terminal error: %v", terminalErr)
 		}
 		var generatorNode *tree.Node
-		for _, n := range lastTree.ByCategory(tree.CategoryEvent) {
+		for _, n := range lastTree.Filter(func(n *tree.Node) bool { return n.Type.Prefix() == "event" }) {
 			if strings.HasPrefix(n.Name, "generator") {
 				generatorNode = n
 			}
@@ -338,7 +338,7 @@ func TestRunFinishNodeContent(t *testing.T) {
 		if finishNode == nil {
 			t.Fatal("expected a finish message node")
 		}
-		if got := finishNode.Category(); got != tree.CategoryMessage {
+		if got := finishNode.Type.Prefix(); got != "message" {
 			t.Fatalf("the finish node must be a message node, got %v", got)
 		}
 		if got := finishNode.Content; got != "finish: stop" {
@@ -397,7 +397,7 @@ func TestRunThoughtSummaryNode(t *testing.T) {
 			t.Fatalf("unexpected terminal error: %v", terminalErr)
 		}
 		var summaryNode *tree.Node
-		for _, n := range lastTree.ByCategory(tree.CategoryEvent) {
+		for _, n := range lastTree.Filter(func(n *tree.Node) bool { return n.Type.Prefix() == "event" }) {
 			if strings.HasPrefix(n.Name, "thought-summary") {
 				summaryNode = n
 			}
@@ -411,10 +411,6 @@ func TestRunThoughtSummaryNode(t *testing.T) {
 	})
 }
 
-// TestTreeOutlineExcludesEventNodes verifies that the model-facing tree
-// outline is a projection without the loop's event nodes: the nodes are
-// program bookkeeping the model never sees. See TheoryOfSessionTree and
-// TheoryOfLoopEvents.
 func TestTreeOutlineExcludesEventNodes(t *testing.T) {
 	tr, err := tree.New().WriteAll(
 		tree.WriteOp{Parent: "root", Name: "user-1", Type: tree.TypeUser, Author: tree.AuthorUser, Content: "task"},
@@ -424,7 +420,7 @@ func TestTreeOutlineExcludesEventNodes(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := string(treeOutlinePart(tr, "root"))
-	if !strings.Contains(out, "user-1 [user/user]") {
+	if !strings.Contains(out, "user-1 [message::user/user]") {
 		t.Fatalf("expected the user node in the outline, got: %s", out)
 	}
 	if strings.Contains(out, "truncated-1") {

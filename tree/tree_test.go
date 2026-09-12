@@ -94,7 +94,7 @@ func TestPathCopyingDeepPath(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tr2, err := tr.Write("c", "d", Type("shell"), AuthorProgram, "d")
+	tr2, err := tr.Write("c", "d", BlockType("shell"), AuthorProgram, "d")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func TestPathCopyingDeepPath(t *testing.T) {
 	}
 
 	// A sibling write off the c subtree shares the c node.
-	tr3, err := tr2.Write("b", "e", Type("shell"), AuthorProgram, "e")
+	tr3, err := tr2.Write("b", "e", BlockType("shell"), AuthorProgram, "e")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +129,7 @@ func TestMerge(t *testing.T) {
 	}
 	branch2, err := base.WriteAll(
 		WriteOp{Parent: "shared", Name: "b", Type: TypeModel, Author: AuthorModel, Content: "b"},
-		WriteOp{Parent: "b", Name: "c", Type: Type("shell"), Author: AuthorModel, Content: "c"},
+		WriteOp{Parent: "b", Name: "c", Type: BlockType("shell"), Author: AuthorModel, Content: "c"},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -199,7 +199,7 @@ func TestWriteAllAtomicSuccess(t *testing.T) {
 	base := New()
 	tr, err := base.WriteAll(
 		WriteOp{Parent: "root", Name: "response-1", Type: TypeModel, Author: AuthorModel, Content: "r"},
-		WriteOp{Parent: "response-1", Name: "block-1", Type: Type("shell"), Author: AuthorModel, Content: "b"},
+		WriteOp{Parent: "response-1", Name: "block-1", Type: BlockType("shell"), Author: AuthorModel, Content: "b"},
 		WriteOp{Parent: "block-1", Name: "block-result-1", Type: TypeBlockResult, Author: AuthorProgram, Content: "ok"},
 	)
 	if err != nil {
@@ -316,7 +316,7 @@ func TestWriteAuto(t *testing.T) {
 func TestSubtreeAndDepth(t *testing.T) {
 	tr, err := New().WriteAll(
 		WriteOp{Parent: "root", Name: "a", Type: TypeModel, Author: AuthorModel, Content: "a"},
-		WriteOp{Parent: "a", Name: "b", Type: Type("shell"), Author: AuthorModel, Content: "b"},
+		WriteOp{Parent: "a", Name: "b", Type: BlockType("shell"), Author: AuthorModel, Content: "b"},
 		WriteOp{Parent: "b", Name: "c", Type: TypeBlockResult, Author: AuthorProgram, Content: "c"},
 		WriteOp{Parent: "root", Name: "d", Type: TypeUser, Author: AuthorUser, Content: "d"},
 	)
@@ -344,7 +344,7 @@ func TestSubtreeAndDepth(t *testing.T) {
 func TestSubtreeToDepth(t *testing.T) {
 	tr, err := New().WriteAll(
 		WriteOp{Parent: "root", Name: "a", Type: TypeModel, Author: AuthorModel, Content: "a"},
-		WriteOp{Parent: "a", Name: "b", Type: Type("shell"), Author: AuthorModel, Content: "b"},
+		WriteOp{Parent: "a", Name: "b", Type: BlockType("shell"), Author: AuthorModel, Content: "b"},
 		WriteOp{Parent: "b", Name: "c", Type: TypeBlockResult, Author: AuthorProgram, Content: "c"},
 	)
 	if err != nil {
@@ -392,20 +392,118 @@ func TestByTypeByAuthor(t *testing.T) {
 	}
 }
 
-// TestCategoryAndEmoji verifies the category layer: every type maps to
-// its category, Node.Category derives from the type, ByCategory selects
-// the family, and every type and category carries a non-empty emoji.
-// A block node's type is its block kind: an unknown kind derives to
-// the block category and the fallback emoji, and a built-in kind
-// carries its predefined emoji. Summary is a block kind; attempt, goal,
-// and plan are structure kinds. Context is an event kind carrying the
-// context glyph. See TheoryOfTree.
-func TestCategoryAndEmoji(t *testing.T) {
+// TestStructuredTypes verifies the structured type model: every type is a
+// "<prefix>::<name>" string, Type.Prefix and Type.Name split it, BlockType
+// and EventType build the dynamic block and event types, every type's
+// family carries the family's glyph with distinct glyphs across families,
+// and every prefix family is selectable with Filter. See TheoryOfTree.
+func TestStructuredTypes(t *testing.T) {
+	for _, tt := range []struct {
+		typ    Type
+		prefix string
+		name   string
+	}{
+		{TypeRoot, "structure", "root"},
+		{TypeLoop, "structure", "loop"},
+		{TypeAttempt, "structure", "attempt"},
+		{TypeGoal, "structure", "goal"},
+		{TypePlan, "structure", "plan"},
+		{TypeSystem, "message", "system"},
+		{TypeUser, "message", "user"},
+		{TypeModel, "message", "model"},
+		{TypeFinish, "message", "finish"},
+		{TypeThoughts, "message", "thoughts"},
+		{TypeDone, "message", "done"},
+		{TypeAbort, "message", "abort"},
+		{TypeUsage, "event", "usage"},
+		{TypeTruncated, "event", "truncated"},
+		{TypeRetry, "event", "retry"},
+		{TypeHandoffStart, "event", "handoff-start"},
+		{TypeHandoff, "event", "handoff"},
+		{TypeSynthesizedSummary, "event", "synthesized-summary"},
+		{TypeThoughtSummary, "event", "thought-summary"},
+		{TypeContinue, "event", "continue"},
+		{TypeIdle, "event", "idle"},
+		{TypeRunError, "event", "run-error"},
+		{TypeContext, "event", "context"},
+		{TypeGenerator, "event", "generator"},
+		{TypeAPIError, "event", "api_error"},
+		{TypeBlockResult, "block", "block-result"},
+		{TypeSummary, "block", "summary"},
+		{TypeError, "error", "error"},
+	} {
+		if got := tt.typ.Prefix(); got != tt.prefix {
+			t.Fatalf("%q prefix = %q, want %q", tt.typ, got, tt.prefix)
+		}
+		if got := tt.typ.Name(); got != tt.name {
+			t.Fatalf("%q name = %q, want %q", tt.typ, got, tt.name)
+		}
+		if got := tt.typ.Emoji(); got == "" {
+			t.Fatalf("%q carries no emoji", tt.typ)
+		}
+	}
+	// A type without a separator is its own prefix and name: unknown block
+	// kinds form dynamic types through BlockType.
+	if got := Type("bare").Prefix(); got != "bare" {
+		t.Fatalf("bare prefix = %q", got)
+	}
+	if got := Type("bare").Name(); got != "bare" {
+		t.Fatalf("bare name = %q", got)
+	}
+	if got := BlockType("custom-kind"); got != Type("block::custom-kind") {
+		t.Fatalf("BlockType = %q", got)
+	}
+	// The glyph is keyed by the type's first part, not by the full type:
+	// every block kind carries the block family glyph, predefined or not,
+	// and a type with an unknown prefix falls back to the question glyph.
+	if got := BlockType("custom-kind").Emoji(); got != BlockType("shell").Emoji() {
+		t.Fatalf("block kinds must share the block family glyph, got %q and %q",
+			got, BlockType("shell").Emoji())
+	}
+	if got := Type("unknown::thing").Emoji(); got != "❔" {
+		t.Fatalf("a type with an unknown prefix must fall back to the question glyph, got %q", got)
+	}
+	if got := EventType("api_error"); got != Type("event::api_error") {
+		t.Fatalf("EventType = %q", got)
+	}
+	// Every type of one family shares one glyph, and distinct families
+	// carry distinct glyphs.
+	glyphOfPrefix := make(map[string]string)
+	for _, typ := range []Type{
+		TypeRoot, TypeLoop, TypeAttempt, TypeGoal, TypePlan,
+		TypeSystem, TypeUser, TypeModel, TypeFinish, TypeThoughts, TypeDone, TypeAbort,
+		TypeUsage, TypeTruncated, TypeRetry, TypeHandoffStart, TypeHandoff,
+		TypeSynthesizedSummary, TypeThoughtSummary, TypeContinue, TypeIdle, TypeRunError,
+		TypeContext, TypeGenerator, TypeAPIError,
+		TypeBlockResult, TypeSummary, TypeError,
+		BlockType("change"), BlockType("shell"), BlockType("go-test"), BlockType("go-src"),
+		BlockType("ingest"), BlockType("new-plan"), BlockType("response"), BlockType("memory"),
+		BlockType("plan-op"), BlockType("done"), BlockType("continue"), BlockType("deleted"),
+	} {
+		prefix := typ.Prefix()
+		glyph := typ.Emoji()
+		if other, ok := glyphOfPrefix[prefix]; ok {
+			if other != glyph {
+				t.Fatalf("family %q carries both the glyphs %q and %q", prefix, other, glyph)
+			}
+			continue
+		}
+		glyphOfPrefix[prefix] = glyph
+	}
+	prefixOfGlyph := make(map[string]string)
+	for prefix, glyph := range glyphOfPrefix {
+		if other, ok := prefixOfGlyph[glyph]; ok {
+			t.Fatalf("families %q and %q share the glyph %q", other, prefix, glyph)
+		}
+		prefixOfGlyph[glyph] = prefix
+	}
+
+	// The prefix selects a whole family with Filter.
 	tr, err := New().WriteAll(
-		WriteOp{Parent: "root", Name: "a", Type: TypeTruncated, Author: AuthorProgram, Content: "x"},
+		WriteOp{Parent: "root", Name: "a", Type: TypeUsage, Author: AuthorProgram, Content: "x"},
 		WriteOp{Parent: "root", Name: "b", Type: TypeGenerator, Author: AuthorProgram, Content: "y"},
 		WriteOp{Parent: "root", Name: "c", Type: TypeUser, Author: AuthorUser, Content: "z"},
-		WriteOp{Parent: "root", Name: "d", Type: Type("shell"), Author: AuthorModel, Content: "b"},
+		WriteOp{Parent: "root", Name: "d", Type: BlockType("shell"), Author: AuthorModel, Content: "b"},
 		WriteOp{Parent: "root", Name: "e", Type: TypeError, Author: AuthorProgram, Content: "e"},
 		WriteOp{Parent: "root", Name: "f", Type: TypeSummary, Author: AuthorModel, Content: "s"},
 		WriteOp{Parent: "root", Name: "g", Type: TypeAttempt, Author: AuthorProgram, Content: "a"},
@@ -415,80 +513,26 @@ func TestCategoryAndEmoji(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := mustNode(t, tr, "a").Category(); got != CategoryEvent {
-		t.Fatalf("truncated category = %v, want event", got)
+	ofPrefix := func(prefix string) int {
+		return len(tr.Filter(func(n *Node) bool { return n.Type.Prefix() == prefix }))
 	}
-	if got := mustNode(t, tr, "c").Category(); got != CategoryMessage {
-		t.Fatalf("user category = %v, want message", got)
+	if got := ofPrefix("event"); got != 2 {
+		t.Fatalf("event-family nodes = %d, want 2", got)
 	}
-	if got := mustNode(t, tr, "d").Category(); got != CategoryBlock {
-		t.Fatalf("shell block category = %v, want block", got)
+	if got := ofPrefix("message"); got != 1 {
+		t.Fatalf("message-family nodes = %d, want 1", got)
 	}
-	if got := mustNode(t, tr, "e").Category(); got != CategoryError {
-		t.Fatalf("error category = %v, want error", got)
+	if got := ofPrefix("block"); got != 2 {
+		t.Fatalf("block-family nodes = %d, want 2", got)
 	}
-	if got := mustNode(t, tr, "f").Category(); got != CategoryBlock {
-		t.Fatalf("summary category = %v, want block", got)
+	if got := ofPrefix("structure"); got != 4 {
+		t.Fatalf("structure-family nodes = %d, want 4 (root, attempt, goal, plan)", got)
 	}
-	if got := mustNode(t, tr, "g").Category(); got != CategoryStructure {
-		t.Fatalf("attempt category = %v, want structure", got)
+	if got := ofPrefix("error"); got != 1 {
+		t.Fatalf("error-family nodes = %d, want 1", got)
 	}
-	if got := mustNode(t, tr, "h").Category(); got != CategoryStructure {
-		t.Fatalf("goal category = %v, want structure", got)
-	}
-	// A plan node is structure: the plan tree is the flow definition of
-	// a loop, not a message. See TheoryOfTree.
-	if got := mustNode(t, tr, "i").Category(); got != CategoryStructure {
-		t.Fatalf("plan category = %v, want structure", got)
-	}
-	if got := len(tr.ByCategory(CategoryEvent)); got != 2 {
-		t.Fatalf("ByCategory(event) = %d, want 2", got)
-	}
-	// A block node's type is its block kind: an unknown kind derives
-	// to the block category with the fallback emoji, and a built-in
-	// kind carries its predefined emoji.
-	if got := Type("custom-kind").Category(); got != CategoryBlock {
-		t.Fatalf("unknown kind category = %v, want block", got)
-	}
-	if got := Type("custom-kind").Emoji(); got != "🧱" {
-		t.Fatalf("unknown kind emoji = %q, want the fallback glyph", got)
-	}
-	if got := Type("shell").Emoji(); got != "🐚" {
-		t.Fatalf("shell kind emoji = %q, want the predefined glyph", got)
-	}
-	// Context is an event subtype: the context-assembly diagnostics
-	// replayed at run start derive to the event category with the
-	// context glyph. See TheoryOfTree.
-	if got := TypeContext.Category(); got != CategoryEvent {
-		t.Fatalf("context category = %v, want event", got)
-	}
-	if got := TypeContext.Emoji(); got != "📊" {
-		t.Fatalf("context emoji = %q, want the context glyph", got)
-	}
-	// The generator subtype carries the request spec description.
-	if got := TypeGenerator.Category(); got != CategoryEvent {
-		t.Fatalf("generator category = %v, want event", got)
-	}
-	for _, n := range tr.Subtree("root") {
-		if n.Type.Emoji() == "" {
-			t.Fatalf("type %q carries no emoji", n.Type)
-		}
-		if n.Category().Emoji() == "" {
-			t.Fatalf("category %q carries no emoji", n.Category())
-		}
-	}
-}
-
-// TestFinishAndThoughtsAreMessage verifies the reclassification of the
-// model-output node types: the finish reason and the reasoning trace
-// derive to the message category, so they join the session's messages
-// and the model-facing outline. See TheoryOfTree.
-func TestFinishAndThoughtsAreMessage(t *testing.T) {
-	if got := TypeFinish.Category(); got != CategoryMessage {
-		t.Fatalf("finish category = %v, want message", got)
-	}
-	if got := TypeThoughts.Category(); got != CategoryMessage {
-		t.Fatalf("thoughts category = %v, want message", got)
+	if got := mustNode(t, tr, "f").Type; got != TypeSummary {
+		t.Fatalf("summary type = %q, want %q", got, TypeSummary)
 	}
 }
 
@@ -496,7 +540,7 @@ func TestExtract(t *testing.T) {
 	insertTime := time.Date(2024, 5, 6, 7, 8, 9, 0, time.UTC)
 	tr, err := New().WriteAll(
 		WriteOp{Parent: "root", Name: "a", Type: TypeModel, Author: AuthorModel, Content: "a", InsertTime: insertTime},
-		WriteOp{Parent: "a", Name: "b", Type: Type("shell"), Author: AuthorModel, Content: "b"},
+		WriteOp{Parent: "a", Name: "b", Type: BlockType("shell"), Author: AuthorModel, Content: "b"},
 		WriteOp{Parent: "b", Name: "c", Type: TypeBlockResult, Author: AuthorProgram, Content: "c"},
 		WriteOp{Parent: "root", Name: "d", Type: TypeUser, Author: AuthorUser, Content: "d"},
 	)
@@ -504,7 +548,7 @@ func TestExtract(t *testing.T) {
 		t.Fatal(err)
 	}
 	proj := tr.Extract(func(n *Node) bool {
-		return n.Type != Type("shell") && n.Type != TypeBlockResult
+		return n.Type != BlockType("shell") && n.Type != TypeBlockResult
 	})
 	if _, ok := proj.Node("b"); ok {
 		t.Fatal("a pruned node must be absent from the projection")
@@ -552,7 +596,7 @@ func TestExtract(t *testing.T) {
 func TestRenderOutline(t *testing.T) {
 	tr, err := New().WriteAll(
 		WriteOp{Parent: "root", Name: "a", Type: TypeModel, Author: AuthorModel, Content: "first line\nsecond line"},
-		WriteOp{Parent: "a", Name: "b", Type: Type("shell"), Author: AuthorModel, Content: strings.Repeat("x", 50)},
+		WriteOp{Parent: "a", Name: "b", Type: BlockType("shell"), Author: AuthorModel, Content: strings.Repeat("x", 50)},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -566,16 +610,16 @@ func TestRenderOutline(t *testing.T) {
 	if len(lines) != 4 { // root, a, b, b-abort-1
 		t.Fatalf("outline lines = %d: %q", len(lines), out)
 	}
-	if !strings.HasPrefix(lines[0], "root [root/]") {
+	if !strings.HasPrefix(lines[0], "root [structure::root/]") {
 		t.Fatalf("root line: %q", lines[0])
 	}
-	if !strings.Contains(lines[1], "a [model/model] first line") {
+	if !strings.Contains(lines[1], "a [message::model/model] first line") {
 		t.Fatalf("a line: %q", lines[1])
 	}
 	if strings.Contains(lines[1], "second") {
 		t.Fatal("preview must take the first line only")
 	}
-	if !strings.HasPrefix(lines[2], "    b [shell/model] ") {
+	if !strings.HasPrefix(lines[2], "    b [block::shell/model] ") {
 		t.Fatalf("b line: %q", lines[2])
 	}
 	if !strings.Contains(lines[2], strings.Repeat("x", 10)+"…") {
@@ -586,7 +630,7 @@ func TestRenderOutline(t *testing.T) {
 	if !strings.Contains(lines[2], "(aborted)") {
 		t.Fatalf("aborted node must be marked on its own line: %q", lines[2])
 	}
-	if !strings.HasPrefix(lines[3], "      b-abort-1 [abort/program] no") {
+	if !strings.HasPrefix(lines[3], "      b-abort-1 [message::abort/program] no") {
 		t.Fatalf("abort child line: %q", lines[3])
 	}
 }
@@ -668,7 +712,7 @@ func TestChildrenDefensiveCopy(t *testing.T) {
 func TestDelete(t *testing.T) {
 	tr, err := New().WriteAll(
 		WriteOp{Parent: "root", Name: "response-1", Type: TypeModel, Author: AuthorModel, Content: "r"},
-		WriteOp{Parent: "response-1", Name: "block-1", Type: Type("shell"), Author: AuthorModel, Content: "b"},
+		WriteOp{Parent: "response-1", Name: "block-1", Type: BlockType("shell"), Author: AuthorModel, Content: "b"},
 		WriteOp{Parent: "block-1", Name: "block-result-1", Type: TypeBlockResult, Author: AuthorProgram, Content: "ok"},
 		WriteOp{Parent: "root", Name: "input-1", Type: TypeUser, Author: AuthorUser, Content: "i"},
 	)
@@ -699,7 +743,7 @@ func TestDelete(t *testing.T) {
 	}
 
 	// A deleted name can be written again; the old tree keeps its own node.
-	rewritten, err := deleted.Write("response-1", "block-1", Type("shell"), AuthorModel, "b2")
+	rewritten, err := deleted.Write("response-1", "block-1", BlockType("shell"), AuthorModel, "b2")
 	if err != nil {
 		t.Fatal(err)
 	}

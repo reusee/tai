@@ -36,36 +36,38 @@ Tree tab theory (cmd/tai):
   depth-first from the root, so a goal run's loops appear as loop-N
   branches and a fresh run's nodes sit directly under the root. The
   walk always starts at the tree root, so every loop's state is
-  displayed: projections filter by category, type, and author, never
+  displayed: projections filter by type prefix, type, and author, never
   by loop, and no display path reduces the view to the current loop.
 - The tab renders a projection of the tree, cycled with the v key or
-  the Tree tab's toolbar button: all shows every node; events shows
-  the event category (tree.CategoryEvent); summary the summary nodes;
-  model, program, and user the nodes of that author; stream flattens
-  the whole tree chronologically. The ancestor-based projections keep
-  each shown node's ancestors (tree.Extract), so the outline stays
-  readable.
+  the Tree tab's toolbar button: all shows every node; events shows the
+  event family (nodes whose type prefix is event); summary the summary
+  nodes; model, program, and user the nodes of that author; stream
+  flattens the whole tree chronologically. The ancestor-based
+  projections keep each shown node's ancestors (tree.Extract), so the
+  outline stays readable.
 - The stream projection renders every node as one flat line, ordered
   by insert time — the chronological order the nodes were written —
-  with no indentation, no fold column, and no expansion: the category
-  and type fragments together (category+type is the complete
-  classification, so both appear on every row), the content's first
-  non-blank line as the preview, the attempt node's jump marker, and
-  the right-aligned elapsed timer, in the node's configured line
-  color. Stream rows record expandable false, so the fold controls
-  and double-click toggles are inert, while the click and
-  title-status paths still map presses onto nodes.
-- Every node renders one line by default: "{category emoji} {category}
-  {type emoji} {type} {fold slot} first content line". The node name
-  and author are secondary to the user, so the collapsed row hides
+  with no indentation, no fold column, and no expansion: the node's
+  type fragment, the content's first non-blank line as the preview,
+  the attempt node's jump marker, and the right-aligned elapsed timer,
+  in the node's configured line color. Stream rows record expandable
+  false, so the fold controls and double-click toggles are inert, while
+  the click and title-status paths still map presses onto nodes.
+- Every node renders one line by default: "{family emoji} {type first
+  part} {type second part} {fold slot} first content line". The type
+  text carries the complete classification in one column: the family
+  emoji is keyed by the type's first part, and the second part follows
+  the first after aligned whitespace in place of the "::" separator, so
+  the second parts line up on every row at the same indent; the node
+  name and author are secondary to the user: the collapsed row hides
   them and the expanded header reveals them after the fold column,
-  alongside the full content below. A node is expandable when its
-  content spans more than one line, or when its one-line header
-  truncates at the pane width; a double-click — two presses at the
-  same cell within treeDoubleClickWindow — on any of its rows, or
-  Enter for the last multi-line node, reveals the full content, and a
-  double-click on an expanded node's header rows folds it, so
-  clicking inside a long expanded body never collapses it by
+  alongside the full content below. A node
+  is expandable when its content spans more than one line, or when its
+  one-line header truncates at the pane width; a double-click — two
+  presses at the same cell within treeDoubleClickWindow — on any of its
+  rows, or Enter for the last multi-line node, reveals the full
+  content, and a double-click on an expanded node's header rows folds
+  it, so clicking inside a long expanded body never collapses it by
   accident. A single text press records itself only and does
   nothing: the pair resets after a toggle, and a press at a
   different cell or after the window starts a new pair. When
@@ -85,15 +87,21 @@ Tree tab theory (cmd/tai):
   conventionally begin with a newline after the Go raw-string
   backtick, so the preview, the ⤷ hint count, and the expanded body
   all derive from the first non-blank line and stay consistent.
-- The tab is a four-column layout: the category/type column (the
-  depth indent plus the category and type fragments), the fold
-  column, the content column, and the right-aligned time column. The
-  category and type fragments pad to the widest visible fragments
-  across every indent level, and the fold column sits right of every
-  category/type fragment, so the content column starts at one fixed
-  display column on every row and never interleaves with the
-  category/type columns; the pad widths and the fold and content
-  columns derive from the projected entries.
+- Block::summary nodes default to the expanded form, so a session's
+  summaries read without a click. The toggle map stays the authority —
+  an explicit collapse records false — and a node the map has never
+  seen takes its type's default. A summary node whose content is a
+  single line hides nothing, so it keeps the one-row index form.
+- The tab is a four-column layout: the type column (the depth indent
+  plus the type fragment), the fold column, the content column, and the
+  right-aligned time column. The fragment's prefix field — the family
+  emoji plus the type's first part — pads to the widest visible prefix,
+  so the second parts line up at every indent; the full fragment pads
+  to the widest visible fragment across every indent level, and the fold
+  column sits right of every type fragment, so the content column
+  starts at one fixed display column on every row and never
+  interleaves with the type column; the pad widths and the fold and
+  content columns derive from the projected entries.
 - The fold column carries one fold slot per node on the header row:
   every expandable node shows the fold glyph ▾ while expanded and ▸
   while collapsed, and a node that is neither multi-line nor
@@ -102,7 +110,9 @@ Tree tab theory (cmd/tai):
   the fold column's cells on a node's first display row toggles the
   node; the slot spans the fold glyph plus one adjacent cell — two
   terminal cells — so the press target is easy to hit and maps onto
-  the rendered slot exactly.
+  the rendered slot exactly. Pointing at the slot's cells renders the
+  glyph reversed, the same affordance the Output tab's control column
+  shows.
 - The fold control follows the content: a node whose header row
   scrolled above the viewport top carries its fold glyph on its first
   visible display row — clamped to the viewport top — so an expanded
@@ -129,14 +139,17 @@ Tree tab theory (cmd/tai):
   snapshotted expansions, and an expanded node's content renders from
   the row below the header. A manual expand breaks the all-collapsed
   state, so the next press folds and re-snapshots again. Nodes that
-  arrive after the snapshot keep the default collapsed form on
-  restore. Every other focus folds the Output tab's sections.
+  arrive after the snapshot keep their type's default — summary nodes
+  return expanded, everything else collapsed. Every other focus folds
+  the Output tab's sections.
 - Node lines carry no built-in role colors: the configured
   tui.tree_colors rules decide the foreground of every tree line —
-  the first rule whose every non-empty field (category, type, author)
-  matches the node wins, and no match keeps the default foreground.
-  The tab alternates the two background shades per node: all display
-  lines of one node share one shade, and consecutive nodes alternate.
+  the first rule whose every non-empty field (type, author) matches
+  the node wins, and no match keeps the default foreground. A rule's
+  type field matches the node's full structured type ("event::usage")
+  or its name segment ("usage"). The tab alternates the two background
+  shades per node: all display lines of one node share one shade, and
+  consecutive nodes alternate.
 - Each node's first display line right-aligns the elapsed timer
   ("+0:07") from the session start to the node's insert time; a pane
   too narrow for the timer omits it.
@@ -176,11 +189,12 @@ func (m treeViewMode) label() string {
 }
 
 // predicate returns the node predicate of the mode; nil means every
-// node. See TheoryOfTreeTab.
+// node. The events mode selects the type prefix, not a separate category:
+// the type itself is the structured classification. See TheoryOfTreeTab.
 func (m treeViewMode) predicate() func(*tree.Node) bool {
 	switch m {
 	case treeViewEvents:
-		return func(n *tree.Node) bool { return n.Category() == tree.CategoryEvent }
+		return func(n *tree.Node) bool { return n.Type.Prefix() == "event" }
 	case treeViewSummary:
 		return func(n *tree.Node) bool { return n.Type == tree.TypeSummary }
 	case treeViewModel:
@@ -281,17 +295,18 @@ func treeFloatGlyph(line taiui.Line, foldX, foldWidth int, glyph string, options
 }
 
 // treeAlignments carries the global column geometry of the projected
-// tree: the widest category and type fragments across every visible
-// node, and the fold and content columns derived from them and from
-// the deepest indent. The columns are fixed across every row, so the
-// content column never interleaves with the category/type columns.
-// See TheoryOfTreeTab.
+// tree: the widest type prefix text and the widest type name across
+// every visible node, the full type fragment width derived from them,
+// and the fold and content columns derived from it and from the deepest
+// indent. The columns are fixed across every row, so the content column
+// never interleaves with the type column. See TheoryOfTreeTab.
 type treeAlignments struct {
-	maxDepth  int
-	catWidth  int
-	typeWidth int
-	foldX     int
-	contentX  int
+	maxDepth    int
+	prefixWidth int
+	nameWidth   int
+	typeWidth   int
+	foldX       int
+	contentX    int
 }
 
 // treeTabState is the Tree tab's interaction state: the projection
@@ -314,17 +329,18 @@ type treeTabState struct {
 }
 
 // treeAlignmentsOf computes the alignments of the projected tree: the
-// widest category and type fragments across every visible node and
-// every indent level, and the fold and content columns derived from
-// them, so the content column starts right of every category/type
-// fragment on every row. See TheoryOfTreeTab.
+// widest type prefix text and the widest type name across every visible
+// node and every indent level, the full fragment width derived from
+// them, and the fold and content columns derived from it, so the second
+// parts line up at every indent and the content column starts right of
+// every type fragment on every row. See TheoryOfTreeTab.
 func treeAlignmentsOf(tr *tree.Tree, options displaywidth.Options) treeAlignments {
 	align := treeAlignments{}
 	var walk func(n *tree.Node, depth int)
 	walk = func(n *tree.Node, depth int) {
 		align.maxDepth = max(align.maxDepth, depth)
-		align.catWidth = max(align.catWidth, options.String(treeNodeCategoryText(n)))
-		align.typeWidth = max(align.typeWidth, options.String(treeNodeTypeText(n)))
+		align.prefixWidth = max(align.prefixWidth, options.String(treeTypePrefixText(n)))
+		align.nameWidth = max(align.nameWidth, options.String(n.Type.Name()))
 		for _, c := range n.Children() {
 			walk(c, depth+1)
 		}
@@ -332,10 +348,13 @@ func treeAlignmentsOf(tr *tree.Tree, options displaywidth.Options) treeAlignment
 	for _, c := range tr.Root().Children() {
 		walk(c, 0)
 	}
-	// The fold column sits right of every category/type fragment: the
-	// deepest indent plus the widest fragments, one space apart. The
-	// content column follows the fold slot.
-	align.foldX = treeIndentWidth*align.maxDepth + align.catWidth + 1 + align.typeWidth + 1
+	// Every type fragment spans the prefix field, one separator space,
+	// and the name; every fragment of the projected tree pads to the
+	// widest of them, so the fold column sits right of every fragment.
+	align.typeWidth = align.prefixWidth + 1 + align.nameWidth
+	// The fold column sits one space right of the deepest indent plus
+	// the widest fragment. The content column follows the fold slot.
+	align.foldX = treeIndentWidth*align.maxDepth + align.typeWidth + 1
 	align.contentX = align.foldX + treeFoldSlotWidth(options) + 1
 	return align
 }
@@ -412,28 +431,20 @@ func treeNodeExpandable(n *tree.Node) bool {
 }
 
 // treeHeaderText renders the node's header text: the depth indent, the
-// category fragment padded to the widest category fragment, the type
-// fragment padded to the widest type fragment, the fold slot at the
-// global fold column, and — collapsed only — the first non-blank
-// content line as the index preview with the ⤷ more-lines hint on
-// multi-line content. The node name and author are secondary to the
+// type fragment padded to the widest type fragment, the fold
+// slot at the global fold column, and — collapsed only — the first
+// non-blank content line as the index preview with the ⤷ more-lines hint
+// on multi-line content. The node name and author are secondary to the
 // user and hidden while collapsed; the expanded header reveals them
-// after the fold column and drops the preview, so the content starts
-// on the row below the header. The jump marker on an attempt node
-// stays on the header. The category/type fragments and the fold
-// column align globally across every indent level, so the content
-// column starts at one fixed display column on every row. See
-// TheoryOfTreeTab.
+// after the fold column and drops the preview, so the content starts on
+// the row below the header. The jump marker on an attempt node stays on
+// the header. The type fragments and the fold column align globally
+// across every indent level, so the content column starts at one fixed
+// display column on every row. See TheoryOfTreeTab.
 func treeHeaderText(n *tree.Node, depth int, expanded bool, slot string, options displaywidth.Options, align treeAlignments) string {
-	cat := treeNodeCategoryText(n)
-	typ := treeNodeTypeText(n)
+	typ := treeNodeTypeText(n, align, options)
 	var b strings.Builder
 	b.WriteString(strings.Repeat(" ", treeIndentWidth*depth))
-	b.WriteString(cat)
-	if pad := align.catWidth - options.String(cat); pad > 0 {
-		b.WriteString(strings.Repeat(" ", pad))
-	}
-	b.WriteString(" ")
 	b.WriteString(typ)
 	if pad := align.typeWidth - options.String(typ); pad > 0 {
 		b.WriteString(strings.Repeat(" ", pad))
@@ -441,7 +452,7 @@ func treeHeaderText(n *tree.Node, depth int, expanded bool, slot string, options
 	// The fold slot sits at the global fold column on every row, so a
 	// shallower row carries the extra spacing its smaller indent
 	// leaves. See TheoryOfTreeTab.
-	if pad := align.foldX - (treeIndentWidth*depth + align.catWidth + 1 + align.typeWidth); pad > 0 {
+	if pad := align.foldX - (treeIndentWidth*depth + align.typeWidth); pad > 0 {
 		b.WriteString(strings.Repeat(" ", pad))
 	}
 	b.WriteString(slot)
@@ -467,31 +478,42 @@ func treeHeaderText(n *tree.Node, depth int, expanded bool, slot string, options
 	return text
 }
 
-// treeNodeCategoryText renders the node's category fragment — the
-// category emoji followed by the category name — the first column the
-// header alignment pads to. See TheoryOfTreeTab.
-func treeNodeCategoryText(n *tree.Node) string {
-	return n.Category().Emoji() + " " + string(n.Category())
+// treeTypePrefixText renders the node's type prefix text: the family
+// emoji followed by the type's first part. The header alignment pads
+// this field to the widest visible prefix, so every type's second part
+// starts at the same column on rows of the same indent. See
+// TheoryOfTreeTab.
+func treeTypePrefixText(n *tree.Node) string {
+	return n.Type.Emoji() + " " + n.Type.Prefix()
 }
 
-// treeNodeTypeText renders the node's type fragment — the type emoji
-// followed by the type name — the second column the header alignment
-// pads to. See TheoryOfTreeTab.
-func treeNodeTypeText(n *tree.Node) string {
-	return n.Type.Emoji() + " " + string(n.Type)
+// treeNodeTypeText renders the node's type fragment: the type prefix
+// text padded to the global prefix column, then the type's second part,
+// so the second parts line up with whitespace in place of the "::"
+// separator the type string carries. One fragment carries the complete
+// classification, so no separate category column exists. See
+// TheoryOfTreeTab.
+func treeNodeTypeText(n *tree.Node, align treeAlignments, options displaywidth.Options) string {
+	prefix := treeTypePrefixText(n)
+	var b strings.Builder
+	b.WriteString(prefix)
+	if pad := align.prefixWidth - options.String(prefix); pad > 0 {
+		b.WriteString(strings.Repeat(" ", pad))
+	}
+	b.WriteString(" ")
+	b.WriteString(n.Type.Name())
+	return b.String()
 }
 
 // treeLineColor maps a node to its display color: the configured
-// tui.tree_colors rules decide it, first match wins. A rule applies
-// when every non-empty field — category, type, author — matches the
-// node; an empty rule list and no match keep the default foreground.
+// tui.tree_colors rules decide it, first match wins. A rule applies when
+// every non-empty field — type, author — matches the node, and a rule's
+// type field matches the node's full structured type or its name
+// segment; an empty rule list and no match keep the default foreground.
 // See TheoryOfTreeTab.
 func treeLineColor(n *tree.Node) taiui.Color {
 	for _, rule := range treeColorRules {
-		if rule.category != "" && rule.category != string(n.Category()) {
-			continue
-		}
-		if rule.nodeType != "" && rule.nodeType != string(n.Type) {
+		if rule.nodeType != "" && rule.nodeType != string(n.Type) && rule.nodeType != n.Type.Name() {
 			continue
 		}
 		if rule.author != "" && rule.author != string(n.Author) {
@@ -524,7 +546,7 @@ func formatTreeElapsed(d time.Duration) string {
 // content will fill, and a finish node ends the request's generating
 // hint. Finish nodes are message-category nodes carrying the model
 // output's finish reason, so they are consumed by type, outside the
-// event-category loop. The tab auto-expands on the first consumed
+// event-family loop. The Tree tab auto-expands on the first consumed
 // node. See TheoryOfTreeTab and TheoryOfTUIOutputSections.
 func (t *TUI) setTree(tr *tree.Tree) {
 	if tr == nil {
@@ -537,8 +559,12 @@ func (t *TUI) setTree(tr *tree.Tree) {
 	if t.treeTab.seen == nil {
 		t.treeTab.seen = make(map[string]bool)
 	}
+	// Every node the map has never seen takes its type's default
+	// expansion state: block::summary nodes start expanded, so a
+	// session's summaries read without a click. See TheoryOfTreeTab.
+	t.seedTreeExpansions(tr.Root())
 	consumed := 0
-	for _, n := range tr.ByCategory(tree.CategoryEvent) {
+	for _, n := range tr.Filter(func(n *tree.Node) bool { return n.Type.Prefix() == "event" }) {
 		if t.treeTab.seen[n.Name] {
 			continue
 		}
@@ -555,7 +581,7 @@ func (t *TUI) setTree(tr *tree.Tree) {
 		consumed++
 		t.generating = false
 	}
-	// Attempt nodes are structure nodes, outside the event category:
+	// Attempt nodes are structure nodes, outside the event family:
 	// each new one opens the output section its attempt's streamed
 	// content will fill. See TheoryOfTUIOutputSections.
 	for _, n := range tr.ByType(tree.TypeAttempt) {
@@ -569,13 +595,28 @@ func (t *TUI) setTree(tr *tree.Tree) {
 		}
 	}
 	if consumed > 0 {
-		if t.tabs.AutoExpand(1) {
-			t.scrolls[1].Follow = true
+		if t.tabs.AutoExpand(0) {
+			t.scrolls[0].Follow = true
 		}
 	}
 	t.treeView = tr
 	t.mu.Unlock()
 	t.notify()
+}
+
+// seedTreeExpansions gives each newly seen node its type's default
+// expansion state: block::summary nodes start expanded, so a session's
+// summaries read without a click, and every other type starts collapsed.
+// The toggle map stays the authority afterward — an explicit collapse
+// records false — so a user's toggle is never overridden. See
+// TheoryOfTreeTab.
+func (t *TUI) seedTreeExpansions(n *tree.Node) {
+	if _, ok := t.treeTab.expanded[n.Name]; !ok && n.Type == tree.TypeSummary {
+		t.treeTab.expanded[n.Name] = true
+	}
+	for _, c := range n.Children() {
+		t.seedTreeExpansions(c)
+	}
 }
 
 // cycleTreeView advances the Tree tab's projection to the next mode,
@@ -659,6 +700,8 @@ func (t *TUI) treeStreamDisplay(contentWidth int, base taiui.Color) []taiui.Line
 	}
 	alt := taiui.AltBG(base)
 	options := taiui.DisplayWidthOptions()
+	align := treeAlignmentsOf(tr, options)
+	t.treeTab.align = align
 	var nodes []*tree.Node
 	var walk func(n *tree.Node)
 	walk = func(n *tree.Node) {
@@ -684,7 +727,7 @@ func (t *TUI) treeStreamDisplay(contentWidth int, base taiui.Color) []taiui.Line
 		if n.InsertTime.After(t.startTime) {
 			elapsed = n.InsertTime.Sub(t.startTime)
 		}
-		lines := treeStreamNodeLines(n, elapsed, shade, contentWidth, options)
+		lines := treeStreamNodeLines(n, elapsed, shade, contentWidth, options, align)
 		start := len(out)
 		out = append(out, lines...)
 		t.treeTab.rows = append(t.treeTab.rows, treeRowRange{
@@ -694,15 +737,14 @@ func (t *TUI) treeStreamDisplay(contentWidth int, base taiui.Color) []taiui.Line
 	return out
 }
 
-// treeStreamNodeLines renders one stream row: the category and type
-// fragments — category+type together form the complete classification,
-// so both appear on every row — the content's first non-blank line as
-// the preview, and the attempt node's jump marker, truncated to the
-// pane width with the elapsed timer right-aligned — the same timer
-// layout the tree rows render. The row carries the node's configured
-// line color. See TheoryOfTreeTab.
-func treeStreamNodeLines(n *tree.Node, elapsed time.Duration, shade taiui.Color, contentWidth int, options displaywidth.Options) []taiui.Line {
-	text := treeNodeCategoryText(n) + " " + treeNodeTypeText(n)
+// treeStreamNodeLines renders one stream row: the node's type fragment
+// — its second part aligned like the tree rows — the content's first
+// non-blank line as the preview, and the attempt node's jump marker,
+// truncated to the pane width with the elapsed timer right-aligned —
+// the same timer layout the tree rows render. The row carries the
+// node's configured line color. See TheoryOfTreeTab.
+func treeStreamNodeLines(n *tree.Node, elapsed time.Duration, shade taiui.Color, contentWidth int, options displaywidth.Options, align treeAlignments) []taiui.Line {
+	text := treeNodeTypeText(n, align, options)
 	if first := treeFirstLine(n); first != "" {
 		text += " " + first
 	}
@@ -766,16 +808,21 @@ func (t *TUI) treeNodeLines(n *tree.Node, depth int, shade taiui.Color, contentW
 	}
 	expandable := treeNodeExpandable(n) ||
 		(options.String(collapsedHeader) > measureWidth && first != "")
+	// The expansion state applies only to an expandable node: a seeded
+	// default (block::summary starts expanded) on a single-line,
+	// untruncated node keeps the collapsed index form, which already
+	// shows the whole content. See TheoryOfTreeTab.
+	effectiveExpanded := expanded && expandable
 	slot := blankSlot
 	if expandable {
-		slot = treeFoldSlot(expanded, options)
+		slot = treeFoldSlot(effectiveExpanded, options)
 	}
 	header := collapsedHeader
-	if expanded || expandable {
-		header = treeHeaderText(n, depth, expanded, slot, options, align)
+	if expandable {
+		header = treeHeaderText(n, depth, effectiveExpanded, slot, options, align)
 	}
 	var body []string
-	if expanded && first != "" {
+	if effectiveExpanded && first != "" {
 		// The content starts on the row below the header: the body
 		// carries the full content, first line included. See
 		// TheoryOfTreeTab.
@@ -934,7 +981,9 @@ func (t *TUI) toggleLastTreeExpandable() {
 // keep the default collapsed form on restore. A manual expand breaks
 // the all-collapsed state, so the next press folds and re-snapshots
 // rather than restoring. The stream projection carries no fold, so
-// the key is inert there. See TheoryOfTreeTab and TheoryOfOutputControls.
+// the key is inert there. The Tree tab is index 0 after the tab-order
+// swap, so the view offset comes from scrolls[0]. See TheoryOfTreeTab
+// and TheoryOfOutputControls.
 func (t *TUI) collapseAllTreeNodes() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -981,7 +1030,7 @@ func (t *TUI) collapseAllTreeNodes() {
 	t.treeTab.collapseAllSaved = expanded
 	if len(expanded) > 0 {
 		anchorName := ""
-		topRow := t.scrolls[1].Offset
+		topRow := t.scrolls[0].Offset
 		for _, r := range t.treeTab.rows {
 			if topRow >= r.startRow && topRow < r.endRow {
 				anchorName = r.name
@@ -1001,7 +1050,7 @@ func (t *TUI) collapseAllTreeNodes() {
 // match what is on screen. Click path only — never per frame.
 func (t *TUI) treeDisplayLine(row int, box taiui.Box) (taiui.Line, bool) {
 	base := panelStyle.BaseBG
-	if t.tabs.Focus == 1 {
+	if t.tabs.Focus == 0 {
 		base = panelStyle.FocusBG
 	}
 	display := t.treeDisplay(treeContentWidth(box.Width()), base)
@@ -1009,6 +1058,46 @@ func (t *TUI) treeDisplayLine(row int, box taiui.Box) (taiui.Line, bool) {
 		return taiui.Line{}, false
 	}
 	return display[row], true
+}
+
+// treeFoldHoverElement renders the fold glyph under the pointer reversed,
+// so the fold column's affordance shows before a press. The element
+// covers the slot's cells at the control's visible row — the header row,
+// or the node's first visible row when the header scrolled above the
+// viewport — and returns nil when no control is hovered. The caller holds
+// t.mu. See TheoryOfTreeTab.
+func (t *TUI) treeFoldHoverElement(box taiui.Box, display []taiui.Line) taiui.Element {
+	if t.treeView == nil || !t.ctlHover || !t.mouseReporting {
+		return nil
+	}
+	if box.Width() <= 0 || box.Height() <= 0 || len(display) == 0 {
+		return nil
+	}
+	options := taiui.DisplayWidthOptions()
+	foldWidth := treeFoldSlotWidth(options)
+	foldLeft := box.Left + t.treeTab.align.foldX
+	if t.ctlHoverX < foldLeft || t.ctlHoverX >= foldLeft+foldWidth {
+		return nil
+	}
+	if t.ctlHoverY <= box.Top || t.ctlHoverY >= box.Bottom {
+		return nil
+	}
+	offset := taiui.ClampOffset(t.scrolls[0].Offset, len(display), t.tuiPaneHeight(0, box))
+	paneHeight := t.tuiPaneHeight(0, box)
+	row := offset + (t.ctlHoverY - box.Top - 1)
+	for _, r := range t.treeTab.rows {
+		if !r.expandable {
+			continue
+		}
+		controlRow, visible := treeControlRow(r, offset, paneHeight)
+		if !visible || controlRow != row {
+			continue
+		}
+		return taiui.Text(treeFoldGlyph(t.treeTab.expanded[r.name]), taiui.Box{
+			Top: t.ctlHoverY, Left: foldLeft, Bottom: t.ctlHoverY + 1, Right: foldLeft + foldWidth,
+		}, taiui.Reverse(true))
+	}
+	return nil
 }
 
 // treeFoldGlyph returns the fold column's glyph of a node: ▾ while
@@ -1021,14 +1110,14 @@ func treeFoldGlyph(expanded bool) string {
 }
 
 func (t *TUI) floatTreeControls(box taiui.Box, display []taiui.Line) {
-	if !t.tabs.Expanded[1] || t.treeView == nil {
+	if !t.tabs.Expanded[0] || t.treeView == nil {
 		return
 	}
 	if box.Width() <= 0 || box.Height() <= 0 || len(display) == 0 {
 		return
 	}
-	offset := taiui.ClampOffset(t.scrolls[1].Offset, len(display), t.tuiPaneHeight(1, box))
-	paneHeight := t.tuiPaneHeight(1, box)
+	offset := taiui.ClampOffset(t.scrolls[0].Offset, len(display), t.tuiPaneHeight(0, box))
+	paneHeight := t.tuiPaneHeight(0, box)
 	options := taiui.DisplayWidthOptions()
 	foldWidth := treeFoldSlotWidth(options)
 	foldX := t.treeTab.align.foldX
@@ -1059,17 +1148,17 @@ func (t *TUI) floatTreeControls(box taiui.Box, display []taiui.Line) {
 // control consumed the press. The caller holds t.mu. See
 // TheoryOfTreeTab.
 func (t *TUI) toggleTreeControlAtClick(x, y int) bool {
-	if !t.tabs.Expanded[1] || t.treeView == nil {
+	if !t.tabs.Expanded[0] || t.treeView == nil {
 		return false
 	}
-	box := t.tabs.Boxes(t.width, t.height)[1]
+	box := t.tabs.Boxes(t.width, t.height)[0]
 	if box.Width() <= 0 || box.Height() <= 0 {
 		return false
 	}
 	if y < box.Top+1 || y >= box.Bottom {
 		return false
 	}
-	display := wrappedDisplay(t, 1, box)
+	display := wrappedDisplay(t, 0, box)
 	if len(display) == 0 {
 		return false
 	}
@@ -1079,8 +1168,8 @@ func (t *TUI) toggleTreeControlAtClick(x, y int) bool {
 	if x < foldLeft || x >= foldLeft+foldWidth {
 		return false
 	}
-	offset := taiui.ClampOffset(t.scrolls[1].Offset, len(display), t.tuiPaneHeight(1, box))
-	paneHeight := t.tuiPaneHeight(1, box)
+	offset := taiui.ClampOffset(t.scrolls[0].Offset, len(display), t.tuiPaneHeight(0, box))
+	paneHeight := t.tuiPaneHeight(0, box)
 	row := offset + (y - box.Top - 1)
 	for _, r := range t.treeTab.rows {
 		if !r.expandable {
@@ -1102,13 +1191,15 @@ func (t *TUI) toggleTreeControlAtClick(x, y int) bool {
 
 // scrollToTreeNode scrolls the Tree pane's view so the node's first
 // display row lands at the top of the pane, stopping the live tail.
-// The caller holds t.mu. See TheoryOfTreeTab.
+// The Tree tab is index 0 after the tab-order swap, so the pane and its
+// scroll state use that index. The caller holds t.mu. See
+// TheoryOfTreeTab.
 func (t *TUI) scrollToTreeNode(name string) {
-	box := t.tabs.Boxes(t.width, t.height)[1]
+	box := t.tabs.Boxes(t.width, t.height)[0]
 	if box.Width() <= 0 || box.Height() <= 0 {
 		return
 	}
-	display := wrappedDisplay(t, 1, box)
+	display := wrappedDisplay(t, 0, box)
 	if len(display) == 0 {
 		return
 	}
@@ -1116,8 +1207,8 @@ func (t *TUI) scrollToTreeNode(name string) {
 		if r.name != name {
 			continue
 		}
-		t.scrolls[1].Offset = taiui.ClampOffset(r.startRow, len(display), t.tuiPaneHeight(1, box))
-		t.scrolls[1].Follow = false
+		t.scrolls[0].Offset = taiui.ClampOffset(r.startRow, len(display), t.tuiPaneHeight(0, box))
+		t.scrolls[0].Follow = false
 		return
 	}
 }
@@ -1130,14 +1221,14 @@ func (t *TUI) scrollToTreeNode(name string) {
 // Presses outside the pane's content area are no-ops. Called with
 // t.mu held. See TheoryOfTreeTab and TheoryOfTUIOutputSections.
 func (t *TUI) treeAtClick(x, y int) {
-	if !t.tabs.Expanded[1] {
+	if !t.tabs.Expanded[0] {
 		return
 	}
-	box := t.tabs.Boxes(t.width, t.height)[1]
+	box := t.tabs.Boxes(t.width, t.height)[0]
 	if x < box.Left || x >= box.Right || y <= box.Top || y >= box.Bottom {
 		return
 	}
-	row := t.scrolls[1].Offset + (y - box.Top - 1)
+	row := t.scrolls[0].Offset + (y - box.Top - 1)
 	node := t.treeNodeAtRow(row)
 	if node == nil {
 		return
@@ -1193,7 +1284,7 @@ func (t *TUI) treeTitleStatus() string {
 	if t.treeView == nil {
 		return ""
 	}
-	offset := t.scrolls[1].Offset
+	offset := t.scrolls[0].Offset
 	for _, r := range t.treeTab.rows {
 		if offset >= r.startRow && offset < r.endRow {
 			n, ok := t.treeView.Node(r.name)

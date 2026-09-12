@@ -38,20 +38,21 @@ const (
 )
 
 // tabTitleButtons returns the title buttons of tab idx: one button per
-// operation that acts on the tab or on the session. The Logs tab
-// carries the session-level controls. See TheoryOfToolbars.
+// operation that acts on the tab or on the session. The tabs are indexed
+// in display order (0 Tree, 1 Output, 2 Logs), and the Logs tab carries
+// the session-level controls. See TheoryOfToolbars.
 func tabTitleButtons(idx int) []taiui.ToolbarButton {
 	switch idx {
 	case 0:
 		return []taiui.ToolbarButton{
-			{Label: titleButtonPrev, Action: string(controlPrevSections)},
-			{Label: titleButtonNext, Action: string(controlNextSections)},
-			{Label: titleButtonCollapse, Action: string(controlCollapseAll)},
+			{Label: titleButtonCycle, Action: string(controlTreeViewCycle)},
+			{Label: titleButtonCollapse, Action: string(controlCollapseTree)},
 		}
 	case 1:
 		return []taiui.ToolbarButton{
-			{Label: titleButtonCycle, Action: string(controlTreeViewCycle)},
-			{Label: titleButtonCollapse, Action: string(controlCollapseTree)},
+			{Label: titleButtonPrev, Action: string(controlPrevSections)},
+			{Label: titleButtonNext, Action: string(controlNextSections)},
+			{Label: titleButtonCollapse, Action: string(controlCollapseAll)},
 		}
 	case 2:
 		return []taiui.ToolbarButton{

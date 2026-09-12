@@ -93,8 +93,9 @@ func planRootNameOf(sessionParent string) string {
 // planTypeDeleted is the node type of a soft-delete mark: the program
 // writes it as a child under a plan entry when the model issues the
 // plan-op delete operation. The mark keeps the entry and its subtasks
-// in the tree for tracking and audit. See TheoryOfPlan.
-const planTypeDeleted tree.Type = "deleted"
+// in the tree for tracking and audit. It is the plan-op block kind
+// expressed as a block type. See TheoryOfPlan.
+const planTypeDeleted tree.Type = "block::deleted"
 
 const PlanBlockSystemPrompt = `
 Plan-Op Block Kind:

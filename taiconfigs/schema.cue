@@ -278,7 +278,7 @@ tui?: {
 	// input_unfocused_fg colors the chat input line while unfocused.
 	input_unfocused_fg?: string
 	tree_colors?: [...{
-		category?: string
+		// type matches the node's full structured type or its name segment.
 		type?: string
 		author?: string
 		color?: string

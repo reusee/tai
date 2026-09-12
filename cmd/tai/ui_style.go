@@ -30,27 +30,30 @@ UI style theory:
   the log alternation without further wiring.
 - Tree tab node lines carry no built-in role colors: the configured
   tui.tree_colors rules decide the foreground of every tree line —
-  the first rule whose every non-empty field (category, type, author)
-  matches the node wins, and no match keeps the default foreground.
-  The Output tab carries no role colors at all: a section's content
-  type is stated by the full-width letter its control column draws
-  (see TheoryOfOutputControls), so the style surface covers the
-  panels, the input bar, and the tree rules only.
+  the first rule whose every non-empty field (type, author) matches
+  the node wins, and a rule's type field matches the node's full
+  structured type string ("event::usage") or its name segment
+  ("usage"); no match keeps the default foreground. There is no
+  separate category field: the node's type is the complete
+  classification. The Output tab carries no role colors at all: a
+  section's content type is stated by the full-width letter its
+  control column draws (see TheoryOfOutputControls), so the style
+  surface covers the panels, the input bar, and the tree rules only.
 `
 
 var _ configs.Config = UIStyle{}
 
 // TreeColorRule is one rule of the tui.tree_colors configuration: a
 // foreground color for the tree tab's node lines. Every non-empty
-// field — category, type, author — must match the node for the rule
-// to apply; an empty field matches any node. color accepts a W3C
-// name or a "#rrggbb" hex value; an empty color keeps the default
+// field — type, author — must match the node for the rule to apply; an
+// empty field matches any node. type matches the node's full structured
+// type ("event::usage") or its name segment ("usage"). color accepts a
+// W3C name or a "#rrggbb" hex value; an empty color keeps the default
 // foreground.
 type TreeColorRule struct {
-	Category string `json:"category"`
-	Type     string `json:"type"`
-	Author   string `json:"author"`
-	Color    string `json:"color"`
+	Type   string `json:"type"`
+	Author string `json:"author"`
+	Color  string `json:"color"`
 }
 
 // UIStyle carries the terminal UI's configurable colors, decoded from
@@ -181,7 +184,6 @@ func parseFGColor(setting string, fallback taiui.Color) taiui.Color {
 // decoded once at startup, so rendering never parses settings per
 // frame. An empty color keeps the default foreground.
 type treeColorRule struct {
-	category string
 	nodeType string
 	author   string
 	color    taiui.Color
@@ -199,7 +201,6 @@ func (s UIStyle) treeColorRulesOf() []treeColorRule {
 	rules := make([]treeColorRule, 0, len(s.TreeColors))
 	for _, r := range s.TreeColors {
 		rules = append(rules, treeColorRule{
-			category: r.Category,
 			nodeType: r.Type,
 			author:   r.Author,
 			color:    parseFGColor(r.Color, taiui.NoColor),
