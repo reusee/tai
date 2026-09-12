@@ -15,8 +15,8 @@ Tab toolbar theory (cmd/tai):
   toggle, the help overlay, and quit. The reusable mechanism — the
   right-to-left layout, the reserved margin, the press hit test, and
   the hover highlight — lives in taiui (see taiui.TheoryOfToolbar).
-- The button labels are plain Han glyphs, so every terminal renders
-  them and the visible label spans its press target.
+- The button labels are English words, so every terminal renders them
+  and the visible label spans its press target.
 - A press on a button runs the button's action through
   dispatchControlBar — the same action vocabulary the key dispatch
   uses, so a click and a keystroke mean the same thing — and preempts
@@ -27,14 +27,14 @@ Tab toolbar theory (cmd/tai):
 
 // The button labels: plain, colorable characters. See TheoryOfToolbars.
 const (
-	titleButtonPrev     = "上"
-	titleButtonNext     = "下"
-	titleButtonCollapse = "收"
-	titleButtonCycle    = "换"
-	titleButtonSplit    = "分"
-	titleButtonMouse    = "鼠"
-	titleButtonHelp     = "帮"
-	titleButtonQuit     = "退"
+	titleButtonPrev     = "Up"
+	titleButtonNext     = "Down"
+	titleButtonCollapse = "Collapse"
+	titleButtonCycle    = "Switch"
+	titleButtonSplit    = "Split"
+	titleButtonMouse    = "Mouse"
+	titleButtonHelp     = "Help"
+	titleButtonQuit     = "Quit"
 )
 
 // tabTitleButtons returns the title buttons of tab idx: one button per

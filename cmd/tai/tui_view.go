@@ -121,7 +121,7 @@ var tuiHelpLines = []string{
 	"output column\tclick ▸ / ▾ at a section's first row to collapse / expand it",
 	"tree row\tclick 👉 on an attempt line to jump the Output tab to its output section; double-click a node to expand or collapse it",
 	"tree column\tclick ▸ / ▾ on an expandable node's first row (or its first visible row when scrolled) to collapse / expand it",
-	"title buttons\tclick the labels at an expanded tab title's right edge: Output 上下收, Tree 换收, Logs 分鼠帮退",
+	"title buttons\tclick the labels at an expanded tab title's right edge: Output UpDownCollapse, Tree SwitchCollapse, Logs SplitMouseHelpQuit",
 	"wheel / drag\tscroll pane under cursor",
 	"m\ttoggle mouse reporting (off: select & copy in the terminal)",
 	"q / Ctrl-C\tquit (press again to confirm)",

@@ -623,9 +623,10 @@ func TestTitleButtonsRendering(t *testing.T) {
 	screen := &panelTestScreen{width: 40, height: 1}
 	taiui.Render(el, screen)
 	frame := screen.frames[len(screen.frames)-1]
-	if frame.Cells[32].Rune != '上' || frame.Cells[34].Rune != '下' || frame.Cells[36].Rune != '收' {
+	// Cells: Up at [24,26), Down at [26,30), Collapse at [30,38).
+	if frame.Cells[24].Rune != 'U' || frame.Cells[26].Rune != 'D' || frame.Cells[30].Rune != 'C' {
 		t.Fatalf("unexpected button labels: %q %q %q",
-			string(frame.Cells[32].Rune), string(frame.Cells[34].Rune), string(frame.Cells[36].Rune))
+			string(frame.Cells[24].Rune), string(frame.Cells[26].Rune), string(frame.Cells[30].Rune))
 	}
 	for _, x := range []int{38, 39} {
 		if frame.Cells[x].Set {
@@ -637,7 +638,7 @@ func TestTitleButtonsRendering(t *testing.T) {
 	tui.mu.Lock()
 	tui.ctlHover = true
 	tui.mouseReporting = true
-	tui.ctlHoverX = 32
+	tui.ctlHoverX = 24
 	tui.ctlHoverY = 0
 	tui.mu.Unlock()
 	tui.mu.Lock()
@@ -646,7 +647,7 @@ func TestTitleButtonsRendering(t *testing.T) {
 	screen = &panelTestScreen{width: 40, height: 1}
 	taiui.Render(el, screen)
 	frame = screen.frames[len(screen.frames)-1]
-	hovered := frame.Cells[32].Style.Attr()&vt.Reverse != 0
+	hovered := frame.Cells[24].Style.Attr()&vt.Reverse != 0
 	if !hovered {
 		t.Fatal("expected the hovered button to render reversed")
 	}
@@ -666,7 +667,7 @@ func TestTUITitleButtonClicks(t *testing.T) {
 		tui.writeOutputPart(generators.RoleModel, true, "t1\nt2\n")
 		tui.writeOutputPart(generators.RoleModel, false, "answer\n")
 		box := tui.tabs.Boxes(40, 10)[0]
-		// The collapse-all button occupies [Right-4, Right-2).
+		// The collapse-all button occupies [Right-10, Right-2).
 		tui.handleMouseKey(fmt.Sprintf("mouse-left@%d,%d", box.Right-3, box.Top))
 		tui.mu.Lock()
 		collapsed := tui.outputSections[0].collapsed &&
@@ -701,8 +702,8 @@ func TestTUITitleButtonClicks(t *testing.T) {
 		tui.writeOutputPart(generators.RoleModel, true, "a thought\n")
 		tui.scrolls[0].Follow = true
 		box := tui.tabs.Boxes(80, 10)[0]
-		// The next-section button occupies [Right-6, Right-4).
-		tui.handleMouseKey(fmt.Sprintf("mouse-left@%d,%d", box.Right-5, box.Top))
+		// The next-section button occupies [Right-14, Right-10).
+		tui.handleMouseKey(fmt.Sprintf("mouse-left@%d,%d", box.Right-12, box.Top))
 		tui.mu.Lock()
 		defer tui.mu.Unlock()
 		if tui.scrolls[0].Follow {
@@ -728,9 +729,10 @@ func TestTUITitleButtonClicks(t *testing.T) {
 		tui.setTree(tr)
 		before := tui.treeTab.mode
 		box := tui.tabs.Boxes(40, 10)[1]
-		// The cycle button occupies [Right-6, Right-4): the layout lays
-		// the buttons right to left, so collapse sits right of cycle.
-		tui.handleMouseKey(fmt.Sprintf("mouse-left@%d,%d", box.Right-5, box.Top))
+		// The cycle button occupies [Right-16, Right-10): the layout
+		// lays the buttons right to left, so collapse sits right of
+		// cycle.
+		tui.handleMouseKey(fmt.Sprintf("mouse-left@%d,%d", box.Right-13, box.Top))
 		tui.mu.Lock()
 		defer tui.mu.Unlock()
 		if tui.treeTab.mode == before {
