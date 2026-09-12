@@ -22,7 +22,8 @@ import (
 const TheoryOfContextPhilosophy = `
 Context and generation are staged. The initial context is an outline, the
 model fetches the detail it needs, and the task advances over multiple
-rounds: a generation is a unit of work, not the whole task.
+rounds: a generation is a unit of work, and the run is a sequence of
+generations.
 
 Outline-first construction: the initial context carries the declaration
 surface — go doc output for focus packages — together with theory
@@ -41,8 +42,7 @@ model descends from the known index into the implementation it needs, and
 the fetched material stays in the accumulated state for the later rounds
 of the run.
 
-Multi-round generation as the execution model: rounds are how the system
-works, not a fallback for oversized tasks. Component-triggered rounds
+Multi-round generation as the execution model: component-triggered rounds
 (go-src, ingest, shell, go-test), continue blocks, retry rounds,
 plan-driven rounds, and idle rounds all advance the same run. The loop
 executes tasks; it is not a chatbot.
@@ -254,8 +254,8 @@ type StateDecorator func(generators.State) generators.State
 // processes blocks via components, and continues if a component
 // triggers a new generation. When Components is empty, no component
 // processes blocks and the loop ends after one generation, unless
-// correction feedback for unprocessable output continues the loop
-// (single-shot mode). The result is filled into
+// correction feedback for unprocessable output continues the loop.
+// The result is filled into
 // result as the run progresses; every notable occurrence — attempt
 // lifecycle (start, completion, truncation), request parameters,
 // retries and handoffs, synthesized completion summaries, attempt
@@ -280,9 +280,8 @@ type generationResult struct {
 	summaries    []string
 	parts        []generators.Part
 	continueNext bool
-	// finalBlocks is set when the generation is the whole run
-	// (single-shot mode): the loop ends with these blocks as the
-	// result.
+	// finalBlocks is set when the generation ends the run: the loop
+	// ends with these blocks as the result.
 	finalBlocks []blocks.Block
 }
 
@@ -1017,7 +1016,9 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 		ls.uncorrectedParseErrors = appendUncorrectedParseErrors(ls.uncorrectedParseErrors, generationUncorrected)
 	}
 
-	// Single-shot mode: no component processing.
+	// No components: blocks are not processed between generations.
+	// The correction feedback still continues the loop; otherwise the
+	// run ends with the collected blocks.
 	if len(ls.opts.Components) == 0 {
 		if len(correctionParts) > 0 {
 			feedbackParts := correctionParts
@@ -1428,8 +1429,8 @@ type RunOptions struct {
 	// See StateDecorator.
 	StateDecorators []StateDecorator
 	// Components is the component set for block processing between
-	// generations. When empty, no component processes blocks
-	// (single-shot mode). See Run.
+	// generations. When empty, no component processes blocks.
+	// See Run.
 	Components components.ComponentSet
 	// BlockHandler processes blocks during streaming. May be nil.
 	// If consumed is true, the block is not passed to ProcessComponents.
@@ -1527,8 +1528,8 @@ type RunOptions struct {
 	// allows the caller to provide interactive input (e.g., chat prompt)
 	// and decide whether to continue with another generation. If OnIdle
 	// returns continue=true, a new generation starts. If false or OnIdle
-	// is nil, the loop ends. OnIdle is only invoked in multi-generation
-	// mode (when Components is non-empty). See TheoryOfIdleHandler.
+	// is nil, the loop ends. OnIdle is only invoked when Components is
+	// non-empty. See TheoryOfIdleHandler.
 	OnIdle IdleHandler
 }
 

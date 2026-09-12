@@ -58,12 +58,12 @@ func (Module) SystemPrompt(
 	ret += SystemPrompt(prompts.NextStep)
 
 	// Disabled-blocks notice: the next command is a text-output command.
-	// It runs a single-shot loop with no components and no change-block
-	// handler, so no block kind is processed here — shell commands are
-	// not run, no next round is triggered, nothing is fetched, and no
-	// change is applied to any file. Listing them explicitly prevents
-	// blocks that would be silently ignored while implying actions that
-	// never happened. The notice is static for this command, so it sits
+	// It runs the loop with no components and no change-block handler,
+	// so no block kind is processed here — shell commands are not run,
+	// no next round is triggered, nothing is fetched, and no change is
+	// applied to any file. Listing them explicitly prevents blocks that
+	// would be silently ignored while implying actions that never
+	// happened. The notice is static for this command, so it sits
 	// directly after the base prompt inside the stable prefix region.
 	// See components.TheoryOfDisabledBlocks and TheoryOfNextCommand.
 	ret += "\n\n" + SystemPrompt(components.DisabledBlocksNotice(
@@ -157,11 +157,11 @@ var NextCommand = apps.New("next",
 			state = generators.NewOutput(state, os.Stdout, showThoughts)
 		}
 
-		// Run the unified generation loop in single-shot mode (no
-		// components, no change-block handler): next is a text-output
-		// command, so collected blocks are never applied to the working
-		// tree. The phase chain (generate -> chat) drives the
-		// interactive session. Generation errors after content output
+		// Run the unified generation loop with no components and no
+		// change-block handler: next is a text-output command, so
+		// collected blocks are never applied to the working tree. The
+		// phase chain (generate -> chat) drives the interactive
+		// session. Generation errors after content output
 		// retry with the error message fed back as user content. The
 		// loop's recording session is opened through the scope's
 		// recorder, so the session is captured when -record is enabled

@@ -1503,7 +1503,7 @@ func TestRunOnAttemptSuccessError(t *testing.T) {
 	})
 }
 
-func TestRunEmptyComponentsSingleShot(t *testing.T) {
+func TestRunEmptyComponents(t *testing.T) {
 	withRun(t, func(run Run) {
 		phaseCalled := false
 		result, err := runOnce(run, RunOptions{
@@ -1512,7 +1512,7 @@ func TestRunEmptyComponentsSingleShot(t *testing.T) {
 			Components:   nil,
 			PhaseBuilder: func(g generators.Generator) generators.Phase {
 				phaseCalled = true
-				return appendPhase("single shot")
+				return appendPhase("no components")
 			},
 		})
 		if err != nil {
@@ -1521,7 +1521,7 @@ func TestRunEmptyComponentsSingleShot(t *testing.T) {
 		if !phaseCalled {
 			t.Fatal("phase should have been called")
 		}
-		// Single-shot mode: loop runs once and returns.
+		// No components: the loop runs once and returns.
 		if result.FinalState == nil {
 			t.Fatal("expected non-nil final state")
 		}

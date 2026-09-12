@@ -317,11 +317,11 @@ var PingCommand = apps.New("ping",
 		}
 		state = generators.NewOutput(state, os.Stdout, showThoughts)
 
-		// Run the unified generation loop in single-shot mode (no
-		// components). The loop handles ParserState wrapping, phase
-		// execution, and its own recording session (opened through the
-		// scope's recorder, so -record captures the session without the
-		// command carrying the recorder); the TUI's finish-reason
+		// Run the unified generation loop with no components. The loop
+		// handles ParserState wrapping, phase execution, and its own
+		// recording session (opened through the scope's recorder, so
+		// -record captures the session without the command carrying
+		// the recorder); the TUI's finish-reason
 		// observer is applied via RunOptions.StateDecorators when -tui
 		// is enabled. Parsed blocks are collected in result.RemainingBlocks
 		// because no component consumes them. The result is filled into
