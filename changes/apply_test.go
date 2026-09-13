@@ -335,6 +335,49 @@ func TestApplyChangeBlockModifyImportAddToFileWithoutImports(t *testing.T) {
 	})
 }
 
+func TestApplyChangeBlockModifyImportWithoutPackageClause(t *testing.T) {
+	newTestScope(t).Call(func(applyChangeBlock ApplyChangeBlock) {
+		dir := t.TempDir()
+		root, err := os.OpenRoot(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer root.Close()
+
+		// A source with no real package clause is parsed behind a
+		// synthetic "package p" prefix, which shifts every fset offset.
+		// The special import target must reject the file instead of
+		// computing negative offsets and slicing out of range. See
+		// TheoryOfSpecialGoTargets.
+		original := "func Main() {}\n"
+		if err := root.WriteFile("test.go", []byte(original), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		h := ChangeBlock{
+			Op:       "MODIFY",
+			Target:   "import",
+			FilePath: "test.go",
+			Body:     "import \"fmt\"",
+		}
+		err = applyChangeBlock(root, h)
+		if err == nil {
+			t.Fatal("expected an error for a file without a package clause")
+		}
+		if !strings.Contains(err.Error(), "no package clause") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		result, err := root.ReadFile("test.go")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(result) != original {
+			t.Fatalf("the file must be unchanged, got:\n%s", string(result))
+		}
+	})
+}
+
 func TestApplyChangeBlockModifyImportRemoveAll(t *testing.T) {
 	newTestScope(t).Call(func(applyChangeBlock ApplyChangeBlock) {
 		dir := t.TempDir()

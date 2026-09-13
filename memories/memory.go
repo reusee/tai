@@ -38,9 +38,10 @@ pseudo-call fallback extracts textual update_user_profile(...) and
 delete_user_profile(...) calls when the model fails to use the memory block
 format.
 
-Memory updates carry two directions: additions and deletions. Additions are
-appended to the existing item list with deduplication. Deletions remove items
-by exact string match and take precedence over additions emitted in the same
+Memory updates carry two directions: additions and deletions. Additions come
+first with deduplication and the surviving current items follow, so the
+newest learning reads at the top of the profile. Deletions remove items by
+exact string match and take precedence over additions emitted in the same
 round: a contradictory add-and-delete pair for the same item resolves to
 deleted. A deletion-only round still persists an entry, possibly with an
 empty item list. Otherwise the deletion would be lost on the next read.

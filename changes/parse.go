@@ -59,10 +59,12 @@ the targets' body contracts and is not repeated here.
 ValidateChangeBlock rejects the targets on non-Go files, because MODIFY is
 not a file-level operation, and rejects every operation other than MODIFY
 for them. The "import" target unifies replacement and insertion into a
-single "set imports" operation. If the file does not exist or has no real
-package clause, MODIFY is a no-op (consistent with existing MODIFY
-behavior). Both targets run goimports after replacement to ensure valid
-formatting and import synchronization.
+single "set imports" operation. Both targets require a real package clause:
+a file that does not exist, or whose source carries no package clause, is
+rejected with an error, because the computed insertion offsets are relative
+to a real package clause and a synthetic one cannot be modified. Both
+targets run goimports after replacement to ensure valid formatting and
+import synchronization.
 `
 
 const TheoryOfPreciseModifications = `

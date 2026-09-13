@@ -310,6 +310,17 @@ func (Module) ApplyGoModification(
 			if f == nil {
 				return fmt.Errorf("target %q: file %s could not be parsed", h.Target, path)
 			}
+			if prefixLen > 0 {
+				// parseGoSource prepends a synthetic "package p" prefix
+				// when the source has no real package clause, which
+				// shifts every fset offset by the prefix length. The
+				// special targets compute insertion offsets relative to
+				// the real package clause, so a file without one would
+				// compute negative offsets and slice out of range;
+				// reject it with a clear error instead of panicking.
+				// See TheoryOfSpecialGoTargets.
+				return fmt.Errorf("target %q: file %s has no package clause; the special targets cannot be applied", h.Target, path)
+			}
 			return applySpecialTargetModify(store, path, src, f, fset, prefixLen, h)
 		}
 

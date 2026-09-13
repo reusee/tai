@@ -283,6 +283,24 @@ func TestUpdateMemoryFromBlockDeduplicates(t *testing.T) {
 	})
 }
 
+func TestMergeMemoryItemsOrder(t *testing.T) {
+	// The additions-first order is a documented contract: additions come
+	// first with the surviving current items following, so the newest
+	// learning reads at the top of the profile. See TheoryOfMemory.
+	current := []string{"a", "c"}
+	update := memoryUpdate{Adds: []string{"b"}}
+	got := mergeMemoryItems(current, update)
+	want := []string{"b", "a", "c"}
+	if len(got) != len(want) {
+		t.Fatalf("mergeMemoryItems order: got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("mergeMemoryItems order: got %v, want %v", got, want)
+		}
+	}
+}
+
 func TestUpdateMemoryFromBlockWithPseudoCallOnly(t *testing.T) {
 	var appended *MemoryEntry
 	currentMemory := func() (*MemoryEntry, error) {
