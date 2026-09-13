@@ -1918,6 +1918,10 @@ func forkTUIDisplay(scope dscope.Scope, tui *TUI) dscope.Scope {
 	})
 }
 
+// runWithTUI runs the app in the terminal UI. The scope must already
+// carry the app's definitions (app.Scope): a scope is layered exactly
+// once per run, so the caller layers them before the display decision.
+// See TheoryOfDisplayMode and TheoryOfTUIDisplayFork.
 func runWithTUI(app apps.App, scope dscope.Scope) {
 	// The display colors come from the resolved tui config section:
 	// apply re-derives the package-level style values before the
@@ -1927,14 +1931,9 @@ func runWithTUI(app apps.App, scope dscope.Scope) {
 	tui, err := newTUI()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "cannot start TUI: %v; continuing without TUI\n", err)
-		app.Call(app.Scope(scope))
+		app.Call(scope)
 		return
 	}
-	// Layer the app's definitions onto the scope exactly once, before
-	// anything reads from it: each fork branch evaluates providers
-	// independently, so forking the same defs again would evaluate
-	// side-effecting providers twice. See apps.TheoryOfApps.
-	scope = app.Scope(scope)
 	// The chat input bar renders only in interactive sessions: apps
 	// that never call pipeline.ChatInput have no use for the bar, so the
 	// Output pane keeps its full height. Interactive apps fork

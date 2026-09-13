@@ -24,31 +24,19 @@ type SessionInfo struct {
 }
 
 // listSessions writes one key=value metadata line per session, most
-// recent first, to output. See TheoryOfInteractionRecording.
+// recent first, to output. It renders the same session data the record
+// browser reads, so the two views cannot disagree. See
+// TheoryOfInteractionRecording and TheoryOfSessionBrowsing.
 func listSessions(recorder *Recorder, limit int, output io.Writer) error {
-	if recorder == nil || recorder.db == nil {
-		return fmt.Errorf("session database not available")
-	}
-	rows, err := recorder.db.Query(`
-SELECT s.id, s.command, s.start_time, COALESCE(s.end_time, ''), s.status, COALESCE(s.error, ''), COUNT(o.id)
-FROM sessions s
-LEFT JOIN tree_ops o ON o.session_id = s.id
-GROUP BY s.id
-ORDER BY s.id DESC
-LIMIT ?`, limit)
+	infos, err := sessionInfos(recorder, limit)
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var info SessionInfo
-		if err := rows.Scan(&info.ID, &info.Command, &info.StartTime, &info.EndTime, &info.Status, &info.Error, &info.OpCount); err != nil {
-			return err
-		}
+	for _, info := range infos {
 		fmt.Fprintf(output, "id=%d command=%s start=%s status=%s operations=%d\n",
 			info.ID, info.Command, info.StartTime, info.Status, info.OpCount)
 	}
-	return rows.Err()
+	return nil
 }
 
 // Transcript renders a session as readable text: the session metadata

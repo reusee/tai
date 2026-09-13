@@ -54,15 +54,28 @@ func main() {
 		return
 	}
 
+	// Layer the app's definitions onto the scope exactly once, before
+	// anything reads them: each fork branch evaluates providers
+	// independently, so layering the same defs twice would evaluate
+	// side-effecting providers twice. See apps.TheoryOfApps.
+	scope = app.Scope(scope)
+
 	// Generator-level events (api_call, api_error) are captured by the
 	// generators module's default EventRecorder — the scope's EventSink —
 	// and the generation loop drains the sink into session-tree event
 	// nodes. No command-side override is needed. See
 	// generators.TheoryOfEventRecorder.
 	if bool(scope.Get[Tui]()) {
+		if bool(scope.Get[RecordBrowserEnabled]()) {
+			// The record subcommand has a dedicated browser: the
+			// generation TUI's tabs, model output, and logs do not apply
+			// to it. See TheoryOfRecordBrowser.
+			runRecordBrowser(scope)
+			return
+		}
 		runWithTUI(app, scope)
 		return
 	}
 
-	app.Call(app.Scope(scope))
+	app.Call(scope)
 }

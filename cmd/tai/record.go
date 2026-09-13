@@ -53,4 +53,11 @@ var RecordCommand = apps.New("record",
 		ce(listSessions(int(limit), output))
 	},
 	modes.ForProduction(),
+	// TUI mode swaps the command-line output of the browsing modes for
+	// the dedicated record browser. The browser renders no model output
+	// and runs no generation, so the analysis mode withdraws the marker
+	// and keeps the generation TUI. See TheoryOfRecordBrowser.
+	func(analyze records.Analyze) RecordBrowserEnabled {
+		return RecordBrowserEnabled(!bool(analyze))
+	},
 )

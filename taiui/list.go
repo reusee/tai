@@ -50,6 +50,31 @@ func List(items []string, selected int, specs ...any) _List {
 	return *l
 }
 
+// ListWindow returns the index of the first item a List renders in a box
+// of the given height: the view centers on the selected item and clamps
+// to the content extent. It is pure, and the renderer derives its window
+// from it, so a caller's pointer hit test maps a display row onto an
+// item through the same window the renderer draws with. See TheoryOfList.
+func ListWindow(contentHeight, boxHeight int, selected int) int {
+	if contentHeight <= 0 || boxHeight <= 0 {
+		return 0
+	}
+	if selected < 0 {
+		selected = 0
+	}
+	if selected >= contentHeight {
+		selected = contentHeight - 1
+	}
+	fromY := selected - boxHeight/2
+	if fromY < 0 {
+		fromY = 0
+	}
+	if maxFromY := contentHeight - boxHeight; maxFromY > 0 && fromY > maxFromY {
+		fromY = maxFromY
+	}
+	return fromY
+}
+
 func (_List) element() {}
 
 // ListStyle styles the selected item of a List. It composes with the
@@ -94,15 +119,11 @@ func renderList(l _List, box Box, style Style, draw drawFunc, cursor cursorFunc,
 		}
 	}
 
-	// The view is centered on the selected item, clamped to the
-	// content extent.
-	fromY := selected - box.Height()/2
-	if fromY < 0 {
-		fromY = 0
-	}
-	if maxFromY := contentHeight - box.Height(); maxFromY > 0 && fromY > maxFromY {
-		fromY = maxFromY
-	}
+	// The view is centered on the selected item and clamped to the
+	// content extent; ListWindow is the one computation the renderer
+	// and a caller's pointer hit test share, so what is drawn is what
+	// is pressed.
+	fromY := ListWindow(contentHeight, box.Height(), selected)
 
 	// The visible items share one pooled grapheme iterator, so a list
 	// render allocates nothing per item.

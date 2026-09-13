@@ -2440,6 +2440,28 @@ func TestList(t *testing.T) {
 	})
 }
 
+// TestListWindow pins the window contract a List renders with and a
+// caller's pointer hit test maps display rows through: the view centers
+// on the selected item and clamps to the content extent. See
+// TheoryOfList.
+func TestListWindow(t *testing.T) {
+	if got := ListWindow(100, 10, 50); got != 45 {
+		t.Fatalf("ListWindow(100, 10, 50) = %d, want 45", got)
+	}
+	if got := ListWindow(100, 10, 0); got != 0 {
+		t.Fatalf("ListWindow at the first item = %d, want 0", got)
+	}
+	if got := ListWindow(100, 10, 99); got != 90 {
+		t.Fatalf("ListWindow at the last item = %d, want 90", got)
+	}
+	if got := ListWindow(3, 10, 1); got != 0 {
+		t.Fatalf("ListWindow for content fitting the box = %d, want 0", got)
+	}
+	if got := ListWindow(0, 10, 0); got != 0 {
+		t.Fatalf("ListWindow for empty content = %d, want 0", got)
+	}
+}
+
 func TestListItemRendering(t *testing.T) {
 	// A tab in a list item advances to the next tab stop (default 8);
 	// the skipped cells are painted because the selected row is filled.
