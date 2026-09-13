@@ -1,6 +1,7 @@
 package nets
 
 import (
+	"fmt"
 	"net"
 	"net/url"
 	"os"
@@ -18,6 +19,9 @@ type ProxyAddr string
 var _ flags.Flag = ProxyAddr("")
 
 func (p ProxyAddr) Handle(key string, args []string) (newDef any, remainArgs []string, err error) {
+	if len(args) == 0 {
+		return nil, nil, fmt.Errorf("expecting string argument, got empty")
+	}
 	ret := ProxyAddr(args[0])
 	return &ret, args[1:], nil
 }

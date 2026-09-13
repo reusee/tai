@@ -52,15 +52,26 @@ func IsOutsideWritableDirs(path string) (bool, error) {
 
 // RootMkdirAll creates a directory path within an os.Root, creating parent
 // directories as needed. It is equivalent to os.MkdirAll but operates
-// within the restricted filesystem root.
+// within the restricted filesystem root: an existing path succeeds only
+// when it is a directory, and a regular file occupying the path is an
+// error — returning nil there would let a later write through the path
+// fail with an obscure ENOTDIR instead of the real cause.
 func RootMkdirAll(root *os.Root, path string, perm os.FileMode) error {
 	path = filepath.Clean(path)
 	if path == "." || path == "/" || path == "" {
 		return nil
 	}
 	err := root.Mkdir(path, perm)
-	if err == nil || os.IsExist(err) {
+	if err == nil {
 		return nil
+	}
+	if os.IsExist(err) {
+		// An existing directory is a success; an existing regular file
+		// is an error, matching os.MkdirAll.
+		if info, statErr := root.Stat(path); statErr == nil && info.IsDir() {
+			return nil
+		}
+		return err
 	}
 	parent := filepath.Dir(path)
 	if parent != path {
@@ -68,5 +79,14 @@ func RootMkdirAll(root *os.Root, path string, perm os.FileMode) error {
 			return err
 		}
 	}
-	return root.Mkdir(path, perm)
+	err = root.Mkdir(path, perm)
+	if os.IsExist(err) {
+		// The path may have been created between the first attempt and
+		// the parent creation; tolerate an existing directory, matching
+		// os.MkdirAll.
+		if info, statErr := root.Stat(path); statErr == nil && info.IsDir() {
+			return nil
+		}
+	}
+	return err
 }
