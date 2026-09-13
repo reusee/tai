@@ -15,9 +15,6 @@ import (
 	"github.com/reusee/tai/taiui"
 )
 
-// newChatInputTestTUI returns a minimally initialized TUI for input-bar
-// tests: no tty or session, just the state the input bar and the key
-// dispatch read. See TheoryOfTUIChatInput.
 func newChatInputTestTUI() *TUI {
 	return &TUI{
 		tabs:     taiui.NewTabs(3),
@@ -25,6 +22,14 @@ func newChatInputTestTUI() *TUI {
 		// The input-bar tests exercise interactive sessions, the only
 		// ones that render the bar. See TheoryOfTUIChatInput.
 		interactive: true,
+		// The scroll states stay in layout order; the Plan tab would
+		// insert its own entry while it is present, but the input-bar
+		// tests run without a plan. See TheoryOfTUIDynamicPlanTab.
+		scrolls: []taiui.ScrollState{
+			{Follow: true},
+			{Follow: true},
+			{},
+		},
 	}
 }
 
@@ -418,10 +423,6 @@ func TestTUIChatInputNavBlurOnViewChange(t *testing.T) {
 	}
 }
 
-// TestTUIChatInputBarBottomRowOfOutputTab pins the layout: the input
-// bar is the bottom row inside the Output tab's box — the panel above
-// it shrinks by one row — and only a focused bar carries the terminal
-// cursor. See TheoryOfTUIChatInput.
 func TestTUIChatInputBarBottomRowOfOutputTab(t *testing.T) {
 	tui := newTUIForTest()
 	tui.tabs.Expanded = []bool{false, true, false}
@@ -431,7 +432,7 @@ func TestTUIChatInputBarBottomRowOfOutputTab(t *testing.T) {
 	renderRoot := func(focused bool) taiui.Frame {
 		tui.inputFocused = focused
 		screen := &panelTestScreen{width: 40, height: 10}
-		taiui.Render(buildRoot(tui, 40, 10, [3][]taiui.Line{}), screen)
+		taiui.Render(buildRoot(tui, 40, 10, nil), screen)
 		if len(screen.frames) == 0 {
 			t.Fatal("expected a rendered frame")
 		}
@@ -491,11 +492,6 @@ func TestTUIHelpLinesNonInteractive(t *testing.T) {
 	}
 }
 
-// TestTUIChatInputBarBackgroundFollowsTabFocus pins the input bar's
-// background: the bar uses the Output tab's focused background while
-// the tab holds the focus, and the unfocused tab background — the same
-// one the panel above it uses — when another tab is focused. See
-// TheoryOfTUIChatInput.
 func TestTUIChatInputBarBackgroundFollowsTabFocus(t *testing.T) {
 	renderBarCell := func(focus int) taiui.FrameCell {
 		tui := newTUIForTest()
@@ -503,7 +499,7 @@ func TestTUIChatInputBarBackgroundFollowsTabFocus(t *testing.T) {
 		tui.tabs.HasContent = []bool{true, true, false}
 		tui.tabs.Focus = focus
 		screen := &panelTestScreen{width: 40, height: 10}
-		taiui.Render(buildRoot(tui, 40, 10, [3][]taiui.Line{}), screen)
+		taiui.Render(buildRoot(tui, 40, 10, nil), screen)
 		if len(screen.frames) == 0 {
 			t.Fatal("expected a rendered frame")
 		}
@@ -594,12 +590,6 @@ func TestTUIChatInputQuitReleasesWaiter(t *testing.T) {
 	}
 }
 
-// TestTUINonInteractiveHidesInputBar pins the non-interactive layout:
-// without the bar the Output pane keeps its full height, the tab's
-// bottom row shows the control column at the left edge and the scroll
-// content beside it, and an interactive session shows the input prompt
-// there instead. The tab order is Tree (0) / Output (1) / Logs (2).
-// See TheoryOfTUIChatInput and TheoryOfOutputControls.
 func TestTUINonInteractiveHidesInputBar(t *testing.T) {
 	tui := newTUIForTest()
 	tui.tabs.Expanded = []bool{false, true, false}
@@ -626,7 +616,7 @@ func TestTUINonInteractiveHidesInputBar(t *testing.T) {
 		}
 		tui.scrolls[1] = taiui.ScrollState{Offset: offset}
 		screen := &panelTestScreen{width: 40, height: 10}
-		taiui.Render(buildRoot(tui, 40, 10, [3][]taiui.Line{nil, display, nil}), screen)
+		taiui.Render(buildRoot(tui, 40, 10, [][]taiui.Line{nil, display, nil}), screen)
 		if len(screen.frames) == 0 {
 			t.Fatal("expected a rendered frame")
 		}

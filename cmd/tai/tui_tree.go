@@ -130,18 +130,20 @@ Tree tab theory (cmd/tai):
   content opens at its beginning. The scroll lives in
   toggleTreeNodeByName, the one method every expansion path routes
   through, so the invariant cannot regress; collapsing never scrolls.
-- The c key, pressed while the Tree tab holds the focus, folds the
-  nodes the way the Output tab's c key folds its sections (see
-  TheoryOfOutputControls): the first press snapshots the expanded
-  nodes, folds every node to its one-line header, and scrolls the view
-  to the top, so the collapsed list starts at the row below the title
-  and doubles as the outline index; the next press restores the
-  snapshotted expansions, and an expanded node's content renders from
-  the row below the header. A manual expand breaks the all-collapsed
-  state, so the next press folds and re-snapshots again. Nodes that
-  arrive after the snapshot keep their type's default — summary nodes
-  return expanded, everything else collapsed. Every other focus folds
-  the Output tab's sections.
+- The c key folds the focused pane's structure: a tree-shaped pane —
+  the Tree tab or the Plan tab (see TheoryOfTUIDynamicPlanTab) —
+  folds that pane's own nodes the way the Output tab's c key folds
+  its sections (see TheoryOfOutputControls), while every other focus
+  folds the Output tab's sections. For a tree-shaped pane the first
+  press snapshots the expanded nodes, folds every node to its
+  one-line header, and anchors the view on the node that held the
+  pane's top row before the fold, so the items the user was reading
+  stay in view; the next press restores the snapshotted expansions,
+  and an expanded node's content renders from the row below the
+  header. A manual expand breaks the all-collapsed state, so the next
+  press folds and re-snapshots again. Nodes that arrive after the
+  snapshot keep their type's default — summary nodes return expanded,
+  everything else collapsed.
 - Node lines carry no built-in role colors: the configured
   tui.tree_colors rules decide the foreground of every tree line —
   the first rule whose every non-empty field (type, author) matches
@@ -160,7 +162,9 @@ Tree tab theory (cmd/tai):
   way the rows render.
 - The tab auto-expands on the first consumed node and follows the
   tail; the unseen-dot, focus, and scroll semantics are the taiui tab
-  machine's.
+  machine's. The Plan tab shares this rendering, its own pane state,
+  and its own row ranges through the paneIdx parameterization (see
+  TheoryOfTUIDynamicPlanTab).
 `
 
 // treeViewMode selects one projection of the session tree the Tree tab
@@ -309,13 +313,13 @@ type treeAlignments struct {
 	contentX    int
 }
 
-// treeTabState is the Tree tab's interaction state: the projection
-// mode, the per-node expansion toggles, the event nodes already
-// consumed for the display signals, the wrapped-line cache, the row
-// ranges and the column alignment of the last display, and the c-key
-// fold snapshot. Guarded by t.mu. See TheoryOfTreeTab.
 type treeTabState struct {
-	mode     treeViewMode
+	mode treeViewMode
+	// paneIdx names the pane's layout index, so the shared tree
+	// rendering and press paths read the pane's scroll state and tab
+	// box; the Tree pane keeps 0, the Plan pane takes its inserted
+	// index. See TheoryOfTUIDynamicPlanTab.
+	paneIdx  int
 	expanded map[string]bool
 	seen     map[string]bool
 	cache    map[string]treeCached
@@ -541,13 +545,6 @@ func formatTreeElapsed(d time.Duration) string {
 	return fmt.Sprintf("+%d:%02d", minutes, secs)
 }
 
-// setTree stores the latest session tree and consumes its new nodes:
-// an attempt node opens the output section the attempt's streamed
-// content will fill, and a finish node ends the request's generating
-// hint. Finish nodes are message-category nodes carrying the model
-// output's finish reason, so they are consumed by type, outside the
-// event-family loop. The Tree tab auto-expands on the first consumed
-// node. See TheoryOfTreeTab and TheoryOfTUIOutputSections.
 func (t *TUI) setTree(tr *tree.Tree) {
 	if tr == nil {
 		return
@@ -595,11 +592,20 @@ func (t *TUI) setTree(tr *tree.Tree) {
 		}
 	}
 	if consumed > 0 {
-		if t.tabs.AutoExpand(0) {
-			t.scrolls[0].Follow = true
+		// The scroll-state update is a best-effort follow flag, so a
+		// TUI built without its layout state (direct struct
+		// construction in tests) still consumes the tree. See
+		// TheoryOfTUIDynamicPlanTab.
+		idx := t.tabIndex(tabTree)
+		if t.tabs.AutoExpand(idx) && idx >= 0 && idx < len(t.scrolls) {
+			t.scrolls[idx].Follow = true
 		}
 	}
 	t.treeView = tr
+	// The Plan tab's lifecycle follows the tree: the tab opens when the
+	// current loop's plan root appears and closes when the loop ends or
+	// the run ends. See TheoryOfTUIDynamicPlanTab.
+	t.syncPlanTabLocked()
 	t.mu.Unlock()
 	t.notify()
 }
@@ -971,86 +977,83 @@ func (t *TUI) toggleLastTreeExpandable() {
 	}
 }
 
-// collapseAllTreeNodes toggles the c key's fold of the tree nodes,
-// mirroring collapseAllSections's two states: when not every node is
-// collapsed, it snapshots the expanded nodes and folds every node to
-// its one-line header, anchoring the view on the node that held the
-// pane's top row before the fold, so the items the user was reading
-// stay in view; when every node is collapsed, it restores the nodes
-// the last fold had expanded. Nodes that arrive after the snapshot
-// keep the default collapsed form on restore. A manual expand breaks
-// the all-collapsed state, so the next press folds and re-snapshots
-// rather than restoring. The stream projection carries no fold, so
-// the key is inert there. The Tree tab is index 0 after the tab-order
-// swap, so the view offset comes from scrolls[0]. See TheoryOfTreeTab
-// and TheoryOfOutputControls.
+// collapseAllTreeNodes folds or restores the Tree pane's nodes — the
+// c key's action while the Tree tab holds the focus. The caller does not
+// hold t.mu. See TheoryOfTreeTab and TheoryOfTUIDynamicPlanTab.
 func (t *TUI) collapseAllTreeNodes() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.treeView == nil || t.treeTab.mode == treeViewStream {
-		return
-	}
-	expanded := make(map[string]bool)
-	allCollapsed := true
-	var walk func(n *tree.Node)
-	walk = func(n *tree.Node) {
-		// The expansion map is the authority, not the multi-line
-		// predicate: a node whose one-line header truncates at the
-		// pane width is expandable in the display too, and a manual
-		// expand of it must break the all-collapsed state like any
-		// other expand.
-		if t.treeTab.expanded[n.Name] {
-			expanded[n.Name] = true
-			allCollapsed = false
-		}
-		for _, c := range n.Children() {
-			walk(c)
-		}
-	}
-	for _, c := range t.treeView.Root().Children() {
-		walk(c)
-	}
-	if allCollapsed && t.treeTab.collapseAllSaved != nil {
-		// Restore the nodes the last fold had expanded. The snapshot
-		// carries only expanded entries, so nodes that arrived after
-		// it keep the default collapsed form.
-		t.treeTab.expanded = make(map[string]bool)
-		for name := range t.treeTab.collapseAllSaved {
-			t.treeTab.expanded[name] = true
-		}
-		return
-	}
-	// Fold branch: snapshot the currently expanded nodes, fold
-	// everything, and anchor the view on the node the pane's top row
-	// belonged to before the fold, so the items the user was reading
-	// stay in view instead of the list jumping to the top. The rows
-	// and the offset both come from the last render, so they agree;
-	// when no node covers that row — the display never rendered —
-	// the offset is left alone and the render's clamp bounds it.
-	t.treeTab.collapseAllSaved = expanded
-	if len(expanded) > 0 {
-		anchorName := ""
-		topRow := t.scrolls[0].Offset
-		for _, r := range t.treeTab.rows {
-			if topRow >= r.startRow && topRow < r.endRow {
-				anchorName = r.name
-				break
-			}
-		}
-		t.treeTab.expanded = make(map[string]bool)
-		if anchorName != "" {
-			t.scrollToTreeNode(anchorName)
-		}
-	}
+	t.collapseAllPaneNodesLocked(tabTree)
 }
 
-// treeDisplayLine returns the Tree pane's display line at the given
-// content row. The tab recomputes its display with the same width and
-// shade the pane renders with, so the line's text and column layout
-// match what is on screen. Click path only — never per frame.
+func (t *TUI) collapseAllPaneNodesLocked(kind tuiTab) {
+	t.withPane(kind, func() {
+		if t.treeView == nil || t.treeTab.mode == treeViewStream {
+			return
+		}
+		expanded := make(map[string]bool)
+		allCollapsed := true
+		var walk func(n *tree.Node)
+		walk = func(n *tree.Node) {
+			// The expansion map is the authority, not the multi-line
+			// predicate: a node whose one-line header truncates at the
+			// pane width is expandable in the display too, and a manual
+			// expand of it must break the all-collapsed state like any
+			// other expand.
+			if t.treeTab.expanded[n.Name] {
+				expanded[n.Name] = true
+				allCollapsed = false
+			}
+			for _, c := range n.Children() {
+				walk(c)
+			}
+		}
+		for _, c := range t.treeView.Root().Children() {
+			walk(c)
+		}
+		if allCollapsed && t.treeTab.collapseAllSaved != nil {
+			// Restore the nodes the last fold had expanded. The snapshot
+			// carries only expanded entries, so nodes that arrived after
+			// it keep the default collapsed form.
+			t.treeTab.expanded = make(map[string]bool)
+			for name := range t.treeTab.collapseAllSaved {
+				t.treeTab.expanded[name] = true
+			}
+			return
+		}
+		// Fold branch: snapshot the currently expanded nodes, fold
+		// everything, and anchor the view on the node the pane's top row
+		// belonged to before the fold, so the items the user was reading
+		// stay in view instead of the list jumping to the top. The rows
+		// and the offset both come from the last render, so they agree;
+		// when no node covers that row — the display never rendered —
+		// the offset is left alone and the render's clamp bounds it.
+		t.treeTab.collapseAllSaved = expanded
+		if len(expanded) > 0 {
+			anchorName := ""
+			idx := t.treeTab.paneIdx
+			topRow := 0
+			if sc := t.paneScrollLocked(idx); sc != nil {
+				topRow = sc.Offset
+			}
+			for _, r := range t.treeTab.rows {
+				if topRow >= r.startRow && topRow < r.endRow {
+					anchorName = r.name
+					break
+				}
+			}
+			t.treeTab.expanded = make(map[string]bool)
+			if anchorName != "" {
+				t.scrollToTreeNode(anchorName)
+			}
+		}
+	})
+}
+
 func (t *TUI) treeDisplayLine(row int, box taiui.Box) (taiui.Line, bool) {
+	idx := t.treeTab.paneIdx
 	base := panelStyle.BaseBG
-	if t.tabs.Focus == 0 {
+	if t.tabs.Focus == idx {
 		base = panelStyle.FocusBG
 	}
 	display := t.treeDisplay(treeContentWidth(box.Width()), base)
@@ -1060,12 +1063,6 @@ func (t *TUI) treeDisplayLine(row int, box taiui.Box) (taiui.Line, bool) {
 	return display[row], true
 }
 
-// treeFoldHoverElement renders the fold glyph under the pointer reversed,
-// so the fold column's affordance shows before a press. The element
-// covers the slot's cells at the control's visible row — the header row,
-// or the node's first visible row when the header scrolled above the
-// viewport — and returns nil when no control is hovered. The caller holds
-// t.mu. See TheoryOfTreeTab.
 func (t *TUI) treeFoldHoverElement(box taiui.Box, display []taiui.Line) taiui.Element {
 	if t.treeView == nil || !t.ctlHover || !t.mouseReporting {
 		return nil
@@ -1073,6 +1070,7 @@ func (t *TUI) treeFoldHoverElement(box taiui.Box, display []taiui.Line) taiui.El
 	if box.Width() <= 0 || box.Height() <= 0 || len(display) == 0 {
 		return nil
 	}
+	idx := t.treeTab.paneIdx
 	options := taiui.DisplayWidthOptions()
 	foldWidth := treeFoldSlotWidth(options)
 	foldLeft := box.Left + t.treeTab.align.foldX
@@ -1082,8 +1080,11 @@ func (t *TUI) treeFoldHoverElement(box taiui.Box, display []taiui.Line) taiui.El
 	if t.ctlHoverY <= box.Top || t.ctlHoverY >= box.Bottom {
 		return nil
 	}
-	offset := taiui.ClampOffset(t.scrolls[0].Offset, len(display), t.tuiPaneHeight(0, box))
-	paneHeight := t.tuiPaneHeight(0, box)
+	offset := 0
+	if sc := t.paneScrollLocked(idx); sc != nil {
+		offset = taiui.ClampOffset(sc.Offset, len(display), t.tuiPaneHeight(idx, box))
+	}
+	paneHeight := t.tuiPaneHeight(idx, box)
 	row := offset + (t.ctlHoverY - box.Top - 1)
 	for _, r := range t.treeTab.rows {
 		if !r.expandable {
@@ -1110,14 +1111,18 @@ func treeFoldGlyph(expanded bool) string {
 }
 
 func (t *TUI) floatTreeControls(box taiui.Box, display []taiui.Line) {
-	if !t.tabs.Expanded[0] || t.treeView == nil {
+	idx := t.treeTab.paneIdx
+	if idx < 0 || idx >= len(t.tabs.Expanded) || !t.tabs.Expanded[idx] || t.treeView == nil {
 		return
 	}
 	if box.Width() <= 0 || box.Height() <= 0 || len(display) == 0 {
 		return
 	}
-	offset := taiui.ClampOffset(t.scrolls[0].Offset, len(display), t.tuiPaneHeight(0, box))
-	paneHeight := t.tuiPaneHeight(0, box)
+	offset := 0
+	if sc := t.paneScrollLocked(idx); sc != nil {
+		offset = taiui.ClampOffset(sc.Offset, len(display), t.tuiPaneHeight(idx, box))
+	}
+	paneHeight := t.tuiPaneHeight(idx, box)
 	options := taiui.DisplayWidthOptions()
 	foldWidth := treeFoldSlotWidth(options)
 	foldX := t.treeTab.align.foldX
@@ -1145,20 +1150,23 @@ func (t *TUI) floatTreeControls(box taiui.Box, display []taiui.Line) {
 // visible row when the header scrolled above the viewport. Expanding
 // a collapsed node scrolls the view to the node's first display row,
 // mirroring the Output tab's control behavior. It reports whether a
-// control consumed the press. The caller holds t.mu. See
-// TheoryOfTreeTab.
+// control consumed the press. The pane's own layout index drives the
+// box and the scroll state, so a press in the Plan pane acts on the
+// Plan pane. The caller holds t.mu. See TheoryOfTreeTab and
+// TheoryOfTUIDynamicPlanTab.
 func (t *TUI) toggleTreeControlAtClick(x, y int) bool {
-	if !t.tabs.Expanded[0] || t.treeView == nil {
+	idx := t.treeTab.paneIdx
+	if idx < 0 || idx >= len(t.tabs.Expanded) || !t.tabs.Expanded[idx] || t.treeView == nil {
 		return false
 	}
-	box := t.tabs.Boxes(t.width, t.height)[0]
+	box := t.tabs.Boxes(t.width, t.height)[idx]
 	if box.Width() <= 0 || box.Height() <= 0 {
 		return false
 	}
 	if y < box.Top+1 || y >= box.Bottom {
 		return false
 	}
-	display := wrappedDisplay(t, 0, box)
+	display := wrappedDisplay(t, idx, box)
 	if len(display) == 0 {
 		return false
 	}
@@ -1168,8 +1176,11 @@ func (t *TUI) toggleTreeControlAtClick(x, y int) bool {
 	if x < foldLeft || x >= foldLeft+foldWidth {
 		return false
 	}
-	offset := taiui.ClampOffset(t.scrolls[0].Offset, len(display), t.tuiPaneHeight(0, box))
-	paneHeight := t.tuiPaneHeight(0, box)
+	offset := 0
+	if sc := t.paneScrollLocked(idx); sc != nil {
+		offset = taiui.ClampOffset(sc.Offset, len(display), t.tuiPaneHeight(idx, box))
+	}
+	paneHeight := t.tuiPaneHeight(idx, box)
 	row := offset + (y - box.Top - 1)
 	for _, r := range t.treeTab.rows {
 		if !r.expandable {
@@ -1189,46 +1200,61 @@ func (t *TUI) toggleTreeControlAtClick(x, y int) bool {
 	return false
 }
 
-// scrollToTreeNode scrolls the Tree pane's view so the node's first
-// display row lands at the top of the pane, stopping the live tail.
-// The Tree tab is index 0 after the tab-order swap, so the pane and its
-// scroll state use that index. The caller holds t.mu. See
-// TheoryOfTreeTab.
 func (t *TUI) scrollToTreeNode(name string) {
-	box := t.tabs.Boxes(t.width, t.height)[0]
+	idx := t.treeTab.paneIdx
+	box := t.tabs.Boxes(t.width, t.height)[idx]
 	if box.Width() <= 0 || box.Height() <= 0 {
 		return
 	}
-	display := wrappedDisplay(t, 0, box)
+	display := wrappedDisplay(t, idx, box)
 	if len(display) == 0 {
+		return
+	}
+	sc := t.paneScrollLocked(idx)
+	if sc == nil {
+		// A TUI built without layout state carries nothing to scroll;
+		// the pane still renders and the fold still records itself. See
+		// TheoryOfTUIDynamicPlanTab.
 		return
 	}
 	for _, r := range t.treeTab.rows {
 		if r.name != name {
 			continue
 		}
-		t.scrolls[0].Offset = taiui.ClampOffset(r.startRow, len(display), t.tuiPaneHeight(0, box))
-		t.scrolls[0].Follow = false
+		sc.Offset = taiui.ClampOffset(r.startRow, len(display), t.tuiPaneHeight(idx, box))
+		sc.Follow = false
 		return
 	}
 }
 
-// treeAtClick handles a left press in the Tree pane: a press on an
+// treeAtClick handles a left press in a tree-shaped pane: a press on an
 // attempt node's jump marker jumps the Output tab to that attempt's
 // output section, and a double-click — two presses at the same cell
 // within treeDoubleClickWindow — on a node's text toggles its
 // expansion; a single text press records itself and does nothing.
-// Presses outside the pane's content area are no-ops. Called with
-// t.mu held. See TheoryOfTreeTab and TheoryOfTUIOutputSections.
+// Presses outside the pane's content area are no-ops. The pane's own
+// layout index drives the box and the scroll state, so the Plan pane's
+// presses act on the Plan pane. Called with t.mu held. See
+// TheoryOfTreeTab, TheoryOfTUIOutputSections, and
+// TheoryOfTUIDynamicPlanTab.
 func (t *TUI) treeAtClick(x, y int) {
-	if !t.tabs.Expanded[0] {
+	idx := t.treeTab.paneIdx
+	if idx < 0 || idx >= len(t.tabs.Expanded) || !t.tabs.Expanded[idx] {
 		return
 	}
-	box := t.tabs.Boxes(t.width, t.height)[0]
+	box := t.tabs.Boxes(t.width, t.height)[idx]
 	if x < box.Left || x >= box.Right || y <= box.Top || y >= box.Bottom {
 		return
 	}
-	row := t.scrolls[0].Offset + (y - box.Top - 1)
+	// The pane's view offset comes from its scroll state; a TUI built
+	// without layout state reads offset 0, so the press still maps onto
+	// the rows the last display recorded. See
+	// TheoryOfTUIDynamicPlanTab.
+	offset := 0
+	if sc := t.paneScrollLocked(idx); sc != nil {
+		offset = sc.Offset
+	}
+	row := offset + (y - box.Top - 1)
 	node := t.treeNodeAtRow(row)
 	if node == nil {
 		return
@@ -1276,15 +1302,11 @@ func (t *TUI) sectionOfTreeNode(node *tree.Node) int {
 	return t.eventSections[outputSectionOwner{attempt: num}]
 }
 
-// treeTitleStatus renders the Tree tab title's left status: the loop
-// and attempt of the first visible entry, or "" when the tree is
-// empty or the first visible node carries neither. The caller holds
-// t.mu. See TheoryOfTreeTitleStatus.
 func (t *TUI) treeTitleStatus() string {
 	if t.treeView == nil {
 		return ""
 	}
-	offset := t.scrolls[0].Offset
+	offset := t.scrolls[t.treeTab.paneIdx].Offset
 	for _, r := range t.treeTab.rows {
 		if offset >= r.startRow && offset < r.endRow {
 			n, ok := t.treeView.Node(r.name)

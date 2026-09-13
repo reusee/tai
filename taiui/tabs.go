@@ -2,6 +2,7 @@ package taiui
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/clipperhouse/displaywidth"
 	"github.com/gdamore/tcell/v3/vt"
@@ -22,7 +23,7 @@ taiui tabs theory:
   unseen flag, and its collapsed strip renders the unseen dot glyph
   right after the label until the tab is expanded or focused, which
   clears the flag. An expanded tab never carries the flag, because its
-  content is visible as it arrives. FocusTab gives one tab the
+  content is visible as it arrives. FocusTab gives one tab its
   expanded, focused start state; user-facing expansion goes through
   Toggle.
 - Number-key semantics: pressing a focused tab's key collapses it to a
@@ -55,6 +56,16 @@ taiui tabs theory:
   tail, because at the latest position there is nothing left to scroll
   toward. A collapsed tab renders the thin strip: the label is written
   vertically in a narrow column and horizontally in a short row.
+- The tab count is dynamic. Insert adds a collapsed tab at a position:
+  every tab at or after it shifts right, and the focused tab keeps its
+  identity, so a caller that owns layout-ordered state per tab (scroll
+  states, caps) shifts its own entries with the same index. Remove drops
+  one: a removed focused tab hands the focus to the expanded tab that was
+  last focused, and a focused tab after the removed index keeps its
+  identity by shifting. A caller shows a tab only while its condition
+  holds — inserted when the condition turns true, removed when it turns
+  false — so the layout never carries a placeholder strip for a tab
+  without content.
 `
 
 // Tabs is the tab state machine of a terminal UI. See TheoryOfTabs.
@@ -93,6 +104,55 @@ func NewTabs(count int) *Tabs {
 		Unseen:     make([]bool, count),
 		LastFocus:  make([]int, count),
 		Focus:      -1,
+	}
+}
+
+// Insert adds a collapsed tab at idx, shifting the tab at idx and every
+// later tab right. The focused tab keeps its identity: an index at or
+// after idx shifts with it. The new tab carries no content, so the first
+// AutoExpand call for it expands the tab. A tracked MaxSizes list gains an
+// uncapped entry, so the caps stay aligned with the tabs. See
+// TheoryOfTabs.
+func (t *Tabs) Insert(idx int) {
+	if idx < 0 || idx > t.Count {
+		return
+	}
+	t.Count++
+	t.Expanded = slices.Insert(t.Expanded, idx, false)
+	t.HasContent = slices.Insert(t.HasContent, idx, false)
+	t.Unseen = slices.Insert(t.Unseen, idx, false)
+	// -1 marks a tab that never gained the focus, so the inserted tab
+	// loses every tie in FocusLastExpanded.
+	t.LastFocus = slices.Insert(t.LastFocus, idx, -1)
+	if len(t.MaxSizes) > 0 {
+		t.MaxSizes = slices.Insert(t.MaxSizes, idx, 0)
+	}
+	if t.Focus >= idx {
+		t.Focus++
+	}
+}
+
+// Remove drops the tab at idx, shifting every later tab left. A removed
+// focused tab hands the focus to the expanded tab that was last focused;
+// a focused tab after idx keeps its identity by shifting. See
+// TheoryOfTabs.
+func (t *Tabs) Remove(idx int) {
+	if idx < 0 || idx >= t.Count {
+		return
+	}
+	t.Count--
+	t.Expanded = slices.Delete(t.Expanded, idx, idx+1)
+	t.HasContent = slices.Delete(t.HasContent, idx, idx+1)
+	t.Unseen = slices.Delete(t.Unseen, idx, idx+1)
+	t.LastFocus = slices.Delete(t.LastFocus, idx, idx+1)
+	if len(t.MaxSizes) > 0 {
+		t.MaxSizes = slices.Delete(t.MaxSizes, idx, idx+1)
+	}
+	switch {
+	case t.Focus == idx:
+		t.FocusLastExpanded()
+	case t.Focus > idx:
+		t.Focus--
 	}
 }
 

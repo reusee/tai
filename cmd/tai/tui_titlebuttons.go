@@ -37,24 +37,26 @@ const (
 	titleButtonQuit     = "Quit"
 )
 
-// tabTitleButtons returns the title buttons of tab idx: one button per
-// operation that acts on the tab or on the session. The tabs are indexed
-// in display order (0 Tree, 1 Output, 2 Logs), and the Logs tab carries
-// the session-level controls. See TheoryOfToolbars.
-func tabTitleButtons(idx int) []taiui.ToolbarButton {
-	switch idx {
-	case 0:
+func tabTitleButtons(kind tuiTab) []taiui.ToolbarButton {
+	switch kind {
+	case tabTree:
 		return []taiui.ToolbarButton{
 			{Label: titleButtonCycle, Action: string(controlTreeViewCycle)},
 			{Label: titleButtonCollapse, Action: string(controlCollapseTree)},
 		}
-	case 1:
+	case tabPlan:
+		// The Plan tab folds its nodes like the Tree tab. See
+		// TheoryOfTUIDynamicPlanTab.
+		return []taiui.ToolbarButton{
+			{Label: titleButtonCollapse, Action: string(controlCollapseTree)},
+		}
+	case tabOutput:
 		return []taiui.ToolbarButton{
 			{Label: titleButtonPrev, Action: string(controlPrevSections)},
 			{Label: titleButtonNext, Action: string(controlNextSections)},
 			{Label: titleButtonCollapse, Action: string(controlCollapseAll)},
 		}
-	case 2:
+	default:
 		return []taiui.ToolbarButton{
 			{Label: titleButtonSplit, Action: string(controlSplitToggle)},
 			{Label: titleButtonMouse, Action: string(controlMouseToggle)},
@@ -62,20 +64,14 @@ func tabTitleButtons(idx int) []taiui.ToolbarButton {
 			{Label: titleButtonQuit, Action: string(controlQuit)},
 		}
 	}
-	return nil
 }
 
-// titleButtonsElement renders tab idx's title-row buttons as an
-// overlay over the panel. The hover highlight requires mouse reporting
-// on: with reporting off the tracked pointer position is stale. It
-// returns nil when the tab is collapsed, carries no buttons, or the
-// layout drops every button. The caller holds t.mu. See
-// TheoryOfToolbars and taiui.TheoryOfToolbar.
-func (t *TUI) titleButtonsElement(idx int, box taiui.Box) taiui.Element {
-	if !t.tabs.Expanded[idx] {
+func (t *TUI) titleButtonsElement(kind tuiTab, box taiui.Box) taiui.Element {
+	idx := t.tabIndex(kind)
+	if idx < 0 || !t.tabs.Expanded[idx] {
 		return nil
 	}
-	buttons := tabTitleButtons(idx)
+	buttons := tabTitleButtons(kind)
 	if len(buttons) == 0 {
 		return nil
 	}
@@ -86,22 +82,18 @@ func (t *TUI) titleButtonsElement(idx int, box taiui.Box) taiui.Element {
 	return taiui.ToolbarElement(box, buttons, panelStyle, t.tabs.Focus == idx, hover)
 }
 
-// titleButtonHitLocked maps a left press onto the title button it
-// hits: the press must land on an expanded tab's title row, inside one
-// of the tab's button slots. A press on the title row outside the
-// buttons is not consumed, so the ordinary strip semantics stay. The
-// caller holds t.mu. See TheoryOfToolbars.
 func (t *TUI) titleButtonHitLocked(x, y int) (controlBarAction, bool) {
 	boxes := t.tabs.Boxes(t.width, t.height)
-	for idx := range tabNames {
-		if !t.tabs.Expanded[idx] {
+	for _, kind := range t.tabKinds() {
+		idx := t.tabIndex(kind)
+		if idx < 0 || idx >= len(boxes) || !t.tabs.Expanded[idx] {
 			continue
 		}
 		box := boxes[idx]
 		if y != box.Top || x < box.Left || x >= box.Right {
 			continue
 		}
-		buttons := tabTitleButtons(idx)
+		buttons := tabTitleButtons(kind)
 		slot, ok := taiui.ToolbarButtonAt(box, buttons, x, y)
 		if !ok {
 			return "", false

@@ -36,16 +36,17 @@ func TestTUIOutputSectionsRecordAndMap(t *testing.T) {
 	}
 }
 
-// TestTUIEventClickJumpsToOutputSection verifies that a press on the
-// attempt node's jump marker jumps the Output tab to the section
-// the attempt wrote, while presses off the marker and on other nodes
-// never jump. See TheoryOfTUIOutputSections and TheoryOfTreeTab.
 func TestTUIEventClickJumpsToOutputSection(t *testing.T) {
 	tu := &TUI{
 		output: taiui.NewLineBuffer(0),
 		tabs:   taiui.NewTabs(3),
-		width:  100,
-		height: 40,
+		// The scroll states stay in layout order, mirroring the layout
+		// the production TUI holds; a minimal struct without them would
+		// leave paneScrollLocked returning nil and the jump's assertion
+		// unreadable. See TheoryOfTUIDynamicPlanTab.
+		scrolls: []taiui.ScrollState{{Follow: true}, {Follow: true}, {}},
+		width:   100,
+		height:  40,
 	}
 	// The Output tab (index 1) is expanded and focused; the Tree tab
 	// (index 0) stays collapsed so the output section offsets stay

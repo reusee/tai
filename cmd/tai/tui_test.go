@@ -22,9 +22,10 @@ func newTUIForTest() *TUI {
 	// unfocused height cap. See logsMaxBoxHeight.
 	tabs.MaxSizes = []int{0, 0, logsMaxBoxHeight}
 	// The Tree tab sits at index 0 and starts expanded and focused,
-	// matching the production default; the Output tab (index 1) and
-	// Logs tab (index 2) stay collapsed until their first content
-	// expands them. See TheoryOfTUI.
+	// matching the production default; the Output tab and the Logs tab
+	// stay collapsed until their first content expands them, and the Plan
+	// tab joins after the Tree tab while a loop carries a plan. See
+	// TheoryOfTUI and TheoryOfTUIDynamicPlanTab.
 	tabs.FocusTab(0)
 	return &TUI{
 		output: taiui.NewLineBuffer(0),
@@ -35,7 +36,7 @@ func newTUIForTest() *TUI {
 		// offsets start at zero for test determinism: tests that assert
 		// tail offsets either let the render's ScrollState.Update stick
 		// them or set the offset explicitly. See TheoryOfTUI.
-		scrolls: [3]taiui.ScrollState{
+		scrolls: []taiui.ScrollState{
 			{Follow: true},
 			{Follow: true},
 			{},
@@ -759,8 +760,8 @@ func TestTuiShowThoughtsNotSuppressedBySummarizeThoughts(t *testing.T) {
 }
 
 func TestTuiStateSummaryTabTitle(t *testing.T) {
-	if tabNames[0] != "Tree" {
-		t.Fatalf("expected the tree tab title, got %q", tabNames[0])
+	if got := tabTitleOf(tabTree); got != "Tree" {
+		t.Fatalf("expected the tree tab title, got %q", got)
 	}
 }
 

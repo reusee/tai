@@ -134,6 +134,76 @@ func TestTabsToggle(t *testing.T) {
 	}
 }
 
+func TestTabsInsert(t *testing.T) {
+	tabs := NewTabs(3)
+	tabs.MaxSizes = []int{0, 0, 3}
+	tabs.Expanded = []bool{true, false, false}
+	tabs.HasContent = []bool{true, false, false}
+	tabs.Focus = 1
+	tabs.Insert(1)
+	if tabs.Count != 4 {
+		t.Fatalf("expected 4 tabs, got %d", tabs.Count)
+	}
+	if tabs.Expanded[1] || tabs.HasContent[1] || tabs.Unseen[1] {
+		t.Fatalf("the inserted tab must start collapsed and empty, got %+v", tabs)
+	}
+	// The focused tab keeps its identity by shifting right.
+	if tabs.Focus != 2 {
+		t.Fatalf("expected the focus to shift to 2, got %d", tabs.Focus)
+	}
+	if !tabs.Expanded[0] || !tabs.HasContent[0] {
+		t.Fatal("the first tab must keep its state")
+	}
+	if len(tabs.MaxSizes) != 4 || tabs.MaxSizes[1] != 0 || tabs.MaxSizes[3] != 3 {
+		t.Fatalf("MaxSizes must gain an uncapped entry at the insertion point, got %v", tabs.MaxSizes)
+	}
+	// The inserted tab carries no content, so its first content
+	// auto-expands it.
+	if !tabs.AutoExpand(1) || !tabs.Expanded[1] {
+		t.Fatal("the inserted tab must auto-expand on its first content")
+	}
+	// Inserting at the end appends an uncapped tab.
+	tabs.Insert(tabs.Count)
+	if tabs.Count != 5 || tabs.MaxSizes[4] != 0 {
+		t.Fatalf("expected an appended uncapped tab, got count %d caps %v", tabs.Count, tabs.MaxSizes)
+	}
+}
+
+func TestTabsRemove(t *testing.T) {
+	tabs := NewTabs(4)
+	tabs.MaxSizes = []int{0, 0, 0, 3}
+	tabs.Expanded = []bool{true, true, false, false}
+	tabs.HasContent = []bool{true, true, false, false}
+	tabs.Focus = 3
+	tabs.Remove(1)
+	if tabs.Count != 3 {
+		t.Fatalf("expected 3 tabs, got %d", tabs.Count)
+	}
+	// The focused tab keeps its identity by shifting left.
+	if tabs.Focus != 2 {
+		t.Fatalf("expected the focus to shift to 2, got %d", tabs.Focus)
+	}
+	if len(tabs.MaxSizes) != 3 || tabs.MaxSizes[2] != 3 {
+		t.Fatalf("MaxSizes must drop the removed entry, got %v", tabs.MaxSizes)
+	}
+	// Removing the focused tab hands the focus to the expanded tab that
+	// was last focused; another expanded tab must exist for the handoff.
+	tabs.Expanded[1] = true
+	tabs.Focus = 0
+	tabs.Remove(0)
+	if tabs.Focus != 0 || !tabs.Expanded[0] {
+		t.Fatalf("expected the focus to move to the remaining expanded tab, got %+v", tabs)
+	}
+	// Removing the last expanded tab clears the focus.
+	tabs = NewTabs(2)
+	tabs.Focus = 0
+	tabs.Expanded = []bool{true, false}
+	tabs.Remove(0)
+	if tabs.Focus != -1 {
+		t.Fatalf("expected no focus with no expanded tabs, got %d", tabs.Focus)
+	}
+}
+
 func TestCollapsedPanelUnseenDot(t *testing.T) {
 	style := testPanelStyle()
 

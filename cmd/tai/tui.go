@@ -6,6 +6,7 @@ import (
 	"io"
 	"iter"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -37,8 +38,11 @@ session tree pipeline.Run yields is rendered by the Tree tab
 (TheoryOfTreeTab), and the request lifecycle is tracked by
 isGeneratingLog and outputTabLabel.
 
-The TUI interface replaces stdout with a three-tab terminal UI ordered
-Tree, Output, Logs: the Tree tab renders the session tree the pipeline
+The TUI interface replaces stdout with a terminal UI whose permanent tabs
+are ordered Tree, Output, Logs, plus the dynamic Plan tab, which sits
+directly after the Tree tab while the current loop carries a plan (its
+lifecycle and rendering live in TheoryOfTUIDynamicPlanTab). The Tree tab
+renders the session tree the pipeline
 writes — every node the run records: user inputs, responses and their
 summaries, blocks and their results, the attempt structure nodes, the
 loop's own event nodes (generator specs, per-attempt usage, truncations,
@@ -96,12 +100,12 @@ no role color: each section states its content type with the full-width
 letter its control column draws below the fold glyph (see
 TheoryOfOutputControls), so type never competes with the text for
 attention. The keys
-1, 2, and 3 select the corresponding tab (Tree, Output, Logs
-respectively); the number-key collapse/expand and focus-handoff semantics,
-first-content auto-expansion, the unseen dot on collapsed strips, and
-the weighted layout (the focused tab weighs 3, every other expanded tab 1)
-are the taiui tab state machine's (taiui.TheoryOfTabs) and are not
-repeated here. The Tree
+1, 2, 3, and 4 select the tabs in layout order — Tree, Plan (while it is
+present), Output, Logs; the number-key collapse/expand and focus-handoff
+semantics, first-content auto-expansion, the unseen dot on collapsed
+strips, and the weighted layout (the focused tab weighs 3, every other
+expanded tab 1) are the taiui tab state machine's (taiui.TheoryOfTabs)
+and are not repeated here. The Tree
 tab starts expanded and focused, following the
 live tail — the session's structure is the pane the user watches, so it is
 open from the first frame — while the Output and Logs tabs stay collapsed
@@ -139,13 +143,166 @@ Output tab's content is its per-section projection (see
 TheoryOfOutputControls).
 The Logs tab wraps through
 a taiui.WrapCache (taiui.TheoryOfWrapCache owns the mechanism);
-the Tree tab caches each node's wrapped lines instead (see TheoryOfTreeTab), so a frame re-wraps only
+the Tree and Plan tabs cache each node's wrapped lines instead (see
+TheoryOfTreeTab), so a frame re-wraps only
 nodes that are new or repositioned.
 When the display width or tab background changes, the cache is reset
 and recomputed. The TUI holds nothing but the raw state values — line
 buffers, tab machine, scroll offsets, the session tree, and session
 flags.
 `
+
+const TheoryOfTUIDynamicPlanTab = `
+Dynamic Plan tab theory (cmd/tai):
+- The tab layout is dynamic. The Tree, Output, and Logs tabs are always
+  present; the Plan tab is inserted directly after the Tree tab while the
+  current loop carries a plan and removed when the loop ends, so the layout
+  never carries a placeholder strip for a tab without content. taiui.Tabs.
+  Insert and Remove own the mechanics — every tab at or after the insertion
+  point shifts, and a removed focused tab hands the focus to the last-
+  focused expanded tab — so every index the TUI holds in layout order (the
+  scroll states, the displays, the tab boxes) shifts with the tab machine.
+- The loop's plan is the subtree of its plan root: the TypePlan node the
+  pipeline's plan-op component writes directly under the loop's session
+  parent — the tree's root for a fresh run, the loop-N node of a goal run.
+  The TUI resolves the node by the name tuiPlanRootName derives (the same
+  "<parent>-plan" convention pipeline.planRootNameOf writes) and by its
+  type, then renders its subtree with the Tree tab's own rendering: the
+  same type fragments, fold column, content previews, wrapped bodies,
+  colors, and elapsed timer, with its own pane state, so a fold in one pane
+  never moves the other.
+- The Plan tab opens when the plan root first appears in the session tree
+  and closes when the loop ends: a newer loop node means a new loop, whose
+  plan is its own, and the run's end closes the last loop's tab as well. No
+  plan carries across loops, so the tab never shows another loop's work.
+- The title states the plan's progress as "Plan (done / pending)": the
+  entries carrying a done mark over the entries still carrying work, counted
+  over the plan root's subtree and excluding the root itself — the
+  container, not an entry. A deleted entry leaves the plan, so it counts in
+  neither number; an aborted entry counts as neither for the same reason.
+  The counts read the same marks the pipeline's pending-entry search reads,
+  so the title and the plan-driven round feedback agree.
+`
+
+// The tab kinds of the TUI's layout. Every kind but the Plan tab is always
+// present; the Plan tab is inserted after the Tree tab while the current
+// loop carries a plan. See TheoryOfTUIDynamicPlanTab.
+type tuiTab int
+
+// tabTitleOf returns the collapsed strip's label of a tab kind. See
+// TheoryOfTUIDynamicPlanTab.
+func tabTitleOf(kind tuiTab) string {
+	switch kind {
+	case tabTree:
+		return "Tree"
+	case tabPlan:
+		return "Plan"
+	case tabOutput:
+		return "Output"
+	default:
+		return "Logs"
+	}
+}
+
+// tabCount returns the number of tabs in the layout. See
+// TheoryOfTUIDynamicPlanTab.
+func (t *TUI) tabCount() int {
+	if t.hasPlanTab {
+		return 4
+	}
+	return 3
+}
+
+// tabKinds returns the tab kinds in layout order. See
+// TheoryOfTUIDynamicPlanTab.
+func (t *TUI) tabKinds() []tuiTab {
+	if t.hasPlanTab {
+		return []tuiTab{tabTree, tabPlan, tabOutput, tabLogs}
+	}
+	return []tuiTab{tabTree, tabOutput, tabLogs}
+}
+
+// tabIndex returns the layout index of a tab kind, or -1 when the tab is not
+// in the layout. The Plan tab sits directly after the Tree tab, so it shifts
+// every later tab right by one while it is present. See
+// TheoryOfTUIDynamicPlanTab.
+func (t *TUI) tabIndex(kind tuiTab) int {
+	plan := 0
+	if t.hasPlanTab {
+		plan = 1
+	}
+	switch kind {
+	case tabTree:
+		return 0
+	case tabPlan:
+		if !t.hasPlanTab {
+			return -1
+		}
+		return 1
+	case tabOutput:
+		return 1 + plan
+	default:
+		return 2 + plan
+	}
+}
+
+// tabKindAt returns the tab kind at a layout index; an index outside the
+// layout reports false. See TheoryOfTUIDynamicPlanTab.
+func (t *TUI) tabKindAt(idx int) (tuiTab, bool) {
+	for _, kind := range t.tabKinds() {
+		if t.tabIndex(kind) == idx {
+			return kind, true
+		}
+	}
+	return 0, false
+}
+
+// focusedKind returns the kind of the focused tab, tabOutput when no tab is
+// focused. See TheoryOfTUIDynamicPlanTab.
+func (t *TUI) focusedKind() tuiTab {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	kind, ok := t.tabKindAt(t.tabs.Focus)
+	if !ok {
+		return tabOutput
+	}
+	return kind
+}
+
+func (t *TUI) openPlanTabLocked() {
+	if t.hasPlanTab {
+		return
+	}
+	t.hasPlanTab = true
+	t.tabs.Insert(1)
+	// The scroll states stay in layout order: the inserted tab takes
+	// the second entry and every later pane shifts right with the
+	// layout. The pane's own layout index drives the shared tree
+	// rendering and press paths while the pane is active. See
+	// TheoryOfTUIDynamicPlanTab.
+	t.scrolls = slices.Insert(t.scrolls, 1, taiui.ScrollState{Offset: 1 << 30, Follow: true})
+	t.plan.paneIdx = 1
+	t.tabs.AutoExpand(1)
+}
+
+func (t *TUI) closePlanTabLocked() {
+	if !t.hasPlanTab {
+		return
+	}
+	t.hasPlanTab = false
+	t.tabs.Remove(1)
+	t.scrolls = slices.Delete(t.scrolls, 1, 2)
+	t.plan = treeTabState{}
+	t.planView = nil
+	t.planRoot = ""
+}
+
+const (
+	tabTree tuiTab = iota
+	tabPlan
+	tabOutput
+	tabLogs
+)
 
 // logsMaxBoxHeight bounds the Logs tab's box height while it is expanded
 // but not focused: one label-strip row plus two log-content rows. Logs
@@ -494,8 +651,13 @@ func (t *TUI) writeColored(color taiui.Color, p []byte) {
 	if len(p) == 0 {
 		return
 	}
-	if t.tabs.AutoExpand(1) {
-		t.scrolls[1].Follow = true
+	// The Output tab is addressed by its kind; the scroll-state update
+	// is a best-effort follow flag, so a TUI built without its layout
+	// state (direct struct construction in tests) still records the
+	// content. See TheoryOfTUIDynamicPlanTab.
+	idx := t.tabIndex(tabOutput)
+	if t.tabs.AutoExpand(idx) && idx >= 0 && idx < len(t.scrolls) {
+		t.scrolls[idx].Follow = true
 	}
 	t.output.Append(color, string(p))
 }
@@ -506,8 +668,13 @@ func (t *TUI) writeLogs(p []byte) {
 	if len(p) == 0 {
 		return
 	}
-	if t.tabs.AutoExpand(2) {
-		t.scrolls[2].Follow = true
+	// The Logs tab is addressed by its kind; the scroll-state update is
+	// a best-effort follow flag, so a TUI built without its layout
+	// state (direct struct construction in tests) still records the
+	// log line. See TheoryOfTUIDynamicPlanTab.
+	idx := t.tabIndex(tabLogs)
+	if t.tabs.AutoExpand(idx) && idx >= 0 && idx < len(t.scrolls) {
+		t.scrolls[idx].Follow = true
 	}
 	for _, line := range t.logs.Append(p) {
 		if isGeneratingLog(line) {
@@ -549,11 +716,14 @@ func (w logsWriter) Write(p []byte) (int, error) {
 }
 
 type TUI struct {
-	mu      sync.Mutex
-	output  *taiui.LineBuffer
-	logs    *taiui.StringBuffer
-	tabs    *taiui.Tabs
-	scrolls [3]taiui.ScrollState
+	mu     sync.Mutex
+	output *taiui.LineBuffer
+	logs   *taiui.StringBuffer
+	tabs   *taiui.Tabs
+	// scrolls holds one scroll state per tab, in layout order: the
+	// Plan tab inserts its own entry between the Tree and Output
+	// entries while it is present. See TheoryOfTUIDynamicPlanTab.
+	scrolls []taiui.ScrollState
 
 	// treeView is the latest session tree pipeline.Run yielded: the
 	// Tree tab renders — and projects — this same tree, never a
@@ -565,6 +735,19 @@ type TUI struct {
 	// the row ranges of the last display. Guarded by mu. See
 	// TheoryOfTreeTab.
 	treeTab treeTabState
+
+	// The Plan tab's state, guarded by mu. hasPlanTab reports whether
+	// the tab is in the layout; currentLoop names the loop the plan
+	// belongs to (empty for a fresh run, whose plan hangs under the
+	// tree's root); planRoot names the plan root node; planView is the
+	// projection the tab renders; and plan is the tab's own pane state,
+	// so a fold in one tree-shaped pane never moves the other. See
+	// TheoryOfTUIDynamicPlanTab.
+	hasPlanTab  bool
+	currentLoop string
+	planRoot    string
+	planView    *tree.Tree
+	plan        treeTabState
 
 	// startTime anchors the Tree tab's elapsed-time timer: every node's
 	// first display line right-aligns the duration from startTime to
@@ -701,11 +884,12 @@ type TUI struct {
 	ctlHoverX int
 	ctlHoverY int
 
-	// lastTreePress records the previous left press on the Tree tab's
-	// text rows, for double-click detection: a second press at the
-	// same cell within treeDoubleClickWindow toggles the node under
-	// it, and the first press records itself only. The zero time
-	// clears the record. Guarded by mu. See TheoryOfTreeTab.
+	// lastTreePress records the previous left press on a tree-shaped
+	// pane's text rows, for double-click detection: a second press at
+	// the same cell within treeDoubleClickWindow toggles the node under
+	// it, and the first press records itself only. The zero time clears
+	// the record. Guarded by mu. See TheoryOfTreeTab and
+	// TheoryOfTUIDynamicPlanTab.
 	lastTreePress  time.Time
 	lastTreePressX int
 	lastTreePressY int
@@ -749,9 +933,10 @@ func newTUI() (*TUI, error) {
 	tabs.MaxSizes = []int{0, 0, logsMaxBoxHeight}
 	// The Tree tab starts expanded and focused: the session's structure
 	// is the pane the user watches, so it is open from the first frame.
-	// The tab machine lays out tabs in index order, so index 0 is the
-	// Tree tab, index 1 the Output tab, and index 2 the Logs tab.
-	// See TheoryOfTUI.
+	// The tab machine lays out tabs in index order, so the Tree tab is
+	// first and the other tabs follow in layout order; the Plan tab joins
+	// directly after the Tree tab while the current loop carries a plan.
+	// See TheoryOfTUI and TheoryOfTUIDynamicPlanTab.
 	tabs.FocusTab(0)
 	// No screen row is reserved: every action is reachable through the
 	// tab toolbars, so the panels keep the full height. See
@@ -770,8 +955,10 @@ func newTUI() (*TUI, error) {
 		// automatically the first time content for them arrives, and
 		// the Output tab follows the tail once it does. The scroll
 		// offsets start at the tail sentinel so the first render sticks
-		// to the latest content. See TheoryOfTUI.
-		scrolls: [3]taiui.ScrollState{
+		// to the latest content, and they stay in layout order: the Plan
+		// tab inserts its own entry when it appears. See TheoryOfTUI and
+		// TheoryOfTUIDynamicPlanTab.
+		scrolls: []taiui.ScrollState{
 			{Offset: 1 << 30, Follow: true},
 			{Offset: 1 << 30, Follow: true},
 			{Offset: 1 << 30},
@@ -869,57 +1056,46 @@ func (t *TUI) cancelChatInput() {
 	}
 }
 
-// focusInputLocked focuses the chat input bar: typed keys edit the
-// line, and the Output tab — the pane the bar belongs to — takes the
-// keyboard focus with it so the scroll keys act on that pane. An armed
-// quit confirmation is cancelled because q types text while the bar is
-// focused. The caller holds t.mu. See TheoryOfTUIChatInput.
 func (t *TUI) focusInputLocked() {
 	t.inputFocused = true
 	t.quit.Cancel()
-	if t.tabs.Focus != 1 {
-		t.tabs.FocusTab(1)
+	idx := t.tabIndex(tabOutput)
+	if t.tabs.Focus != idx {
+		t.tabs.FocusTab(idx)
 	}
 }
 
-// chatInputViewSnapshot captures the view state a fall-through key may
-// change while the chat input bar is focused: the pane scroll states,
-// the tab focus, the tab expansion, and the split axis. handleKey
-// compares the snapshots taken before and after a fall-through key's
-// dispatch to detect whether the key changed other elements — the
-// condition that releases the input focus. See TheoryOfTUIChatInput.
 type chatInputViewSnapshot struct {
-	scrolls  [3]taiui.ScrollState
-	expanded [3]bool
+	scrolls  []taiui.ScrollState
+	expanded []bool
 	focus    int
 	split    bool
 }
 
-// inputRowHit reports whether the given cell lies on the chat input
-// bar's row: the bottom row of the expanded Output tab's box, the same
-// row buildRoot renders the bar on. The row exists only in interactive
-// sessions; in the others the bar is not rendered and the press falls
-// through to ordinary tab interaction. The caller holds t.mu. See
-// TheoryOfTUIChatInput.
+func (s chatInputViewSnapshot) equal(o chatInputViewSnapshot) bool {
+	return slices.Equal(s.scrolls, o.scrolls) &&
+		slices.Equal(s.expanded, o.expanded) &&
+		s.focus == o.focus &&
+		s.split == o.split
+}
+
 func (t *TUI) inputRowHit(x, y int) bool {
-	if !t.interactive || !t.tabs.Expanded[1] {
+	idx := t.tabIndex(tabOutput)
+	if !t.interactive || !t.tabs.Expanded[idx] {
 		return false
 	}
-	box := t.tabs.Boxes(t.width, t.height)[1]
+	box := t.tabs.Boxes(t.width, t.height)[idx]
 	if box.Height() <= 1 || box.Width() <= 0 {
 		return false
 	}
 	return y == box.Bottom-1 && x >= box.Left && x < box.Right
 }
 
-// chatInputViewSnapshotLocked returns the current view snapshot for the
-// input-focus release detection. The caller holds t.mu. See
-// TheoryOfTUIChatInput.
 func (t *TUI) chatInputViewSnapshotLocked() chatInputViewSnapshot {
 	var snap chatInputViewSnapshot
-	snap.scrolls = t.scrolls
+	snap.scrolls = slices.Clone(t.scrolls)
 	snap.focus = t.tabs.Focus
-	copy(snap.expanded[:], t.tabs.Expanded)
+	snap.expanded = slices.Clone(t.tabs.Expanded)
 	snap.split = t.tabs.SplitVertical
 	return snap
 }
@@ -1089,6 +1265,28 @@ func (t *TUI) HandoffEnd() {
 	t.handoff = false
 }
 
+// genEnd ends the session's generating state: the request hint clears, the
+// run is over, and the current loop's Plan tab is destroyed with it. See
+// TheoryOfTUI and TheoryOfTUIDynamicPlanTab.
+func (t *TUI) genEnd(err error) {
+	if err != nil {
+		t.write([]byte(err.Error() + "\n"))
+	}
+	t.mu.Lock()
+	// The session has ended: clear the in-flight hint with the finished
+	// state. A request that returned without a finish line (e.g., an
+	// error path) must not leave the hint stuck on. See TheoryOfTUI.
+	t.finished = true
+	t.generating = false
+	t.handoff = false
+	// The last loop ends with the run, so its plan tab goes too. See
+	// TheoryOfTUIDynamicPlanTab.
+	t.closePlanTabLocked()
+	t.currentLoop = ""
+	t.mu.Unlock()
+	t.notify()
+}
+
 // toggleTab implements the number-key semantics (keys 1, 2, 3): pressing
 // a tab's key toggles its expansion. The state machine lives in
 // taiui.Tabs; expanding a collapsed tab resumes following the live tail.
@@ -1182,6 +1380,11 @@ func (t *TUI) handleKey(key string) bool {
 		t.toggleTab(1)
 	case key == "3":
 		t.toggleTab(2)
+	case key == "4":
+		// The layout is dynamic: with the Plan tab present, the number
+		// keys address the tabs in layout order, so 4 selects the Logs
+		// tab. See TheoryOfTUIDynamicPlanTab.
+		t.toggleTab(3)
 	case key == "split":
 		t.toggleSplit()
 	case key == "mouse":
@@ -1193,14 +1396,10 @@ func (t *TUI) handleKey(key string) bool {
 	case key == "next-transition":
 		t.jumpToTransition(1)
 	case key == "collapse-all":
-		// The c key folds the focused tab's structure: the Tree tab's
-		// nodes, or — every other focus — the Output tab's sections.
-		// See TheoryOfTreeTab and TheoryOfOutputControls.
-		if t.tabs.Focus == 0 {
-			t.collapseAllTreeNodes()
-		} else {
-			t.collapseAllSections()
-		}
+		// The c key folds the focused tab's structure: a tree-shaped
+		// pane's nodes, or — every other focus — the Output tab's
+		// sections. See TheoryOfTreeTab and TheoryOfOutputControls.
+		t.collapseFocusedNodes()
 	case key == "up":
 		t.scroll(-1)
 	case key == "down":
@@ -1232,7 +1431,7 @@ func (t *TUI) handleKey(key string) bool {
 	// focused. See TheoryOfTUIChatInput.
 	if inputFocused {
 		t.mu.Lock()
-		if viewBefore != t.chatInputViewSnapshotLocked() {
+		if !viewBefore.equal(t.chatInputViewSnapshotLocked()) {
 			t.inputFocused = false
 		}
 		t.mu.Unlock()
@@ -1308,6 +1507,18 @@ func (t *TUI) toggleMouse() {
 	t.notify()
 }
 
+func (t *TUI) collapseFocusedNodes() {
+	kind := t.focusedKind()
+	switch kind {
+	case tabTree, tabPlan:
+		t.mu.Lock()
+		defer t.mu.Unlock()
+		t.collapseAllPaneNodesLocked(kind)
+	default:
+		t.collapseAllSections()
+	}
+}
+
 func (t *TUI) Run(gen func()) error {
 	// The taiui.Session owns the terminal lifecycle — cursor hiding,
 	// mouse reporting, key decoding, resize notification, and the
@@ -1327,22 +1538,8 @@ func (t *TUI) Run(gen func()) error {
 			t.width, t.height = width, height
 			t.mu.Unlock()
 		},
-		Gen: gen,
-		GenEnd: func(err error) {
-			if err != nil {
-				t.write([]byte(err.Error() + "\n"))
-			}
-			t.mu.Lock()
-			// The session has ended: clear the in-flight hint with the
-			// finished state. A request that returned without a finish
-			// line (e.g., an error path) must not leave the hint stuck
-			// on. See TheoryOfTUI.
-			t.finished = true
-			t.generating = false
-			t.handoff = false
-			t.mu.Unlock()
-			t.notify()
-		},
+		Gen:    gen,
+		GenEnd: t.genEnd,
 	}
 	// The session reference lets the mouse key switch mouse reporting
 	// at runtime (see toggleMouse); mouseReporting mirrors the Mouse
@@ -1368,9 +1565,9 @@ func (t *TUI) handleMouseKey(key string) bool {
 		// TheoryOfOutputControls and TheoryOfToolbars.
 		t.setControlHoverLocked(x, y)
 	case "wheel-up":
-		t.mouse.Wheel(t.tabs, t.scrolls[:], t.width, t.height, x, y, -1)
+		t.mouse.Wheel(t.tabs, t.scrolls, t.width, t.height, x, y, -1)
 	case "wheel-down":
-		t.mouse.Wheel(t.tabs, t.scrolls[:], t.width, t.height, x, y, 1)
+		t.mouse.Wheel(t.tabs, t.scrolls, t.width, t.height, x, y, 1)
 	case "left":
 		// The Logs toolbar's quit button is the pointer path's quit
 		// key: it runs the two-press protocol and must not cancel a
@@ -1421,19 +1618,20 @@ func (t *TUI) handleMouseKey(key string) bool {
 			if t.expandCollapsedSectionAtClick(x, y) {
 				break
 			}
-			// A press on the Tree tab's fold column toggles the
-			// node under the control. See TheoryOfTreeTab.
-			if t.toggleTreeControlAtClick(x, y) {
+			// A press on a tree-shaped pane — the Tree tab or the
+			// Plan tab — is dispatched to that pane: a press on its
+			// fold column toggles the node under the control, and
+			// the pane's click handler covers the attempt jump
+			// marker and the double-click expansion. See
+			// TheoryOfTreeTab and TheoryOfTUIDynamicPlanTab.
+			kind, isTreePane := t.treePaneAtLocked(x, y)
+			if isTreePane && t.toggleTreePaneControlLocked(kind, x, y) {
 				break
 			}
-			t.mouse.Press(t.tabs, t.scrolls[:], t.width, t.height, x, y)
-			// A press on the attempt-start node's jump marker jumps
-			// the Output tab to the section that attempt wrote; a
-			// double-click on a node's text toggles its expansion,
-			// and a single text press records itself only. The
-			// click maps rows of the last-rendered tree. See
-			// TheoryOfTUIOutputSections and TheoryOfTreeTab.
-			t.treeAtClick(x, y)
+			t.mouse.Press(t.tabs, t.scrolls, t.width, t.height, x, y)
+			if isTreePane {
+				t.treePaneClickLocked(kind, x, y)
+			}
 		}
 	case "release":
 		// The release refreshes the tracked pointer position, ending a
@@ -1441,7 +1639,7 @@ func (t *TUI) handleMouseKey(key string) bool {
 		t.setControlHoverLocked(x, y)
 		t.mouse.Release()
 	case "leftdrag":
-		t.mouse.Drag(t.tabs, t.scrolls[:], y)
+		t.mouse.Drag(t.tabs, t.scrolls, y)
 	}
 	t.mu.Unlock()
 	if dispatchBar {
@@ -1505,15 +1703,16 @@ func (t *TUI) jumpToTransition(direction int) {
 	// collapsed and take the focus so the view switches to it. Toggle
 	// on an expanded non-focused tab switches the focus without
 	// collapsing.
-	if !t.tabs.Expanded[1] || t.tabs.Focus != 1 {
-		t.tabs.Toggle(1)
+	tab := t.tabIndex(tabOutput)
+	if !t.tabs.Expanded[tab] || t.tabs.Focus != tab {
+		t.tabs.Toggle(tab)
 	}
 	boxes := t.tabs.Boxes(t.width, t.height)
-	box := boxes[1]
+	box := boxes[tab]
 	if box.Width() <= 0 || box.Height() <= 0 {
 		return
 	}
-	display := wrappedDisplay(t, 1, box)
+	display := wrappedDisplay(t, tab, box)
 	if len(display) == 0 {
 		return
 	}
@@ -1523,8 +1722,8 @@ func (t *TUI) jumpToTransition(direction int) {
 	// minus its one-row label strip and the interactive Output tab's
 	// input bar row, matching render's scroll updates. See
 	// TheoryOfTUIChatInput.
-	paneHeight := t.tuiPaneHeight(1, box)
-	offset := taiui.ClampOffset(t.scrolls[1].Offset, len(display), paneHeight)
+	paneHeight := t.tuiPaneHeight(tab, box)
+	offset := taiui.ClampOffset(t.scrolls[tab].Offset, len(display), paneHeight)
 	// The stops derive from the section structure — each section
 	// boundary contributes the exit stop and the entry stop — and the
 	// selection, including the backward fallback to the very beginning
@@ -1551,8 +1750,8 @@ func (t *TUI) jumpToTransition(direction int) {
 	// the bottom of the final view. The jump is a deliberate navigation
 	// away from the live tail: following resumes only when the view
 	// reaches the latest row (see ScrollState.Update).
-	t.scrolls[1].Offset = taiui.ClampOffset(target, len(display), paneHeight)
-	t.scrolls[1].Follow = false
+	t.scrolls[tab].Offset = taiui.ClampOffset(target, len(display), paneHeight)
+	t.scrolls[tab].Follow = false
 }
 
 func (t *TUI) render() {
@@ -1568,16 +1767,19 @@ func (t *TUI) render() {
 	// update the authoritative scroll offsets against the FRESH display
 	// lengths, so the panels read post-update offsets. Collapsed (or
 	// degenerate) tabs are skipped: their scroll state stays frozen until
-	// they expand. See TheoryOfTUI.
-	var displays [3][]taiui.Line
+	// they expand. The layout is dynamic — the Plan tab is present only
+	// while the current loop carries a plan — so the count comes from the
+	// tab machine. See TheoryOfTUI and TheoryOfTUIDynamicPlanTab.
+	count := t.tabCount()
+	displays := make([][]taiui.Line, count)
 	boxes := t.tabs.Boxes(width, height)
-	for idx := 0; idx < 3; idx++ {
+	for idx := 0; idx < count && idx < len(boxes); idx++ {
 		if !t.tabs.Expanded[idx] || boxes[idx].Width() <= 0 || boxes[idx].Height() <= 0 {
 			continue
 		}
 		displays[idx] = wrappedDisplay(t, idx, boxes[idx])
 	}
-	for idx := 0; idx < 3; idx++ {
+	for idx := 0; idx < count && idx < len(boxes); idx++ {
 		if !t.tabs.Expanded[idx] || boxes[idx].Width() <= 0 || boxes[idx].Height() <= 0 {
 			continue
 		}
@@ -1587,13 +1789,24 @@ func (t *TUI) render() {
 		t.scrolls[idx].Update(len(displays[idx]), t.tuiPaneHeight(idx, boxes[idx]))
 	}
 
-	// The Tree tab's fold controls follow the content: a node whose
-	// header row scrolled above the viewport carries its fold glyph on
-	// its first visible display row, so an expanded node stays
+	// The tree-shaped panes' fold controls follow the content: a node
+	// whose header row scrolled above the viewport carries its fold glyph
+	// on its first visible display row, so an expanded node stays
 	// collapsible while scrolled. Runs after the scroll updates so the
-	// float reads the offsets the panels render with. See
-	// TheoryOfTreeTab.
-	t.floatTreeControls(boxes[0], displays[0])
+	// float reads the offsets the panels render with. See TheoryOfTreeTab
+	// and TheoryOfTUIDynamicPlanTab.
+	for _, kind := range t.tabKinds() {
+		if kind != tabTree && kind != tabPlan {
+			continue
+		}
+		idx := t.tabIndex(kind)
+		if idx < 0 || idx >= len(boxes) || idx >= len(displays) {
+			continue
+		}
+		t.withPane(kind, func() {
+			t.floatTreeControls(boxes[idx], displays[idx])
+		})
+	}
 
 	taiui.Render(buildRoot(t, width, height, displays), t.screen)
 
@@ -1614,20 +1827,6 @@ func (t *TUI) render() {
 	}
 }
 
-var (
-	// tabNames lists the tabs in display order: the tab machine lays out
-	// tabs in index order, so index 0 is the Tree tab, index 1 the
-	// Output tab, and index 2 the Logs tab. See TheoryOfTUI.
-	tabNames = [...]string{"Tree", "Output", "Logs"}
-)
-
-// withTUIOutputObserver connects a pipeline.Run to the TUI: it wraps
-// the state with the tuiOutputState decorator (streaming output content
-// to the Output tab) and taps the run's tree iterator, forwarding every
-// yielded tree to setTree before the command's own consumer sees it.
-// The tap is the Tree tab's only content source, so every Tree-tab node
-// originates from the pipeline's own tree. See TheoryOfTUI and
-// pipeline.TheoryOfLoopEvents.
 func withTUIOutputObserver(run pipeline.Run, tui *TUI) pipeline.Run {
 	return func(ctx context.Context, opts pipeline.RunOptions, result *pipeline.Result) iter.Seq2[*tree.Tree, error] {
 		opts.StateDecorators = append(opts.StateDecorators, func(state generators.State) generators.State {
@@ -1644,7 +1843,9 @@ func withTUIOutputObserver(run pipeline.Run, tui *TUI) pipeline.Run {
 		return func(yield func(*tree.Tree, error) bool) {
 			inner(func(tr *tree.Tree, err error) bool {
 				// Tap unconditionally: the terminal error arrives with a
-				// non-nil error and must render too.
+				// non-nil error and must render too. The session tree is
+				// also the Plan tab's source: setTree tracks the current
+				// loop and its plan root. See TheoryOfTUIDynamicPlanTab.
 				tui.setTree(tr)
 				return yield(tr, err)
 			})

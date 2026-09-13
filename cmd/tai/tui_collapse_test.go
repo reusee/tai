@@ -498,12 +498,6 @@ func TestExpandSectionScrollsToItsStart(t *testing.T) {
 	}
 }
 
-// TestOutputControlColumnBesideContent pins the control column's place
-// in the layout: the column paints only the content rows, the title
-// row spans the full tab width with a centered label, and the content
-// is indented past the column. The tab order is Tree (0) / Output (1)
-// / Logs (2); the Output tab sits below the collapsed Tree strip. See
-// TheoryOfOutputControls.
 func TestOutputControlColumnBesideContent(t *testing.T) {
 	tui := newTUIForTest()
 	tui.tabs.Expanded = []bool{false, true, false}
@@ -523,7 +517,7 @@ func TestOutputControlColumnBesideContent(t *testing.T) {
 	tui.mu.Unlock()
 
 	screen := &panelTestScreen{width: 40, height: 10}
-	taiui.Render(buildRoot(tui, 40, 10, [3][]taiui.Line{nil, display, nil}), screen)
+	taiui.Render(buildRoot(tui, 40, 10, [][]taiui.Line{nil, display, nil}), screen)
 	frame := screen.frames[len(screen.frames)-1]
 
 	// The title row spans the full tab width: the 6-wide label centers
@@ -550,11 +544,6 @@ func TestOutputControlColumnBesideContent(t *testing.T) {
 	}
 }
 
-// TestOutputControlColumnShowsTypeLetters verifies that each section
-// states its content type with a full-width letter in the control
-// column, on the row below the section's fold glyph, and that a
-// section with no second visible row shows only the fold glyph. See
-// TheoryOfOutputControls.
 func TestOutputControlColumnShowsTypeLetters(t *testing.T) {
 	tui := newTUIForTest()
 	tui.interactive = false
@@ -577,7 +566,7 @@ func TestOutputControlColumnShowsTypeLetters(t *testing.T) {
 	}
 
 	screen := &panelTestScreen{width: 40, height: 10}
-	taiui.Render(buildRoot(tui, 40, 10, [3][]taiui.Line{nil, display, nil}), screen)
+	taiui.Render(buildRoot(tui, 40, 10, [][]taiui.Line{nil, display, nil}), screen)
 	frame := screen.frames[len(screen.frames)-1]
 
 	// The user and thoughts sections span two or more display rows, so
@@ -608,11 +597,6 @@ func TestControlStripText(t *testing.T) {
 	}
 }
 
-// TestOutputControlHoverRendersReversed pins the control column's hover
-// affordance: hovering a control's row renders the control under the
-// pointer with an attribute applied, so the press target is visible
-// before any press, while the unhovered column carries the plain style.
-// See TheoryOfOutputControls.
 func TestOutputControlHoverRendersReversed(t *testing.T) {
 	tui := newTUIForTest()
 	tui.tabs.Expanded = []bool{false, true, false}
@@ -633,7 +617,7 @@ func TestOutputControlHoverRendersReversed(t *testing.T) {
 	row := rows[0].row
 
 	screen := &panelTestScreen{width: 40, height: 10}
-	taiui.Render(buildRoot(tui, 40, 10, [3][]taiui.Line{nil, display, nil}), screen)
+	taiui.Render(buildRoot(tui, 40, 10, [][]taiui.Line{nil, display, nil}), screen)
 	frame := screen.frames[len(screen.frames)-1]
 	cell := frame.Cells[row*frame.Width]
 	if cell.Style.Attr() != 0 {
@@ -646,7 +630,7 @@ func TestOutputControlHoverRendersReversed(t *testing.T) {
 	tui.setControlHoverLocked(box.Left, row)
 	tui.mouseReporting = true
 	tui.mu.Unlock()
-	taiui.Render(buildRoot(tui, 40, 10, [3][]taiui.Line{nil, display, nil}), screen)
+	taiui.Render(buildRoot(tui, 40, 10, [][]taiui.Line{nil, display, nil}), screen)
 	frame = screen.frames[len(screen.frames)-1]
 	cell = frame.Cells[row*frame.Width]
 	if cell.Style.Attr() == 0 {
@@ -654,42 +638,35 @@ func TestOutputControlHoverRendersReversed(t *testing.T) {
 	}
 }
 
-// TestTabTitleButtons verifies the per-tab button sets under the tab
-// order Tree (0) / Output (1) / Logs (2): the Tree tab carries the view
-// cycling and the nodes collapse-all, the Output tab the section
-// navigation and the sections collapse-all, and the Logs tab the
-// session-level controls — split, mouse reporting, help, and quit.
-// See TheoryOfToolbars.
 func TestTabTitleButtons(t *testing.T) {
-	if got := tabTitleButtons(0); len(got) != 2 {
+	if got := tabTitleButtons(tabTree); len(got) != 2 {
 		t.Fatalf("expected 2 Tree buttons, got %+v", got)
 	}
-	if got := tabTitleButtons(1); len(got) != 3 {
+	if got := tabTitleButtons(tabPlan); len(got) != 1 {
+		t.Fatalf("expected 1 Plan button, got %+v", got)
+	}
+	if got := tabTitleButtons(tabOutput); len(got) != 3 {
 		t.Fatalf("expected 3 Output buttons, got %+v", got)
 	}
-	if got := tabTitleButtons(2); len(got) != 4 {
+	if got := tabTitleButtons(tabLogs); len(got) != 4 {
 		t.Fatalf("expected 4 Logs buttons, got %+v", got)
 	}
-	if got := tabTitleButtons(2)[3].Action; got != string(controlQuit) {
+	if got := tabTitleButtons(tabLogs)[3].Action; got != string(controlQuit) {
 		t.Fatalf("the rightmost Logs button must run the quit action, got %q", got)
 	}
 }
 
-// TestTitleButtonsRendering verifies the rendered labels and the two
-// reserved cells: the buttons draw right-aligned and adjacent — no
-// separator cells — before the reserved stretch, and hovering a
-// button renders it reversed. See TheoryOfToolbars.
 func TestTitleButtonsRendering(t *testing.T) {
 	tui := newTUIForTest()
 	tui.interactive = false
-	// The Output tab (index 1) must be expanded to carry title buttons.
-	// See TheoryOfTUI.
+	// The Output tab (kind tabOutput) must be expanded to carry title
+	// buttons. See TheoryOfTUI and TheoryOfTUIDynamicPlanTab.
 	tui.tabs.Expanded = []bool{false, true, false}
 	tui.tabs.HasContent = []bool{false, true, false}
 	tui.tabs.Focus = 1
 	box := taiui.Box{Top: 0, Left: 0, Bottom: 1, Right: 40}
 	tui.mu.Lock()
-	el := tui.titleButtonsElement(1, box)
+	el := tui.titleButtonsElement(tabOutput, box)
 	tui.mu.Unlock()
 	if el == nil {
 		t.Fatal("expected the Output tab's title buttons element")
@@ -716,7 +693,7 @@ func TestTitleButtonsRendering(t *testing.T) {
 	tui.ctlHoverY = 0
 	tui.mu.Unlock()
 	tui.mu.Lock()
-	el = tui.titleButtonsElement(1, box)
+	el = tui.titleButtonsElement(tabOutput, box)
 	tui.mu.Unlock()
 	screen = &panelTestScreen{width: 40, height: 1}
 	taiui.Render(el, screen)
