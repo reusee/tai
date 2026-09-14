@@ -113,7 +113,7 @@ and expand on their first content (the Output tab on streamed output,
 the Logs tab on any log record), so the interface surfaces panes
 only when they have something to show. The Logs tab caps its box at
 logsMaxBoxHeight rows while expanded but not focused — logs are internal
-diagnostics, so an unfocused pane shows only the latest lines — and the
+diagnostics, so an unfocused pane shows only the latest line — and the
 freed rows go to the other expanded tabs by weight; focusing Logs
 restores the usual ratio. The s key switches between vertical splitting
 (tabs side by side, a vertical split line) and horizontal splitting (tabs
@@ -305,12 +305,12 @@ const (
 )
 
 // logsMaxBoxHeight bounds the Logs tab's box height while it is expanded
-// but not focused: one label-strip row plus two log-content rows. Logs
+// but not focused: one label-strip row plus one log-content row. Logs
 // collect internal diagnostics, so an unfocused pane shows only the
-// latest lines; the freed rows go to the other expanded tabs by weight,
+// latest line; the freed rows go to the other expanded tabs by weight,
 // and focusing Logs lifts the cap and restores the usual ratio. See
 // TheoryOfTUI and taiui.TheoryOfTabs.
-const logsMaxBoxHeight = 3
+const logsMaxBoxHeight = 2
 
 const TheoryOfTUIChatInput = `
 TUI mode replaces the liner-based chat prompt with the TUI's own input

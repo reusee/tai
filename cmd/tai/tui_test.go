@@ -68,6 +68,11 @@ func TestTUILogsBoxCappedWhenUnfocused(t *testing.T) {
 	if boxes[2].Height() != logsMaxBoxHeight {
 		t.Fatalf("unfocused Logs box must be capped to %d rows, got %+v", logsMaxBoxHeight, boxes[2])
 	}
+	// The cap leaves exactly one content row below the label strip: an
+	// unfocused Logs pane shows one title row and one content row.
+	if taiui.PaneHeight(boxes[2]) != 1 {
+		t.Fatalf("unfocused Logs box must keep one content row, got %+v", boxes[2])
+	}
 	if boxes[0].Height()+boxes[1].Height() != 40-logsMaxBoxHeight {
 		t.Fatalf("freed rows must go to the other tabs: %+v", boxes)
 	}
@@ -1487,19 +1492,20 @@ func TestTUIMouseWheel(t *testing.T) {
 		tui.tabs.Focus = 0
 		tui.scrolls[2].MaxOffset = 100
 		tui.scrolls[2].Offset = 50
-		// Horizontal split: the unfocused Logs tab is capped to
-		// logsMaxBoxHeight rows, so the output tab occupies rows 0..40,
-		// the collapsed summary tab row 41, and the logs tab rows
-		// 42..44. A wheel event over the logs tab scrolls its view
-		// without changing the focus.
-		tui.handleMouseKey("mouse-wheel-down@5,43")
+		// Horizontal split: the collapsed summary tab keeps one row, and
+		// the unfocused Logs tab is capped to logsMaxBoxHeight rows. A
+		// wheel event over the logs pane scrolls its view without
+		// changing the focus. The row is derived from the layout, so the
+		// test survives a cap change. See logsMaxBoxHeight.
+		logsBox := tui.tabs.Boxes(tui.width, tui.height)[2]
+		tui.handleMouseKey(fmt.Sprintf("mouse-wheel-down@5,%d", logsBox.Top))
 		if tui.scrolls[2].Offset != 51 {
 			t.Fatalf("expected offset 51, got %d", tui.scrolls[2].Offset)
 		}
 		if tui.tabs.Focus != 0 {
 			t.Fatalf("wheel must not change the focus, got %d", tui.tabs.Focus)
 		}
-		tui.handleMouseKey("mouse-wheel-up@5,43")
+		tui.handleMouseKey(fmt.Sprintf("mouse-wheel-up@5,%d", logsBox.Top))
 		if tui.scrolls[2].Offset != 50 {
 			t.Fatalf("expected offset 50, got %d", tui.scrolls[2].Offset)
 		}
@@ -1513,8 +1519,10 @@ func TestTUIMouseWheel(t *testing.T) {
 		tui.tabs.Focus = 0
 		tui.scrolls[1].MaxOffset = 100
 		tui.scrolls[1].Offset = 10
-		// A wheel event over the collapsed summary row (41) is a no-op.
-		tui.handleMouseKey("mouse-wheel-down@5,41")
+		// A wheel event over the collapsed summary tab's row is a no-op.
+		// The row is derived from the layout, like the logs pane's.
+		summaryBox := tui.tabs.Boxes(tui.width, tui.height)[1]
+		tui.handleMouseKey(fmt.Sprintf("mouse-wheel-down@5,%d", summaryBox.Top))
 		if tui.scrolls[2].Offset != 0 {
 			t.Fatal("wheel must not affect another tab")
 		}
