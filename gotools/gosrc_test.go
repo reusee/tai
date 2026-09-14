@@ -29,8 +29,8 @@ func TestParseGoSrcSymbols(t *testing.T) {
 
 // TestGoSrcPrompts verifies the fragments the go-src system prompt
 // must teach: the package-symbol form, the division of labor with
-// ingest, batch fetching, the resolution-result contract, and the
-// summary-first stop rule. See TheoryOfGoSrcBlocks and
+// ingest, batch fetching, the resolution-result contract, the snapshot
+// behavior, and the summary-first stop rule. See TheoryOfGoSrcBlocks and
 // TheoryOfGoSrcResolution.
 func TestGoSrcPrompts(t *testing.T) {
 	prompt := GoSrcBlockSystemPrompt
@@ -76,8 +76,14 @@ func TestGoSrcPrompts(t *testing.T) {
 		if !strings.Contains(prompt, "file-path") {
 			t.Fatal("GoSrcBlockSystemPrompt does not describe the defining file usage")
 		}
-		if strings.Contains(prompt, "in-memory snapshot") {
-			t.Fatal("GoSrcBlockSystemPrompt must not expose the snapshot semantics")
+		if !strings.Contains(prompt, "file snapshot") {
+			t.Fatal("GoSrcBlockSystemPrompt must teach that resolution reads the session's file snapshot")
+		}
+		if !strings.Contains(prompt, "does not mean the modification failed") {
+			t.Fatal("GoSrcBlockSystemPrompt must state that pre-modification source does not mean the change was not applied")
+		}
+		if !strings.Contains(prompt, "Never emit go-src blocks to verify an applied change") {
+			t.Fatal("GoSrcBlockSystemPrompt must forbid using go-src to verify an applied change")
 		}
 		if strings.Contains(prompt, "Verify applied changes") {
 			t.Fatal("GoSrcBlockSystemPrompt must not instruct disk verification")

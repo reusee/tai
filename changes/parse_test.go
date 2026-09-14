@@ -548,3 +548,19 @@ func TestChangeBlockPromptPrefersPreciseModifications(t *testing.T) {
 		t.Fatal("ChangeBlockSystemPrompt should prefer existing test files for new test functions")
 	}
 }
+
+func TestChangeBlockPromptAppliedMeansEffective(t *testing.T) {
+	// An applied change block needs no verification: apply errors come
+	// back as explicit feedback, and a disk re-read must never be used
+	// as a substitute confirmation.
+	prompt := ChangeBlockSystemPrompt()
+	if !strings.Contains(prompt, "Applied Means Effective") {
+		t.Fatal("ChangeBlockSystemPrompt must teach that an applied change block needs no verification")
+	}
+	if !strings.Contains(prompt, "absence of an error is the confirmation") {
+		t.Fatal("ChangeBlockSystemPrompt must name the apply result as the change's confirmation")
+	}
+	if !strings.Contains(prompt, "Do not re-read a file you just modified") {
+		t.Fatal("ChangeBlockSystemPrompt must forbid re-reading a modified file to verify an applied change")
+	}
+}
