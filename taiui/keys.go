@@ -11,10 +11,15 @@ import (
 
 const TheoryOfKeyInput = `
 taiui key input theory:
-- Raw terminal input is decoded in non-blocking raw mode into logical
-  key names. A zero-byte read is not completion: an incomplete escape
-  sequence split across reads is held until it completes or a grace
-  period expires. A lone escape that never grows is emitted as "esc".
+- Raw terminal input is decoded into logical key names. The reads run
+  on their own goroutine, so the grace period of a pending partial
+  sequence is observable even when the source blocks without input: a
+  raw-mode terminal never returns from a read while the user is silent,
+  and a lone escape must reach the application as "esc" without waiting
+  for the next key. An incomplete escape sequence split across reads is
+  held until it completes or the grace period expires; a lone escape
+  that never grows is emitted as "esc" when the period expires, and any
+  other incomplete fragment is dropped.
 - An escape followed by a printable character is "alt-<char>"; an
   escape followed by a control byte is "alt-<key>", so Alt+Enter is
   "alt-enter" and Alt+Ctrl+A is "alt-ctrl-a". An escape followed by an
@@ -105,10 +110,10 @@ const (
 )
 
 // escapeSequenceTimeout is the grace period a partial escape sequence is
-// held before it is discarded: a zero-byte read is not a completion
-// signal, so a sequence split across reads is kept until it completes or
-// the timeout expires. A lone ESC that never grows is emitted as "esc"
-// when the timeout expires.
+// held before its outcome is decided: a sequence split across reads is
+// kept until it completes or the timeout expires, and a lone ESC that
+// never grows is emitted as "esc" when the timeout expires, even when the
+// input source blocks without new bytes. See TheoryOfKeyInput.
 const escapeSequenceTimeout = 50 * time.Millisecond
 
 const (
@@ -135,47 +140,83 @@ const (
 	KittyKeyboardDisableSequence = "\x1b[<0u"
 )
 
+// readOutcome is one completed read of an input source: the bytes it
+// delivered, the error that ended it, or both. Zero-byte reads carry no
+// information and are never delivered. See TheoryOfKeyInput.
+type readOutcome struct {
+	data []byte
+	err  error
+}
+
+// ReadKeys reads raw terminal input and emits logical key names on ch.
+// The reads run on their own goroutine, so a partial sequence's grace
+// period elapses even when the source blocks without input: a lone ESC
+// that never grows reaches the application as "esc" after the period
+// instead of waiting for the next key. See TheoryOfKeyInput.
 func ReadKeys(r io.Reader, ch chan<- string) {
-	var buf [64]byte
+	outcomes := make(chan readOutcome)
+	go readInto(r, outcomes)
+
 	var pending []byte
-	lastData := time.Now()
+	// The timer is created stopped: it runs only while a partial
+	// sequence is pending, and its expiry decides that sequence's
+	// outcome.
+	grace := time.NewTimer(escapeSequenceTimeout)
+	grace.Stop()
+	defer grace.Stop()
+
+	for {
+		select {
+		case outcome := <-outcomes:
+			if len(outcome.data) > 0 {
+				grace.Stop()
+				pending = append(pending, outcome.data...)
+				pending = processKeys(pending, ch)
+				if len(pending) > 0 {
+					grace.Reset(escapeSequenceTimeout)
+				}
+			}
+			if outcome.err != nil {
+				// A lone ESC at end of input is a real key press,
+				// not a partial sequence: emit it before returning.
+				if len(pending) == 1 && pending[0] == 0x1b {
+					ch <- "esc"
+				}
+				return
+			}
+		case <-grace.C:
+			// The grace period expired: a lone ESC is the key press
+			// the user made, and every other pending fragment is an
+			// incomplete sequence that is dropped.
+			if len(pending) == 1 && pending[0] == 0x1b {
+				ch <- "esc"
+			}
+			pending = pending[:0]
+		}
+	}
+}
+
+// readInto delivers the input source's reads on outcomes until an error
+// ends the source. It runs on its own goroutine so ReadKeys can wait for
+// input and for the escape grace period at the same time: a raw-mode
+// terminal (VMIN=1, VTIME=0) blocks in a read while the user is silent
+// and never produces the zero-byte read a non-blocking source would.
+// See TheoryOfKeyInput.
+func readInto(r io.Reader, outcomes chan<- readOutcome) {
+	var buf [64]byte
 	for {
 		n, err := r.Read(buf[:])
 		if n > 0 {
-			lastData = time.Now()
-			pending = append(pending, buf[:n]...)
-			pending = processKeys(pending, ch)
+			outcomes <- readOutcome{data: append([]byte(nil), buf[:n]...)}
 		}
 		if err != nil {
-			// A lone ESC at end of input is a real key press, not a
-			// partial sequence: emit it before returning.
-			if err == io.EOF && len(pending) == 1 && pending[0] == 0x1b {
-				ch <- "esc"
-			}
+			outcomes <- readOutcome{err: err}
 			return
 		}
 		if n == 0 {
-			// The tty is in non-blocking raw mode; avoid a busy loop.
-			// A zero-byte read is not a completion signal: a partial
-			// escape sequence is held until it completes or the grace
-			// period expires, so a sequence split across reads is not
-			// lost. A lone ESC that never grows is emitted as "esc"
-			// before it is discarded. An incomplete multi-byte UTF-8
-			// sequence is likewise dropped after the grace period.
-			if len(pending) > 0 && time.Since(lastData) > escapeSequenceTimeout {
-				if pending[0] == 0x1b {
-					if len(pending) == 1 {
-						ch <- "esc"
-					}
-					pending = pending[:0]
-				} else if pending[0] >= 0x80 {
-					// An incomplete multi-byte UTF-8 sequence that
-					// never grew to a complete rune: drop it.
-					pending = pending[:0]
-				}
-			}
+			// A non-blocking source returns zero-byte reads; avoid a
+			// busy loop.
 			time.Sleep(2 * time.Millisecond)
-			continue
 		}
 	}
 }

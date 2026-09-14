@@ -2609,6 +2609,31 @@ func TestReadKeysImprovements(t *testing.T) {
 	})
 }
 
+// TestReadKeysLoneEscThroughBlockingReader verifies that a lone ESC
+// reaches the application when the reader blocks without input, as a
+// raw-mode terminal does (VMIN=1, VTIME=0): the grace timer emits "esc"
+// instead of waiting for a byte that never arrives, so a key such as the
+// record browser's esc returns from an opened record to the list. Reads
+// through a pipe block exactly like the terminal's and never produce a
+// zero-byte read.
+func TestReadKeysLoneEscThroughBlockingReader(t *testing.T) {
+	pr, pw := io.Pipe()
+	defer pw.Close()
+	ch := make(chan string, 8)
+	go ReadKeys(pr, ch)
+	if _, err := pw.Write([]byte{0x1b}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case k := <-ch:
+		if k != "esc" {
+			t.Fatalf("expected esc, got %q", k)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for esc: a lone ESC must not wait for the next read")
+	}
+}
+
 func (r *chunkReader) Read(p []byte) (int, error) {
 	if r.idx >= len(r.chunks) {
 		return 0, io.EOF
