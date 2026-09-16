@@ -11,7 +11,13 @@ import (
 // render() holds the lock while computing the displays and building the
 // root. See TheoryOfTUI.
 
-func outputTabLabel(finished bool, generating bool, handoff bool) (label string) {
+// outputTabLabel renders the Output tab's title: the request lifecycle
+// state — done, handoff, block processing, or generating — or the plain
+// tab title when none applies. A component's block processing is observed
+// through the display decorator, because the session tree carries the
+// block-result nodes only after the work returns. See
+// TheoryOfTUIBlockProcessing.
+func outputTabLabel(finished bool, generating bool, handoff bool, processing string) (label string) {
 	// The Output tab is addressed by its kind, never by a fixed index:
 	// the Plan tab shifts every later tab while it is present. See
 	// TheoryOfTUIDynamicPlanTab.
@@ -21,6 +27,11 @@ func outputTabLabel(finished bool, generating bool, handoff bool) (label string)
 		label = "Output (done)"
 	case handoff:
 		label = "Output (handoff...)"
+	case processing != "":
+		// Processing outranks a stale generating hint: a request that
+		// ended without a finish node leaves generating set while a
+		// component still works. See TheoryOfTUIBlockProcessing.
+		label = "Output (processing " + processing + "...)"
 	case generating:
 		label = "Output (generating...)"
 	}
@@ -162,8 +173,9 @@ func buildRoot(t *TUI, width, height int, displays [][]taiui.Line) taiui.Element
 			label = t.planTabLabel()
 		case tabOutput:
 			// The Output tab's label states the request lifecycle:
-			// generating, handoff, or done. See TheoryOfTUI.
-			label = outputTabLabel(t.finished, t.generating, t.handoff)
+			// generating, handoff, block processing, or done. See
+			// TheoryOfTUI and TheoryOfTUIBlockProcessing.
+			label = outputTabLabel(t.finished, t.generating, t.handoff, t.blockProcessing)
 		}
 		// A searching tree pane's panel sits in the inset box below its
 		// search row, so the panel, its title buttons, the fold

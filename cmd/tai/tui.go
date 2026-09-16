@@ -402,16 +402,17 @@ anything resolves the loop: a loop resolved before them binds the
 pre-fork Logger built during startup on the real stderr, painting the
 raw terminal where the next repaint erases it.
 
-The display's state decorator and tree tap are not a Run shadow. A
-static Run wrapper resolved once shadows Module.Run's provider, and a
-goal loop's later SessionTreeContinuation fork can never re-evaluate
-it: every loop binds the zero continuation, opens its own fresh tree,
-and the Tree tab shows only the current loop. Instead forkTUIDisplay
-forks pipeline.RunDecorators with the withTUIOutputObserver decorator;
+The display's state decorator, tree tap, and block-processing observer
+are not a Run shadow. A static Run wrapper resolved once shadows
+Module.Run's provider, and a goal loop's later SessionTreeContinuation
+fork can never re-evaluate it: every loop binds the zero continuation,
+opens its own fresh tree, and the Tree tab shows only the current loop.
+Instead forkTUIDisplay forks pipeline.RunDecorators with its display
+decorators — the output observer and the block-processing observer;
 Module.Run applies the decorators inside its provider (see
 pipeline.TheoryOfRunDecorators), so each loop scope re-evaluates
 Module.Run, re-binds that loop's continuation, and applies the
-decorator — one run owns one tree, and the Tree tab renders every
+decorators — one run owns one tree, and the Tree tab renders every
 loop's session nodes. The goal tree observer is forked to the same
 setTree path, so the goal runner's verdict nodes reach the Tree tab
 through the observer.
@@ -779,6 +780,13 @@ type TUI struct {
 	// precedence over the "generating..." hint in the Output tab title.
 	// See pipeline.TheoryOfHandoff and TheoryOfTUIHandoff.
 	handoff bool
+	// blockProcessing names the component whose block processing is in
+	// progress (go-test, go-src, ingest, shell, ...), empty when none
+	// is. The display decorator wraps the session's component set with
+	// the TUI as the observer, so the Output tab title shows
+	// "processing <kind>..." while the user waits on a component's
+	// work. Guarded by mu. See TheoryOfTUIBlockProcessing.
+	blockProcessing string
 	// showHelp reports whether the operation help overlay is visible.
 	// The ? key, or the Logs toolbar's help button, toggles it. The
 	// overlay is derived from state like the quit confirmation bar:
@@ -1273,12 +1281,15 @@ func (t *TUI) genEnd(err error) {
 		t.write([]byte(err.Error() + "\n"))
 	}
 	t.mu.Lock()
-	// The session has ended: clear the in-flight hint with the finished
+	// The session has ended: clear the in-flight hints with the finished
 	// state. A request that returned without a finish line (e.g., an
-	// error path) must not leave the hint stuck on. See TheoryOfTUI.
+	// error path) must not leave a hint stuck on. The block-processing
+	// hint clears too, so a run that stopped mid-processing leaves none.
+	// See TheoryOfTUI and TheoryOfTUIBlockProcessing.
 	t.finished = true
 	t.generating = false
 	t.handoff = false
+	t.blockProcessing = ""
 	// The last loop ends with the run, so its plan tab goes too. See
 	// TheoryOfTUIDynamicPlanTab.
 	t.closePlanTabLocked()
@@ -1930,17 +1941,20 @@ func forkTUIDisplay(scope dscope.Scope, tui *TUI) dscope.Scope {
 		// pipeline.TheoryOfGoalMode.
 		func() pipeline.GoalTreeObserver { return tui.setTree },
 	)
-	// The display's state decorator and tree tap travel as
-	// RunDecorators, applied by Module.Run inside its provider: a goal
-	// loop's later SessionTreeContinuation fork re-evaluates Module.Run,
-	// so the per-loop continuation reaches the loop and one run owns one
-	// tree. A static Run wrapper would shadow the provider and freeze
-	// the continuation at zero. See TheoryOfTUIDisplayFork and
-	// pipeline.TheoryOfRunDecorators.
+	// The display's state decorator, tree tap, and block-processing
+	// observer travel as RunDecorators, applied by Module.Run inside its
+	// provider: a goal loop's later SessionTreeContinuation fork
+	// re-evaluates Module.Run, so the per-loop continuation reaches the
+	// loop and one run owns one tree. A static Run wrapper would shadow
+	// the provider and freeze the continuation at zero. See
+	// TheoryOfTUIDisplayFork and pipeline.TheoryOfRunDecorators.
 	return scope.Fork(func() pipeline.RunDecorators {
 		return pipeline.RunDecorators{
 			func(run pipeline.Run) pipeline.Run {
 				return withTUIOutputObserver(run, tui)
+			},
+			func(run pipeline.Run) pipeline.Run {
+				return withTUIBlockProcessing(run, tui)
 			},
 		}
 	})
