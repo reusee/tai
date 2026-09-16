@@ -330,6 +330,14 @@ type treeTabState struct {
 	// collapsed restores them. Nil until the first fold. See
 	// TheoryOfTreeTab.
 	collapseAllSaved map[string]bool
+
+	// Search state, per tree-shaped pane. See TheoryOfTreeSearch.
+	searching   bool
+	searchBar   taiui.InputBar
+	searchTree  *tree.Tree
+	searchNames map[string]bool
+	matches     []treeMatch
+	matchIndex  int
 }
 
 // treeAlignmentsOf computes the alignments of the projected tree: the
@@ -641,25 +649,31 @@ func (t *TUI) treeTabLabel() string {
 	return "Tree (" + t.treeTab.mode.label() + ")"
 }
 
-// treeDisplay renders the Tree tab's display: the depth-first walk of
-// the current projection, each node contributing its header row plus
-// its wrapped body lines when expanded. The walk starts at the tree
-// root, so every goal loop's nodes render. The walk records every
-// node's row range together with the node's expandability at the
-// rendering width, so a pointer press maps onto the node the way the
-// rows render and the fold column reads one fact. The caller holds
-// t.mu. See TheoryOfTreeTab.
 func (t *TUI) treeDisplay(contentWidth int, base taiui.Color) []taiui.Line {
 	tr := t.treeView
 	if tr == nil {
 		return nil
+	}
+	// While searching, the walk reads the filtered tree (the match
+	// set plus ancestors, or the flat stream match list), so matched
+	// nodes' full paths stay visible. See TheoryOfTreeSearch.
+	if t.treeTab.searching && t.treeTab.searchBar.Line() != "" {
+		if t.treeTab.mode == treeViewStream {
+			if t.treeTab.searchTree != nil {
+				tr = t.treeTab.searchTree
+			}
+			return t.treeStreamDisplayWith(contentWidth, base, tr, true)
+		}
+		if t.treeTab.searchTree != nil {
+			tr = t.treeTab.searchTree
+		}
 	}
 	// The stream projection bypasses the walk: every node renders as
 	// one flat chronological line.
 	if t.treeTab.mode == treeViewStream {
 		return t.treeStreamDisplay(contentWidth, base)
 	}
-	if t.treeTab.mode != treeViewAll {
+	if t.treeTab.mode != treeViewAll && t.treeTab.searchTree == nil {
 		tr = tr.Extract(t.treeTab.mode.predicate())
 	}
 	alt := taiui.AltBG(base)
@@ -692,15 +706,16 @@ func (t *TUI) treeDisplay(contentWidth int, base taiui.Color) []taiui.Line {
 	return out
 }
 
-// treeStreamDisplay renders the stream projection: every node of the
-// session tree as one flat line, ordered by insert time — the
-// chronological order the nodes were written — with no indentation,
-// no fold column, and no expansion. Each node's row range records
-// expandable false, so the fold controls stay inert while the click
-// and title-status paths keep mapping presses onto nodes. See
-// TheoryOfTreeTab.
 func (t *TUI) treeStreamDisplay(contentWidth int, base taiui.Color) []taiui.Line {
-	tr := t.treeView
+	return t.treeStreamDisplayWith(contentWidth, base, t.treeView, false)
+}
+
+// treeStreamDisplayWith renders the flat stream projection, optionally
+// restricted to the search match set. Search matches are already
+// ordered by insert time in searchTree, but the flat stream sort is
+// reapplied so the two paths share one renderer. See TheoryOfTreeTab
+// and TheoryOfTreeSearch.
+func (t *TUI) treeStreamDisplayWith(contentWidth int, base taiui.Color, tr *tree.Tree, matchedOnly bool) []taiui.Line {
 	if tr == nil {
 		return nil
 	}
@@ -712,7 +727,9 @@ func (t *TUI) treeStreamDisplay(contentWidth int, base taiui.Color) []taiui.Line
 	var walk func(n *tree.Node)
 	walk = func(n *tree.Node) {
 		if n.Type != tree.TypeRoot {
-			nodes = append(nodes, n)
+			if !matchedOnly || t.treeTab.searchNames[n.Name] {
+				nodes = append(nodes, n)
+			}
 		}
 		for _, c := range n.Children() {
 			walk(c)
@@ -1115,6 +1132,11 @@ func (t *TUI) floatTreeControls(box taiui.Box, display []taiui.Line) {
 	if idx < 0 || idx >= len(t.tabs.Expanded) || !t.tabs.Expanded[idx] || t.treeView == nil {
 		return
 	}
+	// The pane's display and scroll bound come from the box its panel
+	// renders in, which a searching pane insets below its search row;
+	// the same box drives the fold column's geometry. See
+	// TheoryOfTreeSearch.
+	box = t.tabRenderBox(idx, box)
 	if box.Width() <= 0 || box.Height() <= 0 || len(display) == 0 {
 		return
 	}
@@ -1152,21 +1174,26 @@ func (t *TUI) floatTreeControls(box taiui.Box, display []taiui.Line) {
 // mirroring the Output tab's control behavior. It reports whether a
 // control consumed the press. The pane's own layout index drives the
 // box and the scroll state, so a press in the Plan pane acts on the
-// Plan pane. The caller holds t.mu. See TheoryOfTreeTab and
-// TheoryOfTUIDynamicPlanTab.
+// Plan pane. The caller holds t.mu. See TheoryOfTreeTab,
+// TheoryOfTUIDynamicPlanTab, and TheoryOfTreeSearch.
 func (t *TUI) toggleTreeControlAtClick(x, y int) bool {
 	idx := t.treeTab.paneIdx
 	if idx < 0 || idx >= len(t.tabs.Expanded) || !t.tabs.Expanded[idx] || t.treeView == nil {
 		return false
 	}
-	box := t.tabs.Boxes(t.width, t.height)[idx]
+	outer := t.tabs.Boxes(t.width, t.height)[idx]
+	// The rendered box is the inset one while the pane searches, so
+	// the press row maps onto the rows the panel shows; the outer box
+	// drives the display, which reads only the width and stays
+	// unchanged by the inset. See TheoryOfTreeSearch.
+	box := t.tabRenderBox(idx, outer)
 	if box.Width() <= 0 || box.Height() <= 0 {
 		return false
 	}
 	if y < box.Top+1 || y >= box.Bottom {
 		return false
 	}
-	display := wrappedDisplay(t, idx, box)
+	display := wrappedDisplay(t, idx, outer)
 	if len(display) == 0 {
 		return false
 	}
@@ -1202,11 +1229,15 @@ func (t *TUI) toggleTreeControlAtClick(x, y int) bool {
 
 func (t *TUI) scrollToTreeNode(name string) {
 	idx := t.treeTab.paneIdx
-	box := t.tabs.Boxes(t.width, t.height)[idx]
+	outer := t.tabs.Boxes(t.width, t.height)[idx]
+	// The rendered box is the inset one while the pane searches; the
+	// scroll bound follows the rendered pane, so the expansion opens
+	// at the node's first visible row. See TheoryOfTreeSearch.
+	box := t.tabRenderBox(idx, outer)
 	if box.Width() <= 0 || box.Height() <= 0 {
 		return
 	}
-	display := wrappedDisplay(t, idx, box)
+	display := wrappedDisplay(t, idx, outer)
 	if len(display) == 0 {
 		return
 	}
@@ -1242,7 +1273,10 @@ func (t *TUI) treeAtClick(x, y int) {
 	if idx < 0 || idx >= len(t.tabs.Expanded) || !t.tabs.Expanded[idx] {
 		return
 	}
-	box := t.tabs.Boxes(t.width, t.height)[idx]
+	// The pane's box is the inset one while it searches, so the press
+	// maps onto the rows the last display recorded and the search row
+	// itself stays outside the content area. See TheoryOfTreeSearch.
+	box := t.tabRenderBox(idx, t.tabs.Boxes(t.width, t.height)[idx])
 	if x < box.Left || x >= box.Right || y <= box.Top || y >= box.Bottom {
 		return
 	}

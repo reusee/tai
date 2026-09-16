@@ -1359,6 +1359,21 @@ func (t *TUI) handleKey(key string) bool {
 	if t.handleChatInputKey(key) {
 		return false
 	}
+	// While the focused tree pane searches, the raw key belongs to the
+	// search bar: "/" opens it, Esc closes it, Up/Down and Enter move
+	// the match cursor, and every editing key edits the keyword. The
+	// raw key is consulted before mapTUIKey, so the search bar receives
+	// plain characters — "q", "s", "1" — instead of the TUI's
+	// navigation actions. See TheoryOfTreeSearch.
+	if t.handleTreeSearchKey(key) {
+		// A key the search consumed still cancels a pending quit
+		// confirmation before it edits the keyword; only the quit key
+		// itself leaves the confirmation armed. See TheoryOfTUI.
+		if key != "quit" {
+			t.cancelConfirmQuit()
+		}
+		return false
+	}
 	// taiui.ReadKeys returns generic key names ("q", "s", "?", "[", "]");
 	// mapTUIKey translates the TUI's key bindings to semantic names so
 	// the dispatch below reads as a table of actions, not a table of
@@ -1580,6 +1595,13 @@ func (t *TUI) handleMouseKey(key string) bool {
 			break
 		}
 		t.quit.Cancel()
+		// A press on a searching tree pane's search row is consumed by
+		// the search: a press on a button runs the button's action, and
+		// any other cell on the row is inert. The press never reaches
+		// the tab machine. See TheoryOfTreeSearch.
+		if t.treeSearchPressLocked(x, y) {
+			break
+		}
 		switch {
 		case t.helpPressLocked(x, y):
 			// A press inside the help overlay closes it. See
@@ -1671,15 +1693,15 @@ func (t *TUI) pageScroll(direction int) {
 	if idx < 0 || !t.tabs.Expanded[idx] {
 		return
 	}
-	boxes := t.tabs.Boxes(t.width, t.height)
-	box := boxes[idx]
+	// The rendered box is the inset one while a tree pane searches; the
+	// page size follows the rendered pane, like the render's scroll
+	// update. tuiPaneHeight applies the interactive Output tab's input
+	// bar row on top of the label strip. See TheoryOfTUIChatInput and
+	// TheoryOfTreeSearch.
+	box := t.tabRenderBox(idx, t.tabs.Boxes(t.width, t.height)[idx])
 	if box.Width() <= 0 || box.Height() <= 0 {
 		return
 	}
-	// The scroll view is the panel box minus the one-row label strip,
-	// and the interactive Output tab's input bar row on top of it;
-	// tuiPaneHeight applies both so the page size matches the rendered
-	// pane. See TheoryOfTUIChatInput.
 	paneHeight := t.tuiPaneHeight(idx, box)
 	t.scrolls[idx].PageScroll(direction, paneHeight)
 }
@@ -1785,8 +1807,12 @@ func (t *TUI) render() {
 		}
 		// tuiPaneHeight reserves every panel's one-row label strip plus
 		// the interactive Output tab's input bar row, matching the boxes
-		// buildRoot renders. See TheoryOfTUIChatInput.
-		t.scrolls[idx].Update(len(displays[idx]), t.tuiPaneHeight(idx, boxes[idx]))
+		// buildRoot renders. A searching tree pane's panel is inset below
+		// its search row, so the pane height comes from the same inset
+		// box the panel renders in. See TheoryOfTUIChatInput and
+		// TheoryOfTreeSearch.
+		box := t.tabRenderBox(idx, boxes[idx])
+		t.scrolls[idx].Update(len(displays[idx]), t.tuiPaneHeight(idx, box))
 	}
 
 	// The tree-shaped panes' fold controls follow the content: a node
@@ -1810,20 +1836,22 @@ func (t *TUI) render() {
 
 	taiui.Render(buildRoot(t, width, height, displays), t.screen)
 
-	// The chat input bar carries the terminal cursor while it is
-	// focused: the cursor is shown on the focus gain and hidden on the
-	// loss, written after the frame is presented so the sequence stays
-	// serial with the screen's output. Between transitions the Input
-	// element's CursorAt records the editing position in the frame and
-	// the screen repositions the cursor on its own. See
-	// TheoryOfTUIChatInput.
-	if t.inputFocused != t.wasInputFocused {
-		if t.inputFocused {
+	// The terminal cursor follows the components that hold a text
+	// cursor: the chat input bar while focused, or a focused searching
+	// tree pane. The cursor is shown on the rise and hidden on the
+	// fall, written after the frame is presented so the sequence stays
+	// serial with the screen's output. Between transitions the
+	// component's CursorAt records the editing position in the frame
+	// and the screen repositions the cursor on its own. See
+	// TheoryOfTUIChatInput and TheoryOfTreeSearch.
+	cursorWanted := t.inputFocused || t.treeSearchCursorWanted()
+	if cursorWanted != t.wasInputFocused {
+		if cursorWanted {
 			io.WriteString(t.tty, taiui.CursorRestoreSequence)
 		} else {
 			io.WriteString(t.tty, taiui.CursorHideSequence)
 		}
-		t.wasInputFocused = t.inputFocused
+		t.wasInputFocused = cursorWanted
 	}
 }
 

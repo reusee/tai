@@ -89,7 +89,10 @@ func (t *TUI) titleButtonHitLocked(x, y int) (controlBarAction, bool) {
 		if idx < 0 || idx >= len(boxes) || !t.tabs.Expanded[idx] {
 			continue
 		}
-		box := boxes[idx]
+		// The buttons render on the panel's title row, which a
+		// searching tree pane's search row pushes down one row; the
+		// inset box is the one geometry source. See TheoryOfTreeSearch.
+		box := t.tabRenderBox(idx, boxes[idx])
 		if y != box.Top || x < box.Left || x >= box.Right {
 			continue
 		}

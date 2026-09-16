@@ -40,6 +40,10 @@ func wrappedDisplay(t *TUI, idx int, box taiui.Box) []taiui.Line {
 	if !ok {
 		return nil
 	}
+	// A searching tree pane reads the inset box so its display wraps
+	// at the shifted panel's width and the scroll math uses the same
+	// geometry the hit tests read. See TheoryOfTreeSearch.
+	box = t.tabRenderBox(idx, box)
 	base := panelStyle.BaseBG
 	if t.tabs.Focus == idx {
 		base = panelStyle.FocusBG
@@ -161,7 +165,11 @@ func buildRoot(t *TUI, width, height int, displays [][]taiui.Line) taiui.Element
 			// generating, handoff, or done. See TheoryOfTUI.
 			label = outputTabLabel(t.finished, t.generating, t.handoff)
 		}
-		box := boxes[i]
+		// A searching tree pane's panel sits in the inset box below its
+		// search row, so the panel, its title buttons, the fold
+		// controls, and the title status all read one geometry. See
+		// TheoryOfTreeSearch.
+		box := t.tabRenderBox(i, boxes[i])
 		var inputBar taiui.Element
 		var submitGlyphEl taiui.Element
 		if kind == tabOutput && t.interactive && t.tabs.Expanded[i] && box.Height() > 1 && box.Width() > 0 {
@@ -199,6 +207,15 @@ func buildRoot(t *TUI, width, height int, displays [][]taiui.Line) taiui.Element
 		}
 		if panel != nil {
 			elements = append(elements, panel)
+		}
+		if panel != nil && t.tabs.Expanded[i] && (kind == tabTree || kind == tabPlan) {
+			// A searching tree pane's search row occupies the row its
+			// inset panel freed: keyword editing on the left, then the
+			// match indicator and the navigation buttons on the right.
+			// See TheoryOfTreeSearch.
+			if searchEl := t.treeSearchElement(kind, boxes[i]); searchEl != nil {
+				elements = append(elements, searchEl)
+			}
 		}
 		if kind == tabTree && panel != nil && t.tabs.Expanded[i] {
 			// The Tree tab's title row shows the loop and attempt of
