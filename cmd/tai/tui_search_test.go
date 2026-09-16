@@ -311,3 +311,81 @@ func TestTreeFoldClickAlignsWhileSearching(t *testing.T) {
 		t.Fatal("the fold press must toggle the node its row shows")
 	}
 }
+
+// TestTreeSearchCollapsesUnmatchedAutoExpansion verifies an expansion
+// the search made lasts exactly as long as the match: typing on until
+// the keyword no longer matches the node restores the node's earlier
+// collapsed state, and shortening the keyword expands it again. See
+// TheoryOfTreeSearch.
+func TestTreeSearchCollapsesUnmatchedAutoExpansion(t *testing.T) {
+	tu := newSearchTestTUI()
+	tu.treeView = searchTestTree(t)
+
+	tu.handleKey("/")
+	typeSearchKeyword(tu, "needle")
+	tu.mu.Lock()
+	expanded := tu.treeTab.expanded["attempt-1"]
+	tu.mu.Unlock()
+	if !expanded {
+		t.Fatal("a content match must expand its node")
+	}
+
+	// Typing on past the match collapses the stale expansion and
+	// leaves no tracking behind.
+	tu.handleKey("z")
+	tu.mu.Lock()
+	matches := len(tu.treeTab.matches)
+	expanded = tu.treeTab.expanded["attempt-1"]
+	tracked := len(tu.treeTab.searchExpanded)
+	tu.mu.Unlock()
+	if matches != 0 {
+		t.Fatalf("the extended keyword must match nothing, got %d matches", matches)
+	}
+	if expanded {
+		t.Fatal("an unmatched auto-expanded node must collapse")
+	}
+	if tracked != 0 {
+		t.Fatalf("the restored node must leave the tracking set, got %d entries", tracked)
+	}
+
+	// Deleting the extra character re-matches the node and the jump
+	// expands it again.
+	tu.handleKey("backspace")
+	tu.mu.Lock()
+	matches = len(tu.treeTab.matches)
+	expanded = tu.treeTab.expanded["attempt-1"]
+	tu.mu.Unlock()
+	if matches != 2 {
+		t.Fatalf("the shortened keyword must match both occurrences, got %d", matches)
+	}
+	if !expanded {
+		t.Fatal("re-matching must expand the node again")
+	}
+}
+
+// TestTreeSearchKeepsManualExpansionOnRestore verifies the restore
+// returns an unmatched node to the expansion state it had before the
+// search expanded it: a manual expansion survives, so the search never
+// collapses content the user opened. See TheoryOfTreeSearch.
+func TestTreeSearchKeepsManualExpansionOnRestore(t *testing.T) {
+	tu := newSearchTestTUI()
+	tu.treeView = searchTestTree(t)
+
+	tu.mu.Lock()
+	tu.toggleTreeNodeByName("attempt-1")
+	before := tu.treeTab.expanded["attempt-1"]
+	tu.mu.Unlock()
+	if !before {
+		t.Fatal("setup: the node must be expanded before the search")
+	}
+
+	tu.handleKey("/")
+	typeSearchKeyword(tu, "needle")
+	tu.handleKey("z")
+	tu.mu.Lock()
+	after := tu.treeTab.expanded["attempt-1"]
+	tu.mu.Unlock()
+	if !after {
+		t.Fatal("the manual expansion must survive the search")
+	}
+}

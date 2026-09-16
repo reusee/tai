@@ -32,6 +32,15 @@ Tree tab search theory (cmd/tai):
 - A content-line jump expands the node first and then scrolls to the
   occurrence's exact wrapped display row; header matches need no
   expansion. Expansion never changes the match set.
+- An expansion the search made lasts exactly as long as the match: when
+  the keyword stops matching the node, the node returns to the
+  expansion state it had before the search expanded it, so continued
+  typing collapses content the new keyword no longer matches while a
+  manual expansion or a type default survives untouched. The same
+  restore runs when the keyword is emptied and when the search closes,
+  because neither state holds a match; a manual toggle and the
+  collapse-all key discard the search's record of the node's earlier
+  state, so the user's explicit structure is never overwritten.
 - While searching, the whole panel shifts down one row and the search
   bar occupies the freed row. tabRenderBox is the one geometry source
   for the inset panel, fold controls, toolbar, status overlay, and
@@ -107,7 +116,9 @@ func appendNodeMatches(ms []treeMatch, n *tree.Node, keyword string) []treeMatch
 }
 
 // refreshTreeSearchLocked recomputes the filtered tree and matches for
-// the active pane. Callers run inside withPane and hold t.mu.
+// the active pane, and returns the nodes the search auto-expanded to
+// their earlier state once the keyword stops matching them. Callers
+// run inside withPane and hold t.mu. See TheoryOfTreeSearch.
 func (t *TUI) refreshTreeSearchLocked() {
 	st := &t.treeTab
 	st.searchTree = nil
@@ -115,12 +126,23 @@ func (t *TUI) refreshTreeSearchLocked() {
 	st.matches = nil
 	st.matchIndex = 0
 	if !st.searching || t.treeView == nil {
+		t.restoreSearchExpansionsLocked(nil)
 		return
 	}
 	keyword := st.searchBar.Line()
 	if keyword == "" {
+		t.restoreSearchExpansionsLocked(nil)
 		return
 	}
+	t.collectTreeSearchLocked(keyword)
+	t.restoreSearchExpansionsLocked(st.searchNames)
+}
+
+// collectTreeSearchLocked builds the filtered tree and the match list
+// of the current keyword. Callers run inside withPane and hold t.mu.
+// See TheoryOfTreeSearch.
+func (t *TUI) collectTreeSearchLocked(keyword string) {
+	st := &t.treeTab
 	pred := func(n *tree.Node) bool { return nodeMatchesSearch(n, keyword) }
 
 	if st.mode == treeViewStream {
@@ -159,6 +181,32 @@ func (t *TUI) refreshTreeSearchLocked() {
 	}
 }
 
+// restoreSearchExpansionsLocked returns the search-expanded nodes that
+// the current match set no longer holds to the expansion state they
+// had before the search expanded them. An expansion the search made
+// exists to reveal a matched occurrence, so it lasts exactly as long
+// as the match: a node the user had already expanded returns expanded,
+// and a collapsed node stays collapsed. keep is the current match set;
+// nil restores every tracked node, because an empty keyword and a
+// closed search hold no match. The caller holds t.mu. See
+// TheoryOfTreeSearch.
+func (t *TUI) restoreSearchExpansionsLocked(keep map[string]bool) {
+	st := &t.treeTab
+	if len(st.searchExpanded) == 0 {
+		return
+	}
+	if st.expanded == nil {
+		st.expanded = make(map[string]bool)
+	}
+	for name, wasExpanded := range st.searchExpanded {
+		if keep[name] {
+			continue
+		}
+		st.expanded[name] = wasExpanded
+		delete(st.searchExpanded, name)
+	}
+}
+
 func (t *TUI) openTreeSearchLocked() {
 	st := &t.treeTab
 	st.searching = true
@@ -175,6 +223,9 @@ func (t *TUI) closeTreeSearchLocked() {
 	st.searchNames = nil
 	st.matches = nil
 	st.matchIndex = 0
+	// A closed search holds no match, so it restores the expansions
+	// the search made. See TheoryOfTreeSearch.
+	t.restoreSearchExpansionsLocked(nil)
 }
 
 func (t *TUI) paneSearching(kind tuiTab) bool {
@@ -325,6 +376,15 @@ func (t *TUI) jumpTreeSearchLocked() {
 	if m.contentLine >= 0 {
 		if st.expanded == nil {
 			st.expanded = map[string]bool{}
+		}
+		if st.searchExpanded == nil {
+			st.searchExpanded = map[string]bool{}
+		}
+		// The first auto-expansion of a node records the state it had
+		// before, so an unmatched node can return to it. See
+		// TheoryOfTreeSearch.
+		if _, tracked := st.searchExpanded[m.name]; !tracked {
+			st.searchExpanded[m.name] = st.expanded[m.name]
 		}
 		st.expanded[m.name] = true
 	}

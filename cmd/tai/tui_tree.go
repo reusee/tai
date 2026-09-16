@@ -338,6 +338,11 @@ type treeTabState struct {
 	searchNames map[string]bool
 	matches     []treeMatch
 	matchIndex  int
+	// searchExpanded records the nodes the search auto-expanded
+	// together with the expansion state each node had before, so a
+	// node the keyword stops matching returns to its earlier state
+	// instead of staying expanded. See TheoryOfTreeSearch.
+	searchExpanded map[string]bool
 }
 
 // treeAlignmentsOf computes the alignments of the projected tree: the
@@ -950,12 +955,15 @@ func (t *TUI) toggleTreeNodeAtRow(row int) {
 // call initialized it. Expanding the node scrolls the view to its
 // first display row, so the expanded content opens at its beginning;
 // every expansion path routes through this method, so the invariant
-// cannot regress. Collapsing never scrolls. The caller holds t.mu.
-// See TheoryOfTreeTab.
+// cannot regress. Collapsing never scrolls. A manual toggle drops the
+// search's record of the node's earlier state, so the user's explicit
+// choice survives a later un-match. The caller holds t.mu. See
+// TheoryOfTreeTab and TheoryOfTreeSearch.
 func (t *TUI) toggleTreeNodeByName(name string) {
 	if t.treeTab.expanded == nil {
 		t.treeTab.expanded = make(map[string]bool)
 	}
+	delete(t.treeTab.searchExpanded, name)
 	wasExpanded := t.treeTab.expanded[name]
 	t.treeTab.expanded[name] = !wasExpanded
 	if !wasExpanded {
@@ -1036,6 +1044,11 @@ func (t *TUI) collapseAllPaneNodesLocked(kind tuiTab) {
 			for name := range t.treeTab.collapseAllSaved {
 				t.treeTab.expanded[name] = true
 			}
+			// The restored map is the structure the user asked for; the
+			// search's record of earlier states refers to the map the
+			// fold replaced, so it clears with it. See
+			// TheoryOfTreeSearch.
+			t.treeTab.searchExpanded = nil
 			return
 		}
 		// Fold branch: snapshot the currently expanded nodes, fold
@@ -1060,6 +1073,10 @@ func (t *TUI) collapseAllPaneNodesLocked(kind tuiTab) {
 				}
 			}
 			t.treeTab.expanded = make(map[string]bool)
+			// The fold replaced the map the search recorded its earlier
+			// states against, so the record clears with it. See
+			// TheoryOfTreeSearch.
+			t.treeTab.searchExpanded = nil
 			if anchorName != "" {
 				t.scrollToTreeNode(anchorName)
 			}
