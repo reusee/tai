@@ -30,35 +30,33 @@ Record browser theory (cmd/tai):
   browser does not render, so an analysis keeps the generation TUI.
 - The list view shows every recorded session, most recent first, one
   line per record, read through records.ListSessionInfos; the -session
-  flag opens its record directly on entry. The selected record is
-  highlighted and moves with the up and down keys, the page keys, or
-  the wheel; Enter or a double click opens it.
+  flag opens its record directly on entry. The selected record is the
+  browser's one focus: the up and down keys, the page keys, home and
+  end, and the wheel move it, and Enter or a double click opens it.
 - The tree view renders the opened record's tree with the Tree tab's own
-  rendering and interaction — the same rows, fold column, previews,
-  expansions, and collapse-all — so a record is browsed exactly like a
-  live session. The tree is reconstructed from the recorded operation
+  rendering and pointer interaction — the same rows, fold column,
+  previews, expansions, and collapse-all — so a record is browsed
+  exactly like a live session, except that the tree carries no keyboard
+  focus: the up, down, page, home, and end keys and the wheel scroll its
+  content, matching the generation TUI's pane scrolling, and Enter is
+  inert there. The tree is reconstructed from the recorded operation
   stream with tree.Replay (records.LoadSessionTree); the pane is one TUI
   value whose tab layout holds exactly one tab, so the shared paths read
   the pane's box, scroll state, and row ranges from it and what is drawn
   is what is pressed. The elapsed timer counts from the record's start,
   so a row shows how far into the session its node was written.
-- The row ranges the navigation and the pointer mapping read come from
-  the display the pane renders; the browser recomputes the display
-  whenever it needs the rows, so the keyboard cursor never depends on a
-  render having happened since the last change.
+- The scroll keys refresh the pane's display and scroll bounds before
+  scrolling, so a key press never depends on a render having happened
+  since the last change; the row ranges the pointer mapping reads come
+  from the same display.
 - The title row's left side carries the navigation: the record list's
   label and, while a record is open, the record's id after it. A press on
   the navigation returns to the list; the two leading cells stay
   untouched, keeping the title row's rule at the box edge, like the Tree
   tab's status.
-- The tree view carries a keyboard node cursor: up and down move it over
-  the visible nodes and Enter toggles the node under it, so a record is
-  browsable without a mouse; the fold column, a double click on a node,
-  and the c key fold and restore exactly as in the Tree tab, and the v
-  key cycles the projection.
 - Rendering stays a plain function of the browser's state: the browser
   rebuilds a full element tree per frame from its records, the opened
-  tree, and the cursor, following the TUI's rendering pattern.
+  tree, and the projection, following the TUI's rendering pattern.
 `
 
 // The record browser's fixed labels. See TheoryOfRecordBrowser.
@@ -73,15 +71,13 @@ const (
 	recordNavIndent = 2
 )
 
-// recordBrowserHelp is the browser's key-binding list for the help
-// overlay. See TheoryOfRecordBrowser.
 var recordBrowserHelp = []string{
-	"up / down\tselect a record; move the node cursor in a tree",
-	"enter\topen the selected record; toggle the node under the cursor",
+	"up / down\tmove the record selection; scroll the tree",
+	"enter\topen the selected record (the tree carries no focus)",
 	"page up / down\ta page of records; a page of tree rows",
-	"home / end\tfirst / last record or node",
+	"home / end\tfirst / last record or row",
 	"esc\treturn to the record list",
-	"click\tselect a record; put the tree cursor on a node",
+	"click\tselect a record; a tree row acts on a double click",
 	"double-click\topen a record; expand or collapse a node",
 	"tree column\tclick ▸ / ▾ to collapse / expand the node",
 	"c\tfold every node of the tree; press again to restore",
@@ -124,11 +120,6 @@ func runRecordBrowser(scope dscope.Scope) {
 	}
 }
 
-// RecordBrowser is the record subcommand's dedicated TUI: one record tab
-// that lists the recorded sessions and renders the tree of an opened
-// record. It owns its terminal session and its state; the tree pane is a
-// dedicated TUI value carrying the Tree tab's rendering and interaction
-// state. See TheoryOfRecordBrowser.
 type RecordBrowser struct {
 	tty      tty.Tty
 	screen   *taiui.TerminalScreen
@@ -154,8 +145,6 @@ type RecordBrowser struct {
 	// treePane carries the opened record's tree and the Tree tab's
 	// rendering and interaction state. See TheoryOfRecordBrowser.
 	treePane *TUI
-	// nodeCursor names the node the keyboard's cursor highlights.
-	nodeCursor string
 
 	// lastListPress records the previous left press in the list view,
 	// so a second press at the same cell within the double-click window
@@ -286,10 +275,6 @@ func (b *RecordBrowser) openRecord(id int64) {
 	p.startTime = recordStartTime(b.infos, id, tr)
 	p.scrolls[paneIdx] = taiui.ScrollState{}
 	p.mu.Unlock()
-	b.nodeCursor = ""
-	if children := tr.Root().Children(); len(children) > 0 {
-		b.nodeCursor = children[0].Name
-	}
 	b.currentID = id
 }
 
@@ -305,7 +290,6 @@ func (b *RecordBrowser) backToList() {
 	p.treeTab = treeTabState{paneIdx: paneIdx}
 	p.mu.Unlock()
 	b.currentID = 0
-	b.nodeCursor = ""
 	b.err = ""
 }
 
@@ -459,9 +443,8 @@ func (b *RecordBrowser) listView(box taiui.Box) taiui.Element {
 }
 
 // treeView renders the opened record's tree: the pane's shared tree
-// display through the tab panel, with the keyboard cursor's highlight
-// and the fold column's hover affordance on top.
-// See TheoryOfRecordBrowser.
+// display through the tab panel, with the fold column's hover affordance
+// on top. See TheoryOfRecordBrowser.
 func (b *RecordBrowser) treeView(box taiui.Box) taiui.Element {
 	p := b.treePane
 	label := fmt.Sprintf("%s #%d", recordTabTitle, b.currentID)
@@ -479,57 +462,30 @@ func (b *RecordBrowser) treeView(box taiui.Box) taiui.Element {
 	panel := taiui.TabPanel(box, recordTabTitle, label, true, true, false,
 		display, p.scrolls[paneIdx], panelStyle)
 	elements := []any{panel}
-	if el := b.cursorElement(box, display); el != nil {
-		elements = append(elements, el)
-	}
 	if el := p.treeFoldHoverElement(box, display); el != nil {
 		elements = append(elements, el)
 	}
 	return taiui.Overlay(elements...)
 }
 
-// syncTreeDisplay recomputes the tree pane's display when a record is
-// open, so the row ranges and geometry the navigation and press mapping
-// read are current. The pane caches its wrapped node lines, so the call
-// is cheap; the shared tree paths already recompute the display on their
-// press paths, and the keyboard cursor reads the same rows, so it must
-// not depend on a render having happened since the last change. The
-// caller must not hold the pane's lock. See TheoryOfRecordBrowser.
-func (b *RecordBrowser) syncTreeDisplay() {
+// syncTreeScroll recomputes the tree pane's display when a record is
+// open and updates the pane's scroll bounds from it, so the row ranges
+// the pointer mapping reads and the content extent the scroll keys clamp
+// against are current. The pane caches its wrapped node lines, so the
+// call is cheap; the shared press paths already recompute the display,
+// and the scroll keys read the same extent, so they must not depend on a
+// render having happened since the last change. The caller must not hold
+// the pane's lock. See TheoryOfRecordBrowser.
+func (b *RecordBrowser) syncTreeScroll() {
 	p := b.treePane
 	if p.treeView == nil {
 		return
 	}
 	box := b.tabBox()
 	p.mu.Lock()
-	p.treeDisplay(treeContentWidth(box.Width()), panelStyle.FocusBG)
+	display := p.treeDisplay(treeContentWidth(box.Width()), panelStyle.FocusBG)
+	p.scrolls[p.treeTab.paneIdx].Update(len(display), taiui.PaneHeight(box))
 	p.mu.Unlock()
-}
-
-// cursorElement highlights the node cursor's header row, so the
-// keyboard's position is visible before any toggle. The highlight carries
-// the display row's own text, so the row keeps its content and gains the
-// reversed affordance. See TheoryOfRecordBrowser.
-func (b *RecordBrowser) cursorElement(box taiui.Box, display []taiui.Line) taiui.Element {
-	row := b.cursorRow()
-	if row < 0 {
-		return nil
-	}
-	paneHeight := taiui.PaneHeight(box)
-	offset := taiui.ClampOffset(b.treeScroll().Offset, len(display), paneHeight)
-	if row < offset || row >= offset+paneHeight || row >= len(display) {
-		return nil
-	}
-	text := display[row].Text
-	width := max(box.Width()-1, 1)
-	if w := displaywidth.String(text); w < width {
-		text += strings.Repeat(" ", width-w)
-	}
-	screenRow := box.Top + 1 + row - offset
-	return taiui.Text(text,
-		taiui.Box{Top: screenRow, Left: box.Left, Bottom: screenRow + 1, Right: box.Right},
-		taiui.Reverse(true),
-	)
 }
 
 // recordListItem renders one list row: the record's id, command, start,
@@ -552,90 +508,34 @@ func recordStartText(start string) string {
 	return displaywidth.TruncateString(start, 19, "…")
 }
 
-// cursorRow returns the display row of the tree cursor, or -1.
-func (b *RecordBrowser) cursorRow() int {
-	if b.nodeCursor == "" {
-		return -1
-	}
-	for _, r := range b.treePane.treeTab.rows {
-		if r.name == b.nodeCursor {
-			return r.startRow
-		}
-	}
-	return -1
-}
-
-// setNodeCursor moves the tree cursor to the named node and scrolls the
-// pane just enough to keep it visible. See TheoryOfRecordBrowser.
-func (b *RecordBrowser) setNodeCursor(name string) {
-	b.nodeCursor = name
-	row := b.cursorRow()
-	if row < 0 {
-		return
-	}
-	paneHeight := taiui.PaneHeight(b.tabBox())
-	sc := b.treeScroll()
-	switch {
-	case row < sc.Offset:
-		sc.Offset = row
-	case row >= sc.Offset+paneHeight:
-		sc.Offset = row - paneHeight + 1
-	default:
-		return
-	}
-	sc.Follow = false
-}
-
-// moveCursor moves the list's selection or the tree's node cursor: the
-// list view moves one record, the tree view moves the cursor one visible
-// node. The tree's row ranges are refreshed first, so the cursor never
-// depends on a render having happened since the last change. See
-// TheoryOfRecordBrowser.
-func (b *RecordBrowser) moveCursor(delta int) {
+// move handles the up and down keys and the wheel: the list view moves
+// its selection — the browser's one focus — and the tree view scrolls its
+// content by one row. The tree's display and scroll bounds are refreshed
+// first, so a scroll never depends on a render having happened since the
+// last change. See TheoryOfRecordBrowser.
+func (b *RecordBrowser) move(delta int) {
 	if b.currentID == 0 {
 		b.selectRecord(b.selected + delta)
 		return
 	}
-	b.syncTreeDisplay()
-	rows := b.treePane.treeTab.rows
-	if len(rows) == 0 {
-		return
-	}
-	i := -1
-	for j, r := range rows {
-		if r.name == b.nodeCursor {
-			i = j
-			break
-		}
-	}
-	if i < 0 {
-		if delta >= 0 {
-			i = 0
-		} else {
-			i = len(rows) - 1
-		}
-	} else {
-		i += delta
-	}
-	b.setNodeCursor(rows[min(max(i, 0), len(rows)-1)].name)
+	b.syncTreeScroll()
+	b.treeScroll().Scroll(delta)
 }
 
-// pageMove moves the list's selection by a page of records, or the tree
-// cursor to the node nearest one pane height away.
+// pageMove moves the list's selection by a page of records, or scrolls
+// the tree view by a page of rows. The tree's display and scroll bounds
+// are refreshed first. See TheoryOfRecordBrowser.
 func (b *RecordBrowser) pageMove(direction int) {
 	if b.currentID == 0 {
 		b.selectRecord(b.selected + direction*max(b.listBox().Height(), 1))
 		return
 	}
-	row := b.cursorRow()
-	if row < 0 {
-		row = 0
-	}
-	b.moveNodeCursorToRow(row + direction*taiui.PaneHeight(b.tabBox()))
+	b.syncTreeScroll()
+	b.treeScroll().PageScroll(direction, taiui.PaneHeight(b.tabBox()))
 }
 
-// moveTo moves the list's selection or the tree cursor to the first or
-// last entry.
+// moveTo moves the list's selection or the tree view to the first or
+// last entry: the home and end keys. See TheoryOfRecordBrowser.
 func (b *RecordBrowser) moveTo(last bool) {
 	if b.currentID == 0 {
 		if last {
@@ -645,51 +545,27 @@ func (b *RecordBrowser) moveTo(last bool) {
 		}
 		return
 	}
-	target := 0
+	top := 0
 	if last {
-		target = 1 << 30
+		// A large sentinel offset sticks the view to the tail, matching
+		// the generation TUI's end key. See taiui.ScrollState.ScrollTo.
+		top = 1 << 30
 	}
-	b.moveNodeCursorToRow(target)
+	b.syncTreeScroll()
+	b.treeScroll().ScrollTo(top)
 }
 
-// moveNodeCursorToRow moves the tree cursor to the node whose header row
-// is nearest the given display row. The display is refreshed first, so
-// the row ranges are current. See TheoryOfRecordBrowser.
-func (b *RecordBrowser) moveNodeCursorToRow(target int) {
-	b.syncTreeDisplay()
-	rows := b.treePane.treeTab.rows
-	if len(rows) == 0 {
+// openSelected opens the list's selected record, the Enter key's action
+// in the list view. The tree view carries no focus, so Enter is inert
+// there. See TheoryOfRecordBrowser.
+func (b *RecordBrowser) openSelected() {
+	if b.currentID != 0 {
 		return
 	}
-	best, bestDist := rows[0].name, 1<<30
-	for _, r := range rows {
-		dist := r.startRow - target
-		if dist < 0 {
-			dist = -dist
-		}
-		if dist < bestDist {
-			bestDist, best = dist, r.name
-		}
-	}
-	b.setNodeCursor(best)
-}
-
-// activateCursor runs the Enter key in the current view: the list's
-// selected record opens, the tree's cursor node toggles.
-// See TheoryOfRecordBrowser.
-func (b *RecordBrowser) activateCursor() {
-	if b.currentID == 0 {
-		if len(b.infos) > 0 {
-			b.openRecord(b.infos[b.selected].ID)
-		}
+	if len(b.infos) == 0 {
 		return
 	}
-	if b.nodeCursor == "" {
-		return
-	}
-	b.treePane.mu.Lock()
-	b.treePane.toggleTreeNodeByName(b.nodeCursor)
-	b.treePane.mu.Unlock()
+	b.openRecord(b.infos[b.selected].ID)
 }
 
 // listPress handles a left press in the list view: the press selects the
@@ -725,19 +601,15 @@ func (b *RecordBrowser) listPress(x, y int) {
 
 // treePress handles a left press in the tree view: the fold column's
 // control toggles the node under it — the Tree tab's own path — and any
-// other text press puts the cursor on the node under it and records
-// itself for the double-click toggle. See TheoryOfRecordBrowser.
+// other text press runs the Tree tab's click handling, which pairs the
+// press for a double-click toggle. A press never moves a focus: the tree
+// view carries none. See TheoryOfRecordBrowser.
 func (b *RecordBrowser) treePress(x, y int) {
 	p := b.treePane
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.toggleTreeControlAtClick(x, y) {
 		return
-	}
-	box := b.tabBox()
-	row := b.treeScroll().Offset + (y - box.Top - 1)
-	if node := p.treeNodeAtRow(row); node != nil {
-		b.nodeCursor = node.Name
 	}
 	p.treeAtClick(x, y)
 }
@@ -755,9 +627,9 @@ func (b *RecordBrowser) handleMouseKey(key string) bool {
 		b.treePane.ctlHoverX = x
 		b.treePane.ctlHoverY = y
 	case "wheel-up":
-		b.mouseMove(-1)
+		b.move(-1)
 	case "wheel-down":
-		b.mouseMove(1)
+		b.move(1)
 	case "left":
 		// Any press cancels a pending quit confirmation before its
 		// normal processing, so an accidental quit press never loses
@@ -781,16 +653,6 @@ func (b *RecordBrowser) handleMouseKey(key string) bool {
 		}
 	}
 	return false
-}
-
-// mouseMove moves the list's selection or scrolls the tree pane by one
-// row, which is what one wheel tick carries.
-func (b *RecordBrowser) mouseMove(delta int) {
-	if b.currentID == 0 {
-		b.selectRecord(b.selected + delta)
-		return
-	}
-	b.treeScroll().Scroll(delta)
 }
 
 // handleKey handles one decoded key name; returning true quits the
@@ -817,9 +679,9 @@ func (b *RecordBrowser) handleKey(key string) bool {
 		}
 		b.backToList()
 	case "up":
-		b.moveCursor(-1)
+		b.move(-1)
 	case "down":
-		b.moveCursor(1)
+		b.move(1)
 	case "pageup":
 		b.pageMove(-1)
 	case "pagedown":
@@ -829,7 +691,7 @@ func (b *RecordBrowser) handleKey(key string) bool {
 	case "end":
 		b.moveTo(true)
 	case "enter":
-		b.activateCursor()
+		b.openSelected()
 	case "v":
 		if b.currentID != 0 {
 			b.treePane.cycleTreeView()

@@ -93,15 +93,12 @@ func TestRecordBrowserListsAndOpensRecords(t *testing.T) {
 	out.Reset()
 
 	// Enter opens the selected record.
-	b.activateCursor()
+	b.handleKey("enter")
 	if b.currentID != 3 {
 		t.Fatalf("expected record 3 opened, got %d", b.currentID)
 	}
 	if b.treePane.treeView != tr {
 		t.Fatal("expected the opened record's tree in the tree pane")
-	}
-	if b.nodeCursor != "attempt-1" {
-		t.Fatalf("expected the cursor on the first node, got %q", b.nodeCursor)
 	}
 	b.render()
 	rendered = out.String()
@@ -177,56 +174,109 @@ func TestRecordBrowserNavReturnsToList(t *testing.T) {
 	}
 }
 
-// TestRecordBrowserTreeCursor verifies the keyboard's tree navigation:
-// the cursor moves over the visible nodes, Enter toggles the node under
-// it through the Tree tab's own expansion path, and the page and end keys
-// land on the last node. See TheoryOfRecordBrowser.
-func TestRecordBrowserTreeCursor(t *testing.T) {
+// TestRecordBrowserTreeScroll verifies the browser's focus rule: the
+// record list's selection is the one focus, so the up, down, page, and
+// home/end keys move it in the list view and scroll the tree view's
+// content, while the tree's structure stays pointer-driven. See
+// TheoryOfRecordBrowser.
+func TestRecordBrowserTreeScroll(t *testing.T) {
 	var out strings.Builder
-	b, _ := recordBrowserFixture(t, &out)
-	b.loadList()
-	b.openRecord(2)
-
-	if b.nodeCursor != "attempt-1" {
-		t.Fatalf("expected the cursor on the first node, got %q", b.nodeCursor)
-	}
-	b.moveCursor(1)
-	if b.nodeCursor != "user-1" {
-		t.Fatalf("expected the cursor on the second node, got %q", b.nodeCursor)
-	}
-	b.moveCursor(-1)
-	if b.nodeCursor != "attempt-1" {
-		t.Fatalf("expected the cursor back on the first node, got %q", b.nodeCursor)
-	}
-	b.moveTo(true)
-	if b.nodeCursor != "model-1" {
-		t.Fatalf("expected the end key to land on the last node, got %q", b.nodeCursor)
-	}
-
-	// Enter toggles the node under the cursor: the model node has a
-	// multi-line body, so the expansion is observable.
-	b.activateCursor()
-	if !b.treePane.treeTab.expanded["model-1"] {
-		t.Fatal("expected Enter to expand the node under the cursor")
-	}
-	b.activateCursor()
-	if b.treePane.treeTab.expanded["model-1"] {
-		t.Fatal("expected Enter to collapse the node under the cursor")
-	}
-
-	// The expanded node renders through the shared tree display: its
-	// body lines appear in the pane.
-	b.activateCursor()
-	box := b.tabBox()
-	display := b.treePane.treeDisplay(treeContentWidth(box.Width()), panelStyle.FocusBG)
-	body := ""
-	for _, line := range display {
-		body += line.Text + "\n"
-	}
-	for _, want := range []string{"line one", "line two", "line three"} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("expected %q in the shared tree display, got %q", want, body)
+	var ops []tree.WriteOp
+	for i := 0; i < 10; i++ {
+		content := fmt.Sprintf("event %d", i)
+		if i == 0 {
+			// A multi-line body makes the node expandable, so the
+			// pointer's double click has an observable target.
+			content = "event 0\nline two\nline three"
 		}
+		ops = append(ops, tree.WriteOp{
+			Parent:  "root",
+			Name:    fmt.Sprintf("node-%d", i),
+			Type:    tree.TypeUsage,
+			Author:  tree.AuthorProgram,
+			Content: content,
+		})
+	}
+	tr, err := tree.New().WriteAll(ops...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := newRecordBrowserForTest(
+		func() ([]records.SessionInfo, error) {
+			return []records.SessionInfo{
+				{ID: 2, Command: "next", StartTime: "2026-01-02T03:04:05Z", Status: "success", OpCount: 10},
+				{ID: 1, Command: "ai", StartTime: "2026-01-01T03:04:05Z", Status: "success", OpCount: 10},
+			}, nil
+		},
+		func(int64) (*tree.Tree, error) { return tr, nil },
+		0,
+		&out,
+	)
+	// A short pane makes the tree's content overflow, so the scroll
+	// keys have somewhere to move.
+	b.height = 4
+	b.loadList()
+
+	// The list view moves its selection.
+	b.handleKey("down")
+	if b.selected != 1 {
+		t.Fatalf("expected the down key to move the list selection, got %d", b.selected)
+	}
+	b.handleKey("up")
+	if b.selected != 0 {
+		t.Fatalf("expected the up key to move the list selection back, got %d", b.selected)
+	}
+
+	// The tree view scrolls its content; no key moves a focus.
+	b.openRecord(2)
+	b.handleKey("down")
+	if off := b.treeScroll().Offset; off != 1 {
+		t.Fatalf("expected the down key to scroll the tree by one row, got offset %d", off)
+	}
+	b.handleKey("up")
+	if off := b.treeScroll().Offset; off != 0 {
+		t.Fatalf("expected the up key to scroll the tree back, got offset %d", off)
+	}
+	b.handleKey("pagedown")
+	if off := b.treeScroll().Offset; off != 2 {
+		t.Fatalf("expected the page-down key to scroll a page, got offset %d", off)
+	}
+	b.handleKey("end")
+	end := b.treeScroll().Offset
+	if end == 0 {
+		t.Fatal("expected the end key to scroll the tree to its last rows")
+	}
+	b.handleKey("down")
+	if off := b.treeScroll().Offset; off != end {
+		t.Fatalf("expected a down key at the end to stay clamped, got offset %d", off)
+	}
+	b.handleKey("enter")
+	if len(b.treePane.treeTab.expanded) != 0 {
+		t.Fatal("expected Enter to be inert in the tree view")
+	}
+	b.handleKey("home")
+	if off := b.treeScroll().Offset; off != 0 {
+		t.Fatalf("expected the home key to return to the top, got offset %d", off)
+	}
+
+	// The tree's structure stays pointer-driven: a double click on an
+	// expandable node's row toggles it through the shared Tree tab path.
+	row := -1
+	for _, r := range b.treePane.treeTab.rows {
+		if r.name == "node-0" {
+			row = r.startRow
+		}
+	}
+	if row < 0 {
+		t.Fatal("expected the rendered rows to carry the first node")
+	}
+	b.syncTreePane()
+	box := b.tabBox()
+	y := box.Top + 1 + row - b.treeScroll().Offset
+	b.treePress(box.Left, y)
+	b.treePress(box.Left, y)
+	if !b.treePane.treeTab.expanded["node-0"] {
+		t.Fatal("expected a double click on the node's row to expand it")
 	}
 }
 
@@ -239,7 +289,7 @@ func TestRecordBrowserOpenFailureKeepsList(t *testing.T) {
 	b.loadList()
 	// Record 1 has no recorded operations.
 	b.selectRecord(2)
-	b.activateCursor()
+	b.handleKey("enter")
 	if b.currentID != 0 {
 		t.Fatalf("expected the failed open to keep the list view, got record %d", b.currentID)
 	}
