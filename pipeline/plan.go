@@ -167,7 +167,7 @@ the response cannot finish every entry, use a continue block and the
 remaining entries are provided next round. End the response with the
 summary block.`
 
-const planRootNotice = `[Plan] Every entry of the plan is done. Mark the plan root %q done with a plan-op done block to end the flow, or refine the plan with plan-op add blocks if work remains. End the response with the summary block.`
+const planRootNotice = `[Plan] Every entry of the plan is resolved (done or deleted). Mark the plan root %q done with a plan-op done block to end the flow, or refine the plan with plan-op add blocks if work remains. End the response with the summary block.`
 
 const goalPlanModeNote = `[Plan] The plan tree is available in this loop: for a non-simple task, decompose it into plan entries with plan-op add blocks and work through the entries — the program provides every pending entry each round, so batch as many entries as fit into each response to minimize rounds; a simple task needs no plan, do the work directly. Each loop maintains its own plan under its loop node; plans do not carry across loops — cross-loop context arrives through the summaries and feedback. Continue blocks remain available for chaining rounds as the goal protocol above describes. Marking the plan root done completes the plan flow; while the plan still carries pending entries, a done block does not end the run — complete every plan entry (done or deleted) before emitting the done block; the run still ends only per the goal protocol above.`
 
@@ -250,7 +250,8 @@ func rejectDeletedPlanEntry(n *tree.Node, name string) error {
 // pendingPlanEntries returns every plan node the model can work on:
 // depth-first, in insertion order, the nodes carrying no done,
 // deleted, or abort mark whose every plan-entry child is resolved. A
-// done root reports complete; a root without entries reports empty.
+// done root reports complete; a deleted root and a root without
+// entries report empty, and an empty plan drives no round.
 // See TheoryOfPlan.
 func pendingPlanEntries(tr *tree.Tree, root string) (entries []*tree.Node, complete, empty bool) {
 	rootNode, ok := tr.Node(root)
@@ -293,8 +294,10 @@ func pendingPlanEntries(tr *tree.Tree, root string) (entries []*tree.Node, compl
 }
 
 // planHasPendingWork reports whether the given loop's plan tree
-// carries pending work: a plan root with entries whose done mark is
-// absent (the root or an entry still surfaces as pending). A loop
+// carries pending work: a plan root with an entry that still surfaces
+// as pending — the root itself, or an unresolved entry. A done,
+// deleted, or aborted node is resolved and never surfaces, so a
+// deleted plan node needs no further action in this decision. A loop
 // without a plan, or with an empty or completed plan, carries no
 // pending work. The plan root is the loop's own — the check never
 // consults another loop's plan. See TheoryOfGoalMode.

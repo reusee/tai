@@ -442,6 +442,71 @@ func TestPlanSoftDelete(t *testing.T) {
 	}
 }
 
+// TestPlanDeletedNodeNeedsNoFurtherAction verifies the deleted-node
+// rule at the next-round decisions: a deleted entry and its subtree
+// never surface as pending entries, the plan-driven round feedback
+// never lists them, and a deleted plan root reports the plan empty, so
+// no round is driven and the goal gate sees no pending work. See
+// TheoryOfPlan.
+func TestPlanDeletedNodeNeedsNoFurtherAction(t *testing.T) {
+	root := planRootNameOf("root")
+	tr, err := tree.New().Write("root", root, tree.TypePlan, tree.AuthorProgram, "objective")
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, err := tr.Write(root, "e1", tree.TypePlan, tree.AuthorModel, "first")
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, err = next.Write("e1", "c1", tree.TypePlan, tree.AuthorModel, "child")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr = next
+	tr, _, err = applyOnePlanOp(tr, blocks.Block{
+		Kind:       "plan-op",
+		Attributes: map[string]string{"op": "delete", "name": "e1"},
+		Body:       "dropped with its subtree",
+	}, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, _, _ := pendingPlanEntries(tr, root)
+	for _, e := range entries {
+		if e.Name == "e1" || e.Name == "c1" {
+			t.Fatalf("a deleted entry and its subtree must need no further action, got %q", e.Name)
+		}
+	}
+	parts, _ := planFeedback(tr, root, false)
+	for _, p := range parts {
+		text, ok := p.(generators.Text)
+		if !ok {
+			continue
+		}
+		if strings.Contains(string(text), "e1") || strings.Contains(string(text), "c1") {
+			t.Fatal("the plan-driven round feedback must not list a deleted node")
+		}
+	}
+
+	// A deleted plan root needs no further action either: the plan
+	// reports empty, so no plan-driven round follows and the goal gate
+	// sees no pending work.
+	deletedRoot, err := tree.New().Write("root", root, tree.TypePlan, tree.AuthorProgram, "objective")
+	if err != nil {
+		t.Fatal(err)
+	}
+	deletedRoot, _, err = deletedRoot.WriteAuto(root, "deleted", planTypeDeleted, tree.AuthorProgram, "dropped")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rootParts, _ := planFeedback(deletedRoot, root, false); rootParts != nil {
+		t.Fatalf("a deleted plan root must drive no plan round, got %d parts", len(rootParts))
+	}
+	if planHasPendingWork(deletedRoot, root) {
+		t.Fatal("a deleted plan root carries no pending work for the goal gate")
+	}
+}
+
 func TestRunPlanDrivenRounds(t *testing.T) {
 	withRun(t, func(run Run) {
 		callCount := 0
