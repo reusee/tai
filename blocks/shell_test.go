@@ -238,6 +238,31 @@ func TestShellPromptSecurityPolicy(t *testing.T) {
 	}
 }
 
+func TestShellPromptsNoTimeout(t *testing.T) {
+	// A shell command runs to completion: no duration limit is enforced,
+	// because legitimate work — a full test suite, a large build — may run
+	// for a long time, and a deadline would kill it mid-run so the model
+	// would read the limit as the command's own failure. The prompts and
+	// the theory must not promise a limit the executor does not enforce:
+	// a model reading a timeout would shorten, split, or avoid long
+	// commands out of habit. See TheoryOfShellBlocks.
+	if strings.Contains(TheoryOfShellBlocks, "with a timeout") {
+		t.Fatal("TheoryOfShellBlocks must not state that commands run under a timeout")
+	}
+	prompts := []string{
+		ShellBlockSystemPrompt,
+		ShellBlockPrompt(AllowedShellCommands{"ls -la"}),
+	}
+	for _, prompt := range prompts {
+		if strings.Contains(prompt, "timeout") {
+			t.Fatalf("shell prompt must not declare a timeout, got: %s", prompt)
+		}
+		if !strings.Contains(prompt, "runs to completion") {
+			t.Fatalf("shell prompt must state that a command runs to completion, got: %s", prompt)
+		}
+	}
+}
+
 func TestAllowedShellCommands(t *testing.T) {
 	allowed := AllowedShellCommands{"  git status ", "", "ls", "git status"}
 	if !allowed.Configured() {

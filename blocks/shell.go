@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
-	"time"
 
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/security"
@@ -15,14 +14,19 @@ import (
 // its turn-based delivery semantics, and the two gates every command
 // passes before it runs.
 const TheoryOfShellBlocks = `
-Shell blocks execute shell commands in a subprocess with a timeout, capture
-both stdout and stderr, and return them as user content in the next
-generation round. The working directory is the project root. This enables
-the model to run tests, check build status, explore the codebase, and verify
-its own changes without human intervention. Shell execution is disabled by
-default for safety: the -shell flag enables it, and a configured command
-allowlist enables it by itself, because the user who lists commands has
-already decided to let the model run them (see TheoryOfShellAllowlist).
+Shell blocks execute shell commands in a subprocess, capture both stdout
+and stderr, and return them as user content in the next generation round.
+The working directory is the project root. A command runs to completion:
+no duration limit is enforced. Legitimate work — a full test suite, a
+large build — may run for a long time, and a deadline would kill it
+mid-run, so the model would read the limit as the command's own failure.
+Only the caller's context cancellation ends a command. This enables the
+model to run tests, check build status, explore the codebase, and verify
+its own changes without human intervention. Shell execution is disabled
+by default for safety: the -shell flag enables it, and a configured
+command allowlist enables it by itself, because the user who lists
+commands has already decided to let the model run them (see
+TheoryOfShellAllowlist).
 
 The turn-based semantics are the critical design constraint: shell output is
 delivered only in the NEXT round, never in the response that contains the
@@ -46,16 +50,12 @@ security.TheoryOfShellSecurity.
 // structural rules. See ShellBlockPrompt and TheoryOfShellAllowlist.
 const ShellBlockSystemPrompt = shellPromptHead + shellAnyProgramPolicy + shellPromptTail
 
-const shellTimeout = 30 * time.Second
-
-// executeShellCommand runs a shell command with a timeout derived from the
-// provided context and returns the combined stdout/stderr output with a
-// status prefix.
+// executeShellCommand runs a shell command and returns the combined
+// stdout/stderr output with a status prefix. No duration limit applies:
+// the command runs to completion, and the provided context cancels it
+// when the session shuts down. See TheoryOfShellBlocks.
 func executeShellCommand(ctx context.Context, cmdStr string) string {
-	cancelCtx, cancel := context.WithTimeout(ctx, shellTimeout)
-	defer cancel()
-
-	cmd := exec.CommandContext(cancelCtx, "sh", "-c", cmdStr)
+	cmd := exec.CommandContext(ctx, "sh", "-c", cmdStr)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
