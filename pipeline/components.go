@@ -38,9 +38,12 @@ TheoryOfSessionTree and are not repeated here. The new-plan and response
 components follow the ingest component; declaring their kinds registers
 them in KnownKinds.
 
-When the shell flag is off, the set carries the disabled-blocks notice for
-shell (components.DisabledBlocksComponent), so the model is explicitly told
-that shell blocks are unavailable instead of finding the shell slot silent.
+Shell processing is enabled by the shell flag or by a configured command
+allowlist, which is the user's own decision to let the model run the listed
+commands (see blocks.TheoryOfShellAllowlist). When neither switch enables
+it, the set carries the disabled-blocks notice for shell
+(components.DisabledBlocksComponent), so the model is explicitly told that
+shell blocks are unavailable instead of finding the shell slot silent.
 Under -no-apply the change prompt is still included and change is
 deliberately not listed as disabled: the blocks are the deliverable of a dry
 run, reviewed by the user, so the model must keep emitting them. See
@@ -251,6 +254,7 @@ func (Module) CodesComponents(
 	apply flags.Apply,
 	summaryLanguage flags.SummaryLanguage,
 	flagShell flags.Shell,
+	allowedShellCommands blocks.AllowedShellCommands,
 	applyChangeBlocks changes.ApplyChangeBlocks,
 	resolveGoSymbols gotools.ResolveGoSymbols,
 	hiddenPatterns gotools.HiddenPatterns,
@@ -372,24 +376,27 @@ func (Module) CodesComponents(
 	comps = append(comps, NewPlanComponent())
 	comps = append(comps, ResponseComponent())
 
-	// Common components: shell (conditional on flagShell) and continue.
-	// Reused from components.CommonComponents so that shell and continue
-	// configuration is shared across all generation commands. The
-	// continue component stays available: continue blocks remain the
-	// model's way of prompting the next round's user input. See
-	// TheoryOfCommonComponents.
-	comps = append(comps, components.CommonComponents(bool(flagShell))...)
+	// Common components: shell and continue. Reused from
+	// components.CommonComponents so that shell and continue
+	// configuration is shared across all generation commands. Shell
+	// processing is enabled by the shell flag or by a configured command
+	// allowlist, which is the user's own decision to let the model run
+	// the listed commands; the component carries the matching policy
+	// prompt. The continue component stays available: continue blocks
+	// remain the model's way of prompting the next round's user input.
+	// See TheoryOfCommonComponents and blocks.TheoryOfShellAllowlist.
+	comps = append(comps, components.CommonComponents(bool(flagShell), allowedShellCommands)...)
 
-	// Disabled-blocks notice: shell without the flag is announced
-	// explicitly instead of leaving its slot silent. A model that emits
-	// an unavailable kind from habit would have it silently ignored
-	// while implying an action that never happened. Under -no-apply the
-	// change prompt above is still included and change is deliberately
-	// not listed as disabled: the blocks are the deliverable of a dry
-	// run. See components.TheoryOfDisabledBlocks and
-	// TheoryOfCodesComponents.
+	// Disabled-blocks notice: shell without the flag and without a
+	// configured allowlist is announced explicitly instead of leaving its
+	// slot silent. A model that emits an unavailable kind from habit would
+	// have it silently ignored while implying an action that never
+	// happened. Under -no-apply the change prompt above is still included
+	// and change is deliberately not listed as disabled: the blocks are
+	// the deliverable of a dry run. See components.TheoryOfDisabledBlocks
+	// and TheoryOfCodesComponents.
 	var disabled []string
-	if !bool(flagShell) {
+	if !allowedShellCommands.ShellEnabled(bool(flagShell)) {
 		disabled = append(disabled, "shell")
 	}
 	if len(disabled) > 0 {

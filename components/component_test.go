@@ -195,7 +195,7 @@ func TestProcessResultErrorPropagation(t *testing.T) {
 
 func TestCommonComponents(t *testing.T) {
 	t.Run("with shell", func(t *testing.T) {
-		comps := CommonComponents(true)
+		comps := CommonComponents(true, nil)
 		processable := comps.Processable()
 		if len(processable) != 2 {
 			t.Fatalf("expected 2 processable components (shell, continue), got %d", len(processable))
@@ -216,7 +216,7 @@ func TestCommonComponents(t *testing.T) {
 	})
 
 	t.Run("without shell", func(t *testing.T) {
-		comps := CommonComponents(false)
+		comps := CommonComponents(false, nil)
 		processable := comps.Processable()
 		if len(processable) != 1 {
 			t.Fatalf("expected 1 processable component (continue), got %d", len(processable))
@@ -230,6 +230,24 @@ func TestCommonComponents(t *testing.T) {
 		}
 		if !strings.Contains(prompt, "Continue Block Kind") {
 			t.Fatal("PromptSections should contain continue block prompt")
+		}
+	})
+
+	t.Run("allowlist enables shell", func(t *testing.T) {
+		comps := CommonComponents(false, blocks.AllowedShellCommands{"git status"})
+		processable := comps.Processable()
+		if len(processable) != 2 {
+			t.Fatalf("expected 2 processable components (shell, continue), got %d", len(processable))
+		}
+		if processable[0].Kind != "shell" {
+			t.Fatalf("expected first component to be shell, got %s", processable[0].Kind)
+		}
+		prompt := comps.PromptSections()
+		if !strings.Contains(prompt, "command allowlist") {
+			t.Fatal("PromptSections should carry the allowlist policy")
+		}
+		if strings.Contains(prompt, "Any program may run") {
+			t.Fatal("PromptSections must not promise that any program may run when an allowlist is configured")
 		}
 	})
 }

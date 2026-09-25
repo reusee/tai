@@ -8,12 +8,19 @@ import (
 	"mvdan.cc/sh/v3/syntax"
 )
 
+// TheoryOfShellSecurity documents the validator's containment model: what
+// the syntax walk rejects, what the destructive-pattern filter catches,
+// and where the real containment lives.
 const TheoryOfShellSecurity = `
-Shell command execution runs any program: a program allowlist is hard to keep
-correct and unnecessary, because the process already runs inside the container
+Shell command execution runs any program the session permits: this package
+ships no program allowlist, because a system-maintained list is hard to keep
+correct and unnecessary — the process already runs inside the container
 sandbox, where the filesystem is read-only except for the working directory,
 the Go and config directories, /tmp, and /dev/shm (see
-TheoryOfContainerIsolation). The validator parses the command with
+TheoryOfContainerIsolation). A session may carry its own command allowlist,
+which only narrows what runs: the blocks layer checks it before this
+validator, and the validator still applies to every listed command (see
+blocks.TheoryOfShellAllowlist). The validator parses the command with
 mvdan.cc/sh/v3 and walks the syntax tree.
 
 Structural rules: only simple commands (CallExpr) and binary commands

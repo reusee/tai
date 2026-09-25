@@ -5,6 +5,9 @@ import (
 	"strings"
 	"testing"
 
+	"cuelang.org/go/cue"
+	"cuelang.org/go/cue/cuecontext"
+
 	"github.com/reusee/tai/generators"
 )
 
@@ -12,7 +15,7 @@ func TestProcessShellBlocks(t *testing.T) {
 	blocks := []Block{
 		{Kind: "shell", Body: "echo hello world"},
 	}
-	parts, err := ProcessShellBlocks(blocks, context.Background())
+	parts, err := ProcessShellBlocks(blocks, context.Background(), nil)
 	if err != nil {
 		t.Fatalf("ProcessShellBlocks failed: %v", err)
 	}
@@ -36,7 +39,7 @@ func TestProcessShellBlocksSeparatesOutputsWithBlankLine(t *testing.T) {
 		{Kind: "shell", Body: "echo one"},
 		{Kind: "shell", Body: "echo two"},
 	}
-	parts, err := ProcessShellBlocks(blocks, context.Background())
+	parts, err := ProcessShellBlocks(blocks, context.Background(), nil)
 	if err != nil {
 		t.Fatalf("ProcessShellBlocks failed: %v", err)
 	}
@@ -55,7 +58,7 @@ func TestProcessShellBlocksCommandFailure(t *testing.T) {
 	blocks := []Block{
 		{Kind: "shell", Body: "cat /nonexistent"},
 	}
-	parts, err := ProcessShellBlocks(blocks, context.Background())
+	parts, err := ProcessShellBlocks(blocks, context.Background(), nil)
 	if err != nil {
 		t.Fatalf("ProcessShellBlocks failed: %v", err)
 	}
@@ -69,7 +72,7 @@ func TestProcessShellBlocksCommandFailure(t *testing.T) {
 }
 
 func TestProcessShellBlocksEmpty(t *testing.T) {
-	parts, err := ProcessShellBlocks(nil, context.Background())
+	parts, err := ProcessShellBlocks(nil, context.Background(), nil)
 	if err != nil {
 		t.Fatalf("ProcessShellBlocks failed: %v", err)
 	}
@@ -82,7 +85,7 @@ func TestProcessShellBlocksRejectsRedirection(t *testing.T) {
 	blocks := []Block{
 		{Kind: "shell", Body: "echo hello > /tmp/test"},
 	}
-	parts, err := ProcessShellBlocks(blocks, context.Background())
+	parts, err := ProcessShellBlocks(blocks, context.Background(), nil)
 	if err != nil {
 		t.Fatalf("ProcessShellBlocks failed: %v", err)
 	}
@@ -102,7 +105,7 @@ func TestProcessShellBlocksAllowsGitStatus(t *testing.T) {
 	blocks := []Block{
 		{Kind: "shell", Body: "git status"},
 	}
-	parts, err := ProcessShellBlocks(blocks, context.Background())
+	parts, err := ProcessShellBlocks(blocks, context.Background(), nil)
 	if err != nil {
 		t.Fatalf("ProcessShellBlocks failed: %v", err)
 	}
@@ -124,7 +127,7 @@ func TestProcessShellBlocksRejectsDangerousCommand(t *testing.T) {
 	blocks := []Block{
 		{Kind: "shell", Body: "rm -rf /nonexistent-top-level-dir"},
 	}
-	parts, err := ProcessShellBlocks(blocks, context.Background())
+	parts, err := ProcessShellBlocks(blocks, context.Background(), nil)
 	if err != nil {
 		t.Fatalf("ProcessShellBlocks failed: %v", err)
 	}
@@ -145,7 +148,7 @@ func TestProcessShellBlocksFiltersByKind(t *testing.T) {
 		{Kind: "summary", Body: "echo hello"},
 		{Kind: "shell", Body: "echo hello world"},
 	}
-	parts, err := ProcessShellBlocks(blocks, context.Background())
+	parts, err := ProcessShellBlocks(blocks, context.Background(), nil)
 	if err != nil {
 		t.Fatalf("ProcessShellBlocks failed: %v", err)
 	}
@@ -159,13 +162,13 @@ func TestProcessShellBlocksFiltersByKind(t *testing.T) {
 }
 
 func TestProcessShellBlocksAllowsAnyProgram(t *testing.T) {
-	// The program allowlist is gone: kill was not in the old list and now
-	// runs normally. `kill -l` only lists signal names, so the test cannot
-	// signal any process.
+	// Without a configured allowlist no program list applies: kill was
+	// never in the old list and still runs. `kill -l` only lists signal
+	// names, so the test cannot signal any process.
 	blocks := []Block{
 		{Kind: "shell", Body: "kill -l"},
 	}
-	parts, err := ProcessShellBlocks(blocks, context.Background())
+	parts, err := ProcessShellBlocks(blocks, context.Background(), nil)
 	if err != nil {
 		t.Fatalf("ProcessShellBlocks failed: %v", err)
 	}
@@ -174,7 +177,7 @@ func TestProcessShellBlocksAllowsAnyProgram(t *testing.T) {
 	}
 	output := string(parts[0].(generators.Text))
 	if strings.Contains(output, "Shell command rejected") {
-		t.Fatalf("kill should be allowed now, got: %s", output)
+		t.Fatalf("kill should be allowed without an allowlist, got: %s", output)
 	}
 	if !strings.Contains(output, "Command succeeded") {
 		t.Fatalf("expected the command to run, got: %s", output)
@@ -232,5 +235,112 @@ func TestShellPromptSecurityPolicy(t *testing.T) {
 	}
 	if strings.Contains(prompt, "Allowed command categories") || strings.Contains(prompt, "allowed list") {
 		t.Fatal("ShellBlockSystemPrompt must not carry a program allowlist")
+	}
+}
+
+func TestAllowedShellCommands(t *testing.T) {
+	allowed := AllowedShellCommands{"  git status ", "", "ls", "git status"}
+	if !allowed.Configured() {
+		t.Fatal("a list with entries must report configured")
+	}
+	if !allowed.Allows("git status") {
+		t.Fatal("a listed command must be allowed")
+	}
+	if allowed.Allows("git push") {
+		t.Fatal("an unlisted command must not be allowed")
+	}
+	var empty AllowedShellCommands
+	if empty.Configured() {
+		t.Fatal("an empty list must not report configured")
+	}
+	if !empty.Allows("anything") {
+		t.Fatal("an unconfigured list allows every command")
+	}
+	if empty.ShellEnabled(false) || !empty.ShellEnabled(true) {
+		t.Fatal("an unconfigured list follows the shell flag")
+	}
+	if !allowed.ShellEnabled(false) {
+		t.Fatal("a configured list enables shell blocks by itself")
+	}
+}
+
+func TestAllowedShellCommandsHandleConfig(t *testing.T) {
+	ctx := cuecontext.New()
+	v := ctx.CompileString(`["git status", "ls"]`)
+	if err := v.Err(); err != nil {
+		t.Fatal(err)
+	}
+	newDef, err := AllowedShellCommands(nil).HandleConfig("allowed_shell_commands", []*cue.Value{&v})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ret, ok := newDef.(*AllowedShellCommands)
+	if !ok {
+		t.Fatalf("expected *AllowedShellCommands, got %T", newDef)
+	}
+	if !ret.Allows("git status") || !ret.Allows("ls") {
+		t.Fatalf("listed commands must be allowed, got %v", *ret)
+	}
+	if ret.Allows("rm -rf /") {
+		t.Fatal("an unlisted command must not be allowed")
+	}
+}
+
+func TestProcessShellBlocksAllowlist(t *testing.T) {
+	// A configured allowlist is the permission grant: a listed command
+	// runs, and an unlisted one is rejected before execution with the
+	// allowed commands named in the rejection. See
+	// TheoryOfShellAllowlist.
+	allowed := AllowedShellCommands{"echo hello"}
+	blocks := []Block{
+		{Kind: "shell", Body: "echo hello"},
+		{Kind: "shell", Body: "echo unlisted"},
+	}
+	parts, err := ProcessShellBlocks(blocks, context.Background(), allowed)
+	if err != nil {
+		t.Fatalf("ProcessShellBlocks failed: %v", err)
+	}
+	if len(parts) != 2 {
+		t.Fatalf("expected 2 parts, got %d", len(parts))
+	}
+	first := string(parts[0].(generators.Text))
+	if !strings.Contains(first, "Command succeeded") {
+		t.Fatalf("a listed command must run, got: %s", first)
+	}
+	second := string(parts[1].(generators.Text))
+	if !strings.Contains(second, "Shell command rejected") {
+		t.Fatalf("an unlisted command must be rejected, got: %s", second)
+	}
+	if !strings.Contains(second, "  - echo hello") {
+		t.Fatalf("the rejection must name the allowed commands, got: %s", second)
+	}
+}
+
+func TestShellBlockPromptAllowlist(t *testing.T) {
+	if ShellBlockPrompt(nil) != ShellBlockSystemPrompt {
+		t.Fatal("an unconfigured allowlist must keep the default shell prompt")
+	}
+	prompt := ShellBlockPrompt(AllowedShellCommands{"ls -la", "git status", "git status"})
+	if !strings.Contains(prompt, "  - git status\n") {
+		t.Fatalf("the prompt must list the allowed commands, got: %s", prompt)
+	}
+	if !strings.Contains(prompt, "  - ls -la\n") {
+		t.Fatalf("the prompt must list the allowed commands, got: %s", prompt)
+	}
+	if strings.Contains(prompt, "Any program may run") {
+		t.Fatal("the prompt must not promise that any program may run when an allowlist is configured")
+	}
+	if !strings.Contains(prompt, "Output redirection") {
+		t.Fatal("the prompt must keep the structural rules")
+	}
+}
+
+func TestAllowedShellCommandsConfigPath(t *testing.T) {
+	// The config path is the contract with the closed schema. A wrong path
+	// fails silently — no Config type registers the key, so nothing is ever
+	// read and the feature appears to do nothing.
+	paths := AllowedShellCommands(nil).ConfigPaths()
+	if len(paths) != 1 || paths[0] != "allowed_shell_commands" {
+		t.Fatalf("unexpected config paths: %v", paths)
 	}
 }

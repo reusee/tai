@@ -6,9 +6,14 @@ configuration files (CUE). Flags provide per-invocation overrides, while config
 files provide persistent defaults. The configs.Load function runs before
 flags.Parse, so flag values always override config values. For composite types
 (maps, lists), flags accumulate values through repeated invocation, while config
-files specify values as structured lists. API keys are exempt from this parity
-principle: they are config-only and environment-variable-only to avoid exposing
-secrets in process command-line listings.
+files specify values as structured lists. Two exemptions exist. API keys are
+config-only and environment-variable-only to avoid exposing secrets in process
+command-line listings. An option that records a durable policy rather than a
+per-invocation switch is config-only as well, because the user sets it once and
+keeps it: the shell command allowlist (blocks.AllowedShellCommands, the
+allowed_shell_commands config path) names the commands the model may execute,
+and it is read from configuration files only. See
+blocks.TheoryOfShellAllowlist.
 `
 
 // Flag is the interface for command-line flag types. Each Flag type

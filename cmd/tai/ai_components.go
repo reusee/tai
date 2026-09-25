@@ -50,6 +50,7 @@ type AIComponents struct {
 
 func (Module) AIComponents(
 	flagShell flags.Shell,
+	allowedShellCommands blocks.AllowedShellCommands,
 	currentMemory memories.CurrentMemory,
 	extra flags.ExtraSystemPrompt,
 	familyExtra flags.FamilyExtraSystemPrompt,
@@ -83,16 +84,20 @@ func (Module) AIComponents(
 	// blocks.TheoryOfIngestBlocks.
 	comps = append(comps, pipeline.NewIngestComponent(lspHandler))
 
-	// Common components: shell (conditional on flagShell) only. The
-	// continue component is deliberately filtered out: in the interactive
+	// Common components: shell only. Shell processing is enabled by the
+	// shell flag or by a configured command allowlist, which is the user's
+	// own decision to let the model run the listed commands; the component
+	// carries the matching policy prompt. The continue component is
+	// deliberately filtered out: in the interactive
 	// ai chat the user's next input arrives through OnIdle
 	// (phases.BuildChatIdle) after the round ends, so a continue block
 	// would only feed the model's own body back as user content, allowing
 	// meaningless self-prompts such as "Please provide the next task or
 	// user input" to bypass the user prompt. Shell output remains useful:
 	// it is real feedback that triggers the next round without user
-	// input. See TheoryOfAIComponents and TheoryOfAiCommand.
-	for _, comp := range components.CommonComponents(bool(flagShell)) {
+	// input. See TheoryOfAIComponents, TheoryOfAiCommand and
+	// blocks.TheoryOfShellAllowlist.
+	for _, comp := range components.CommonComponents(bool(flagShell), allowedShellCommands) {
 		if comp.Kind == "continue" {
 			continue
 		}
@@ -105,15 +110,16 @@ func (Module) AIComponents(
 	// happened. The ai command processes shell, ingest, and memory blocks:
 	// the remaining pipeline kinds (change, go-test, go-src) have no
 	// processor here, and continue is deliberately excluded because
-	// OnIdle is the sole input gateway. Shell is listed when the flag is
-	// off, memory when -no-memory is set. The notice is static per
-	// configuration and placed before the config-derived extras and the
-	// dynamic memory section, keeping the cacheable prefix stable. See
+	// OnIdle is the sole input gateway. Shell is listed when neither the
+	// flag nor a configured allowlist enables it, memory when -no-memory
+	// is set. The notice is static per configuration and placed before the
+	// config-derived extras and the dynamic memory section, keeping the
+	// cacheable prefix stable. See
 	// components.TheoryOfDisabledBlocks and TheoryOfAIComponents.
 	disabledKinds := []string{
 		"change", "continue", "go-test", "go-src",
 	}
-	if !bool(flagShell) {
+	if !allowedShellCommands.ShellEnabled(bool(flagShell)) {
 		disabledKinds = append(disabledKinds, "shell")
 	}
 	if noMemory {

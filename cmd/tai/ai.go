@@ -41,7 +41,12 @@ Shell Blocks and Interactive Input:
 Shell blocks allow the model to execute shell commands and receive the output
 as part of the next generation, enabling autonomous testing, build
 verification, and codebase exploration. Shell block execution is disabled by
-default for safety; the -shell flag enables it.
+default for safety; the -shell flag enables it, and a configured command
+allowlist (the allowed_shell_commands config path) enables it by itself,
+because the user who lists commands has already decided to let the model run
+them — with a configured list only the listed commands execute, and the
+structural rules still apply to each of them. See
+blocks.TheoryOfShellAllowlist.
 
 The continue block is deliberately not part of the ai command; see
 TheoryOfAIComponents for the rationale.

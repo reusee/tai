@@ -11,53 +11,40 @@ import (
 	"github.com/reusee/tai/security"
 )
 
+// TheoryOfShellBlocks documents the shell block kind: its execution model,
+// its turn-based delivery semantics, and the two gates every command
+// passes before it runs.
 const TheoryOfShellBlocks = `
 Shell blocks execute shell commands in a subprocess with a timeout, capture
 both stdout and stderr, and return them as user content in the next
 generation round. The working directory is the project root. This enables
 the model to run tests, check build status, explore the codebase, and verify
-its own changes without human intervention. Execution is disabled by default
-for safety; the -shell flag enables it and adds the shell block instructions
-to the system prompt.
+its own changes without human intervention. Shell execution is disabled by
+default for safety: the -shell flag enables it, and a configured command
+allowlist enables it by itself, because the user who lists commands has
+already decided to let the model run them (see TheoryOfShellAllowlist).
 
 The turn-based semantics are the critical design constraint: shell output is
 delivered only in the NEXT round, never in the response that contains the
 shell blocks, so a model that acts on results it has not yet received
 fabricates outputs and creates pointless loops (see
-TheoryOfDeferredExecution). ShellBlockSystemPrompt is itself the theory text
-for the waiting rules — command independence within a response, the
-prohibition on change or ingest content that depends on the output, and the
-summary-first stop rule — and they are not repeated here.
+TheoryOfDeferredExecution). ShellBlockPrompt is itself the theory text for
+the waiting rules — command independence within a response, the prohibition
+on change or ingest content that depends on the output, and the summary-first
+stop rule — and for the policy the session runs under; neither is repeated
+here.
 
-Shell command validation is handled by the security package
-(security.ValidateShellCommand), which runs any program and filters only
-common destructive patterns via AST-level parsing. See
-security.TheoryOfShellSecurity for the security model.
+Two gates precede execution: the allowlist, which is the user's own
+permission decision and never widens what may run, and the structural
+validator (security.ValidateShellCommand), which applies to every command
+including the listed ones. See TheoryOfShellAllowlist and
+security.TheoryOfShellSecurity.
 `
 
-const ShellBlockSystemPrompt = `
-Shell Block Kind:
-
-Use the "shell" kind to execute shell commands and receive the output as part of the next generation round. Use shell blocks to run tests, check build status, explore the codebase, and verify changes autonomously.
-
-**Rules:**
-- Use shell blocks to run tests, check build status, explore the codebase, or verify changes.
-- The command is executed with ` + "`" + `sh -c` + "`" + ` in the project root directory.
-- Both stdout and stderr are captured and returned as user content in the next round.
-- A timeout of 30 seconds is enforced per command.
-- Shell output is NOT available in the current response: it is returned as user content only at the start of the NEXT round, after ALL shell blocks in the response have been executed.
-- You MAY emit multiple shell blocks in one response, but only when their commands are independent of one another: no shell block can use the output of another shell block from the same response.
-- Do NOT emit change blocks or ingest blocks whose content depends on the shell output: the results have not arrived yet, so emitting them before the results arrive creates pointless loops.
-- After the last shell block's closing line, emit the summary block IMMEDIATELY, then end the response and wait for the results.
-- Never end a response on a shell block, and never stop at its closing line: stopping there omits the mandatory summary block, the response is treated as incomplete, and it is discarded and retried — its blocks are discarded, so the commands are never executed unless re-emitted.
-- When the results arrive as user content in the next round (formatted as "Shell command: <command>" followed by the output), read them before emitting anything else. If another command is needed, emit a new shell block in that round and wait for its results in the following round.
-**Security policy**: Any program may run. Only common destructive patterns are rejected:
-  - Output redirection (>, >>) is not allowed.
-  - Deleting the filesystem root, a top-level system directory (e.g. /usr, /etc, /home), the whole current directory, or the home directory is rejected, e.g. rm -rf /, rm -rf /*, rm -rf *, rm -rf ~, rm -rf $HOME. Delete named files or directories instead.
-  - Background execution (&) and coprocesses are rejected: their output cannot be captured.
-- If a command is rejected, the error message will be returned as user content. Adjust the command and try again.
-- Shell output triggers a new generation round so the model can act on the results.
-`
+// ShellBlockSystemPrompt is the shell block prompt of a session without a
+// configured allowlist: any program may run, filtered only by the
+// structural rules. See ShellBlockPrompt and TheoryOfShellAllowlist.
+const ShellBlockSystemPrompt = shellPromptHead + shellAnyProgramPolicy + shellPromptTail
 
 const shellTimeout = 30 * time.Second
 
@@ -82,14 +69,18 @@ func executeShellCommand(ctx context.Context, cmdStr string) string {
 
 // ProcessShellBlocks executes all shell blocks and returns the outputs as
 // generator parts. Only blocks with Kind "shell" are processed; blocks of
-// other kinds are skipped. Each command is validated against the
-// destructive-pattern filter before execution; rejected commands return an
-// error message as user content instead of being executed. Each output part
-// ends with a blank line so consecutive parts in the same round stay
-// paragraph-separated after verbatim part concatenation; see
+// other kinds are skipped. Each command passes two gates before execution:
+// the allowlist — an unconfigured list allows every command, a configured
+// one allows exactly its entries — and the structural validator; the
+// allowlist narrows what may run and never widens it. A rejected command
+// returns a message listing the allowed commands as user content instead
+// of being executed. Each output part ends with a blank line so
+// consecutive parts in the same round stay paragraph-separated after
+// verbatim part concatenation; see
 // generators.TheoryOfContentUnitSeparation. The provided context allows
-// callers to cancel long-running commands. See security.TheoryOfShellSecurity.
-func ProcessShellBlocks(blocks []Block, ctx context.Context) ([]generators.Part, error) {
+// callers to cancel long-running commands. See
+// security.TheoryOfShellSecurity and TheoryOfShellAllowlist.
+func ProcessShellBlocks(blocks []Block, ctx context.Context, allowed AllowedShellCommands) ([]generators.Part, error) {
 	if len(blocks) == 0 {
 		return nil, nil
 	}
@@ -99,6 +90,12 @@ func ProcessShellBlocks(blocks []Block, ctx context.Context) ([]generators.Part,
 			continue
 		}
 		cmdStr := block.Body
+		if !allowed.Allows(cmdStr) {
+			parts = append(parts, generators.Text(
+				allowed.rejectionText(cmdStr),
+			))
+			continue
+		}
 		if err := security.ValidateShellCommand(cmdStr); err != nil {
 			parts = append(parts, generators.Text(
 				fmt.Sprintf("Shell command rejected: %s\n\nError: %v\n\n", cmdStr, err),

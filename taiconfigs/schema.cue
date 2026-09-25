@@ -51,6 +51,14 @@ match_patterns?: [...string]
 // effort specifies the reasoning effort level (e.g., low, medium, high).
 effort?: string
 
+// allowed_shell_commands lists the shell commands the model may execute.
+// Accepts a single string or a list of strings; values from multiple
+// config files are aggregated additively. A configured list enables shell
+// block execution by itself, because the user who lists commands has
+// already decided to let the model run them, and restricts execution to
+// the listed commands, each matched as a whole. An empty list leaves the
+// shell flag in charge.
+allowed_shell_commands?: string | [...string]
 // shell enables shell block execution during generation.
 shell?: bool
 
