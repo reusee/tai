@@ -194,7 +194,9 @@ func TestTreeSummaryNodesExpandedByDefault(t *testing.T) {
 // ancestor-based projections keep the shown nodes' ancestors so the
 // outline stays readable; and the tab label states the current
 // projection. The collapsed rows hide node names, so the assertions
-// read the content previews. See TheoryOfTreeTab.
+// read the content previews. The pane is wide enough that the tree
+// form is not replaced by the width-driven stream default. See
+// TheoryOfTreeTab.
 func TestTreeProjectionCycle(t *testing.T) {
 	tui := newTUIForTest()
 	tr, err := tree.New().WriteAll(
@@ -209,7 +211,7 @@ func TestTreeProjectionCycle(t *testing.T) {
 
 	// All mode: every node.
 	tui.mu.Lock()
-	display := tui.treeDisplay(60, panelStyle.BaseBG)
+	display := tui.treeDisplay(120, panelStyle.BaseBG)
 	if len(display) < 3 {
 		t.Fatalf("expected the full outline, got %d rows", len(display))
 	}
@@ -222,7 +224,7 @@ func TestTreeProjectionCycle(t *testing.T) {
 		t.Fatalf("expected the events projection, got %d", tui.treeTab.mode)
 	}
 	tui.mu.Lock()
-	display = tui.treeDisplay(60, panelStyle.BaseBG)
+	display = tui.treeDisplay(120, panelStyle.BaseBG)
 	tui.mu.Unlock()
 	found := false
 	for _, line := range display {
@@ -254,7 +256,7 @@ func TestTreeProjectionCycle(t *testing.T) {
 		t.Fatalf("expected the user projection, got %d", tui.treeTab.mode)
 	}
 	tui.mu.Lock()
-	display = tui.treeDisplay(60, panelStyle.BaseBG)
+	display = tui.treeDisplay(120, panelStyle.BaseBG)
 	tui.mu.Unlock()
 	found = false
 	for _, line := range display {
@@ -1405,6 +1407,79 @@ func TestTreeStreamView(t *testing.T) {
 	}
 	if tui.treeTabLabel() != "Tree (stream)" {
 		t.Fatalf("unexpected projection label: %q", tui.treeTabLabel())
+	}
+}
+
+// TestTreeNarrowPaneDefaultsToStream verifies the width-driven
+// projection default: when the pane's content column would be narrower
+// than its structure column, the Tree tab renders the stream form —
+// content follows the type fragment with no depth indent — so a small
+// pane still shows the content; the v key overrides the default and
+// starts from the form the pane renders; and a wide pane keeps the
+// tree form. See TheoryOfTreeTab.
+func TestTreeNarrowPaneDefaultsToStream(t *testing.T) {
+	tui := newTUIForTest()
+	tr, err := tree.New().WriteAll(
+		tree.WriteOp{Parent: "root", Name: "loop-1", Type: tree.TypeLoop, Author: tree.AuthorProgram, Content: "loop"},
+		tree.WriteOp{Parent: "loop-1", Name: "model-1", Type: tree.TypeModel, Author: tree.AuthorModel, Content: "readable"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tui.treeView = tr
+
+	// A wide pane keeps the tree form: the model node indents under the
+	// loop node.
+	tui.mu.Lock()
+	wide := tui.treeDisplay(200, panelStyle.BaseBG)
+	tui.mu.Unlock()
+	if len(wide) < 2 || !strings.HasPrefix(displayTexts(wide)[1], "  ") {
+		t.Fatalf("wide pane must keep the tree indent, got %v", displayTexts(wide))
+	}
+	if tui.treeTabLabel() != "Tree (all)" {
+		t.Fatalf("wide pane label must state the chosen projection, got %q", tui.treeTabLabel())
+	}
+
+	// A narrow pane whose content column would be narrower than its
+	// structure column renders the stream form: no indent on any row,
+	// and the content stays on the same row as the type fragment.
+	tui.mu.Lock()
+	narrow := tui.treeDisplay(40, panelStyle.BaseBG)
+	tui.mu.Unlock()
+	texts := displayTexts(narrow)
+	if len(texts) != 2 {
+		t.Fatalf("expected one flat row per node, got %d: %v", len(texts), texts)
+	}
+	for _, line := range narrow {
+		if strings.HasPrefix(line.Text, " ") {
+			t.Fatalf("narrow pane must use the stream form, got %q", line.Text)
+		}
+	}
+	found := false
+	for _, line := range narrow {
+		if strings.Contains(line.Text, "readable") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("narrow pane must keep the content, got %v", texts)
+	}
+	if tui.treeTabLabel() != "Tree (stream)" {
+		t.Fatalf("narrow pane label must state the rendered projection, got %q", tui.treeTabLabel())
+	}
+
+	// The v key overrides the width default, starting from the form the
+	// pane renders: the first press lands on the all projection and the
+	// tree form returns at the same narrow width.
+	tui.cycleTreeView()
+	if tui.treeTab.mode != treeViewAll {
+		t.Fatalf("cycling from the stream default must land on all, got %d", tui.treeTab.mode)
+	}
+	tui.mu.Lock()
+	narrow = tui.treeDisplay(40, panelStyle.BaseBG)
+	tui.mu.Unlock()
+	if len(narrow) < 2 || !strings.HasPrefix(displayTexts(narrow)[1], "  ") {
+		t.Fatalf("an explicit choice must override the width default, got %v", displayTexts(narrow))
 	}
 }
 

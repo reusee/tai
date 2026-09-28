@@ -45,6 +45,17 @@ Tree tab theory (cmd/tai):
   flattens the whole tree chronologically. The ancestor-based
   projections keep each shown node's ancestors (tree.Extract), so the
   outline stays readable.
+- The projection defaults to the stream form when the pane's content
+  column would be narrower than its structure column — the depth
+  indent plus the type fragment plus the fold column. On such a pane
+  the tree form would spend every cell on the classification and hide
+  the content, while the flat stream form starts the content right
+  after the type fragment. An explicit cycle with the v key (or the
+  toolbar button) overrides the width-driven default; when it starts
+  from that default, the cycle advances to the projection after the
+  stream form, so the first press lands where the user expects. The
+  width-driven default is the Tree pane's own: the Plan pane's short,
+  shallow tree keeps the tree form at any width.
 - The stream projection renders every node as one flat line, ordered
   by insert time — the chronological order the nodes were written —
   with no indentation, no fold column, and no expansion: the node's
@@ -315,6 +326,15 @@ type treeAlignments struct {
 
 type treeTabState struct {
 	mode treeViewMode
+	// narrow records that the last render fell back to the stream form
+	// because the pane's content column would be narrower than its
+	// structure column: the label states the rendered projection, and
+	// the first explicit cycle starts from it. See TheoryOfTreeTab.
+	narrow bool
+	// modeExplicit records that the user chose the projection with the
+	// v key, so the width-driven default never overrides an explicit
+	// choice. See TheoryOfTreeTab.
+	modeExplicit bool
 	// paneIdx names the pane's layout index, so the shared tree
 	// rendering and press paths read the pane's scroll state and tab
 	// box; the Tree pane keeps 0, the Plan pane takes its inserted
@@ -647,13 +667,26 @@ func (t *TUI) seedTreeExpansions(n *tree.Node) {
 func (t *TUI) cycleTreeView() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	// The first explicit cycle starts from the projection the pane
+	// actually renders: when the width-driven default put the pane on
+	// the stream form, the cycle advances from there, so the next
+	// projection is the one after stream. See TheoryOfTreeTab.
+	if !t.treeTab.modeExplicit && t.treeTab.narrow {
+		t.treeTab.mode = treeViewStream
+	}
 	t.treeTab.mode = (t.treeTab.mode + 1) % treeViewModeCount
+	t.treeTab.modeExplicit = true
 }
 
-// treeTabLabel renders the Tree tab's label with the current
-// projection. See TheoryOfTreeTab.
+// treeTabLabel renders the Tree tab's label with the projection the
+// pane renders: the width-driven stream default while it applies, the
+// chosen projection otherwise. See TheoryOfTreeTab.
 func (t *TUI) treeTabLabel() string {
-	return "Tree (" + t.treeTab.mode.label() + ")"
+	mode := t.treeTab.mode
+	if t.treeTab.narrow {
+		mode = treeViewStream
+	}
+	return "Tree (" + mode.label() + ")"
 }
 
 func (t *TUI) treeDisplay(contentWidth int, base taiui.Color) []taiui.Line {
@@ -661,10 +694,11 @@ func (t *TUI) treeDisplay(contentWidth int, base taiui.Color) []taiui.Line {
 	if tr == nil {
 		return nil
 	}
+	searching := t.treeTab.searching && t.treeTab.searchBar.Line() != ""
 	// While searching, the walk reads the filtered tree (the match
 	// set plus ancestors, or the flat stream match list), so matched
 	// nodes' full paths stay visible. See TheoryOfTreeSearch.
-	if t.treeTab.searching && t.treeTab.searchBar.Line() != "" {
+	if searching {
 		if t.treeTab.mode == treeViewStream {
 			if t.treeTab.searchTree != nil {
 				tr = t.treeTab.searchTree
@@ -683,9 +717,27 @@ func (t *TUI) treeDisplay(contentWidth int, base taiui.Color) []taiui.Line {
 	if t.treeTab.mode != treeViewAll && t.treeTab.searchTree == nil {
 		tr = tr.Extract(t.treeTab.mode.predicate())
 	}
-	alt := taiui.AltBG(base)
 	options := taiui.DisplayWidthOptions()
 	align := treeAlignmentsOf(tr, options)
+	// The width-driven default: when the pane's content column would
+	// be narrower than its structure column, the tree form spends
+	// every cell on the classification and hides the content, while
+	// the flat stream form starts the content right after the type
+	// fragment. The default applies to the Tree pane alone — the Plan
+	// pane's short, shallow tree keeps the tree form at any width —
+	// and an explicit cycle with the v key always wins. See
+	// TheoryOfTreeTab.
+	narrow := t.treeTab.paneIdx == t.tabIndex(tabTree) &&
+		!t.treeTab.modeExplicit &&
+		contentWidth-align.contentX < align.contentX
+	t.treeTab.narrow = narrow
+	if narrow {
+		if searching {
+			return t.treeStreamDisplayWith(contentWidth, base, tr, true)
+		}
+		return t.treeStreamDisplay(contentWidth, base)
+	}
+	alt := taiui.AltBG(base)
 	t.treeTab.align = align
 	var out []taiui.Line
 	t.treeTab.rows = t.treeTab.rows[:0]
