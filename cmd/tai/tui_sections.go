@@ -36,7 +36,10 @@ Output tab sections and attempt-to-output navigation theory (cmd/tai):
   renderer uses, so the press must land on the marker's own columns.
   Presses on other rows, other columns, rows without a node, and
   attempts that produced no visible output are no-ops; any other
-  press on a node toggles its expansion. Mirroring jumpToTransition,
+  press on a node is the Tree tab's click handling, which expands a
+  collapsed node on a single press and pairs the press for the
+  double-click toggle of an expanded node (see TheoryOfTreeTab).
+  Mirroring jumpToTransition,
   the jump expands and focuses the Output tab when needed and stops
   following the tail; the live tail resumes only when the view reaches
   the latest row. The display geometry is recomputed on the click

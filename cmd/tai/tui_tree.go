@@ -74,14 +74,18 @@ Tree tab theory (cmd/tai):
   them and the expanded header reveals them after the fold column,
   alongside the full content below. A node
   is expandable when its content spans more than one line, or when its
-  one-line header truncates at the pane width; a double-click — two
-  presses at the same cell within treeDoubleClickWindow — on any of its
-  rows, or Enter for the last multi-line node, reveals the full
-  content, and a double-click on an expanded node's header rows folds
-  it, so clicking inside a long expanded body never collapses it by
-  accident. A single text press records itself only and does
-  nothing: the pair resets after a toggle, and a press at a
-  different cell or after the window starts a new pair. When
+  one-line header truncates at the pane width; a single press on a
+  collapsed node expands it, matching the Output tab's collapsed-row
+  rule, and a double-click — two presses at the same cell within
+  treeDoubleClickWindow — on any of its rows, or Enter for the last
+  multi-line node, reveals the full content; a double-click on an
+  expanded node's header rows folds it, so clicking inside a long
+  expanded body never collapses it by accident. Collapsing therefore
+  needs the fold column or a double-click, never a single press, and the
+  pair resets when a single press expanded the node, so the second press
+  of a fast tap pair starts a new cycle instead of folding the node it
+  just opened; a press at a different cell or after the window starts a
+  new pair. When
   expanded, the content starts on the row below the header: the
   expanded header drops the inline preview and carries the structural
   columns plus the name and author, and the body renders the full
@@ -135,12 +139,13 @@ Tree tab theory (cmd/tai):
   carries no floating control. The render path and the fold-column
   press path share one clamped-row computation, so what is drawn is
   what is pressed.
-- Every expansion of a node — a double-click on its text rows, a
-  press on its fold control, or Enter on the last multi-line node —
-  scrolls the view to the node's first display row, so the expanded
-  content opens at its beginning. The scroll lives in
-  toggleTreeNodeByName, the one method every expansion path routes
-  through, so the invariant cannot regress; collapsing never scrolls.
+- Every expansion of a node — a single press on a collapsed node's row,
+  a double-click on its text rows, a press on its fold control, or Enter
+  on the last multi-line node — scrolls the view to the node's first
+  display row, so the expanded content opens at its beginning. The
+  scroll lives in toggleTreeNodeByName, the one method every expansion
+  path routes through, so the invariant cannot regress; collapsing never
+  scrolls.
 - The c key folds the focused pane's structure: a tree-shaped pane —
   the Tree tab or the Plan tab (see TheoryOfTUIDynamicPlanTab) —
   folds that pane's own nodes the way the Output tab's c key folds
@@ -1331,13 +1336,14 @@ func (t *TUI) scrollToTreeNode(name string) {
 
 // treeAtClick handles a left press in a tree-shaped pane: a press on an
 // attempt node's jump marker jumps the Output tab to that attempt's
-// output section, and a double-click — two presses at the same cell
-// within treeDoubleClickWindow — on a node's text toggles its
-// expansion; a single text press records itself and does nothing.
-// Presses outside the pane's content area are no-ops. The pane's own
-// layout index drives the box and the scroll state, so the Plan pane's
-// presses act on the Plan pane. Called with t.mu held. See
-// TheoryOfTreeTab, TheoryOfTUIOutputSections, and
+// output section; a press on a collapsed node expands it, matching the
+// Output tab's collapsed-row rule; and a double-click — two presses at
+// the same cell within treeDoubleClickWindow — on a node's text toggles
+// its expansion, so clicking inside a long expanded body never collapses
+// it by accident. Presses outside the pane's content area are no-ops.
+// The pane's own layout index drives the box and the scroll state, so
+// the Plan pane's presses act on the Plan pane. Called with t.mu held.
+// See TheoryOfTreeTab, TheoryOfTUIOutputSections, and
 // TheoryOfTUIDynamicPlanTab.
 func (t *TUI) treeAtClick(x, y int) {
 	idx := t.treeTab.paneIdx
@@ -1380,12 +1386,23 @@ func (t *TUI) treeAtClick(x, y int) {
 		}
 	}
 	// A double-click — two presses at the same cell within
-	// treeDoubleClickWindow — toggles the node; the first press
-	// records itself only, so single-clicking text never toggles. The
-	// pair resets after a toggle, so a third press starts a new cycle.
+	// treeDoubleClickWindow — toggles the node. The pair resets after
+	// a toggle, so a third press starts a new cycle.
 	now := time.Now()
 	if now.Sub(t.lastTreePress) <= treeDoubleClickWindow &&
 		x == t.lastTreePressX && y == t.lastTreePressY {
+		t.lastTreePress = time.Time{}
+		t.toggleTreeNodeAtRow(row)
+		return
+	}
+	// A single press on a collapsed node expands it, matching the
+	// Output tab's collapsed-row rule: on a pane whose structure is the
+	// map, one press opens the entry under it. Collapsing still needs
+	// the fold column or a double-click, so a press inside an expanded
+	// node never folds it. The pair resets with the expansion, so the
+	// second press of a fast tap pair starts a new cycle instead of
+	// folding the node it just opened. See TheoryOfOutputControls.
+	if !t.treeTab.expanded[node.Name] {
 		t.lastTreePress = time.Time{}
 		t.toggleTreeNodeAtRow(row)
 		return

@@ -11,6 +11,12 @@ taiui mouse interaction theory:
   in ReadKeys: it splits a mouse key name ("mouse-left@12,34") into its
   event kind and 0-based cell coordinates. Applications route the parsed
   event into their interaction model.
+- The emission places optional keyboard-modifier segments directly
+  after the "mouse-" prefix, dash-joined: "mouse-shift-left@12,34" and
+  "mouse-ctrl-wheel-up@12,34". ParseMouseKey folds them away and
+  returns the bare event kind, because every consumer routes a pointer
+  event by its kind and a modifier segment must never hide the event;
+  a consumer that needs the modifiers reads them from the raw key name.
 - TabAt locates the tab whose panel box contains a cell, so an
   application can map pointer coordinates onto its tab layout.
 - TabMouse is the standard pointer interaction over a tabbed panel
@@ -21,12 +27,20 @@ taiui mouse interaction theory:
   a drag-scroll. The drag is anchored to the press origin, so the
   content moves with the pointer even when motion events are skipped.
   The zero value is inert.
+- Touchscreens reach this model through the terminal's mouse reporting:
+  a tap arrives as a left press and release, and a swipe as a wheel event
+  or as a button-held drag. A pane that handles presses and the wheel but
+  not the drag is inert to swipes.
 `
 
 // ParseMouseKey splits a mouse key name emitted by ReadKeys into its
 // event kind and 0-based cell coordinates: "mouse-left@12,34" returns
-// ("left", 12, 34, true). See TheoryOfMouseInteraction and
-// TheoryOfMouseInput.
+// ("left", 12, 34, true). The leading keyboard-modifier segments of the
+// name are folded away, so "mouse-ctrl-wheel-up@12,34" returns
+// ("wheel-up", 12, 34, true): the emission places the modifier segments
+// directly after the mouse- prefix, and a modifier segment must never
+// hide the event kind every consumer routes by. See
+// TheoryOfMouseInteraction and TheoryOfMouseInput.
 func ParseMouseKey(key string) (event string, x, y int, ok bool) {
 	name, coord, found := strings.Cut(key, "@")
 	if !found || name == "" {
@@ -34,6 +48,10 @@ func ParseMouseKey(key string) (event string, x, y int, ok bool) {
 	}
 	event = strings.TrimPrefix(name, MouseKeyPrefix)
 	if event == "" || event == name {
+		return "", 0, 0, false
+	}
+	event = trimMouseModifiers(event)
+	if event == "" {
 		return "", 0, 0, false
 	}
 	xStr, yStr, found := strings.Cut(coord, ",")
@@ -48,6 +66,27 @@ func ParseMouseKey(key string) (event string, x, y int, ok bool) {
 		return "", 0, 0, false
 	}
 	return event, x, y, true
+}
+
+// trimMouseModifiers removes the leading dash-joined keyboard-modifier
+// segments of a mouse event name, so the event kind underneath is
+// recovered: the emission prepends "shift-", "alt-", and "ctrl-"
+// segments, and every consumer routes a pointer event by its kind.
+// See TheoryOfMouseInteraction.
+func trimMouseModifiers(event string) string {
+	for {
+		rest, ok := strings.CutPrefix(event, "shift-")
+		if !ok {
+			rest, ok = strings.CutPrefix(event, "alt-")
+		}
+		if !ok {
+			rest, ok = strings.CutPrefix(event, "ctrl-")
+		}
+		if !ok {
+			return event
+		}
+		event = rest
+	}
 }
 
 // TabAt returns the index of the tab whose panel box contains the given
@@ -122,10 +161,11 @@ func (m *TabMouse) Wheel(tabs *Tabs, scrolls []ScrollState, width, height, x, y,
 }
 
 // Drag scrolls the tab that the press started in by the pointer's
-// movement since the press: dragging up reveals earlier content,
-// dragging down reveals the tail. The scroll offset is anchored to the
-// press origin so the content follows the pointer even when motion
-// events are skipped. See TheoryOfMouseInteraction.
+// movement since the press: the content follows the pointer, so dragging
+// up reveals later content and dragging down reveals earlier content.
+// The scroll offset is anchored to the press origin, so the content
+// moves with the pointer even when motion events are skipped. See
+// TheoryOfMouseInteraction.
 func (m *TabMouse) Drag(tabs *Tabs, scrolls []ScrollState, y int) {
 	if !m.dragging || !tabs.Expanded[m.dragTab] {
 		return

@@ -280,6 +280,74 @@ func TestRecordBrowserTreeScroll(t *testing.T) {
 	}
 }
 
+// TestRecordBrowserTreeSwipe verifies the tree view's swipe contract: a
+// press inside the tree's content area anchors a drag-scroll, so a swipe
+// the terminal reports as a button-held drag scrolls the record from the
+// press origin, the drag clamps at the content start, and the release
+// ends the swipe. See TheoryOfRecordBrowser.
+func TestRecordBrowserTreeSwipe(t *testing.T) {
+	var out strings.Builder
+	var ops []tree.WriteOp
+	for i := 0; i < 20; i++ {
+		ops = append(ops, tree.WriteOp{
+			Parent:  "root",
+			Name:    fmt.Sprintf("node-%d", i),
+			Type:    tree.TypeUsage,
+			Author:  tree.AuthorProgram,
+			Content: fmt.Sprintf("event %d", i),
+		})
+	}
+	tr, err := tree.New().WriteAll(ops...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := newRecordBrowserForTest(
+		func() ([]records.SessionInfo, error) {
+			return []records.SessionInfo{
+				{ID: 1, Command: "next", StartTime: "2026-01-02T03:04:05Z", Status: "success", OpCount: 20},
+			}, nil
+		},
+		func(int64) (*tree.Tree, error) { return tr, nil },
+		0,
+		&out,
+	)
+	// A short pane makes the tree's content overflow, so the swipe has
+	// somewhere to move.
+	b.height = 8
+	b.loadList()
+	b.openRecord(1)
+	b.syncTreePane()
+	box := b.tabBox()
+
+	pressX := box.Left + 2
+	pressY := box.Top + 4
+	b.handleMouseKey(fmt.Sprintf("mouse-left@%d,%d", pressX, pressY))
+	start := b.treeScroll().Offset
+
+	// A swipe up moves the content with the pointer, anchored to the
+	// press origin.
+	b.handleMouseKey(fmt.Sprintf("mouse-leftdrag@%d,%d", pressX, pressY-3))
+	if off := b.treeScroll().Offset; off != start+3 {
+		t.Fatalf("expected the swipe to scroll to %d, got %d", start+3, off)
+	}
+	// Swiping back to the origin returns the view to where it started.
+	b.handleMouseKey(fmt.Sprintf("mouse-leftdrag@%d,%d", pressX, pressY))
+	if off := b.treeScroll().Offset; off != start {
+		t.Fatalf("expected the swipe back to scroll to %d, got %d", start, off)
+	}
+	// The drag clamps at the content start.
+	b.handleMouseKey(fmt.Sprintf("mouse-leftdrag@%d,%d", pressX, pressY+50))
+	if off := b.treeScroll().Offset; off != 0 {
+		t.Fatalf("expected the swipe to clamp at 0, got %d", off)
+	}
+	// The release ends the swipe: later motion does not scroll.
+	b.handleMouseKey(fmt.Sprintf("mouse-release@%d,%d", pressX, pressY))
+	b.handleMouseKey(fmt.Sprintf("mouse-leftdrag@%d,%d", pressX, pressY-3))
+	if off := b.treeScroll().Offset; off != 0 {
+		t.Fatalf("expected the released swipe to leave the offset, got %d", off)
+	}
+}
+
 // TestRecordBrowserOpenFailureKeepsList verifies that a record without a
 // tree reports the reason and keeps the list view, so a broken record
 // never blanks the browser. See TheoryOfRecordBrowser.

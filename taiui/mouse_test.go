@@ -19,12 +19,33 @@ func TestParseMouseKey(t *testing.T) {
 	if !ok || event != "release" || x != 80 || y != 44 {
 		t.Fatalf("got %q, %d, %d, %v", event, x, y, ok)
 	}
+	// The emission places keyboard modifiers directly after the
+	// "mouse-" prefix as dash-joined segments; the parser folds them
+	// away, so a modifier bit set by the terminal never hides the
+	// event kind. A tap on a touchscreen is a left press and release,
+	// and the terminal may mark it with any modifier.
+	for _, c := range []struct {
+		key   string
+		event string
+	}{
+		{"mouse-shift-left@1,2", "left"},
+		{"mouse-alt-left@1,2", "left"},
+		{"mouse-ctrl-wheel-up@1,2", "wheel-up"},
+		{"mouse-shift-alt-ctrl-leftdrag@1,2", "leftdrag"},
+		{"mouse-ctrl-release@1,2", "release"},
+	} {
+		event, x, y, ok := ParseMouseKey(c.key)
+		if !ok || event != c.event || x != 1 || y != 2 {
+			t.Fatalf("ParseMouseKey(%q) = %q, %d, %d, %v", c.key, event, x, y, ok)
+		}
+	}
 	for _, bad := range []string{
-		"mouse-left",     // no coordinates
-		"mouse-left@a,b", // non-numeric coordinates
-		"mouse-left@1",   // missing the y coordinate
-		"plain@1,2",      // missing the mouse prefix
-		"mouse-@1,2",     // empty event kind
+		"mouse-left",       // no coordinates
+		"mouse-left@a,b",   // non-numeric coordinates
+		"mouse-left@1",     // missing the y coordinate
+		"plain@1,2",        // missing the mouse prefix
+		"mouse-@1,2",       // empty event kind
+		"mouse-shift-@1,2", // modifiers only, no event kind
 	} {
 		if _, _, _, ok := ParseMouseKey(bad); ok {
 			t.Fatalf("expected %q to be invalid", bad)

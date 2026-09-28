@@ -28,6 +28,14 @@ taiuidemo architecture theory:
   event loop. HandleKey reports whether the state changed, so a key
   press that changes nothing (e.g., up at the scroll clamp) skips the
   render entirely.
+- Pointer input is the library's: taiui.ReadKeys decodes the terminal
+  into generic key names, mapDemoKey maps the demo's bindings onto its
+  action vocabulary, and HandleKey consumes both actions and pointer
+  events. A tap — a press and release without motion — fires on the
+  release, and a swipe scrolls the pane anchored to the press origin, so
+  a scroll never toggles the theme as a side effect. The gesture state
+  lives in the State struct like every other state. See
+  taiui.TheoryOfMouseInteraction.
 - The canvas content is derived state: buildCanvas builds it from the
   frame counter, so the ball is a pure function of state and the event
   loop never mutates the content in place. Rebuilding the canvas per
@@ -47,6 +55,17 @@ type State struct {
 	Rotation int
 	Frame    int64
 	Now      time.Time
+
+	// The pointer gesture state: a press starts a pending tap, the tap
+	// action fires on the release, and a swipe that moves the pointer
+	// cancels it, so scrolling never toggles the theme as a side
+	// effect. pressY and scrollAtPress anchor the swipe scroll to the
+	// press origin, so the content follows the pointer even when motion
+	// events are skipped. See TheoryOfDemoArchitecture.
+	pressed       bool
+	dragged       bool
+	pressY        int
+	scrollAtPress int
 }
 
 // maxW1Weight bounds the w1 flex weight adjustable with the left and
@@ -56,8 +75,11 @@ const maxW1Weight = 10
 // HandleKey processes one key and mutates the state. It reports whether
 // anything changed, so the event loop skips the render for a key that had
 // no effect (e.g., up at the scroll clamp), and whether the key quits the
-// demo.
+// demo. A pointer event is a key like any other; see HandlePointer.
 func (s *State) HandleKey(key string) (changed bool, quit bool) {
+	if event, _, y, ok := taiui.ParseMouseKey(key); ok {
+		return s.HandlePointer(event, y)
+	}
 	switch key {
 	case "up":
 		// The scroll offset never goes negative: the view clamps at the
@@ -98,6 +120,75 @@ func (s *State) HandleKey(key string) (changed bool, quit bool) {
 		return false, true
 	}
 	return
+}
+
+// HandlePointer maps one decoded pointer event onto the demo's actions: a
+// tap — a press and release without motion — toggles the toggle state like
+// the space key, and the wheel and a button-held swipe scroll the Scroll
+// panel. The swipe is anchored to the press origin, so the content follows
+// the pointer even when motion events are skipped, and its clamp matches
+// the scroll key's. It reports whether anything changed, like HandleKey.
+// See TheoryOfDemoArchitecture.
+func (s *State) HandlePointer(event string, y int) (changed bool, quit bool) {
+	switch event {
+	case "left":
+		// The press is a pending tap: its action fires on the release,
+		// so a swipe never toggles the theme as a side effect.
+		s.pressed = true
+		s.dragged = false
+		s.pressY = y
+		s.scrollAtPress = s.Scroll
+	case "leftdrag":
+		if !s.pressed {
+			return false, false
+		}
+		s.dragged = true
+		top := s.scrollAtPress + (s.pressY - y)
+		// The scroll offset never goes negative, matching the up key.
+		if top < 0 {
+			top = 0
+		}
+		if top != s.Scroll {
+			s.Scroll = top
+			changed = true
+		}
+	case "release":
+		tap := s.pressed && !s.dragged
+		s.pressed = false
+		s.dragged = false
+		if tap {
+			s.Toggle = !s.Toggle
+			changed = true
+		}
+	case "wheel-up":
+		if s.Scroll > 0 {
+			s.Scroll--
+			changed = true
+		}
+	case "wheel-down":
+		s.Scroll++
+		changed = true
+	}
+	return
+}
+
+// mapDemoKey maps the library's generic key names onto the demo's action
+// vocabulary, so the dispatch in HandleKey reads as a table of actions
+// rather than a table of characters. Unmapped keys — arrows, pointer
+// events — pass through unchanged. See TheoryOfDemoArchitecture.
+func mapDemoKey(key string) string {
+	switch key {
+	case "q", "Q", "ctrl-c":
+		return "quit"
+	case " ":
+		return "space"
+	case "m", "M":
+		return "modal"
+	case "\t":
+		return "tab"
+	default:
+		return key
+	}
 }
 
 // BuildRoot builds the root element tree from the current state.
@@ -212,7 +303,7 @@ func header(toggle bool, now time.Time) taiui.Element {
 
 func footer() taiui.Element {
 	return taiui.Text(
-		" \u2191/\u2193 scroll \u00b7 \u2190/\u2192 w1:w2 \u00b7 space toggle \u00b7 m modal \u00b7 tab rotate \u00b7 q quit ",
+		" \u2191/\u2193 scroll \u00b7 \u2190/\u2192 w1:w2 \u00b7 space toggle \u00b7 m modal \u00b7 tab rotate \u00b7 tap toggle \u00b7 swipe scroll \u00b7 q quit ",
 		taiui.Dim(true),
 		taiui.Fill(true),
 		taiui.BGColor(taiui.HexColor(0x181818)),

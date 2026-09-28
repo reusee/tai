@@ -45,6 +45,14 @@ Record browser theory (cmd/tai):
   the pane's box, scroll state, and row ranges from it and what is drawn
   is what is pressed. The elapsed timer counts from the record's start,
   so a row shows how far into the session its node was written.
+- The tree view also carries the swipe: a press inside the tree's
+  content area anchors a drag-scroll, a button-held drag scrolls the
+  record from the press origin, and the release ends it, so a swipe the
+  terminal reports as a drag moves the tree the way the wheel does. The
+  list view carries no drag — its selection moves by the wheel and the
+  scroll keys — and the browser's single tab is always expanded and
+  focused, so a press never reaches the label-strip toggle and the title
+  row stays the navigation's own.
 - The scroll keys refresh the pane's display and scroll bounds before
   scrolling, so a key press never depends on a render having happened
   since the last change; the row ranges the pointer mapping reads come
@@ -77,8 +85,8 @@ var recordBrowserHelp = []string{
 	"page up / down\ta page of records; a page of tree rows",
 	"home / end\tfirst / last record or row",
 	"esc\treturn to the record list",
-	"click\tselect a record; a tree row acts on a double click",
-	"double-click\topen a record; expand or collapse a node",
+	"click\tselect a record; expand a collapsed tree node",
+	"double-click\topen a record; toggle a tree node's expansion",
 	"tree column\tclick ▸ / ▾ to collapse / expand the node",
 	"c\tfold every node of the tree; press again to restore",
 	"v\tcycle the tree's projection (all / events / summary / model / program / user / stream)",
@@ -601,9 +609,10 @@ func (b *RecordBrowser) listPress(x, y int) {
 
 // treePress handles a left press in the tree view: the fold column's
 // control toggles the node under it — the Tree tab's own path — and any
-// other text press runs the Tree tab's click handling, which pairs the
-// press for a double-click toggle. A press never moves a focus: the tree
-// view carries none. See TheoryOfRecordBrowser.
+// other text press runs the Tree tab's click handling, which expands a
+// collapsed node on a single press and pairs the press for the
+// double-click toggle of an expanded one. A press never moves a focus:
+// the tree view carries none. See TheoryOfRecordBrowser.
 func (b *RecordBrowser) treePress(x, y int) {
 	p := b.treePane
 	p.mu.Lock()
@@ -630,6 +639,19 @@ func (b *RecordBrowser) handleMouseKey(key string) bool {
 		b.move(-1)
 	case "wheel-down":
 		b.move(1)
+	case "leftdrag":
+		// A swipe the terminal reports as a button-held drag scrolls the
+		// record's tree from the press origin, so the content follows
+		// the pointer. The list view carries no drag: its selection
+		// moves by the wheel and the scroll keys. See
+		// TheoryOfRecordBrowser.
+		if b.currentID == 0 {
+			break
+		}
+		b.syncTreeScroll()
+		b.treePane.mouse.Drag(b.tabs, b.treePane.scrolls, y)
+	case "release":
+		b.treePane.mouse.Release()
 	case "left":
 		// Any press cancels a pending quit confirmation before its
 		// normal processing, so an accidental quit press never loses
@@ -648,9 +670,17 @@ func (b *RecordBrowser) handleMouseKey(key string) bool {
 		}
 		if b.currentID == 0 {
 			b.listPress(x, y)
-		} else {
-			b.treePress(x, y)
+			break
 		}
+		// A press inside the tree's content area anchors a swipe. The
+		// browser's single tab is always expanded and focused, so the
+		// press must not reach the label-strip toggle; the title row
+		// stays the navigation's own. See TheoryOfRecordBrowser.
+		box := b.tabBox()
+		if y > box.Top && y < box.Bottom {
+			b.treePane.mouse.Press(b.tabs, b.treePane.scrolls, b.width, b.height, x, y)
+		}
+		b.treePress(x, y)
 	}
 	return false
 }

@@ -33,10 +33,15 @@ func main() {
 	defer t.Stop()
 
 	// The demo drives the terminal directly with ANSI escapes: hide the
-	// cursor while rendering and restore it on exit.
+	// cursor while rendering and restore it on exit. Mouse reporting is
+	// enabled for the session, so a tap arrives as a press and release
+	// and a swipe as a wheel event or a button-held drag; the demo maps
+	// them onto its own actions. See TheoryOfDemoArchitecture.
 	width, height := 80, 24
 	io.WriteString(t, "\x1b[?25l")
+	io.WriteString(t, taiui.MouseEnableSequence)
 	defer func() {
+		io.WriteString(t, taiui.MouseDisableSequence)
 		fmt.Fprintf(t, "\x1b[%d;1H", height)
 		io.WriteString(t, "\x1b[0m\x1b[?25h")
 	}()
@@ -70,8 +75,12 @@ func main() {
 	resizeCh := make(chan bool, 4)
 	t.NotifyResize(resizeCh)
 
+	// The library's decoder turns the terminal into generic key names —
+	// arrows, printable characters, and pointer events — and mapDemoKey
+	// maps the demo's bindings onto its action vocabulary. The demo
+	// carries no decoder of its own. See TheoryOfDemoArchitecture.
 	keyCh := make(chan string, 8)
-	go readKeys(t, keyCh)
+	go taiui.ReadKeys(t, keyCh)
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
@@ -88,7 +97,7 @@ func main() {
 			// HandleKey mutates the state and reports whether anything
 			// changed, so a key that had no effect (e.g., up at the
 			// scroll clamp) skips the render entirely.
-			changed, quit := state.HandleKey(key)
+			changed, quit := state.HandleKey(mapDemoKey(key))
 			if quit {
 				return
 			}
@@ -112,69 +121,6 @@ func main() {
 			}
 		case <-sigCh:
 			return
-		}
-	}
-}
-
-func readKeys(r io.Reader, ch chan<- string) {
-	var buf [64]byte
-	var pending []byte
-	for {
-		n, err := r.Read(buf[:])
-		if err != nil {
-			return
-		}
-		if n == 0 {
-			// The tty is in non-blocking raw mode; avoid a busy loop.
-			// An incomplete ESC sequence that never grew is discarded.
-			if len(pending) > 0 && pending[0] == 0x1b && len(pending) < 3 {
-				pending = pending[:0]
-			}
-			time.Sleep(2 * time.Millisecond)
-			continue
-		}
-		pending = append(pending, buf[:n]...)
-		for len(pending) > 0 {
-			if pending[0] == 0x1b {
-				// Arrow keys arrive as ESC [ A/B/C/D; other sequences
-				// are ignored. Wait for the full three-byte sequence.
-				if len(pending) < 3 {
-					if len(pending) == 2 && pending[1] != '[' {
-						// ESC followed by a non-sequence byte: the ESC
-						// is not part of an arrow sequence, so discard
-						// it and process the rest.
-						pending = pending[1:]
-						continue
-					}
-					break
-				}
-				seq := pending[:3]
-				if seq[1] == '[' {
-					switch seq[2] {
-					case 'A':
-						ch <- "up"
-					case 'B':
-						ch <- "down"
-					case 'C':
-						ch <- "right"
-					case 'D':
-						ch <- "left"
-					}
-				}
-				pending = pending[3:]
-				continue
-			}
-			switch pending[0] {
-			case 'q', 'Q', 0x03:
-				ch <- "quit"
-			case ' ':
-				ch <- "space"
-			case 'm', 'M':
-				ch <- "modal"
-			case '\t':
-				ch <- "tab"
-			}
-			pending = pending[1:]
 		}
 	}
 }

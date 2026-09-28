@@ -81,8 +81,11 @@ taiui mouse input theory:
   and the like. Extended buttons (8-11) are reported as "button-8"
   through "button-11"; extended button drag appends "-drag". Keyboard
   modifiers (Shift, Alt, Ctrl) are extracted from the button code and
-  prepended as a dash-joined prefix, matching the keyboard modifier
-  convention: "shift-mouse-left@12,34", "ctrl-mouse-wheel-up@12,34". A
+  placed as a dash-joined prefix directly after the "mouse-" prefix,
+  matching the keyboard modifier convention:
+  "mouse-shift-left@12,34", "mouse-ctrl-wheel-up@12,34"; ParseMouseKey
+  folds the prefix away so the event kind underneath stays addressable
+  (see TheoryOfMouseInteraction). A
   release event carries no button number — the SGR release code is
   always 3 — and is emitted as "mouse-release@12,34" with any detected
   modifier prefix; the consumer tracks which button the release ends.
@@ -1106,9 +1109,10 @@ const mouseExtendedButtonFlag = 128
 func mouseKeyName(button, x, y int, release bool) string {
 	// Keyboard modifiers (Shift, Alt, Ctrl) are encoded in bits 2-4 of
 	// the button code, matching the xterm mouse protocol. They are
-	// extracted and prepended as a dash-joined prefix to the event
-	// name, so a Shift+click is "shift-mouse-left" and a Ctrl+wheel-up
-	// is "ctrl-mouse-wheel-up", consistent with keyboard modifier names.
+	// extracted and placed directly after the mouse- prefix,
+	// dash-joined before the event kind, so a Shift+click is
+	// "mouse-shift-left" and a Ctrl+wheel-up is "mouse-ctrl-wheel-up",
+	// consistent with keyboard modifier names.
 	var modifiers []string
 	if button&mouseShiftFlag != 0 {
 		modifiers = append(modifiers, "shift")

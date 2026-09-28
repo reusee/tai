@@ -1,10 +1,7 @@
 package main
 
 import (
-	"reflect"
-	"strings"
 	"testing"
-	"time"
 )
 
 func TestHandleKeyScrollClamp(t *testing.T) {
@@ -97,6 +94,25 @@ func TestHandleKeyModal(t *testing.T) {
 	}
 }
 
+func TestMapDemoKey(t *testing.T) {
+	for in, want := range map[string]string{
+		"q":                  "quit",
+		"Q":                  "quit",
+		"ctrl-c":             "quit",
+		" ":                  "space",
+		"m":                  "modal",
+		"M":                  "modal",
+		"\t":                 "tab",
+		"up":                 "up",
+		"mouse-left@1,2":     "mouse-left@1,2",
+		"mouse-wheel-up@1,2": "mouse-wheel-up@1,2",
+	} {
+		if got := mapDemoKey(in); got != want {
+			t.Fatalf("mapDemoKey(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestHandleKeyRotation(t *testing.T) {
 	s := &State{Toggle: true, W1Weight: 1}
 	changed, quit := s.HandleKey("tab")
@@ -142,51 +158,6 @@ func TestRotatedPanelIndex(t *testing.T) {
 	}
 }
 
-func TestReadKeys(t *testing.T) {
-	ch := make(chan string, 8)
-	go readKeys(strings.NewReader("\x1b[Aqm \t\x1b[B"), ch)
-	var got []string
-	for len(got) < 6 {
-		select {
-		case k := <-ch:
-			got = append(got, k)
-		case <-time.After(time.Second):
-			t.Fatal("timeout waiting for keys")
-		}
-	}
-	want := []string{"up", "quit", "modal", "space", "tab", "down"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("expected %v, got %v", want, got)
-	}
-}
-
-func TestReadKeysLoneEsc(t *testing.T) {
-	ch := make(chan string, 8)
-	go readKeys(strings.NewReader("\x1b"), ch)
-	// A lone ESC that never grows into a sequence is discarded: the
-	// incomplete sequence never resolves to a key.
-	select {
-	case k := <-ch:
-		t.Fatalf("expected no key, got %q", k)
-	case <-time.After(50 * time.Millisecond):
-	}
-}
-
-func TestReadKeysEscThenKey(t *testing.T) {
-	ch := make(chan string, 8)
-	go readKeys(strings.NewReader("\x1bq"), ch)
-	// ESC followed by a non-sequence byte: the ESC is discarded and the
-	// following key is processed, so 'q' quits the demo.
-	select {
-	case k := <-ch:
-		if k != "quit" {
-			t.Fatalf("expected quit, got %q", k)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("timeout waiting for quit")
-	}
-}
-
 func TestRuneWidthEnv(t *testing.T) {
 	t.Setenv("RUNEWIDTH_EASTASIAN", "")
 	if got := runeWidthEnv(); got != "EA=narrow" {
@@ -210,6 +181,45 @@ func TestBounce(t *testing.T) {
 		if got := bounce(c.v, 3); got != c.want {
 			t.Fatalf("bounce(%d, 3) = %d, want %d", c.v, got, c.want)
 		}
+	}
+}
+
+func TestHandlePointer(t *testing.T) {
+	s := &State{Toggle: true, W1Weight: 1}
+	// The wheel scrolls the pane and clamps at the content start.
+	if changed, quit := s.HandleKey("mouse-wheel-up@1,2"); changed || quit {
+		t.Fatal("a wheel up at the content start must change nothing")
+	}
+	if changed, quit := s.HandleKey("mouse-wheel-down@1,2"); !changed || quit || s.Scroll != 1 {
+		t.Fatalf("expected the wheel down to scroll, got changed=%v quit=%v scroll=%d", changed, quit, s.Scroll)
+	}
+	// A tap fires on the release, not on the press.
+	s.HandleKey("mouse-left@5,5")
+	if !s.Toggle {
+		t.Fatal("the tap action must fire on the release, not on the press")
+	}
+	s.HandleKey("mouse-release@5,5")
+	if s.Toggle {
+		t.Fatal("the tap must toggle the state")
+	}
+	// A swipe scrolls with the pointer, anchored to the press origin,
+	// and cancels the pending tap.
+	s.Toggle = true
+	s.Scroll = 0
+	s.HandleKey("mouse-left@5,10")
+	s.HandleKey("mouse-leftdrag@5,7")
+	if s.Scroll != 3 {
+		t.Fatalf("expected the swipe to scroll to 3, got %d", s.Scroll)
+	}
+	s.HandleKey("mouse-release@5,7")
+	if !s.Toggle {
+		t.Fatal("a swipe must not toggle the state")
+	}
+	// The swipe clamps at the content start.
+	s.HandleKey("mouse-left@5,3")
+	s.HandleKey("mouse-leftdrag@5,53")
+	if s.Scroll != 0 {
+		t.Fatalf("expected the swipe to clamp at 0, got %d", s.Scroll)
 	}
 }
 

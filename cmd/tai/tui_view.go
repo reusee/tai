@@ -130,7 +130,7 @@ var tuiHelpLines = []string{
 	"enter\tsend the input line when focused; toggle the latest tree node's expansion otherwise",
 	"click\tselect / toggle tab under cursor; click the input row to focus input",
 	"output column\tclick ▸ / ▾ at a section's first row to collapse / expand it",
-	"tree row\tclick 👉 on an attempt line to jump the Output tab to its output section; double-click a node to expand or collapse it",
+	"tree row\tclick 👉 on an attempt line to jump the Output tab to its output section; click a collapsed node to expand it; double-click to expand or collapse it",
 	"tree column\tclick ▸ / ▾ on an expandable node's first row (or its first visible row when scrolled) to collapse / expand it",
 	"title buttons\tclick the labels at an expanded tab title's right edge: Tree SwitchCollapse, Plan Collapse, Output UpDownCollapse, Logs SplitMouseHelpQuit",
 	"wheel / drag\tscroll pane under cursor",
