@@ -595,6 +595,47 @@ func TestOutputControlColumnShowsTypeLetters(t *testing.T) {
 	}
 }
 
+// TestOutputControlColumnShowsLetterOnLongPartialLine reproduces the
+// vanished column markers on a long streaming line: a section whose
+// only projected rows come from the trailing partial line — one line
+// too long for the pane to show at once — keeps its fold control and
+// renders its type letter below it. See TheoryOfOutputControls.
+func TestOutputControlColumnShowsLetterOnLongPartialLine(t *testing.T) {
+	tui := newTUIForTest()
+	tui.interactive = false
+	tui.width, tui.height = 40, 10
+	tui.tabs.Expanded = []bool{false, true, false}
+	tui.tabs.HasContent = []bool{false, true, false}
+	tui.tabs.Focus = 1
+
+	// One long line with no newline: every visible row of the section
+	// is a transient partial row, and the line overflows the pane.
+	tui.writeOutputPart(generators.RoleModel, false, strings.Repeat("long ", 200))
+
+	box := tui.tabs.Boxes(40, 10)[1]
+	tui.mu.Lock()
+	display := wrappedDisplay(tui, 1, box)
+	tui.scrolls[1].Update(len(display), tui.tuiPaneHeight(1, box))
+	offset := tui.scrolls[1].Offset
+	rows := tui.outputControlRows(box, display, offset)
+	tui.mu.Unlock()
+	if len(rows) != 1 {
+		t.Fatalf("expected the partial-line section to carry a control row, got %+v", rows)
+	}
+
+	screen := &panelTestScreen{width: 40, height: 10}
+	taiui.Render(buildRoot(tui, 40, 10, [][]taiui.Line{nil, display, nil}), screen)
+	frame := screen.frames[len(screen.frames)-1]
+
+	want := []rune(sectionGlyphExpanded)[0]
+	if cell := frame.Cells[rows[0].row*frame.Width+box.Left]; cell.Rune != want {
+		t.Fatalf("expected the fold glyph on the control row, got %q", string(cell.Rune))
+	}
+	if cell := frame.Cells[(rows[0].row+1)*frame.Width+box.Left]; cell.Rune != 'M' {
+		t.Fatalf("expected the model letter below the fold glyph, got %q", string(cell.Rune))
+	}
+}
+
 // TestControlStripText verifies the horizontal hover strip's layout:
 // one Han-width slot per control. See TheoryOfOutputControls.
 func TestControlStripText(t *testing.T) {

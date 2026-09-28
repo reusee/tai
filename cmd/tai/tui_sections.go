@@ -113,9 +113,15 @@ Output tab control column theory (cmd/tai):
   most once per content width behind a left-to-right pointer, the
   trailing partial line re-wraps fresh every frame, and a section
   toggle, a collapse-all key press, or a content-width change resets
-  the projection. Only the last collapsed section's row changes while
-  output streams, so the projection rewrites that single row in place
-  each frame instead of re-deriving.
+  the projection.
+- The trailing partial line belongs to the last section's span: the
+  rows its wrapping contributes count toward that section's display
+  rows. A long line whose wrapped rows fill the pane before its
+  newline arrives therefore keeps the section's fold control and type
+  letter on screen instead of losing both. The partial rows are
+  transient — re-wrapped every frame — so they stay outside the
+  section's stable projected row count and are added by the section
+  row query; section offsets never depend on them.
 `
 
 // controlColumnWidth is the control column's width in terminal cells:
@@ -236,6 +242,28 @@ func sectionCollapsedRow(line taiui.Line, contentWidth int) taiui.Line {
 // renders in full. The caller holds t.mu. See TheoryOfOutputControls.
 func (t *TUI) sectionCollapsed(idx int) bool {
 	return t.outputSections[idx].collapsed
+}
+
+// projSectionRows returns the display rows the current projection
+// gives section idx: the section's projected completed-line rows plus,
+// for the last section, the transient rows of the trailing partial
+// line when that line lies inside the section's span. The partial
+// rows re-wrap every frame, so they stay out of projCounts and the
+// section queries add them back here; without them a long line still
+// streaming without a newline leaves its section with no counted rows
+// at all, and the section loses its control and its type letter. The
+// projection must have been computed for the current content width.
+// The caller holds t.mu. See TheoryOfOutputControls.
+func (t *TUI) projSectionRows(idx int) int {
+	count := 0
+	if idx >= 0 && idx < len(t.projCounts) {
+		count = t.projCounts[idx]
+	}
+	if idx >= 0 && idx == len(t.outputSections)-1 && t.projPartialRows > 0 &&
+		len(t.output.CompletedLines()) < t.sectionedLines {
+		count += t.projPartialRows
+	}
+	return count
 }
 
 // outputDisplay renders the Output tab's display: the projection of the
@@ -535,10 +563,7 @@ func (t *TUI) outputControlRows(box taiui.Box, display []taiui.Line, offset int)
 	paneHeight := t.tuiPaneHeight(t.tabIndex(tabOutput), box)
 	var rows []outputControlRow
 	for i := range t.outputSections {
-		count := 0
-		if i < len(t.projCounts) {
-			count = t.projCounts[i]
-		}
+		count := t.projSectionRows(i)
 		if count <= 0 {
 			continue
 		}
@@ -557,6 +582,8 @@ func (t *TUI) outputControlRows(box taiui.Box, display []taiui.Line, offset int)
 // outputTypeRow returns the screen row of a section's content-type
 // letter in the current view: the row below the section's fold
 // control, when that row still belongs to the section's visible rows.
+// The section's rows include the trailing partial line's transient
+// rows, so a long line still streaming keeps its letter on screen.
 // ok is false when the section has no second visible row — a
 // collapsed section, or one whose span the viewport or the pane
 // clips — so a one-row section shows only its fold glyph and the
@@ -564,10 +591,7 @@ func (t *TUI) outputControlRows(box taiui.Box, display []taiui.Line, offset int)
 // have been computed for the current content width. The caller holds
 // t.mu. See TheoryOfOutputControls.
 func (t *TUI) outputTypeRow(box taiui.Box, row outputControlRow, offset int) (int, bool) {
-	count := 0
-	if row.section < len(t.projCounts) {
-		count = t.projCounts[row.section]
-	}
+	count := t.projSectionRows(row.section)
 	top := t.outputSectionOffset(row.section)
 	if max(top, offset)+1 >= top+count {
 		return 0, false
