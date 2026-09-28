@@ -36,7 +36,7 @@ UI style theory:
   ("usage"); no match keeps the default foreground. There is no
   separate category field: the node's type is the complete
   classification. The Output tab carries no role colors at all: a
-  section's content type is stated by the full-width letter its
+  section's content type is stated by the half-width letter its
   control column draws (see TheoryOfOutputControls), so the style
   surface covers the panels, the input bar, and the tree rules only.
 `

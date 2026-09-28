@@ -53,11 +53,11 @@ const TheoryOfOutputControls = `
 Output tab control column theory (cmd/tai):
 
 - The Output tab reserves a control column beside its content rows,
-  one Han character wide: the panel's content is indented past the
-  column (taiui.ContentIndent), so no content hides under the controls,
-  and the column's background follows the tab's focus state like the
-  panel's own. The title row spans the full box width and is not part
-  of the column.
+  controlColumnWidth cells wide: the panel's content is indented past
+  the column (taiui.ContentIndent), so no content hides under the
+  controls, and the column's background follows the tab's focus state
+  like the panel's own. The title row spans the full box width and is
+  not part of the column.
 - Every section carries a fold control: the unicode triangle ▾ while
   the section is expanded, ▸ while collapsed, drawn in the default
   foreground so it never competes with the content. A press on the
@@ -65,15 +65,17 @@ Output tab control column theory (cmd/tai):
   collapsed section scrolls the view so the section's first display
   row lands at the pane top and stops following the tail, so the
   expanded content opens at its beginning.
-- The column also states the section's content type: a full-width
-  letter renders on the row below the section's fold glyph — Ｔ the
-  model's reasoning thoughts, Ｍ its body text, Ｕ the user's input,
-  Ｓ system messages, Ｃ tool calls and results, Ｌ log records. A
-  full-width letter is two cells wide, matching the column, and
-  renders in the default foreground so it never competes with the
-  content. A section with no second visible row — a collapsed section,
-  or one whose span the viewport clips — shows only its fold glyph,
-  so the letter never covers the next section's control.
+- The column also states the section's content type: a half-width
+  letter renders in the column's leftmost cell on the row below the
+  section's fold glyph — T the model's reasoning thoughts, M its body
+  text, U the user's input, S system messages, C tool calls and
+  results, L log records. A half-width letter is one cell wide; the
+  column's second cell stays blank, so the letter reads as a type
+  marker separated from the content (which begins past the column)
+  and never competes with it. The letter renders in the default
+  foreground. A section with no second visible row — a collapsed
+  section, or one whose span the viewport clips — shows only its fold
+  glyph, so the letter never covers the next section's control.
 - The c key toggles the whole structure: when not every section is
   collapsed, it snapshots the per-section collapsed state and folds
   every section to one row; when every section is collapsed, it
@@ -172,33 +174,35 @@ type outputSection struct {
 	startLine int
 	collapsed bool
 	showLine  int
-	// letter is the section's content type: the full-width letter the
-	// control column draws on the row below the section's fold glyph.
-	// See TheoryOfOutputControls.
+	// letter is the section's content type: the half-width letter the
+	// control column draws in its leftmost cell on the row below the
+	// section's fold glyph. See TheoryOfOutputControls.
 	letter string
 }
 
 // outputTypeLetterOf maps a content role and its thinking state to the
-// full-width letter the control column draws below the section's fold
-// glyph: Ｔ the model's reasoning thoughts, Ｍ its body text, Ｕ the
-// user's input, Ｓ system messages, Ｃ tool calls and results, Ｌ log
-// records. A full-width letter is two cells wide, matching the control
-// column. See TheoryOfOutputControls.
+// half-width letter the control column draws below the section's fold
+// glyph: T the model's reasoning thoughts, M its body text, U the
+// user's input, S system messages, C tool calls and results, L log
+// records. A half-width letter is one cell wide and occupies the
+// column's leftmost cell, leaving the column's second cell blank as
+// the gap that separates the type marker from the content. See
+// TheoryOfOutputControls.
 func outputTypeLetterOf(role generators.Role, isThought bool) string {
 	if isThought {
-		return "Ｔ"
+		return "T"
 	}
 	switch role {
 	case generators.RoleUser:
-		return "Ｕ"
+		return "U"
 	case generators.RoleSystem:
-		return "Ｓ"
+		return "S"
 	case generators.RoleTool:
-		return "Ｃ"
+		return "C"
 	case generators.RoleLog:
-		return "Ｌ"
+		return "L"
 	default:
-		return "Ｍ"
+		return "M"
 	}
 }
 

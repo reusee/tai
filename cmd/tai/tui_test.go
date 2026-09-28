@@ -296,7 +296,7 @@ func TestDisplayChatInput(t *testing.T) {
 	if lines[1].Text != "world" || lines[1].Color != taiui.NoColor {
 		t.Fatalf("unexpected second line: %+v", lines[1])
 	}
-	if len(tui.outputSections) != 1 || tui.outputSections[0].letter != "Ｕ" {
+	if len(tui.outputSections) != 1 || tui.outputSections[0].letter != "U" {
 		t.Fatalf("expected one user-letter section, got %+v", tui.outputSections)
 	}
 	if !tui.tabs.Expanded[1] {
@@ -371,8 +371,8 @@ func TestDisplayChatInputCollapsibleSection(t *testing.T) {
 	if expandedDisplay[0].Color != taiui.NoColor {
 		t.Fatalf("expected the default foreground on the chat input row, got %#x", expandedDisplay[0].Color)
 	}
-	if tui.outputSections[0].letter != "Ｕ" {
-		t.Fatalf("expected the Ｕ letter on the chat input section, got %q", tui.outputSections[0].letter)
+	if tui.outputSections[0].letter != "U" {
+		t.Fatalf("expected the U letter on the chat input section, got %q", tui.outputSections[0].letter)
 	}
 }
 
@@ -1959,7 +1959,7 @@ func TestTuiStateFlushKeepsCompleteLine(t *testing.T) {
 // TestTUICaptureContentRoleColors verifies that the Output tab carries
 // no role foreground color: every body line renders in the default
 // foreground, and each section states its content type with its
-// full-width letter. See TheoryOfOutputControls.
+// half-width letter. See TheoryOfOutputControls.
 func TestTUICaptureContentRoleColors(t *testing.T) {
 	tui := newTUIForTest()
 	state := generators.NewPrompts("", nil)
@@ -1993,7 +1993,7 @@ func TestTUICaptureContentRoleColors(t *testing.T) {
 			t.Fatalf("line %d: got %+v, want text %q in the default foreground", i, lines[i], want)
 		}
 	}
-	wantLetters := []string{"Ｕ", "Ｍ", "Ｃ", "Ｓ", "Ｌ"}
+	wantLetters := []string{"U", "M", "C", "S", "L"}
 	if len(tui.outputSections) != len(wantLetters) {
 		t.Fatalf("expected %d sections, got %d", len(wantLetters), len(tui.outputSections))
 	}
@@ -2035,7 +2035,7 @@ func TestTUICaptureContentThoughtColor(t *testing.T) {
 			t.Fatalf("line %d: got %+v, want text %q in the default foreground", i, lines[i], want)
 		}
 	}
-	wantLetters := []string{"Ｔ", "Ｍ"}
+	wantLetters := []string{"T", "M"}
 	if len(tui.outputSections) != len(wantLetters) {
 		t.Fatalf("expected %d sections, got %d", len(wantLetters), len(tui.outputSections))
 	}

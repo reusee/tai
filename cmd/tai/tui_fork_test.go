@@ -112,9 +112,9 @@ func TestForkTUIDisplayDecoratesHandoffState(t *testing.T) {
 	if !found {
 		t.Fatalf("expected the handoff text line in the output buffer, got %v", lines)
 	}
-	// The thinking and body sections carry their own type letters: Ｔ
-	// for the reasoning trace and Ｍ for the model's body text.
-	wantLetters := []string{"Ｔ", "Ｍ"}
+	// The thinking and body sections carry their own type letters: T
+	// for the reasoning trace and M for the model's body text.
+	wantLetters := []string{"T", "M"}
 	if len(tui.outputSections) != len(wantLetters) {
 		t.Fatalf("expected %d sections, got %d", len(wantLetters), len(tui.outputSections))
 	}

@@ -570,12 +570,19 @@ func TestOutputControlColumnShowsTypeLetters(t *testing.T) {
 	frame := screen.frames[len(screen.frames)-1]
 
 	// The user and thoughts sections span two or more display rows, so
-	// their letters render on the row below their fold glyphs.
-	if cell := frame.Cells[(rows[0].row+1)*frame.Width+box.Left]; cell.Rune != 'Ｕ' {
+	// their half-width letters render in the column's leftmost cell on
+	// the row below their fold glyphs. See TheoryOfOutputControls.
+	if cell := frame.Cells[(rows[0].row+1)*frame.Width+box.Left]; cell.Rune != 'U' {
 		t.Fatalf("expected the user letter below the fold glyph, got %q", string(cell.Rune))
 	}
-	if cell := frame.Cells[(rows[1].row+1)*frame.Width+box.Left]; cell.Rune != 'Ｔ' {
+	if cell := frame.Cells[(rows[1].row+1)*frame.Width+box.Left]; cell.Rune != 'T' {
 		t.Fatalf("expected the thoughts letter below the fold glyph, got %q", string(cell.Rune))
+	}
+	// The column's second cell stays blank beside the letter, so the
+	// type marker reads separated from the content. See
+	// TheoryOfOutputControls.
+	if cell := frame.Cells[(rows[0].row+1)*frame.Width+box.Left+1]; cell.Rune == 'U' || cell.Rune == 'T' {
+		t.Fatalf("expected a blank cell beside the user letter, got %q", string(cell.Rune))
 	}
 	// The answer section spans one display row: it shows only its fold
 	// glyph, so the letter never covers the next section's control.
@@ -583,7 +590,7 @@ func TestOutputControlColumnShowsTypeLetters(t *testing.T) {
 		t.Fatalf("expected the fold glyph on the one-row section, got %q", string(cell.Rune))
 	}
 	switch frame.Cells[(rows[2].row+1)*frame.Width+box.Left].Rune {
-	case 'Ｕ', 'Ｍ', 'Ｔ', 'Ｓ', 'Ｃ', 'Ｌ':
+	case 'U', 'M', 'T', 'S', 'C', 'L':
 		t.Fatal("a one-row section must show only its fold glyph")
 	}
 }

@@ -96,10 +96,10 @@ and failure notes are goal structure nodes in the same tree (RunGoal
 records them through GoalTreeObserver), so they render in the Tree tab
 and never reach the Output tab. stdout is discarded in TUI mode, while
 stderr stays visible in the Output tab. The Output tab's content carries
-no role color: each section states its content type with the full-width
-letter its control column draws below the fold glyph (see
-TheoryOfOutputControls), so type never competes with the text for
-attention. The keys
+no role color: each section states its content type with the half-width
+letter its control column draws in the column's leftmost cell below the
+fold glyph (see TheoryOfOutputControls), so type never competes with the
+text for attention. The keys
 1, 2, 3, and 4 select the tabs in layout order — Tree, Plan (while it is
 present), Output, Logs; the number-key collapse/expand and focus-handoff
 semantics, first-content auto-expansion, the unseen dot on collapsed
