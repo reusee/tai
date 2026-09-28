@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"iter"
+	"time"
 
 	"github.com/reusee/tai/components"
 	"github.com/reusee/tai/pipeline"
@@ -28,12 +29,20 @@ Block processing display theory (cmd/tai):
 - The observer's callbacks run on the generation goroutine, one component
   at a time — ProcessComponents runs components sequentially — so the
   TUI's blockProcessing field names the component currently working. The
-  Output tab title renders "processing <kind>..." while the field is set;
-  the label precedence is finished > handoff > processing > generating,
-  with processing ranked above generating because a request that ends
-  without a finish node leaves the generating hint on while a component
-  still works. genEnd clears the state, so a session that ends
+  Output tab title renders "processing <kind> <elapsed>..." while the
+  field is set, the elapsed fragment being the stopwatch reading of
+  blockProcessingStart; the label precedence is finished > handoff >
+  processing > generating, with processing ranked above generating
+  because a request that ends without a finish node leaves the generating
+  hint on while a component still works. BlockProcessingEnd and genEnd
+  clear the state and the start moment together, so a session that ends
   mid-processing leaves no hint stuck on.
+- The stopwatch advances without unrelated events: the session loop wakes
+  only on keys, updates, and resizes, and a component's work may run for
+  minutes with no event to wake it. The session's ticker notifies the loop
+  once per blockProcessingTick while the field is set, and the fragment
+  renders in the Tree tab rows' "+0:07" form (formatTreeElapsed), so both
+  stopwatches read alike.
 - The decorator travels with the scope like the output observer: each
   loop scope re-evaluates Module.Run and re-applies it, so a goal loop's
   component processing reports through the same TUI. See
@@ -89,21 +98,65 @@ func withTUIBlockProcessing(run pipeline.Run, tui *TUI) pipeline.Run {
 	}
 }
 
+// blockProcessingTick is the wake interval of the Output tab's processing
+// stopwatch: the elapsed fragment renders whole seconds, so one wake per
+// second keeps it current. See TheoryOfTUIBlockProcessing.
+const blockProcessingTick = time.Second
+
 // BlockProcessingStart reports the kind of the component whose block
-// processing is starting. It is called on the generation goroutine by the
-// observer wrapper. See TheoryOfTUIBlockProcessing.
+// processing is starting, and records the stopwatch's start moment so the
+// Output tab title can render the elapsed time. It is called on the
+// generation goroutine by the observer wrapper. See
+// TheoryOfTUIBlockProcessing.
 func (t *TUI) BlockProcessingStart(kind string) {
 	t.mu.Lock()
 	t.blockProcessing = kind
+	t.blockProcessingStart = time.Now()
 	t.mu.Unlock()
 	t.notify()
 }
 
 // BlockProcessingEnd reports that the component's block processing has
-// ended. See TheoryOfTUIBlockProcessing.
+// ended, and clears the stopwatch's start moment together with the hint.
+// See TheoryOfTUIBlockProcessing.
 func (t *TUI) BlockProcessingEnd() {
 	t.mu.Lock()
 	t.blockProcessing = ""
+	t.blockProcessingStart = time.Time{}
 	t.mu.Unlock()
 	t.notify()
+}
+
+// tickBlockProcessing wakes the session loop once per blockProcessingTick
+// while a component's block processing is active, so the Output tab's
+// processing stopwatch advances without unrelated events. It returns when
+// stop is closed, which Run does when the session ends. See
+// TheoryOfTUIBlockProcessing.
+func (t *TUI) tickBlockProcessing(stop <-chan struct{}) {
+	ticker := time.NewTicker(blockProcessingTick)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+			t.mu.Lock()
+			active := t.blockProcessing != ""
+			t.mu.Unlock()
+			if active {
+				t.notify()
+			}
+		}
+	}
+}
+
+// blockProcessingElapsedLocked returns the elapsed duration since the
+// current component's block processing started, or zero when no
+// processing is active. The caller holds t.mu. See
+// TheoryOfTUIBlockProcessing.
+func (t *TUI) blockProcessingElapsedLocked() time.Duration {
+	if t.blockProcessing == "" {
+		return 0
+	}
+	return time.Since(t.blockProcessingStart)
 }

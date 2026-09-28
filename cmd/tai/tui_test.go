@@ -387,25 +387,25 @@ func TestTuiStateWriteLogs(t *testing.T) {
 
 func TestTuiStateRequesting(t *testing.T) {
 	tui := newTUIForTest()
-	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff, tui.blockProcessing); label != "Output" {
+	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff, tui.blockProcessing, 0); label != "Output" {
 		t.Fatalf("expected plain Output label before any activity, got label %q", label)
 	}
 	tui.writeLogs([]byte("level=INFO msg=generating name=model\n"))
 	if !tui.generating {
 		t.Fatal("expected generating after the generating log")
 	}
-	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff, tui.blockProcessing); label != "Output (generating...)" {
+	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff, tui.blockProcessing, 0); label != "Output (generating...)" {
 		t.Fatalf("expected generating hint, got label %q", label)
 	}
 	tui.setTree(treeWithFinishNode(t))
 	if tui.generating {
 		t.Fatal("expected not generating after the finish node")
 	}
-	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff, tui.blockProcessing); label != "Output" {
+	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff, tui.blockProcessing, 0); label != "Output" {
 		t.Fatalf("expected plain Output label after the finish node, got label %q", label)
 	}
 	tui.finished = true
-	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff, tui.blockProcessing); label != "Output (done)" {
+	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff, tui.blockProcessing, 0); label != "Output (done)" {
 		t.Fatalf("expected done hint, got label %q", label)
 	}
 }
@@ -416,7 +416,7 @@ func TestTuiStateRequestingLogsWrite(t *testing.T) {
 	if !tui.generating {
 		t.Fatal("expected generating after log write")
 	}
-	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff, tui.blockProcessing); label != "Output (generating...)" {
+	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff, tui.blockProcessing, 0); label != "Output (generating...)" {
 		t.Fatalf("expected generating hint, got label %q", label)
 	}
 }
@@ -450,23 +450,62 @@ func TestTuiStateRequestingClearedByFinish(t *testing.T) {
 	if tui.generating {
 		t.Fatal("expected not generating after the finish node")
 	}
-	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff, tui.blockProcessing); label != "Output" {
+	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff, tui.blockProcessing, 0); label != "Output" {
 		t.Fatalf("expected plain Output label after the finish node, got %q", label)
 	}
 }
 
 func TestTUIOutputTabLabel(t *testing.T) {
 	tui := newTUIForTest()
-	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff, tui.blockProcessing); label != "Output" {
+	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff, tui.blockProcessing, 0); label != "Output" {
 		t.Fatalf("expected plain Output label, got label %q", label)
 	}
 	tui.writeLogs([]byte("level=INFO msg=generating name=model\n"))
-	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff, tui.blockProcessing); label != "Output (generating...)" {
+	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff, tui.blockProcessing, 0); label != "Output (generating...)" {
 		t.Fatalf("expected generating hint, got label %q", label)
 	}
 	tui.finished = true
-	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff, tui.blockProcessing); label != "Output (done)" {
+	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff, tui.blockProcessing, 0); label != "Output (done)" {
 		t.Fatalf("expected done hint, got label %q", label)
+	}
+}
+
+// TestTUIBlockProcessingTimer verifies the Output tab's processing hint
+// carries an elapsed stopwatch fragment and that the timer state follows
+// the processing lifecycle. See TheoryOfTUIBlockProcessing.
+func TestTUIBlockProcessingTimer(t *testing.T) {
+	if label := outputTabLabel(false, false, false, "go-test", 90*time.Second); label != "Output (processing go-test +1:30...)" {
+		t.Fatalf("expected the processing label with the elapsed fragment, got %q", label)
+	}
+	tui := newTUIForTest()
+	tui.BlockProcessingStart("go-test")
+	tui.mu.Lock()
+	tui.blockProcessingStart = time.Now().Add(-time.Minute)
+	elapsed := tui.blockProcessingElapsedLocked()
+	tui.mu.Unlock()
+	if elapsed < 30*time.Second {
+		t.Fatalf("expected the elapsed time measured from the recorded start moment, got %v", elapsed)
+	}
+	tui.BlockProcessingEnd()
+	tui.mu.Lock()
+	cleared := tui.blockProcessingStart.IsZero()
+	idle := tui.blockProcessingElapsedLocked()
+	tui.mu.Unlock()
+	if !cleared {
+		t.Fatal("expected BlockProcessingEnd to clear the processing start moment")
+	}
+	if idle != 0 {
+		t.Fatalf("expected no elapsed time while idle, got %v", idle)
+	}
+	// The session end resets the timer with the hint, so a run that
+	// stopped mid-processing leaves none stuck on.
+	tui.BlockProcessingStart("ingest")
+	tui.genEnd(nil)
+	tui.mu.Lock()
+	cleared = tui.blockProcessingStart.IsZero()
+	tui.mu.Unlock()
+	if !cleared {
+		t.Fatal("expected genEnd to clear the processing start moment")
 	}
 }
 
@@ -476,7 +515,7 @@ func TestTUIOutputTabLabel(t *testing.T) {
 // box edge.
 func TestTUIPanelTitleUsesOrdinaryLabelColor(t *testing.T) {
 	renderTitle := func(generating bool) taiui.Frame {
-		label := outputTabLabel(false, generating, false, "")
+		label := outputTabLabel(false, generating, false, "", 0)
 		element := taiui.Panel(
 			taiui.Box{Top: 0, Left: 0, Bottom: 2, Right: 12},
 			label,
@@ -515,24 +554,24 @@ func TestTUIPanelTitleUsesOrdinaryLabelColor(t *testing.T) {
 
 func TestTUIHandoffState(t *testing.T) {
 	tui := newTUIForTest()
-	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff, tui.blockProcessing); label != "Output" {
+	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff, tui.blockProcessing, 0); label != "Output" {
 		t.Fatalf("expected plain Output label, got label %q", label)
 	}
 	tui.handoff = true
-	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff, tui.blockProcessing); label != "Output (handoff...)" {
+	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff, tui.blockProcessing, 0); label != "Output (handoff...)" {
 		t.Fatalf("expected handoff label, got label %q", label)
 	}
 	// Handoff takes precedence over generating.
 	tui.generating = true
-	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff, tui.blockProcessing); label != "Output (handoff...)" {
+	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff, tui.blockProcessing, 0); label != "Output (handoff...)" {
 		t.Fatalf("expected handoff label to take precedence over generating, got label %q", label)
 	}
 	tui.handoff = false
-	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff, tui.blockProcessing); label != "Output (generating...)" {
+	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff, tui.blockProcessing, 0); label != "Output (generating...)" {
 		t.Fatalf("expected generating label after handoff cleared, got label %q", label)
 	}
 	tui.generating = false
-	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff, tui.blockProcessing); label != "Output" {
+	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff, tui.blockProcessing, 0); label != "Output" {
 		t.Fatalf("expected plain Output label after handoff, got label %q", label)
 	}
 }

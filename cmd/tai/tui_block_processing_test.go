@@ -75,14 +75,14 @@ func TestTUIBlockProcessingLifecycle(t *testing.T) {
 	if tui.blockProcessing != "go-test" {
 		t.Fatalf("expected the processing kind, got %q", tui.blockProcessing)
 	}
-	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff, tui.blockProcessing); label != "Output (processing go-test...)" {
+	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff, tui.blockProcessing, 0); label != "Output (processing go-test +0:00...)" {
 		t.Fatalf("expected the processing label, got %q", label)
 	}
 	// Processing outranks a stale generating hint: a request that ends
 	// without a finish node leaves generating set while a component still
 	// works.
 	tui.generating = true
-	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff, tui.blockProcessing); label != "Output (processing go-test...)" {
+	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff, tui.blockProcessing, 0); label != "Output (processing go-test +0:00...)" {
 		t.Fatalf("expected the processing label to outrank generating, got %q", label)
 	}
 	tui.generating = false

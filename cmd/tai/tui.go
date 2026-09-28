@@ -787,6 +787,12 @@ type TUI struct {
 	// "processing <kind>..." while the user waits on a component's
 	// work. Guarded by mu. See TheoryOfTUIBlockProcessing.
 	blockProcessing string
+	// blockProcessingStart is the moment the current component's block
+	// processing started. The Output tab title renders the elapsed
+	// stopwatch fragment from it, so a long go-test run shows how long
+	// the user has waited. It is zero when no processing is active.
+	// Guarded by mu. See TheoryOfTUIBlockProcessing.
+	blockProcessingStart time.Time
 	// showHelp reports whether the operation help overlay is visible.
 	// The ? key, or the Logs toolbar's help button, toggles it. The
 	// overlay is derived from state like the quit confirmation bar:
@@ -1284,12 +1290,14 @@ func (t *TUI) genEnd(err error) {
 	// The session has ended: clear the in-flight hints with the finished
 	// state. A request that returned without a finish line (e.g., an
 	// error path) must not leave a hint stuck on. The block-processing
-	// hint clears too, so a run that stopped mid-processing leaves none.
-	// See TheoryOfTUI and TheoryOfTUIBlockProcessing.
+	// hint clears too, so a run that stopped mid-processing leaves none,
+	// and its stopwatch start moment resets with it. See TheoryOfTUI and
+	// TheoryOfTUIBlockProcessing.
 	t.finished = true
 	t.generating = false
 	t.handoff = false
 	t.blockProcessing = ""
+	t.blockProcessingStart = time.Time{}
 	// The last loop ends with the run, so its plan tab goes too. See
 	// TheoryOfTUIDynamicPlanTab.
 	t.closePlanTabLocked()
@@ -1573,6 +1581,14 @@ func (t *TUI) Run(gen func()) error {
 	// sess.Run starts the loop, so handleKey reads them ordered.
 	t.session = sess
 	t.mouseReporting = true
+	// The processing stopwatch advances without unrelated events: the
+	// session loop wakes only on keys, updates, and resizes, and a
+	// component's work may run for minutes with no event to wake it.
+	// The ticker notifies the loop while processing is active and ends
+	// with the session. See TheoryOfTUIBlockProcessing.
+	stopTick := make(chan struct{})
+	defer close(stopTick)
+	go t.tickBlockProcessing(stopTick)
 	return sess.Run()
 }
 

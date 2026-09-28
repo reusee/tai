@@ -2,6 +2,7 @@ package main
 
 import (
 	"strings"
+	"time"
 
 	"github.com/reusee/tai/taiui"
 )
@@ -15,9 +16,11 @@ import (
 // state — done, handoff, block processing, or generating — or the plain
 // tab title when none applies. A component's block processing is observed
 // through the display decorator, because the session tree carries the
-// block-result nodes only after the work returns. See
+// block-result nodes only after the work returns. The processing hint
+// carries the elapsed stopwatch fragment of processingElapsed, so the user
+// sees how long a component has been working. See
 // TheoryOfTUIBlockProcessing.
-func outputTabLabel(finished bool, generating bool, handoff bool, processing string) (label string) {
+func outputTabLabel(finished bool, generating bool, handoff bool, processing string, processingElapsed time.Duration) (label string) {
 	// The Output tab is addressed by its kind, never by a fixed index:
 	// the Plan tab shifts every later tab while it is present. See
 	// TheoryOfTUIDynamicPlanTab.
@@ -31,7 +34,7 @@ func outputTabLabel(finished bool, generating bool, handoff bool, processing str
 		// Processing outranks a stale generating hint: a request that
 		// ended without a finish node leaves generating set while a
 		// component still works. See TheoryOfTUIBlockProcessing.
-		label = "Output (processing " + processing + "...)"
+		label = "Output (processing " + processing + " " + formatTreeElapsed(processingElapsed) + "...)"
 	case generating:
 		label = "Output (generating...)"
 	}
@@ -173,9 +176,11 @@ func buildRoot(t *TUI, width, height int, displays [][]taiui.Line) taiui.Element
 			label = t.planTabLabel()
 		case tabOutput:
 			// The Output tab's label states the request lifecycle:
-			// generating, handoff, block processing, or done. See
-			// TheoryOfTUI and TheoryOfTUIBlockProcessing.
-			label = outputTabLabel(t.finished, t.generating, t.handoff, t.blockProcessing)
+			// generating, handoff, block processing, or done. The
+			// processing hint carries the elapsed stopwatch fragment,
+			// read under the render's lock. See TheoryOfTUI and
+			// TheoryOfTUIBlockProcessing.
+			label = outputTabLabel(t.finished, t.generating, t.handoff, t.blockProcessing, t.blockProcessingElapsedLocked())
 		}
 		// A searching tree pane's panel sits in the inset box below its
 		// search row, so the panel, its title buttons, the fold

@@ -542,8 +542,10 @@ func treeLineColor(n *tree.Node) taiui.Color {
 }
 
 // formatTreeElapsed renders an elapsed duration as a stopwatch
-// fragment: "+0:07" under an hour, "+1:02:03" beyond it. See
-// TheoryOfTreeTab.
+// fragment: "+0:07" under an hour, "+1:02:03" beyond it. The Tree tab's
+// node rows and the Output tab's processing hint render the same
+// fragment, so both stopwatches read alike. See TheoryOfTreeTab and
+// TheoryOfTUIBlockProcessing.
 func formatTreeElapsed(d time.Duration) string {
 	if d < 0 {
 		d = 0
