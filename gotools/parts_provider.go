@@ -67,7 +67,14 @@ func (c PartsProvider) Parts(
 
 	files, err := c.GetFiles()()
 	if err != nil {
-		return nil, err
+		// The package load failed: a project whose package graph does not
+		// resolve has no Go context to assemble. Serve the raw-file
+		// context instead, led by the load error note, so the model can
+		// read the project and fix the build; the probe runs per call,
+		// so the next loop returns to the Go context once the build is
+		// fixed. See TheoryOfGoLoadFallback.
+		c.Logger().Info("go package load failed, serving raw file context", "error", err)
+		return c.anyTextLoadFallback(maxTokens, countTokens, patterns, err)
 	}
 	c.Logger().Info("get files done", "num files", len(files))
 

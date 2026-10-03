@@ -6,8 +6,12 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/reusee/dscope"
 	"github.com/reusee/tai/apps"
+	"github.com/reusee/tai/gotools"
+	"github.com/reusee/tai/modes"
 	"github.com/reusee/tai/pathutil"
+	"github.com/reusee/tai/pipeline/codetypes"
 )
 
 func TestDefaultCommandAutoDetection(t *testing.T) {
@@ -56,6 +60,25 @@ func TestDefaultCommandAutoDetection(t *testing.T) {
 	outside := Module{}.Command(false)
 	if appMainPointer(outside) != appMainPointer(AnyTextCommand) {
 		t.Fatal("the default command outside a Go module must be AnyTextCommand")
+	}
+}
+
+// TestGoModuleCommandKeepsGoPartsProvider pins the go command's parts
+// provider type. The codes pipeline's Go-session gate — the Go-specific
+// extra system prompts — keys on the provider satisfying
+// gotools.PartsProvider, so a command-level wrapper would hide the type and
+// silently drop those prompts. The load-failure fallback therefore lives
+// inside the provider (gotools.TheoryOfGoLoadFallback).
+// See TheoryOfCommandAutoDetection.
+func TestGoModuleCommandKeepsGoPartsProvider(t *testing.T) {
+	scope := dscope.New(new(Module)).Fork(modes.ForTest(t))
+	scope = GoModuleCommand.Scope(scope)
+	var provider codetypes.PartsProvider
+	scope.Call(func(p codetypes.PartsProvider) {
+		provider = p
+	})
+	if _, ok := provider.(gotools.PartsProvider); !ok {
+		t.Fatalf("the go command's parts provider must satisfy gotools.PartsProvider, got %T", provider)
 	}
 }
 
