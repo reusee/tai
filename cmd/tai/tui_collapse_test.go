@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/clipperhouse/displaywidth"
 	"github.com/gdamore/tcell/v3/vt"
@@ -364,10 +365,13 @@ func TestToggleControlAtClick(t *testing.T) {
 	tui.mu.Unlock()
 }
 
-// TestClickExpandsCollapsedSection verifies that a press on a collapsed
-// section's display row expands it, the click behavior that replaces
+// TestDoubleClickExpandsCollapsedSection verifies the Output tab's
+// expansion contract: a single press on a collapsed section's display
+// row is inert, so a press on the content never expands a section by
+// accident, and a second press at the same cell within
+// treeDoubleClickWindow expands it — the click behavior that replaces
 // the removed preview's click-to-jump. See TheoryOfOutputControls.
-func TestClickExpandsCollapsedSection(t *testing.T) {
+func TestDoubleClickExpandsCollapsedSection(t *testing.T) {
 	tui := newTUIForTest()
 	tui.width, tui.height = 40, 10
 	tui.tabs.Expanded = []bool{false, true, false}
@@ -388,28 +392,65 @@ func TestClickExpandsCollapsedSection(t *testing.T) {
 	// separator blank line inside its span — so the collapsed row sits
 	// at display index 2. The Output box occupies row 1; the display is
 	// indented one row below the title, so the press row is box.Top+3.
+	// The first press only records itself.
 	tui.mu.Lock()
 	ok := tui.expandCollapsedSectionAtClick(box.Left+5, box.Top+3)
+	collapsed := tui.outputSections[1].collapsed
+	tui.mu.Unlock()
+	if ok || !collapsed {
+		t.Fatalf("a single press must not expand the section, ok=%v collapsed=%v", ok, collapsed)
+	}
+
+	// The second press at the same cell expands it.
+	tui.mu.Lock()
+	ok = tui.expandCollapsedSectionAtClick(box.Left+5, box.Top+3)
 	expanded := !tui.outputSections[1].collapsed
 	tui.mu.Unlock()
 	if !ok || !expanded {
-		t.Fatalf("expected the press to expand section 1, ok=%v expanded=%v", ok, expanded)
+		t.Fatalf("the double-click must expand section 1, ok=%v expanded=%v", ok, expanded)
 	}
 
-	// A press on an expanded section's row is inert: only the control
-	// column collapses an expanded section.
+	// A press on an expanded section's row stays inert: the pair was
+	// consumed by the expansion, and only the control column collapses
+	// an expanded section.
 	tui.mu.Lock()
-	if tui.expandCollapsedSectionAtClick(box.Left+5, box.Top+3) {
+	inert := tui.expandCollapsedSectionAtClick(box.Left+5, box.Top+3)
+	tui.mu.Unlock()
+	if inert {
 		t.Fatal("a press on an expanded section's row must be inert")
 	}
+
+	// A press at a different cell starts a new pair instead of
+	// completing the previous one.
+	tui.mu.Lock()
+	tui.toggleOutputSectionLocked(1)
+	tui.lastOutputPress = time.Time{}
+	first := tui.expandCollapsedSectionAtClick(box.Left+5, box.Top+3)
+	second := tui.expandCollapsedSectionAtClick(box.Left+6, box.Top+3)
+	collapsed = tui.outputSections[1].collapsed
 	tui.mu.Unlock()
+	if first || second || !collapsed {
+		t.Fatalf("a press at a different cell must not expand the section, first=%v second=%v collapsed=%v", first, second, collapsed)
+	}
+
+	// A press after the double-click window starts a new pair: the
+	// recorded press is aged past the window, so the next press at the
+	// same cell only records itself.
+	tui.mu.Lock()
+	tui.lastOutputPress = time.Now().Add(-2 * treeDoubleClickWindow)
+	ok = tui.expandCollapsedSectionAtClick(box.Left+6, box.Top+3)
+	collapsed = tui.outputSections[1].collapsed
+	tui.mu.Unlock()
+	if ok || !collapsed {
+		t.Fatalf("a press after the window must not expand the section, ok=%v collapsed=%v", ok, collapsed)
+	}
 }
 
 // TestExpandSectionScrollsToItsStart verifies that expanding a
-// collapsed section — by pressing its collapsed row or its control —
-// scrolls the Output tab's view so the section's first display row
-// lands at the top of the pane, and the live tail stops. See
-// TheoryOfOutputControls.
+// collapsed section — by double-clicking its collapsed row or by
+// pressing its control — scrolls the Output tab's view so the
+// section's first display row lands at the top of the pane, and the
+// live tail stops. See TheoryOfOutputControls.
 func TestExpandSectionScrollsToItsStart(t *testing.T) {
 	tui := newTUIForTest()
 	tui.width, tui.height = 40, 10
@@ -437,22 +478,27 @@ func TestExpandSectionScrollsToItsStart(t *testing.T) {
 	before := tui.scrolls[1].Offset
 	tui.mu.Unlock()
 
-	// The press expands the section and scrolls the view so the
-	// section's first display row lands at the pane top.
+	// The double-click expands the section and scrolls the view so the
+	// section's first display row lands at the pane top; the first
+	// press of the pair only records itself.
 	tui.mu.Lock()
 	collapsedRow := tui.outputSectionOffset(2)
 	y := box.Top + 1 + (collapsedRow - tui.scrolls[1].Offset)
+	first := tui.expandCollapsedSectionAtClick(box.Left+5, y)
 	ok := tui.expandCollapsedSectionAtClick(box.Left+5, y)
 	expanded := !tui.outputSections[2].collapsed
 	start := tui.outputSectionOffset(2)
 	scrolled := tui.scrolls[1].Offset
 	follow := tui.scrolls[1].Follow
 	tui.mu.Unlock()
+	if first {
+		t.Fatal("a single press must not expand the section")
+	}
 	if before == start {
 		t.Fatalf("precondition: the view already sat at the section start (%d)", before)
 	}
 	if !ok || !expanded {
-		t.Fatalf("expected the press to expand section 2, ok=%v expanded=%v", ok, expanded)
+		t.Fatalf("expected the double-click to expand section 2, ok=%v expanded=%v", ok, expanded)
 	}
 	if scrolled != start {
 		t.Fatalf("expanding did not scroll to the section start: offset %d, start %d", scrolled, start)

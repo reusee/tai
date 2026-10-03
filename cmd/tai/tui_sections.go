@@ -2,6 +2,7 @@ package main
 
 import (
 	"strings"
+	"time"
 
 	"github.com/clipperhouse/displaywidth"
 	"github.com/reusee/tai/generators"
@@ -84,13 +85,15 @@ Output tab control column theory (cmd/tai):
   every section to one row; when every section is collapsed, it
   restores the snapshotted state. A manual expand breaks the
   all-collapsed state, so the next press folds and re-snapshots rather
-  than restoring. A press on any collapsed section's display row
+  than restoring. A double-click — two presses at the same cell within
+  treeDoubleClickWindow — on any collapsed section's display row
   expands it, so the collapsed structure doubles as the table of
-  contents. Expanded sections are inert to body presses — only the
-  control column collapses them — so reading inside an expanded
-  section never folds it. The key dispatches by focus: the Tree tab's
-  focus folds the tree nodes instead (see TheoryOfTreeTab); every
-  other focus folds the sections.
+  contents; a single press on the content is inert, so a reading press
+  never expands a section by accident. Expanded sections are inert to
+  body presses — only the control column collapses them — so reading
+  inside an expanded section never folds it. The key dispatches by
+  focus: the Tree tab's focus folds the tree nodes instead (see
+  TheoryOfTreeTab); every other focus folds the sections.
 - The control follows the content: it renders at the section's first
   display row, clamped into the viewport when that row has scrolled
   above it, so every section with a visible row stays addressable while
@@ -678,6 +681,13 @@ func (t *TUI) setControlHoverLocked(x, y int) {
 	t.ctlHoverY = y
 }
 
+// expandCollapsedSectionAtClick expands a collapsed section on a
+// double-click — two presses at the same cell within
+// treeDoubleClickWindow — and reports whether the press expanded one,
+// so the caller consumes the press. A single press on the content is
+// inert, so a press on the content never expands a section by
+// accident; expanded sections stay inert to body presses, and only the
+// control column collapses them. See TheoryOfOutputControls.
 func (t *TUI) expandCollapsedSectionAtClick(x, y int) bool {
 	idx := t.tabIndex(tabOutput)
 	if !t.tabs.Expanded[idx] || t.output == nil {
@@ -700,16 +710,27 @@ func (t *TUI) expandCollapsedSectionAtClick(x, y int) bool {
 	}
 	offset := taiui.ClampOffset(t.scrolls[idx].Offset, len(display), t.tuiPaneHeight(idx, box))
 	section := t.outputSectionAtOffset(offset + (y - box.Top - 1))
-	if section < 0 || !t.outputSections[section].collapsed {
-		return false
+	// Every press on the content rows records itself, so an
+	// intervening press resets the pair; two presses at the same cell
+	// within the window expand the collapsed section under them. See
+	// TheoryOfOutputControls.
+	now := time.Now()
+	if now.Sub(t.lastOutputPress) <= treeDoubleClickWindow &&
+		x == t.lastOutputPressX && y == t.lastOutputPressY &&
+		section >= 0 && t.outputSections[section].collapsed {
+		t.lastOutputPress = time.Time{}
+		t.outputSections[section].collapsed = false
+		t.resetProjectionLocked()
+		if t.tabs.Focus != idx {
+			t.tabs.FocusTab(idx)
+		}
+		t.scrollToOutputSection(section)
+		return true
 	}
-	t.outputSections[section].collapsed = false
-	t.resetProjectionLocked()
-	if t.tabs.Focus != idx {
-		t.tabs.FocusTab(idx)
-	}
-	t.scrollToOutputSection(section)
-	return true
+	t.lastOutputPress = now
+	t.lastOutputPressX = x
+	t.lastOutputPressY = y
+	return false
 }
 
 // beginOutputSection records a new section of the given content type

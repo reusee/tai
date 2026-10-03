@@ -75,12 +75,12 @@ Tree tab theory (cmd/tai):
   alongside the full content below. A node
   is expandable when its content spans more than one line, or when its
   one-line header truncates at the pane width; a single press on a
-  collapsed node expands it, matching the Output tab's collapsed-row
-  rule, and a double-click — two presses at the same cell within
-  treeDoubleClickWindow — on any of its rows, or Enter for the last
-  multi-line node, reveals the full content; a double-click on an
-  expanded node's header rows folds it, so clicking inside a long
-  expanded body never collapses it by accident. Collapsing therefore
+  collapsed node expands it, and a double-click — two presses at the
+  same cell within treeDoubleClickWindow — on any of its rows, or
+  Enter for the last multi-line node, reveals the full content; a
+  double-click on an expanded node's header rows folds it, so clicking
+  inside a long expanded body never collapses it by accident.
+  Collapsing therefore
   needs the fold column or a double-click, never a single press, and the
   pair resets when a single press expanded the node, so the second press
   of a fast tap pair starts a new cycle instead of folding the node it
@@ -248,8 +248,10 @@ type treeCached struct {
 }
 
 // treeDoubleClickWindow is the maximum interval between two left
-// presses at the same Tree-pane cell that counts as one double-click.
-// See TheoryOfTreeTab.
+// presses at the same cell that counts as one double-click: the Tree
+// pane's nodes, the Output tab's collapsed section rows, and the
+// record browser's list entries all use it. See TheoryOfTreeTab and
+// TheoryOfOutputControls.
 const treeDoubleClickWindow = 400 * time.Millisecond
 
 // treeRowRange maps one rendered node onto its display row range as
@@ -1336,14 +1338,14 @@ func (t *TUI) scrollToTreeNode(name string) {
 
 // treeAtClick handles a left press in a tree-shaped pane: a press on an
 // attempt node's jump marker jumps the Output tab to that attempt's
-// output section; a press on a collapsed node expands it, matching the
-// Output tab's collapsed-row rule; and a double-click — two presses at
-// the same cell within treeDoubleClickWindow — on a node's text toggles
-// its expansion, so clicking inside a long expanded body never collapses
-// it by accident. Presses outside the pane's content area are no-ops.
-// The pane's own layout index drives the box and the scroll state, so
-// the Plan pane's presses act on the Plan pane. Called with t.mu held.
-// See TheoryOfTreeTab, TheoryOfTUIOutputSections, and
+// output section; a press on a collapsed node expands it; and a
+// double-click — two presses at the same cell within
+// treeDoubleClickWindow — on a node's text toggles its expansion, so
+// clicking inside a long expanded body never collapses it by accident.
+// Presses outside the pane's content area are no-ops. The pane's own
+// layout index drives the box and the scroll state, so the Plan pane's
+// presses act on the Plan pane. Called with t.mu held. See
+// TheoryOfTreeTab, TheoryOfTUIOutputSections, and
 // TheoryOfTUIDynamicPlanTab.
 func (t *TUI) treeAtClick(x, y int) {
 	idx := t.treeTab.paneIdx
@@ -1395,13 +1397,13 @@ func (t *TUI) treeAtClick(x, y int) {
 		t.toggleTreeNodeAtRow(row)
 		return
 	}
-	// A single press on a collapsed node expands it, matching the
-	// Output tab's collapsed-row rule: on a pane whose structure is the
-	// map, one press opens the entry under it. Collapsing still needs
-	// the fold column or a double-click, so a press inside an expanded
-	// node never folds it. The pair resets with the expansion, so the
-	// second press of a fast tap pair starts a new cycle instead of
-	// folding the node it just opened. See TheoryOfOutputControls.
+	// A single press on a collapsed node expands it: on a pane whose
+	// structure is the map, one press opens the entry under it.
+	// Collapsing still needs the fold column or a double-click, so a
+	// press inside an expanded node never folds it. The pair resets
+	// with the expansion, so the second press of a fast tap pair
+	// starts a new cycle instead of folding the node it just opened.
+	// See TheoryOfTreeTab.
 	if !t.treeTab.expanded[node.Name] {
 		t.lastTreePress = time.Time{}
 		t.toggleTreeNodeAtRow(row)

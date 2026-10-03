@@ -125,7 +125,7 @@ var tuiHelpLines = []string{
 	"page up / down\tscroll focused pane by page",
 	"home / end\tjump to start / end of focused pane",
 	"[ / ]\tjump to previous / next section start or end",
-	"c\tfold every section (Output tab) or node (Tree and Plan tabs) of the focused tab; press again to restore; click a collapsed row to expand it",
+	"c\tfold every section (Output tab) or node (Tree and Plan tabs) of the focused tab; press again to restore; double-click a collapsed row to expand it",
 	"v\tcycle the Tree tab's projection (all / events / summary / model / program / user / stream)",
 	"enter\tsend the input line when focused; toggle the latest tree node's expansion otherwise",
 	"click\tselect / toggle tab under cursor; click the input row to focus input",

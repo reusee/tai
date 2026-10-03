@@ -440,19 +440,23 @@ in taiui.TheoryOfMouseInteraction and taiui.TheoryOfMouseInput.
 Press routing in the TUI: a press on the Tree tab's attempt node
 👉 jump marker jumps the Output tab to the section that attempt wrote
 (see TheoryOfTUIOutputSections). A press on a collapsed tree node
-expands it — the same rule as the Output tab's collapsed sections — and
-a double-click on a node's header toggles its expansion, with the
-node's fold column as the other toggle path (see TheoryOfTreeTab). A
-press on the Output tab's control column toggles the section under it;
-a press on a collapsed section's row expands it; both preempt the
-ordinary press handling (see TheoryOfOutputControls). A press on the
-Tree tab's fold column toggles the node under it, preempting ordinary
-handling like the control column (see TheoryOfTreeTab). A press on an
-expanded tab's title button runs the button's action, preempting
-ordinary handling (see TheoryOfToolbars). Presses outside every panel,
-and middle and right presses, are ignored; no-button motion (mode 1003)
-drives the control column's hover strip and the tab title buttons'
-hover highlight (see TheoryOfOutputControls and TheoryOfToolbars).
+expands it, and a double-click on a node's header toggles its
+expansion, with the node's fold column as the other toggle path (see
+TheoryOfTreeTab). A press on the Output tab's control column toggles
+the section under it; a double-click on a collapsed section's row
+expands it, and a single press on the content is inert, so reading
+never expands a section by accident (see TheoryOfOutputControls).
+Both the control press and the expanding double-click preempt the
+ordinary press handling; the first press of the double-click falls
+through to it, so the tab focuses like any content press. A press on
+the Tree tab's fold column toggles the node under it, preempting
+ordinary handling like the control column (see TheoryOfTreeTab). A
+press on an expanded tab's title button runs the button's action,
+preempting ordinary handling (see TheoryOfToolbars). Presses outside
+every panel, and middle and right presses, are ignored; no-button
+motion (mode 1003) drives the control column's hover strip and the tab
+title buttons' hover highlight (see TheoryOfOutputControls and
+TheoryOfToolbars).
 
 In interactive sessions, the Output tab's input row is the one press
 target with its own semantics: a left press on the chat input bar's row
@@ -908,6 +912,15 @@ type TUI struct {
 	lastTreePress  time.Time
 	lastTreePressX int
 	lastTreePressY int
+
+	// lastOutputPress records the previous left press on the Output
+	// tab's section rows, for double-click detection: a second press at
+	// the same cell within treeDoubleClickWindow expands the collapsed
+	// section under it, while a single press is inert. The zero time
+	// clears the record. Guarded by mu. See TheoryOfOutputControls.
+	lastOutputPress  time.Time
+	lastOutputPressX int
+	lastOutputPressY int
 
 	// mouse is the pointer interaction state over the tab layout: wheel
 	// scrolling, press-driven tab switching, and drag-scrolling anchored
@@ -1662,8 +1675,10 @@ func (t *TUI) handleMouseKey(key string) bool {
 			if t.toggleControlAtClick(x, y) {
 				break
 			}
-			// A press on a collapsed section's row expands it,
-			// replacing the removed preview's click-to-jump. See
+			// A double-click on a collapsed section's row expands
+			// it, replacing the removed preview's click-to-jump; a
+			// single press is inert, so a press on the content never
+			// expands a section by accident. See
 			// TheoryOfOutputControls.
 			if t.expandCollapsedSectionAtClick(x, y) {
 				break
