@@ -187,9 +187,9 @@ func (t *TUI) toggleTreePaneControlLocked(kind tuiTab, x, y int) bool {
 }
 
 // treePaneClickLocked routes a press inside a tree-shaped pane to that
-// pane's click handler: the attempt node's jump marker, the
-// single-press expansion of a collapsed node, and the double-click
-// toggle of an expanded one. The caller holds t.mu. See
+// pane's click handler: the attempt node's jump marker and the
+// double-click toggle of a node's expansion; a single press on the
+// text is inert. The caller holds t.mu. See
 // TheoryOfTUIDynamicPlanTab.
 func (t *TUI) treePaneClickLocked(kind tuiTab, x, y int) {
 	t.withPane(kind, func() {

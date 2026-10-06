@@ -1118,11 +1118,11 @@ func TestTreeFoldColumnToggles(t *testing.T) {
 }
 
 // TestTreeClickContracts verifies the Tree pane's press contract: a
-// single press on a collapsed node expands it, a single press on an
-// expanded node's header is inert, a double-click on the header of an
-// expanded node folds it, so clicking inside a long expanded body never
-// collapses it by accident, and a press at a different cell starts a new
-// pair. See TheoryOfTreeTab.
+// single press on a node's text is inert — it only records the pair —
+// so reading never expands or folds a node by accident; a double-click
+// toggles the node's expansion; a press at a different cell or after
+// the window starts a new pair; and the fold column is the single-press
+// toggle path. See TheoryOfTreeTab.
 func TestTreeClickContracts(t *testing.T) {
 	tui := newTUIForTest()
 	tr, err := tree.New().Write("root", "tree-1", tree.TypeHandoff, tree.AuthorProgram, "head\nbody")
@@ -1131,6 +1131,7 @@ func TestTreeClickContracts(t *testing.T) {
 	}
 	tui.treeView = tr
 	tui.mu.Lock()
+	defer tui.mu.Unlock()
 	tui.width, tui.height = 80, 25
 	tui.tabs.Expanded[0] = true
 	tui.scrolls[0].Offset = 0
@@ -1140,45 +1141,46 @@ func TestTreeClickContracts(t *testing.T) {
 	// row below the title is the node's header row.
 	textX, textY := box.Left+5, box.Top+1
 
-	// A single press on a collapsed node expands it, matching the
-	// Output tab's collapsed-row rule.
+	// A single press on the text is inert: the node stays collapsed.
 	tui.treeAtClick(textX, textY)
-	if !tui.treeTab.expanded["tree-1"] {
-		t.Fatal("a single press on a collapsed node must expand it")
+	if tui.treeTab.expanded["tree-1"] {
+		t.Fatal("a single press on the text must not expand the node")
 	}
-	// The expansion reset the pair: the next press on the expanded
-	// header is inert, and the one after folds the node.
+	// The second press at the same cell completes the double-click and
+	// expands the node.
 	tui.treeAtClick(textX, textY)
 	if !tui.treeTab.expanded["tree-1"] {
-		t.Fatal("a single press on an expanded header must not fold it")
+		t.Fatal("the double-click must expand the node")
+	}
+	// The pair reset with the toggle, so the next single press is inert
+	// and the one after folds the node.
+	tui.treeAtClick(textX, textY)
+	if !tui.treeTab.expanded["tree-1"] {
+		t.Fatal("a single press after a toggle must not fold the node")
 	}
 	tui.treeAtClick(textX, textY)
 	if tui.treeTab.expanded["tree-1"] {
 		t.Fatal("the double-click on the header must fold the node")
 	}
-	tui.mu.Unlock()
-
 	// A press at a different cell starts a new pair instead of
 	// completing the previous one.
-	tui.mu.Lock()
-	tui.treeAtClick(textX, textY) // the collapsed node expands again
-	tui.treeAtClick(textX+1, textY)
-	if !tui.treeTab.expanded["tree-1"] {
-		t.Fatal("a press at a different cell must not fold the node")
-	}
+	tui.treeAtClick(textX, textY)
 	tui.treeAtClick(textX+1, textY)
 	if tui.treeTab.expanded["tree-1"] {
-		t.Fatal("the pair at the new cell must fold the node")
+		t.Fatal("a press at a different cell must not expand the node")
 	}
-	// A press after the window records a new pair instead of
-	// completing the recorded one.
-	tui.treeAtClick(textX, textY) // expands again
+	tui.treeAtClick(textX+1, textY)
+	if !tui.treeTab.expanded["tree-1"] {
+		t.Fatal("the pair at the new cell must expand the node")
+	}
+	// A press after the window records a new pair instead of completing
+	// the recorded one, so the expanded node stays expanded.
+	tui.treeAtClick(textX-1, textY)
 	tui.lastTreePress = time.Now().Add(-2 * treeDoubleClickWindow)
-	tui.treeAtClick(textX, textY)
+	tui.treeAtClick(textX-1, textY)
 	if !tui.treeTab.expanded["tree-1"] {
 		t.Fatal("a press after the window must not fold the node")
 	}
-	tui.mu.Unlock()
 }
 
 // TestTreeControlRow verifies the clamped control-row computation the

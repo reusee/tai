@@ -85,7 +85,7 @@ var recordBrowserHelp = []string{
 	"page up / down\ta page of records; a page of tree rows",
 	"home / end\tfirst / last record or row",
 	"esc\treturn to the record list",
-	"click\tselect a record; expand a collapsed tree node",
+	"click\tselect a record",
 	"double-click\topen a record; toggle a tree node's expansion",
 	"tree column\tclick ▸ / ▾ to collapse / expand the node",
 	"c\tfold every node of the tree; press again to restore",
@@ -609,10 +609,10 @@ func (b *RecordBrowser) listPress(x, y int) {
 
 // treePress handles a left press in the tree view: the fold column's
 // control toggles the node under it — the Tree tab's own path — and any
-// other text press runs the Tree tab's click handling, which expands a
-// collapsed node on a single press and pairs the press for the
-// double-click toggle of an expanded one. A press never moves a focus:
-// the tree view carries none. See TheoryOfRecordBrowser.
+// other text press runs the Tree tab's click handling, which toggles
+// the node on a double-click and keeps a single press inert, so the
+// record is browsed exactly like a live session. A press never moves a
+// focus: the tree view carries none. See TheoryOfRecordBrowser.
 func (b *RecordBrowser) treePress(x, y int) {
 	p := b.treePane
 	p.mu.Lock()

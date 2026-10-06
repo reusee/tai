@@ -467,8 +467,11 @@ func TestTUIChatInputBarBottomRowOfOutputTab(t *testing.T) {
 }
 
 // TestTUIHelpLinesNonInteractive pins the non-interactive help overlay:
-// it must not describe the input bar that is not rendered. See
-// TheoryOfTUIChatInput.
+// it must not describe the input bar that is not rendered. It also pins
+// the tree-row entry to the current press contract — the jump marker,
+// the inert single text press, and the double-click toggle; the
+// fold-column entry documents the single-press triangle toggle. See
+// TheoryOfTUIChatInput and TheoryOfTreeTab.
 func TestTUIHelpLinesNonInteractive(t *testing.T) {
 	tui := newTUIForTest()
 	if lines := tui.helpLines(); !slices.Equal(lines, tuiHelpLines) {
@@ -487,8 +490,11 @@ func TestTUIHelpLinesNonInteractive(t *testing.T) {
 	if !slices.Contains(lines, "enter\ttoggle the latest tree node's expansion") {
 		t.Fatal("non-interactive help must document Enter's tree-node binding")
 	}
-	if !slices.Contains(lines, "tree row\tclick 👉 on an attempt line to jump the Output tab to its output section; click a collapsed node to expand it; double-click to expand or collapse it") {
-		t.Fatal("help must document the tree-row click jump, the single-press expansion, and the double-click toggle")
+	if !slices.Contains(lines, "tree row\tclick 👉 on an attempt line to jump the Output tab to its output section; double-click the text to expand or collapse a node (a single text press is inert)") {
+		t.Fatal("help must document the tree-row click jump, the inert single text press, and the double-click toggle")
+	}
+	if !slices.Contains(lines, "tree column\tclick ▸ / ▾ on an expandable node's first row (or its first visible row when scrolled) to collapse / expand it") {
+		t.Fatal("help must document the fold column's single-press toggle")
 	}
 }
 

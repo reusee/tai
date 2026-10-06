@@ -439,13 +439,14 @@ in taiui.TheoryOfMouseInteraction and taiui.TheoryOfMouseInput.
 
 Press routing in the TUI: a press on the Tree tab's attempt node
 👉 jump marker jumps the Output tab to the section that attempt wrote
-(see TheoryOfTUIOutputSections). A press on a collapsed tree node
-expands it, and a double-click on a node's header toggles its
-expansion, with the node's fold column as the other toggle path (see
-TheoryOfTreeTab). A press on the Output tab's control column toggles
-the section under it; a double-click on a collapsed section's row
-expands it, and a single press on the content is inert, so reading
-never expands a section by accident (see TheoryOfOutputControls).
+(see TheoryOfTUIOutputSections). A double-click on a tree node's text
+toggles its expansion, and the node's fold column toggles on a single
+press; a single press on the text is inert, so a reading press never
+toggles a node by accident (see TheoryOfTreeTab). A press on the Output
+tab's control column toggles the section under it; a double-click on a
+collapsed section's row expands it, and a single press on the content
+is inert, so reading never expands a section by accident (see
+TheoryOfOutputControls).
 Both the control press and the expanding double-click preempt the
 ordinary press handling; the first press of the double-click falls
 through to it, so the tab focuses like any content press. A press on
@@ -1687,8 +1688,8 @@ func (t *TUI) handleMouseKey(key string) bool {
 			// Plan tab — is dispatched to that pane: a press on its
 			// fold column toggles the node under the control, and
 			// the pane's click handler covers the attempt jump
-			// marker, the single-press expansion of a collapsed
-			// node, and the double-click toggle of an expanded one.
+			// marker and the double-click toggle of a node's
+			// expansion, while a single press on the text is inert.
 			// See TheoryOfTreeTab and TheoryOfTUIDynamicPlanTab.
 			kind, isTreePane := t.treePaneAtLocked(x, y)
 			if isTreePane && t.toggleTreePaneControlLocked(kind, x, y) {
