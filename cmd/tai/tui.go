@@ -457,11 +457,16 @@ ordinary press handling; the first press of the double-click falls
 through to it, so the tab focuses like any content press. A press on
 the Tree tab's fold column toggles the node under it, preempting
 ordinary handling like the control column (see TheoryOfTreeTab). A
-press on an expanded tab's title button runs the button's action,
-preempting ordinary handling (see TheoryOfToolbars). Presses outside
+press on an expanded tab's title toolbar runs the button's action or
+toggles the collapsed toolbar, preempting ordinary handling; an action
+press keeps the toolbar expanded, so consecutive actions need no
+re-expansion, and a press that hits no toolbar button folds an open
+toolbar while keeping its ordinary handling. The collapsed toolbar —
+the default — shows only its collapse icon (see TheoryOfToolbars).
+Presses outside
 every panel, and middle and right presses, are ignored; no-button
 motion (mode 1003) drives the control column's hover strip and the tab
-title buttons' hover highlight (see TheoryOfOutputControls and
+title toolbars' hover highlight (see TheoryOfOutputControls and
 TheoryOfToolbars).
 
 In interactive sessions, the Output tab's input row is the one press
@@ -903,11 +908,20 @@ type TUI struct {
 
 	// ctlHover records the pointer position from the latest no-button
 	// motion event (mode 1003), driving pointer hover rendering: the
-	// Output tab's control-column hover strip and the tab title buttons'
-	// hover highlight. See TheoryOfOutputControls and TheoryOfToolbars.
+	// Output tab's control-column hover strip and the tab title
+	// toolbars' hover highlight. See TheoryOfOutputControls and
+	// TheoryOfToolbars.
 	ctlHover  bool
 	ctlHoverX int
 	ctlHoverY int
+
+	// toolbarOpen reports whether a title toolbar is expanded, and
+	// toolbarKind names the expanded tab: at most one toolbar is open,
+	// because expanding one collapses every other. A press that hits no
+	// toolbar button folds it, and a tab that collapses takes its
+	// toolbar with it. Guarded by mu. See TheoryOfToolbars.
+	toolbarOpen bool
+	toolbarKind tuiTab
 
 	// lastTreePress records the previous left press on a tree-shaped
 	// pane's text rows, for double-click detection: a second press at
@@ -1623,7 +1637,7 @@ func (t *TUI) handleMouseKey(key string) bool {
 	switch event {
 	case "motion":
 		// No-button motion (mode 1003) drives the control column's
-		// hover strip and the tab title buttons' hover highlight. See
+		// hover strip and the tab title toolbars' hover highlight. See
 		// TheoryOfOutputControls and TheoryOfToolbars.
 		t.setControlHoverLocked(x, y)
 	case "wheel-up":
@@ -1631,17 +1645,40 @@ func (t *TUI) handleMouseKey(key string) bool {
 	case "wheel-down":
 		t.mouse.Wheel(t.tabs, t.scrolls, t.width, t.height, x, y, 1)
 	case "left":
+		kind, btnAction, onButton := t.titleButtonHitLocked(x, y)
 		// The Logs toolbar's quit button is the pointer path's quit
 		// key: it runs the two-press protocol and must not cancel a
-		// pending confirmation, so it resolves before the cancel.
-		// Every other press cancels the confirmation before its normal
-		// processing, like any non-quit key. See TheoryOfToolbars and
-		// TheoryOfSessionActions.
-		if btnAction, hit := t.titleButtonHitLocked(x, y); hit && btnAction == controlQuit {
+		// pending confirmation, so it resolves before the cancel. See
+		// TheoryOfToolbars and TheoryOfSessionActions.
+		if onButton && btnAction == controlQuit {
 			action, dispatchBar = btnAction, true
 			break
 		}
 		t.quit.Cancel()
+		// A toolbar press consumes the click, so it never toggles or
+		// focuses the tab. The collapse icon toggles the pressed tab's
+		// toolbar: a press on the expanded toolbar's icon folds it, and
+		// a press on a collapsed one expands it, folding every other
+		// toolbar with it. An action button runs its action and keeps
+		// the toolbar expanded, so consecutive actions need no
+		// re-expansion. See TheoryOfToolbars.
+		if onButton {
+			t.inputFocused = false
+			if btnAction == controlToolbarToggle {
+				if t.toolbarExpanded(kind) {
+					t.collapseToolbar()
+				} else {
+					t.openToolbar(kind)
+				}
+				break
+			}
+			action, dispatchBar = btnAction, true
+			break
+		}
+		// A press that hits no toolbar button folds every open toolbar
+		// while keeping its ordinary handling, so the toolbar never
+		// outlives the press that used it. See TheoryOfToolbars.
+		t.collapseToolbar()
 		// A press on a searching tree pane's search row is consumed by
 		// the search: a press on a button runs the button's action, and
 		// any other cell on the row is inert. The press never reaches
@@ -1668,13 +1705,6 @@ func (t *TUI) handleMouseKey(key string) bool {
 			// hands the keyboard back to navigation. See
 			// TheoryOfTUIChatInput.
 			t.inputFocused = false
-			// A press on a tab title's operation button runs the
-			// button's action through the shared dispatch, preempting
-			// the ordinary press handling. See TheoryOfToolbars.
-			if btnAction, hit := t.titleButtonHitLocked(x, y); hit {
-				action, dispatchBar = btnAction, true
-				break
-			}
 			// A press on the Output tab's control column toggles
 			// the section under the control instead of driving tab
 			// interaction. See TheoryOfOutputControls.
@@ -1829,6 +1859,12 @@ func (t *TUI) jumpToTransition(direction int) {
 func (t *TUI) render() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+
+	// An open toolbar belongs to an expanded tab's title row: a tab
+	// that collapsed or left the layout takes its toolbar with it, so a
+	// re-expanded tab starts with its toolbar collapsed. See
+	// TheoryOfToolbars.
+	t.normalizeToolbar()
 
 	// The terminal size is clamped so the layout always has a usable
 	// extent.

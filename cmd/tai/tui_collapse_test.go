@@ -31,6 +31,29 @@ func assertTexts(t *testing.T, got []string, want ...string) {
 	}
 }
 
+// toolbarButtonX returns the leftmost cell of the title toolbar button
+// that runs action on kind's toolbar, or -1 when the toolbar does not
+// render it. The caller must not hold tui.mu. See TheoryOfToolbars.
+func toolbarButtonX(tui *TUI, kind tuiTab, action controlBarAction, box taiui.Box) int {
+	tui.mu.Lock()
+	defer tui.mu.Unlock()
+	buttons := tui.titleToolbarButtons(kind)
+	for _, slot := range taiui.ToolbarLayout(box, buttons) {
+		if buttons[slot.Index].Action == string(action) {
+			return slot.X0
+		}
+	}
+	return -1
+}
+
+// toolbarExpandedState reports whether kind's title toolbar is expanded,
+// reading the state under the TUI's lock. See TheoryOfToolbars.
+func toolbarExpandedState(tui *TUI, kind tuiTab) bool {
+	tui.mu.Lock()
+	defer tui.mu.Unlock()
+	return tui.toolbarExpanded(kind)
+}
+
 // TestOutputSectionCollapseShowsFirstLine verifies the per-section
 // projection: collapsing a section reduces it to its first source line
 // while every other section renders in full. The Output tab is index 1
@@ -732,84 +755,143 @@ func TestOutputControlHoverRendersReversed(t *testing.T) {
 	}
 }
 
+// TestTabTitleButtons pins the title toolbar's button sets: the action
+// buttons of each tab, and the collapse icon, which stays rightmost in
+// both states so the same cell opens and closes the toolbar. See
+// TheoryOfToolbars.
 func TestTabTitleButtons(t *testing.T) {
-	if got := tabTitleButtons(tabTree); len(got) != 2 {
-		t.Fatalf("expected 2 Tree buttons, got %+v", got)
+	tui := newTUIForTest()
+	// A collapsed toolbar — the default — shows the icon alone.
+	for _, kind := range []tuiTab{tabTree, tabPlan, tabOutput, tabLogs} {
+		buttons := tui.titleToolbarButtons(kind)
+		if len(buttons) != 1 || buttons[0].Label != titleButtonToggle {
+			t.Fatalf("collapsed %v toolbar shows %+v, want the icon alone", kind, buttons)
+		}
+		if buttons[0].Action != string(controlToolbarToggle) {
+			t.Fatalf("the icon must run the toggle action, got %q", buttons[0].Action)
+		}
 	}
-	if got := tabTitleButtons(tabPlan); len(got) != 1 {
-		t.Fatalf("expected 1 Plan button, got %+v", got)
+	if got := tabTitleActions(tabTree); len(got) != 2 {
+		t.Fatalf("expected 2 Tree actions, got %+v", got)
 	}
-	if got := tabTitleButtons(tabOutput); len(got) != 3 {
-		t.Fatalf("expected 3 Output buttons, got %+v", got)
+	if got := tabTitleActions(tabPlan); len(got) != 1 {
+		t.Fatalf("expected 1 Plan action, got %+v", got)
 	}
-	if got := tabTitleButtons(tabLogs); len(got) != 4 {
-		t.Fatalf("expected 4 Logs buttons, got %+v", got)
+	if got := tabTitleActions(tabOutput); len(got) != 3 {
+		t.Fatalf("expected 3 Output actions, got %+v", got)
 	}
-	if got := tabTitleButtons(tabLogs)[3].Action; got != string(controlQuit) {
-		t.Fatalf("the rightmost Logs button must run the quit action, got %q", got)
+	if got := tabTitleActions(tabLogs); len(got) != 4 {
+		t.Fatalf("expected 4 Logs actions, got %+v", got)
+	}
+	if got := tabTitleActions(tabLogs)[3].Action; got != string(controlQuit) {
+		t.Fatalf("the rightmost Logs action must be quit, got %q", got)
+	}
+
+	// An expanded toolbar keeps the icon rightmost beside the actions.
+	tui.tabs.Expanded[tui.tabIndex(tabOutput)] = true
+	tui.mu.Lock()
+	tui.openToolbar(tabOutput)
+	buttons := tui.titleToolbarButtons(tabOutput)
+	tui.mu.Unlock()
+	if len(buttons) != 4 {
+		t.Fatalf("expected the 3 Output actions plus the icon, got %+v", buttons)
+	}
+	if buttons[3].Label != titleButtonToggle || buttons[3].Action != string(controlToolbarToggle) {
+		t.Fatalf("the icon must stay rightmost, got %+v", buttons)
 	}
 }
 
+// TestTitleButtonsRendering pins the toolbar's rendering: a collapsed
+// toolbar renders the icon alone in the slot it keeps while expanded, and
+// an expanded toolbar renders the action labels beside it. See
+// TheoryOfToolbars.
 func TestTitleButtonsRendering(t *testing.T) {
 	tui := newTUIForTest()
 	tui.interactive = false
-	// The Output tab (kind tabOutput) must be expanded to carry title
-	// buttons. See TheoryOfTUI and TheoryOfTUIDynamicPlanTab.
+	// The Output tab (kind tabOutput) must be expanded to carry a title
+	// toolbar. See TheoryOfTUI and TheoryOfTUIDynamicPlanTab.
 	tui.tabs.Expanded = []bool{false, true, false}
 	tui.tabs.HasContent = []bool{false, true, false}
 	tui.tabs.Focus = 1
 	box := taiui.Box{Top: 0, Left: 0, Bottom: 1, Right: 40}
+
+	iconW := displaywidth.String(titleButtonToggle)
+	right := box.Right - taiui.ToolbarReservedCells
+	iconX := right - iconW
+
+	// The collapsed default renders the icon alone: every cell left of it
+	// stays unset, so no action is reachable before the toolbar expands.
 	tui.mu.Lock()
 	el := tui.titleButtonsElement(tabOutput, box)
 	tui.mu.Unlock()
 	if el == nil {
-		t.Fatal("expected the Output tab's title buttons element")
+		t.Fatal("expected the Output tab's title toolbar element")
 	}
 	screen := &panelTestScreen{width: 40, height: 1}
 	taiui.Render(el, screen)
 	frame := screen.frames[len(screen.frames)-1]
-	// Cells: Up at [24,26), Down at [26,30), Collapse at [30,38).
-	if frame.Cells[24].Rune != 'U' || frame.Cells[26].Rune != 'D' || frame.Cells[30].Rune != 'C' {
-		t.Fatalf("unexpected button labels: %q %q %q",
-			string(frame.Cells[24].Rune), string(frame.Cells[26].Rune), string(frame.Cells[30].Rune))
+	if frame.Cells[iconX].Rune != '☰' {
+		t.Fatalf("expected the collapse icon at %d, got %q", iconX, string(frame.Cells[iconX].Rune))
 	}
-	for _, x := range []int{38, 39} {
+	for x := box.Left; x < iconX; x++ {
+		if frame.Cells[x].Set {
+			t.Fatalf("the collapsed toolbar must not render a button at %d", x)
+		}
+	}
+	for _, x := range []int{right, right + 1} {
 		if frame.Cells[x].Set {
 			t.Fatalf("cell %d must stay reserved for the title rule", x)
 		}
 	}
 
-	// Hovering the leftmost button renders it reversed.
+	// The expanded toolbar renders the action labels beside the icon,
+	// which keeps its cells: the collapse toggle never moves.
 	tui.mu.Lock()
-	tui.ctlHover = true
-	tui.mouseReporting = true
-	tui.ctlHoverX = 24
-	tui.ctlHoverY = 0
-	tui.mu.Unlock()
-	tui.mu.Lock()
+	tui.openToolbar(tabOutput)
 	el = tui.titleButtonsElement(tabOutput, box)
 	tui.mu.Unlock()
 	screen = &panelTestScreen{width: 40, height: 1}
 	taiui.Render(el, screen)
 	frame = screen.frames[len(screen.frames)-1]
-	hovered := frame.Cells[24].Style.Attr()&vt.Reverse != 0
-	if !hovered {
-		t.Fatal("expected the hovered button to render reversed")
+	collapseX := iconX - len(titleButtonCollapse)
+	downX := collapseX - len(titleButtonNext)
+	upX := downX - len(titleButtonPrev)
+	if frame.Cells[upX].Rune != 'U' || frame.Cells[downX].Rune != 'D' || frame.Cells[collapseX].Rune != 'C' {
+		t.Fatalf("unexpected action labels: %q %q %q",
+			string(frame.Cells[upX].Rune), string(frame.Cells[downX].Rune), string(frame.Cells[collapseX].Rune))
+	}
+	if frame.Cells[iconX].Rune != '☰' {
+		t.Fatalf("expected the icon to stay at %d, got %q", iconX, string(frame.Cells[iconX].Rune))
+	}
+
+	// Hovering the icon renders it reversed.
+	tui.mu.Lock()
+	tui.ctlHover = true
+	tui.mouseReporting = true
+	tui.ctlHoverX = iconX
+	tui.ctlHoverY = 0
+	el = tui.titleButtonsElement(tabOutput, box)
+	tui.mu.Unlock()
+	screen = &panelTestScreen{width: 40, height: 1}
+	taiui.Render(el, screen)
+	frame = screen.frames[len(screen.frames)-1]
+	if frame.Cells[iconX].Style.Attr()&vt.Reverse == 0 {
+		t.Fatal("expected the hovered collapse icon to render reversed")
 	}
 }
 
-// TestTUITitleButtonClicks verifies the pointer path: a press on a
-// title button runs its action through the shared dispatch and
-// preempts the ordinary press handling, so the tab itself is not
-// toggled; a press outside the buttons keeps the strip semantics.
-// See TheoryOfToolbars.
+// TestTUITitleButtonClicks verifies the pointer path: the collapse icon
+// expands the toolbar, a press on an action button runs its action while
+// the toolbar stays expanded, and a press outside the buttons collapses
+// the toolbar while keeping the ordinary strip semantics. See
+// TheoryOfToolbars.
 func TestTUITitleButtonClicks(t *testing.T) {
-	t.Run("OutputCollapseAll", func(t *testing.T) {
+	t.Run("CollapseAll", func(t *testing.T) {
 		tui := newTUIForTest()
 		tui.interactive = false
 		tui.width, tui.height = 40, 10
-		// The Output tab (index 1) is expanded so its title row renders
-		// the buttons. See TheoryOfTUI.
+		// The Output tab (index 1) is expanded so its title toolbar
+		// renders. See TheoryOfTUI.
 		tui.tabs.Expanded = []bool{false, true, false}
 		tui.tabs.HasContent = []bool{false, true, false}
 		tui.tabs.Focus = 1
@@ -817,26 +899,52 @@ func TestTUITitleButtonClicks(t *testing.T) {
 		tui.writeOutputPart(generators.RoleModel, true, "t1\nt2\n")
 		tui.writeOutputPart(generators.RoleModel, false, "answer\n")
 		box := tui.tabs.Boxes(40, 10)[1]
-		// The collapse-all button occupies [Right-10, Right-2).
-		tui.handleMouseKey(fmt.Sprintf("mouse-left@%d,%d", box.Right-3, box.Top))
+
+		// The collapsed toolbar shows only the icon: the collapse-all
+		// button is not rendered yet.
+		if x := toolbarButtonX(tui, tabOutput, controlCollapseAll, box); x >= 0 {
+			t.Fatal("the collapsed toolbar must not render the collapse-all button")
+		}
+		iconX := toolbarButtonX(tui, tabOutput, controlToolbarToggle, box)
+		if iconX < 0 {
+			t.Fatal("the collapsed toolbar must render the collapse icon")
+		}
+		tui.handleMouseKey(fmt.Sprintf("mouse-left@%d,%d", iconX, box.Top))
+
+		collapseX := toolbarButtonX(tui, tabOutput, controlCollapseAll, box)
+		if collapseX < 0 {
+			t.Fatal("the expanded toolbar must render the collapse-all button")
+		}
+		tui.handleMouseKey(fmt.Sprintf("mouse-left@%d,%d", collapseX, box.Top))
 		tui.mu.Lock()
 		collapsed := tui.outputSections[0].collapsed &&
 			tui.outputSections[1].collapsed && tui.outputSections[2].collapsed
+		opened := tui.toolbarExpanded(tabOutput)
 		expanded := tui.tabs.Expanded[1]
 		tui.mu.Unlock()
 		if !collapsed {
 			t.Fatal("expected the press on the collapse-all button to fold the sections")
 		}
+		if !opened {
+			t.Fatal("an action press must keep the toolbar expanded")
+		}
 		if !expanded {
 			t.Fatal("the button press must not toggle the tab")
 		}
 
-		// A second press restores the sections.
-		tui.handleMouseKey(fmt.Sprintf("mouse-left@%d,%d", box.Right-3, box.Top))
+		// The button keeps its cells, so the same press restores the
+		// sections without re-expanding the toolbar.
+		if again := toolbarButtonX(tui, tabOutput, controlCollapseAll, box); again != collapseX {
+			t.Fatalf("the action button moved between presses: %d then %d", collapseX, again)
+		}
+		tui.handleMouseKey(fmt.Sprintf("mouse-left@%d,%d", collapseX, box.Top))
 		tui.mu.Lock()
 		defer tui.mu.Unlock()
 		if tui.outputSections[0].collapsed {
 			t.Fatal("expected the second press to restore the sections")
+		}
+		if !tui.toolbarExpanded(tabOutput) {
+			t.Fatal("the second action press must keep the toolbar expanded")
 		}
 	})
 
@@ -855,8 +963,14 @@ func TestTUITitleButtonClicks(t *testing.T) {
 		tui.writeOutputPart(generators.RoleModel, true, "a thought\n")
 		tui.scrolls[1].Follow = true
 		box := tui.tabs.Boxes(80, 10)[1]
-		// The next-section button occupies [Right-14, Right-10).
-		tui.handleMouseKey(fmt.Sprintf("mouse-left@%d,%d", box.Right-12, box.Top))
+
+		iconX := toolbarButtonX(tui, tabOutput, controlToolbarToggle, box)
+		tui.handleMouseKey(fmt.Sprintf("mouse-left@%d,%d", iconX, box.Top))
+		nextX := toolbarButtonX(tui, tabOutput, controlNextSections, box)
+		if nextX < 0 {
+			t.Fatal("the expanded toolbar must render the next-section button")
+		}
+		tui.handleMouseKey(fmt.Sprintf("mouse-left@%d,%d", nextX, box.Top))
 		tui.mu.Lock()
 		defer tui.mu.Unlock()
 		if tui.scrolls[1].Follow {
@@ -865,6 +979,9 @@ func TestTUITitleButtonClicks(t *testing.T) {
 		tail := taiui.ClampOffset(1<<30, len(wrappedDisplay(tui, 1, box)), tui.tuiPaneHeight(1, box))
 		if tui.scrolls[1].Offset == tail {
 			t.Fatal("the next-section button must move the view off the tail")
+		}
+		if !tui.toolbarExpanded(tabOutput) {
+			t.Fatal("an action press must keep the toolbar expanded")
 		}
 	})
 
@@ -880,31 +997,213 @@ func TestTUITitleButtonClicks(t *testing.T) {
 			t.Fatal(err)
 		}
 		tui.setTree(tr)
-		before := tui.treeTab.mode
 		box := tui.tabs.Boxes(40, 10)[0]
-		// The cycle button occupies [Right-16, Right-10): the layout
-		// lays the buttons right to left, so collapse sits right of
-		// cycle.
-		tui.handleMouseKey(fmt.Sprintf("mouse-left@%d,%d", box.Right-13, box.Top))
+
+		iconX := toolbarButtonX(tui, tabTree, controlToolbarToggle, box)
+		tui.handleMouseKey(fmt.Sprintf("mouse-left@%d,%d", iconX, box.Top))
+		tui.mu.Lock()
+		before := tui.treeTab.mode
+		tui.mu.Unlock()
+		switchX := toolbarButtonX(tui, tabTree, controlTreeViewCycle, box)
+		if switchX < 0 {
+			t.Fatal("the expanded Tree toolbar must render the view-cycle button")
+		}
+		tui.handleMouseKey(fmt.Sprintf("mouse-left@%d,%d", switchX, box.Top))
 		tui.mu.Lock()
 		defer tui.mu.Unlock()
 		if tui.treeTab.mode == before {
 			t.Fatal("expected the press on the cycle button to advance the projection")
 		}
+		if !tui.toolbarExpanded(tabTree) {
+			t.Fatal("an action press must keep the toolbar expanded")
+		}
 	})
 
-	t.Run("OutsideButtonsKeepsStrip", func(t *testing.T) {
+	t.Run("OutsideButtonsCollapsesAndKeepsStrip", func(t *testing.T) {
 		tui := newTUIForTest()
 		tui.interactive = false
 		tui.width, tui.height = 40, 10
 		tui.tabs.Expanded = []bool{false, true, false}
 		tui.tabs.HasContent = []bool{false, true, false}
 		tui.tabs.Focus = 1
-		// A press on the reserved cells is not a button: the ordinary
-		// strip semantics toggle the focused tab.
-		tui.handleMouseKey("mouse-left@39,1")
+		box := tui.tabs.Boxes(40, 10)[1]
+		iconX := toolbarButtonX(tui, tabOutput, controlToolbarToggle, box)
+		tui.handleMouseKey(fmt.Sprintf("mouse-left@%d,%d", iconX, box.Top))
+		if !toolbarExpandedState(tui, tabOutput) {
+			t.Fatal("the icon press must expand the toolbar")
+		}
+		// A press on the reserved cells hits no button: it collapses the
+		// toolbar and keeps the strip semantics, toggling the tab.
+		tui.handleMouseKey(fmt.Sprintf("mouse-left@%d,%d", box.Right-1, box.Top))
+		tui.mu.Lock()
+		defer tui.mu.Unlock()
+		if tui.toolbarExpanded(tabOutput) {
+			t.Fatal("a press outside the buttons must collapse the toolbar")
+		}
 		if tui.tabs.Expanded[1] {
-			t.Fatal("expected the press outside the buttons to keep the strip semantics")
+			t.Fatal("the press must keep the ordinary strip semantics")
 		}
 	})
+}
+
+// TestTitleToolbarStaysOpenForConsecutiveActions pins the action press
+// semantics: an action press runs the action and keeps the toolbar
+// expanded, so the next action needs no re-expansion — the same rule
+// that lets the quit confirmation's second press reach the quit button.
+// See TheoryOfToolbars.
+func TestTitleToolbarStaysOpenForConsecutiveActions(t *testing.T) {
+	tui := newTUIForTest()
+	tui.interactive = false
+	tui.width, tui.height = 60, 10
+	tui.tabs.Expanded = []bool{true, true, false}
+	tui.tabs.HasContent = []bool{true, true, false}
+	tui.tabs.Focus = 0
+	tr, err := tree.New().Write("root", "finish-1", tree.TypeFinish, tree.AuthorProgram, "finish: stop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tui.setTree(tr)
+	box := tui.tabs.Boxes(60, 10)[0]
+
+	iconX := toolbarButtonX(tui, tabTree, controlToolbarToggle, box)
+	tui.handleMouseKey(fmt.Sprintf("mouse-left@%d,%d", iconX, box.Top))
+	cycleX := toolbarButtonX(tui, tabTree, controlTreeViewCycle, box)
+	if cycleX < 0 {
+		t.Fatal("the expanded toolbar must render the view-cycle button")
+	}
+
+	tui.handleMouseKey(fmt.Sprintf("mouse-left@%d,%d", cycleX, box.Top))
+	if !toolbarExpandedState(tui, tabTree) {
+		t.Fatal("an action press must keep the toolbar expanded")
+	}
+	tui.mu.Lock()
+	first := tui.treeTab.mode
+	tui.mu.Unlock()
+
+	// The button keeps its cells, so the second action needs no
+	// re-expansion.
+	if again := toolbarButtonX(tui, tabTree, controlTreeViewCycle, box); again != cycleX {
+		t.Fatalf("the action button moved between presses: %d then %d", cycleX, again)
+	}
+	tui.handleMouseKey(fmt.Sprintf("mouse-left@%d,%d", cycleX, box.Top))
+	if !toolbarExpandedState(tui, tabTree) {
+		t.Fatal("the second action press must keep the toolbar expanded")
+	}
+	tui.mu.Lock()
+	second := tui.treeTab.mode
+	tui.mu.Unlock()
+	if second == first {
+		t.Fatal("the consecutive action press must run the action again")
+	}
+}
+
+// TestTitleToolbarToggle pins the collapse icon's toggle: the collapsed
+// toolbar shows the icon alone, one press expands the tab's actions, and
+// a second press collapses them again — with the icon keeping its cells.
+// See TheoryOfToolbars.
+func TestTitleToolbarToggle(t *testing.T) {
+	tui := newTUIForTest()
+	tui.interactive = false
+	tui.width, tui.height = 40, 10
+	tui.tabs.Expanded = []bool{true, true, false}
+	tui.tabs.HasContent = []bool{true, true, false}
+	tui.tabs.Focus = 0
+	box := tui.tabs.Boxes(40, 10)[0]
+
+	iconX := toolbarButtonX(tui, tabTree, controlToolbarToggle, box)
+	if iconX < 0 {
+		t.Fatal("the collapsed toolbar must render the collapse icon")
+	}
+	if actionX := toolbarButtonX(tui, tabTree, controlTreeViewCycle, box); actionX >= 0 {
+		t.Fatal("the collapsed toolbar must not render the action buttons")
+	}
+
+	tui.handleMouseKey(fmt.Sprintf("mouse-left@%d,%d", iconX, box.Top))
+	actionX := toolbarButtonX(tui, tabTree, controlTreeViewCycle, box)
+	if !toolbarExpandedState(tui, tabTree) {
+		t.Fatal("the icon press must expand the tab's toolbar")
+	}
+	if actionX < 0 {
+		t.Fatal("the expanded toolbar must render its action buttons")
+	}
+
+	tui.handleMouseKey(fmt.Sprintf("mouse-left@%d,%d", iconX, box.Top))
+	if toolbarExpandedState(tui, tabTree) {
+		t.Fatal("the second icon press must collapse the toolbar")
+	}
+	if iconX2 := toolbarButtonX(tui, tabTree, controlToolbarToggle, box); iconX2 != iconX {
+		t.Fatalf("the collapse icon moved between states: %d then %d", iconX, iconX2)
+	}
+}
+
+// TestTitleToolbarOneAtATime pins the single-toolbar rule: expanding a
+// tab's toolbar collapses the one that was open. See TheoryOfToolbars.
+func TestTitleToolbarOneAtATime(t *testing.T) {
+	tui := newTUIForTest()
+	tui.interactive = false
+	tui.width, tui.height = 60, 10
+	tui.tabs.Expanded = []bool{true, true, false}
+	tui.tabs.HasContent = []bool{true, true, false}
+	tui.tabs.Focus = 0
+	boxes := tui.tabs.Boxes(60, 10)
+
+	treeIcon := toolbarButtonX(tui, tabTree, controlToolbarToggle, boxes[0])
+	outputIcon := toolbarButtonX(tui, tabOutput, controlToolbarToggle, boxes[1])
+	tui.handleMouseKey(fmt.Sprintf("mouse-left@%d,%d", treeIcon, boxes[0].Top))
+	tui.handleMouseKey(fmt.Sprintf("mouse-left@%d,%d", outputIcon, boxes[1].Top))
+	if toolbarExpandedState(tui, tabTree) {
+		t.Fatal("expanding the Output toolbar must collapse the Tree toolbar")
+	}
+	if !toolbarExpandedState(tui, tabOutput) {
+		t.Fatal("the pressed tab's toolbar must be expanded")
+	}
+}
+
+// TestTitleToolbarFollowsTabVisibility pins the toolbar's lifetime: a tab
+// that collapses takes its toolbar with it, so a re-expanded tab starts
+// collapsed and a collapsed tab never carries one. See TheoryOfToolbars.
+func TestTitleToolbarFollowsTabVisibility(t *testing.T) {
+	tui := newTUIForTest()
+	tui.interactive = false
+	tui.width, tui.height = 40, 10
+	tui.tabs.Expanded = []bool{true, true, false}
+	tui.tabs.HasContent = []bool{true, true, false}
+	tui.tabs.Focus = 1
+	tui.tty = &fakeTtyForTest{}
+	var out strings.Builder
+	tui.screen = taiui.NewTerminalScreen(&out, 40, 10)
+	tr, err := tree.New().Write("root", "finish-1", tree.TypeFinish, tree.AuthorProgram, "finish: stop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tui.setTree(tr)
+
+	box := tui.tabs.Boxes(40, 10)[1]
+	iconX := toolbarButtonX(tui, tabOutput, controlToolbarToggle, box)
+	if iconX < 0 {
+		t.Fatal("the collapsed toolbar must render its collapse icon")
+	}
+	tui.handleMouseKey(fmt.Sprintf("mouse-left@%d,%d", iconX, box.Top))
+	if !toolbarExpandedState(tui, tabOutput) {
+		t.Fatal("the icon press must expand the Output toolbar")
+	}
+
+	// The focused tab's number key collapses it: the render folds its
+	// toolbar with it, and expanding the tab again starts collapsed.
+	tui.handleKey("2")
+	tui.render()
+	if toolbarExpandedState(tui, tabOutput) {
+		t.Fatal("a collapsed tab must not carry an expanded toolbar")
+	}
+	tui.mu.Lock()
+	collapsed := !tui.tabs.Expanded[1]
+	tui.mu.Unlock()
+	if !collapsed {
+		t.Fatal("the number key of the focused tab must collapse it")
+	}
+	tui.handleKey("2")
+	tui.render()
+	if toolbarExpandedState(tui, tabOutput) {
+		t.Fatal("a re-expanded tab must start with its toolbar collapsed")
+	}
 }

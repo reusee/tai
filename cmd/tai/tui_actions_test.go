@@ -86,9 +86,11 @@ func TestTUIHelpClickCloses(t *testing.T) {
 }
 
 // TestTUILogsToolbarQuit pins the Logs toolbar's quit button: the
-// rightmost button arms the confirmation on the first press and
-// confirms on the second, the same two-press protocol the quit key
-// uses. See TheoryOfToolbars.
+// collapsed toolbar shows only its icon, the icon expands the toolbar,
+// and the quit button then arms the confirmation on the first press and
+// confirms on the second — the same two-press protocol the quit key uses,
+// with the toolbar kept open so the confirming press reaches the same
+// button. See TheoryOfToolbars.
 func TestTUILogsToolbarQuit(t *testing.T) {
 	tui := newTUIForTest()
 	tui.interactive = false
@@ -98,14 +100,30 @@ func TestTUILogsToolbarQuit(t *testing.T) {
 	tui.tabs.Focus = 2
 	tui.tty = &fakeTtyForTest{}
 	box := tui.tabs.Boxes(60, 10)[2]
-	// The buttons lay out right to left; the quit button is the
-	// rightmost, occupying [Right-4, Right-2).
-	quitX := box.Right - 3
+
+	if x := toolbarButtonX(tui, tabLogs, controlQuit, box); x >= 0 {
+		t.Fatal("the collapsed toolbar must not render the quit button")
+	}
+	iconX := toolbarButtonX(tui, tabLogs, controlToolbarToggle, box)
+	if iconX < 0 {
+		t.Fatal("the collapsed toolbar must render its collapse icon")
+	}
+	if tui.handleMouseKey(fmt.Sprintf("mouse-left@%d,%d", iconX, box.Top)) {
+		t.Fatal("the icon press must not quit")
+	}
+
+	quitX := toolbarButtonX(tui, tabLogs, controlQuit, box)
+	if quitX < 0 {
+		t.Fatal("the expanded toolbar must render the quit button")
+	}
 	if tui.handleMouseKey(fmt.Sprintf("mouse-left@%d,%d", quitX, box.Top)) {
 		t.Fatal("the first press must only arm the confirmation")
 	}
 	if !tui.quit.Pending() {
 		t.Fatal("the first press on the quit button must arm the confirmation")
+	}
+	if !toolbarExpandedState(tui, tabLogs) {
+		t.Fatal("the quit press must keep the toolbar open for the confirming press")
 	}
 	if !tui.handleMouseKey(fmt.Sprintf("mouse-left@%d,%d", quitX, box.Top)) {
 		t.Fatal("the second press must confirm the quit")

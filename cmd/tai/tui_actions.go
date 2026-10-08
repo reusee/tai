@@ -55,6 +55,12 @@ const (
 	controlQuit          controlBarAction = "quit"
 )
 
+// controlToolbarToggle is the action of a title toolbar's collapse icon:
+// the pointer path expands the pressed tab's toolbar, or collapses it
+// when it is already expanded. The toggle acts on the tab whose icon was
+// pressed, so it runs in the pointer path. See TheoryOfToolbars.
+const controlToolbarToggle controlBarAction = "toolbar-toggle"
+
 // submitGlyph returns the input bar's submit glyph and its color: the
 // glyph brightens while a ChatInput call waits. The glyph carries no
 // Emoji property, so every terminal renders it as a colorable

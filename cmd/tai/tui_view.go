@@ -180,7 +180,7 @@ var tuiHelpLines = []string{
 	"output column\tclick ▸ / ▾ at a section's first row to collapse / expand it",
 	"tree row\tclick 👉 on an attempt line to jump the Output tab to its output section; double-click the text to expand or collapse a node (a single text press is inert)",
 	"tree column\tclick ▸ / ▾ on an expandable node's first row (or its first visible row when scrolled) to collapse / expand it",
-	"title buttons\tclick the labels at an expanded tab title's right edge: Tree SwitchCollapse, Plan Collapse, Output UpDownCollapse, Logs SplitMouseHelpQuit",
+	"title toolbar\tclick the icon at an expanded tab title's right edge to show its buttons — Tree Switch Collapse, Plan Collapse, Output Up Down Collapse, Logs Split Mouse Help Quit; an action press runs the action and keeps the toolbar open, so press the icon again or anywhere else to hide it",
 	"wheel / drag\tscroll pane under cursor",
 	"m\ttoggle mouse reporting (off: select & copy in the terminal)",
 	"q / Ctrl-C\tquit (press again to confirm)",
