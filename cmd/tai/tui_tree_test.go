@@ -190,85 +190,90 @@ func TestTreeSummaryNodesExpandedByDefault(t *testing.T) {
 }
 
 // TestTreeProjectionCycle verifies the projection cycling: the modes
-// walk all, events, summary, model, program, user, stream; the
-// ancestor-based projections keep the shown nodes' ancestors so the
-// outline stays readable; and the left status states the current
-// projection. The collapsed rows hide node names, so the assertions
-// read the content previews. The pane is wide enough that the tree
-// form is not replaced by the width-driven stream default. See
-// TheoryOfTreeTab and TheoryOfTabTitleStatus.
+// walk all, summary, model, stream; the summary and model projections
+// keep the shown nodes' ancestors so the outline stays readable; and
+// the left status states the current projection. The collapsed rows
+// hide node names, so the assertions read the content previews. The
+// pane is wide enough that the tree form is not replaced by the
+// width-driven stream default. See TheoryOfTreeTab and
+// TheoryOfTabTitleStatus.
 func TestTreeProjectionCycle(t *testing.T) {
 	tui := newTUIForTest()
 	tr, err := tree.New().WriteAll(
 		tree.WriteOp{Parent: "root", Name: "user-1", Type: tree.TypeUser, Author: tree.AuthorUser, Content: "task"},
-		tree.WriteOp{Parent: "root", Name: "attempt-1", Type: tree.TypeAttempt, Author: tree.AuthorProgram, Content: "attempt 1 (1/3)"},
-		tree.WriteOp{Parent: "root", Name: "synth-1", Type: tree.TypeSynthesizedSummary, Author: tree.AuthorProgram, Content: "attempt 1 complete"},
+		tree.WriteOp{Parent: "root", Name: "model-1", Type: tree.TypeModel, Author: tree.AuthorModel, Content: "resp"},
+		tree.WriteOp{Parent: "model-1", Name: "summary-1", Type: tree.TypeSummary, Author: tree.AuthorModel, Content: "condensed"},
+		tree.WriteOp{Parent: "root", Name: "model-2", Type: tree.TypeModel, Author: tree.AuthorModel, Content: "extra"},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	tui.treeView = tr
 
-	// All mode: every node.
-	tui.mu.Lock()
 	display := tui.treeDisplay(120, panelStyle.BaseBG)
-	if len(display) < 3 {
+	contains := func(sub string) bool {
+		for _, line := range display {
+			if strings.Contains(line.Text, sub) {
+				return true
+			}
+		}
+		return false
+	}
+
+	// All mode: every node.
+	if len(display) < 4 {
 		t.Fatalf("expected the full outline, got %d rows", len(display))
 	}
-	tui.mu.Unlock()
+	for _, want := range []string{"task", "resp", "condensed", "extra"} {
+		if !contains(want) {
+			t.Fatalf("expected %q in the all projection, got %v", want, displayTexts(display))
+		}
+	}
 
-	// Events projection: only the event nodes plus ancestors. The
-	// attempt node is a structure node, so it is pruned here.
+	// Summary projection: the summary node plus its ancestors; the
+	// sibling model node and the user node are pruned.
 	tui.cycleTreeView()
-	if tui.treeTab.mode != treeViewEvents {
-		t.Fatalf("expected the events projection, got %d", tui.treeTab.mode)
+	if tui.treeTab.mode != treeViewSummary {
+		t.Fatalf("expected the summary projection, got %d", tui.treeTab.mode)
 	}
 	tui.mu.Lock()
 	display = tui.treeDisplay(120, panelStyle.BaseBG)
 	tui.mu.Unlock()
-	found := false
-	for _, line := range display {
-		if strings.Contains(line.Text, "attempt 1 complete") {
-			found = true
+	for _, want := range []string{"resp", "condensed"} {
+		if !contains(want) {
+			t.Fatalf("expected %q in the summary projection, got %v", want, displayTexts(display))
 		}
 	}
-	if !found {
-		t.Fatalf("expected the synthesized-summary node in the events projection, got %v", display)
-	}
-	for _, line := range display {
-		if strings.Contains(line.Text, "attempt 1 (1/3)") {
-			t.Fatalf("the attempt structure node must be pruned from the events projection, got %v", display)
-		}
-		if strings.Contains(line.Text, "task") {
-			t.Fatalf("the user node must be pruned from the events projection, got %v", display)
+	for _, dontWant := range []string{"task", "extra"} {
+		if contains(dontWant) {
+			t.Fatalf("the %q node must be pruned from the summary projection, got %v", dontWant, displayTexts(display))
 		}
 	}
-	if got := tui.treeStatus(); got != "view events" {
+	if got := tui.treeStatus(); got != "view summary" {
 		t.Fatalf("unexpected projection status: %q", got)
 	}
 
-	// User projection: the user node plus its ancestors.
+	// Model projection: every model-authored node plus its ancestors.
 	tui.cycleTreeView()
-	tui.cycleTreeView()
-	tui.cycleTreeView()
-	tui.cycleTreeView()
-	if tui.treeTab.mode != treeViewUser {
-		t.Fatalf("expected the user projection, got %d", tui.treeTab.mode)
+	if tui.treeTab.mode != treeViewModel {
+		t.Fatalf("expected the model projection, got %d", tui.treeTab.mode)
 	}
 	tui.mu.Lock()
 	display = tui.treeDisplay(120, panelStyle.BaseBG)
 	tui.mu.Unlock()
-	found = false
-	for _, line := range display {
-		if strings.Contains(line.Text, "task") {
-			found = true
+	for _, want := range []string{"resp", "condensed", "extra"} {
+		if !contains(want) {
+			t.Fatalf("expected %q in the model projection, got %v", want, displayTexts(display))
 		}
 	}
-	if !found {
-		t.Fatalf("expected the user's input node in the user projection, got %v", display)
+	if contains("task") {
+		t.Fatalf("the user node must be pruned from the model projection, got %v", displayTexts(display))
+	}
+	if got := tui.treeStatus(); got != "view model" {
+		t.Fatalf("unexpected projection status: %q", got)
 	}
 
-	// The stream projection comes before the wrap to all.
+	// The stream projection flattens the whole tree.
 	tui.cycleTreeView()
 	if tui.treeTab.mode != treeViewStream {
 		t.Fatalf("expected the stream projection, got %d", tui.treeTab.mode)
@@ -614,7 +619,6 @@ func TestTreeProjectionAncestors(t *testing.T) {
 		t.Fatal(err)
 	}
 	tui.treeView = tr
-	tui.cycleTreeView() // events: nothing shown
 	tui.cycleTreeView() // summary: summary-1 plus ancestors
 	if tui.treeTab.mode != treeViewSummary {
 		t.Fatalf("expected the summary projection, got %d", tui.treeTab.mode)
@@ -1386,7 +1390,7 @@ func TestTreeSingleLineTruncatedExpands(t *testing.T) {
 
 // TestTreeShowsAllLoops verifies that the display covers every goal
 // loop: the walk starts at the tree root, so both loops' nodes render
-// in the all projection, and the user projection keeps the matched
+// in the all projection, and the model projection keeps the matched
 // nodes of every loop. The collapsed rows hide node names, so the
 // assertions read the content previews. See TheoryOfTreeTab.
 func TestTreeShowsAllLoops(t *testing.T) {
@@ -1394,8 +1398,10 @@ func TestTreeShowsAllLoops(t *testing.T) {
 	tr, err := tree.New().WriteAll(
 		tree.WriteOp{Parent: "root", Name: "loop-1", Type: tree.TypeLoop, Author: tree.AuthorProgram, Content: "loop one"},
 		tree.WriteOp{Parent: "loop-1", Name: "user-1", Type: tree.TypeUser, Author: tree.AuthorUser, Content: "task one"},
+		tree.WriteOp{Parent: "loop-1", Name: "model-1", Type: tree.TypeModel, Author: tree.AuthorModel, Content: "resp one"},
 		tree.WriteOp{Parent: "root", Name: "loop-2", Type: tree.TypeLoop, Author: tree.AuthorProgram, Content: "loop two"},
 		tree.WriteOp{Parent: "loop-2", Name: "user-2", Type: tree.TypeUser, Author: tree.AuthorUser, Content: "task two"},
+		tree.WriteOp{Parent: "loop-2", Name: "model-2", Type: tree.TypeModel, Author: tree.AuthorModel, Content: "resp two"},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -1418,10 +1424,10 @@ func TestTreeShowsAllLoops(t *testing.T) {
 	// The projection is set directly: the toolbar's cycle button is
 	// the only production way to change it. See TheoryOfToolbars.
 	tui.mu.Lock()
-	tui.treeTab.mode = treeViewUser
+	tui.treeTab.mode = treeViewModel
 	display = tui.treeDisplay(120, panelStyle.BaseBG)
 	tui.mu.Unlock()
-	for _, want := range []string{"task one", "task two"} {
+	for _, want := range []string{"resp one", "resp two"} {
 		found := false
 		for _, line := range display {
 			if strings.Contains(line.Text, want) {
@@ -1429,7 +1435,7 @@ func TestTreeShowsAllLoops(t *testing.T) {
 			}
 		}
 		if !found {
-			t.Fatalf("expected %q in the user projection, got %v", want, displayTexts(display))
+			t.Fatalf("expected %q in the model projection, got %v", want, displayTexts(display))
 		}
 	}
 }

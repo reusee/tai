@@ -50,18 +50,16 @@ Tree tab theory (cmd/tai):
   depth-first from the root, so a goal run's loops appear as loop-N
   branches and a fresh run's nodes sit directly under the root. The
   walk always starts at the tree root, so every loop's state is
-  displayed: projections filter by type prefix, type, and author, never
-  by loop, and no display path reduces the view to the current loop.
+  displayed: projections filter by type or author, never by loop, and
+  no display path reduces the view to the current loop.
 - The tab renders a projection of the tree, cycled with the v key or
-  the Tree tab's toolbar button: all shows every node; events shows the
-  event family (nodes whose type prefix is event); summary the summary
-  nodes; model, program, and user the nodes of that author; stream
-  flattens the whole tree chronologically. The ancestor-based
-  projections keep each shown node's ancestors (tree.Extract), so the
-  outline stays readable. The projection and the viewport's loop and
-  attempt render as the tab title's left status, never in its center:
-  the title's center stays the fixed name "Tree". See
-  TheoryOfTabTitleStatus.
+  the Tree tab's toolbar button: all shows every node; summary the
+  summary nodes; model the model-authored nodes; stream flattens the
+  whole tree chronologically. The ancestor-based projections keep
+  each shown node's ancestors (tree.Extract), so the outline stays
+  readable. The projection and the viewport's loop and attempt render
+  as the tab title's left status, never in its center: the title's
+  center stays the fixed name "Tree". See TheoryOfTabTitleStatus.
 - The projection defaults to the stream form when the pane's content
   column would be narrower than its structure column — the depth
   indent plus the type fragment plus the fold column. On such a pane
@@ -205,16 +203,15 @@ type treeViewMode int
 
 const (
 	treeViewAll treeViewMode = iota
-	treeViewEvents
+
 	treeViewSummary
 	treeViewModel
-	treeViewProgram
-	treeViewUser
+
 	treeViewStream
 	treeViewModeCount
 )
 
-var treeViewLabels = [...]string{"all", "events", "summary", "model", "program", "user", "stream"}
+var treeViewLabels = [...]string{"all", "summary", "model", "stream"}
 
 // label renders the mode's display label. See TheoryOfTreeTab.
 func (m treeViewMode) label() string {
@@ -225,20 +222,15 @@ func (m treeViewMode) label() string {
 }
 
 // predicate returns the node predicate of the mode; nil means every
-// node. The events mode selects the type prefix, not a separate category:
-// the type itself is the structured classification. See TheoryOfTreeTab.
+// node. The summary mode selects by type and the model mode by
+// author: the node's structured fields are the classification. See
+// TheoryOfTreeTab.
 func (m treeViewMode) predicate() func(*tree.Node) bool {
 	switch m {
-	case treeViewEvents:
-		return func(n *tree.Node) bool { return n.Type.Prefix() == "event" }
 	case treeViewSummary:
 		return func(n *tree.Node) bool { return n.Type == tree.TypeSummary }
 	case treeViewModel:
 		return func(n *tree.Node) bool { return n.Author == tree.AuthorModel }
-	case treeViewProgram:
-		return func(n *tree.Node) bool { return n.Author == tree.AuthorProgram }
-	case treeViewUser:
-		return func(n *tree.Node) bool { return n.Author == tree.AuthorUser }
 	default:
 		return nil
 	}
@@ -686,8 +678,8 @@ func (t *TUI) seedTreeExpansions(n *tree.Node) {
 
 // cycleTreeView advances the Tree tab's projection to the next mode,
 // so the user can inspect the tree's internal representation — all
-// nodes, only the events, only the summaries, or only one author's
-// nodes. See TheoryOfTreeTab.
+// nodes, only the summaries, only the model's nodes, or the flat
+// chronological stream. See TheoryOfTreeTab.
 func (t *TUI) cycleTreeView() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
