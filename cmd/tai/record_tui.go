@@ -57,11 +57,11 @@ Record browser theory (cmd/tai):
   scrolling, so a key press never depends on a render having happened
   since the last change; the row ranges the pointer mapping reads come
   from the same display.
-- The title row's left side carries the navigation: the record list's
-  label and, while a record is open, the record's id after it. A press on
-  the navigation returns to the list; the two leading cells stay
-  untouched, keeping the title row's rule at the box edge, like the Tree
-  tab's status.
+- The title row's left side carries the status: "count N" for the record
+  list and, while a record is open, "id N" after it. A press on the
+  status returns to the list; the two leading cells stay untouched,
+  keeping the title row's rule at the box edge. The title's center
+  carries only the fixed tab name "Record". See TheoryOfTabTitleStatus.
 - Rendering stays a plain function of the browser's state: the browser
   rebuilds a full element tree per frame from its records, the opened
   tree, and the projection, following the TUI's rendering pattern.
@@ -71,9 +71,7 @@ Record browser theory (cmd/tai):
 const (
 	// recordTabTitle names the browser's single tab.
 	recordTabTitle = "Record"
-	// recordNavListLabel labels the navigation bar's list segment; a
-	// press on the navigation returns to the list.
-	recordNavListLabel = "records"
+
 	// recordNavIndent keeps the title row's two leading cells untouched,
 	// so the title's own rule stays visible at the box edge.
 	recordNavIndent = 2
@@ -92,7 +90,7 @@ var recordBrowserHelp = []string{
 	"v\tcycle the tree's projection (all / events / summary / model / program / user / stream)",
 	"wheel\tscroll the tree; move the record selection",
 	"r\treload the record list",
-	"nav bar\tclick records on the title row to return to the list",
+	"title status\tclick the count / id segments on the title row to return to the list",
 	"q / Ctrl-C\tquit (press again to confirm)",
 	"?\ttoggle this help overlay",
 }
@@ -332,7 +330,7 @@ func recordStartTime(infos []records.SessionInfo, id int64, tr *tree.Tree) time.
 }
 
 // render builds the browser's element tree from its state: the list or
-// the opened record's tree, the title row's navigation, and the quit and
+// the opened record's tree, the title row's status, and the quit and
 // help overlays. See TheoryOfRecordBrowser.
 func (b *RecordBrowser) render() {
 	width := max(b.width, 1)
@@ -345,7 +343,12 @@ func (b *RecordBrowser) render() {
 	} else {
 		view = b.treeView(box)
 	}
-	elements := []any{view, b.navElement(box)}
+	elements := []any{view}
+	// The status bar is skipped when the title row cannot hold both it
+	// and the centered fixed name. See TheoryOfTabTitleStatus.
+	if el := b.navElement(box); el != nil {
+		elements = append(elements, el)
+	}
 	if b.err != "" {
 		elements = append(elements, b.errorElement(width, height))
 	}
@@ -384,32 +387,48 @@ func (b *RecordBrowser) treeScroll() *taiui.ScrollState {
 	return &b.treePane.scrolls[b.treePane.tabIndex(tabTree)]
 }
 
-// navText renders the navigation bar's text: the record list's label and
-// the opened record's id. See TheoryOfRecordBrowser.
+// navText renders the navigation bar's text: the record count and, while
+// a record is open, its id, as key value status segments. The key value
+// form is the tab title's left status form. See TheoryOfTabTitleStatus
+// and TheoryOfRecordBrowser.
 func (b *RecordBrowser) navText() string {
 	if b.currentID == 0 {
-		return recordNavListLabel
+		return fmt.Sprintf("count %d", len(b.infos))
 	}
-	return fmt.Sprintf("%s › #%d", recordNavListLabel, b.currentID)
+	return statusText(
+		fmt.Sprintf("count %d", len(b.infos)),
+		fmt.Sprintf("id %d", b.currentID),
+	)
 }
 
-// navHit reports whether a press landed on the navigation bar: the drawn
-// text's own cells on the title row. See TheoryOfRecordBrowser.
+// navHit reports whether a press landed on the status bar: the drawn
+// text's own cells on the title row, clipped where the centered fixed
+// name begins, so the hit range matches what is drawn. See
+// TheoryOfRecordBrowser and TheoryOfTabTitleStatus.
 func (b *RecordBrowser) navHit(x, y int) bool {
 	box := b.tabBox()
-	if y != box.Top || x < box.Left+recordNavIndent {
+	left := box.Left + recordNavIndent
+	if y != box.Top || x < left {
 		return false
 	}
-	w := taiui.DisplayWidthOptions().String(b.navText())
-	return x < box.Left+recordNavIndent+w
+	right := min(left+taiui.DisplayWidthOptions().String(b.navText()), titleLabelStart(box, recordTabTitle))
+	return x < right
 }
 
-// navElement draws the navigation bar over the title row's left side; the
-// two leading cells stay untouched. See TheoryOfRecordBrowser.
+// navElement draws the status bar over the title row's left side; it
+// starts two cells after the box's left edge and ends where the centered
+// fixed name begins, so the status never paints over the name. It
+// returns nil when the row leaves no room between the two. See
+// TheoryOfRecordBrowser and TheoryOfTabTitleStatus.
 func (b *RecordBrowser) navElement(box taiui.Box) taiui.Element {
+	left := box.Left + recordNavIndent
+	right := titleLabelStart(box, recordTabTitle)
+	if right <= left {
+		return nil
+	}
 	specs := []any{
 		b.navText(),
-		taiui.Box{Top: box.Top, Left: box.Left + recordNavIndent, Bottom: box.Top + 1, Right: box.Right},
+		taiui.Box{Top: box.Top, Left: left, Bottom: box.Top + 1, Right: right},
 		taiui.FGColor(panelStyle.FocusLabelFG),
 		taiui.Bold(true),
 	}
@@ -431,18 +450,19 @@ func (b *RecordBrowser) errorElement(width, height int) taiui.Element {
 
 // listView renders the record list: the panel that carries the tab's
 // title row plus a List, whose own window centers on the selection; the
-// list's box is the panel's content area. See TheoryOfRecordBrowser.
+// list's box is the panel's content area. The record count renders at the
+// title row's left side, never in the center. See TheoryOfRecordBrowser
+// and TheoryOfTabTitleStatus.
 func (b *RecordBrowser) listView(box taiui.Box) taiui.Element {
-	label := fmt.Sprintf("%s (%d)", recordTabTitle, len(b.infos))
 	if len(b.infos) == 0 {
-		return taiui.TabPanel(box, recordTabTitle, label, true, true, false,
+		return taiui.TabPanel(box, recordTabTitle, recordTabTitle, true, true, false,
 			[]taiui.Line{{Text: "no recorded sessions"}}, taiui.ScrollState{}, panelStyle)
 	}
 	items := make([]string, 0, len(b.infos))
 	for _, info := range b.infos {
 		items = append(items, recordListItem(info))
 	}
-	panel := taiui.TabPanel(box, recordTabTitle, label, true, true, false, nil, taiui.ScrollState{}, panelStyle)
+	panel := taiui.TabPanel(box, recordTabTitle, recordTabTitle, true, true, false, nil, taiui.ScrollState{}, panelStyle)
 	list := taiui.List(items, b.selected,
 		b.listBox(),
 		taiui.ListStyle(taiui.SameStyle.SetReverse(true)),
@@ -452,12 +472,13 @@ func (b *RecordBrowser) listView(box taiui.Box) taiui.Element {
 
 // treeView renders the opened record's tree: the pane's shared tree
 // display through the tab panel, with the fold column's hover affordance
-// on top. See TheoryOfRecordBrowser.
+// on top. The opened record's id renders at the title row's left side,
+// never in the center. See TheoryOfRecordBrowser and
+// TheoryOfTabTitleStatus.
 func (b *RecordBrowser) treeView(box taiui.Box) taiui.Element {
 	p := b.treePane
-	label := fmt.Sprintf("%s #%d", recordTabTitle, b.currentID)
 	if p.treeView == nil {
-		return taiui.TabPanel(box, recordTabTitle, label, true, true, false,
+		return taiui.TabPanel(box, recordTabTitle, recordTabTitle, true, true, false,
 			[]taiui.Line{{Text: "no nodes in the recorded tree"}}, taiui.ScrollState{}, panelStyle)
 	}
 	paneIdx := p.treeTab.paneIdx
@@ -467,7 +488,7 @@ func (b *RecordBrowser) treeView(box taiui.Box) taiui.Element {
 	p.scrolls[paneIdx].Update(len(display), taiui.PaneHeight(box))
 	p.floatTreeControls(box, display)
 	p.mu.Unlock()
-	panel := taiui.TabPanel(box, recordTabTitle, label, true, true, false,
+	panel := taiui.TabPanel(box, recordTabTitle, recordTabTitle, true, true, false,
 		display, p.scrolls[paneIdx], panelStyle)
 	elements := []any{panel}
 	if el := p.treeFoldHoverElement(box, display); el != nil {

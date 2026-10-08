@@ -12,33 +12,34 @@ import (
 // render() holds the lock while computing the displays and building the
 // root. See TheoryOfTUI.
 
-// outputTabLabel renders the Output tab's title: the request lifecycle
-// state — done, handoff, block processing, or generating — or the plain
-// tab title when none applies. A component's block processing is observed
-// through the display decorator, because the session tree carries the
-// block-result nodes only after the work returns. The processing hint
-// carries the elapsed stopwatch fragment of processingElapsed, so the user
-// sees how long a component has been working. See
-// TheoryOfTUIBlockProcessing.
-func outputTabLabel(finished bool, generating bool, handoff bool, processing string, processingElapsed time.Duration) (label string) {
-	// The Output tab is addressed by its kind, never by a fixed index:
-	// the Plan tab shifts every later tab while it is present. See
-	// TheoryOfTUIDynamicPlanTab.
-	label = tabTitleOf(tabOutput)
+// outputStatus renders the Output tab's left status: the request
+// lifecycle state as one key value segment — state done, state handoff,
+// state processing <kind> <elapsed>, or state generating — or "" when
+// none applies. A component's block processing is observed through the
+// display decorator, because the session tree carries the block-result
+// nodes only after the work returns. The processing segment carries the
+// elapsed stopwatch fragment, so the user sees how long a component has
+// been working. See TheoryOfTUIBlockProcessing and
+// TheoryOfTabTitleStatus.
+func outputStatus(finished bool, generating bool, handoff bool, processing string, processingElapsed time.Duration) string {
+	value := ""
 	switch {
 	case finished:
-		label = "Output (done)"
+		value = "done"
 	case handoff:
-		label = "Output (handoff...)"
+		value = "handoff"
 	case processing != "":
 		// Processing outranks a stale generating hint: a request that
 		// ended without a finish node leaves generating set while a
 		// component still works. See TheoryOfTUIBlockProcessing.
-		label = "Output (processing " + processing + " " + formatTreeElapsed(processingElapsed) + "...)"
+		value = "processing " + processing + " " + formatTreeElapsed(processingElapsed)
 	case generating:
-		label = "Output (generating...)"
+		value = "generating"
 	}
-	return
+	if value == "" {
+		return ""
+	}
+	return "state " + value
 }
 
 // treeContentWidth returns the Tree tab's content width: the
@@ -47,6 +48,38 @@ func outputTabLabel(finished bool, generating bool, handoff bool, processing str
 // TheoryOfTreeTab.
 func treeContentWidth(boxWidth int) int {
 	return max(boxWidth-1, 1)
+}
+
+// statusSeparator joins the key value segments of a tab title's left
+// status. See TheoryOfTabTitleStatus.
+const statusSeparator = " / "
+
+// statusText joins a tab title's left status segments with
+// statusSeparator, dropping the empty ones so a state that is not
+// available contributes nothing. Every non-empty segment is one
+// "key value" pair; the tab's name never appears here — it stays fixed in
+// the title's center. See TheoryOfTabTitleStatus.
+func statusText(segments ...string) string {
+	var out string
+	for _, s := range segments {
+		if s == "" {
+			continue
+		}
+		if out != "" {
+			out += statusSeparator
+		}
+		out += s
+	}
+	return out
+}
+
+// titleLabelStart returns the display column where a tab title's
+// centered fixed name begins, mirroring the panel's centering formula.
+// The left status ends there, so the mutable state never paints over the
+// title's fixed name. See TheoryOfTabTitleStatus.
+func titleLabelStart(box taiui.Box, label string) int {
+	options := taiui.DisplayWidthOptions()
+	return box.Left + max((box.Width()-options.String(label))/2, 0)
 }
 
 func wrappedDisplay(t *TUI, idx int, box taiui.Box) []taiui.Line {
@@ -82,6 +115,21 @@ func wrappedDisplay(t *TUI, idx int, box taiui.Box) []taiui.Line {
 		return t.logsCache.Plain(t.logs, max(box.Width()-1, 1), base)
 	}
 	return nil
+}
+
+// tabStatus renders a tab's left status: the tab's mutable state as key
+// value segments, or "" for a tab that carries no state. The title's
+// center keeps the tab's fixed name. See TheoryOfTabTitleStatus.
+func (t *TUI) tabStatus(kind tuiTab) string {
+	switch kind {
+	case tabTree:
+		return t.treeStatus()
+	case tabPlan:
+		return t.planStatus()
+	case tabOutput:
+		return outputStatus(t.finished, t.generating, t.handoff, t.blockProcessing, t.blockProcessingElapsedLocked())
+	}
+	return ""
 }
 
 func (t *TUI) tuiPaneHeight(idx int, box taiui.Box) int {
@@ -163,25 +211,10 @@ func buildRoot(t *TUI, width, height int, displays [][]taiui.Line) taiui.Element
 		if i < len(t.scrolls) {
 			scroll = t.scrolls[i]
 		}
+		// The title row's center carries only the tab's fixed name;
+		// every mutable state of the tab renders at the row's left side
+		// as key value segments. See TheoryOfTabTitleStatus.
 		title := tabTitleOf(kind)
-		label := title
-		switch kind {
-		case tabTree:
-			// The Tree tab's label states the current projection: the
-			// v key cycles it. See TheoryOfTreeTab.
-			label = t.treeTabLabel()
-		case tabPlan:
-			// The Plan tab's label states the plan's progress. See
-			// TheoryOfTUIDynamicPlanTab.
-			label = t.planTabLabel()
-		case tabOutput:
-			// The Output tab's label states the request lifecycle:
-			// generating, handoff, block processing, or done. The
-			// processing hint carries the elapsed stopwatch fragment,
-			// read under the render's lock. See TheoryOfTUI and
-			// TheoryOfTUIBlockProcessing.
-			label = outputTabLabel(t.finished, t.generating, t.handoff, t.blockProcessing, t.blockProcessingElapsedLocked())
-		}
 		// A searching tree pane's panel sits in the inset box below its
 		// search row, so the panel, its title buttons, the fold
 		// controls, and the title status all read one geometry. See
@@ -214,10 +247,10 @@ func buildRoot(t *TUI, width, height int, displays [][]taiui.Line) taiui.Element
 		if kind == tabOutput && t.tabs.Expanded[i] && box.Width() > controlColumnWidth && box.Height() > 0 {
 			// The expanded Output tab reserves its leftmost column for
 			// the section controls. See TheoryOfOutputControls.
-			panel = t.outputPanelView(box, display, label)
+			panel = t.outputPanelView(box, display)
 		} else {
 			panel = taiui.TabPanel(
-				box, title, label,
+				box, title, title,
 				t.tabs.Expanded[i], t.tabs.Focus == i, t.tabs.Unseen[i],
 				display, scroll, panelStyle,
 			)
@@ -225,25 +258,25 @@ func buildRoot(t *TUI, width, height int, displays [][]taiui.Line) taiui.Element
 		if panel != nil {
 			elements = append(elements, panel)
 		}
-		if panel != nil && t.tabs.Expanded[i] && (kind == tabTree || kind == tabPlan) {
+		if panel != nil && t.tabs.Expanded[i] {
+			// The title row's left side carries the tab's mutable state
+			// as key value segments, clipped before the centered fixed
+			// name so the name always stays visible; the two leading
+			// cells keep the title's rule. See TheoryOfTabTitleStatus.
+			if status := t.tabStatus(kind); status != "" {
+				if el := titleStatusElement(box, title, status, t.tabs.Focus == i); el != nil {
+					elements = append(elements, el)
+				}
+			}
 			// A searching tree pane's search row occupies the row its
 			// inset panel freed: keyword editing on the left, then the
 			// match indicator and the navigation buttons on the right.
 			// See TheoryOfTreeSearch.
-			if searchEl := t.treeSearchElement(kind, boxes[i]); searchEl != nil {
-				elements = append(elements, searchEl)
+			if kind == tabTree || kind == tabPlan {
+				if searchEl := t.treeSearchElement(kind, boxes[i]); searchEl != nil {
+					elements = append(elements, searchEl)
+				}
 			}
-		}
-		if kind == tabTree && panel != nil && t.tabs.Expanded[i] {
-			// The Tree tab's title row shows the loop and attempt of
-			// the first visible entry, two cells from the box's left
-			// edge; the two leading cells keep the title's rule. See
-			// TheoryOfTreeTitleStatus.
-			if status := t.treeTitleStatus(); status != "" {
-				elements = append(elements, treeStatusElement(box, status, t.tabs.Focus == i))
-			}
-		}
-		if panel != nil && t.tabs.Expanded[i] {
 			// The node under the pointer's fold column renders its fold
 			// glyph reversed, the affordance that marks the press
 			// target. It applies to every tree-shaped pane. See
@@ -287,9 +320,9 @@ func buildRoot(t *TUI, width, height int, displays [][]taiui.Line) taiui.Element
 	return root
 }
 
-func (t *TUI) outputPanelView(box taiui.Box, display []taiui.Line, label string) taiui.Element {
+func (t *TUI) outputPanelView(box taiui.Box, display []taiui.Line) taiui.Element {
 	idx := t.tabIndex(tabOutput)
-	panel := taiui.TabPanel(box, tabTitleOf(tabOutput), label,
+	panel := taiui.TabPanel(box, tabTitleOf(tabOutput), tabTitleOf(tabOutput),
 		t.tabs.Expanded[idx], t.tabs.Focus == idx, t.tabs.Unseen[idx], display, t.scrolls[idx], panelStyle,
 		taiui.ContentIndent(controlColumnWidth))
 	base := panelStyle.BaseBG

@@ -134,12 +134,15 @@ func (t *TUI) planProgressLocked() (done, pending int) {
 	return done, pending
 }
 
-// planTabLabel renders the Plan tab's label as its progress: the entries
-// marked done over the entries still carrying work. See
-// TheoryOfTUIDynamicPlanTab.
-func (t *TUI) planTabLabel() string {
+// planStatus renders the Plan tab's left status: the plan's progress as
+// the done and pending entry counts, in key value form. See
+// TheoryOfTabTitleStatus.
+func (t *TUI) planStatus() string {
 	done, pending := t.planProgressLocked()
-	return fmt.Sprintf("%s (%d / %d)", tabTitleOf(tabPlan), done, pending)
+	return statusText(
+		fmt.Sprintf("done %d", done),
+		fmt.Sprintf("pending %d", pending),
+	)
 }
 
 // paneTreeDisplay renders one tree-shaped pane's display: the Plan pane

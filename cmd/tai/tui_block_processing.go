@@ -29,9 +29,9 @@ Block processing display theory (cmd/tai):
 - The observer's callbacks run on the generation goroutine, one component
   at a time — ProcessComponents runs components sequentially — so the
   TUI's blockProcessing field names the component currently working. The
-  Output tab title renders "processing <kind> <elapsed>..." while the
-  field is set, the elapsed fragment being the stopwatch reading of
-  blockProcessingStart; the label precedence is finished > handoff >
+  Output tab's left status reads "state processing <kind> <elapsed>" while
+  the field is set, the elapsed fragment being the stopwatch reading of
+  blockProcessingStart; the status precedence is finished > handoff >
   processing > generating, with processing ranked above generating
   because a request that ends without a finish node leaves the generating
   hint on while a component still works. BlockProcessingEnd and genEnd
@@ -105,8 +105,8 @@ const blockProcessingTick = time.Second
 
 // BlockProcessingStart reports the kind of the component whose block
 // processing is starting, and records the stopwatch's start moment so the
-// Output tab title can render the elapsed time. It is called on the
-// generation goroutine by the observer wrapper. See
+// Output tab's left status can render the elapsed time. It is called on
+// the generation goroutine by the observer wrapper. See
 // TheoryOfTUIBlockProcessing.
 func (t *TUI) BlockProcessingStart(kind string) {
 	t.mu.Lock()

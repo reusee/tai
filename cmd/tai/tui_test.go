@@ -387,26 +387,26 @@ func TestTuiStateWriteLogs(t *testing.T) {
 
 func TestTuiStateRequesting(t *testing.T) {
 	tui := newTUIForTest()
-	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff, tui.blockProcessing, 0); label != "Output" {
-		t.Fatalf("expected plain Output label before any activity, got label %q", label)
+	if status := outputStatus(tui.finished, tui.generating, tui.handoff, tui.blockProcessing, 0); status != "" {
+		t.Fatalf("expected no status before any activity, got %q", status)
 	}
 	tui.writeLogs([]byte("level=INFO msg=generating name=model\n"))
 	if !tui.generating {
 		t.Fatal("expected generating after the generating log")
 	}
-	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff, tui.blockProcessing, 0); label != "Output (generating...)" {
-		t.Fatalf("expected generating hint, got label %q", label)
+	if status := outputStatus(tui.finished, tui.generating, tui.handoff, tui.blockProcessing, 0); status != "state generating" {
+		t.Fatalf("expected the generating status, got %q", status)
 	}
 	tui.setTree(treeWithFinishNode(t))
 	if tui.generating {
 		t.Fatal("expected not generating after the finish node")
 	}
-	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff, tui.blockProcessing, 0); label != "Output" {
-		t.Fatalf("expected plain Output label after the finish node, got label %q", label)
+	if status := outputStatus(tui.finished, tui.generating, tui.handoff, tui.blockProcessing, 0); status != "" {
+		t.Fatalf("expected no status after the finish node, got %q", status)
 	}
 	tui.finished = true
-	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff, tui.blockProcessing, 0); label != "Output (done)" {
-		t.Fatalf("expected done hint, got label %q", label)
+	if status := outputStatus(tui.finished, tui.generating, tui.handoff, tui.blockProcessing, 0); status != "state done" {
+		t.Fatalf("expected the done status, got %q", status)
 	}
 }
 
@@ -416,8 +416,8 @@ func TestTuiStateRequestingLogsWrite(t *testing.T) {
 	if !tui.generating {
 		t.Fatal("expected generating after log write")
 	}
-	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff, tui.blockProcessing, 0); label != "Output (generating...)" {
-		t.Fatalf("expected generating hint, got label %q", label)
+	if status := outputStatus(tui.finished, tui.generating, tui.handoff, tui.blockProcessing, 0); status != "state generating" {
+		t.Fatalf("expected the generating status, got %q", status)
 	}
 }
 
@@ -450,32 +450,38 @@ func TestTuiStateRequestingClearedByFinish(t *testing.T) {
 	if tui.generating {
 		t.Fatal("expected not generating after the finish node")
 	}
-	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff, tui.blockProcessing, 0); label != "Output" {
-		t.Fatalf("expected plain Output label after the finish node, got %q", label)
+	if status := outputStatus(tui.finished, tui.generating, tui.handoff, tui.blockProcessing, 0); status != "" {
+		t.Fatalf("expected no status after the finish node, got %q", status)
 	}
 }
 
-func TestTUIOutputTabLabel(t *testing.T) {
-	tui := newTUIForTest()
-	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff, tui.blockProcessing, 0); label != "Output" {
-		t.Fatalf("expected plain Output label, got label %q", label)
+// TestTUIOutputStatus pins the Output tab's left status: one key value
+// segment naming the request lifecycle state, empty when none applies.
+// See TheoryOfTabTitleStatus.
+func TestTUIOutputStatus(t *testing.T) {
+	if got := outputStatus(false, false, false, "", 0); got != "" {
+		t.Fatalf("expected no status before any activity, got %q", got)
 	}
-	tui.writeLogs([]byte("level=INFO msg=generating name=model\n"))
-	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff, tui.blockProcessing, 0); label != "Output (generating...)" {
-		t.Fatalf("expected generating hint, got label %q", label)
+	if got := outputStatus(false, true, false, "", 0); got != "state generating" {
+		t.Fatalf("expected the generating status, got %q", got)
 	}
-	tui.finished = true
-	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff, tui.blockProcessing, 0); label != "Output (done)" {
-		t.Fatalf("expected done hint, got label %q", label)
+	if got := outputStatus(true, true, false, "", 0); got != "state done" {
+		t.Fatalf("expected the done status, got %q", got)
+	}
+	if got := outputStatus(false, false, true, "", 0); got != "state handoff" {
+		t.Fatalf("expected the handoff status, got %q", got)
+	}
+	if got := outputStatus(false, false, false, "go-test", 90*time.Second); got != "state processing go-test +1:30" {
+		t.Fatalf("expected the processing status, got %q", got)
 	}
 }
 
-// TestTUIBlockProcessingTimer verifies the Output tab's processing hint
-// carries an elapsed stopwatch fragment and that the timer state follows
+// TestTUIBlockProcessingTimer verifies the Output tab's processing status
+// carries an elapsed stopwatch segment and that the timer state follows
 // the processing lifecycle. See TheoryOfTUIBlockProcessing.
 func TestTUIBlockProcessingTimer(t *testing.T) {
-	if label := outputTabLabel(false, false, false, "go-test", 90*time.Second); label != "Output (processing go-test +1:30...)" {
-		t.Fatalf("expected the processing label with the elapsed fragment, got %q", label)
+	if got := outputStatus(false, false, false, "go-test", 90*time.Second); got != "state processing go-test +1:30" {
+		t.Fatalf("expected the processing status with the elapsed segment, got %q", got)
 	}
 	tui := newTUIForTest()
 	tui.BlockProcessingStart("go-test")
@@ -509,70 +515,27 @@ func TestTUIBlockProcessingTimer(t *testing.T) {
 	}
 }
 
-// TestTUIPanelTitleUsesOrdinaryLabelColor verifies the title carries no
-// special color: the generating and idle labels are colored like every
-// other tab's label, and the wider generating label still clips at the
-// box edge.
-func TestTUIPanelTitleUsesOrdinaryLabelColor(t *testing.T) {
-	renderTitle := func(generating bool) taiui.Frame {
-		label := outputTabLabel(false, generating, false, "", 0)
-		element := taiui.Panel(
-			taiui.Box{Top: 0, Left: 0, Bottom: 2, Right: 12},
-			label,
-			[]taiui.Line{{Text: "content"}},
-			0, false, true, panelStyle,
-		)
-		screen := &panelTestScreen{width: 12, height: 2}
-		taiui.Render(element, screen)
-		if len(screen.frames) == 0 {
-			t.Fatal("expected a rendered frame")
-		}
-		return screen.frames[len(screen.frames)-1]
-	}
-
-	// The generating label is wider than the 12-wide box: centering
-	// clamps to the left edge and the label clips at the box's right.
-	generating := renderTitle(true)
-	if cell := generating.Cells[0]; cell.Rune != 'O' {
-		t.Fatalf("expected the clipped generating title to start at (0,0), got %v", cell.Rune)
-	}
-	wantR, wantG, wantB := panelStyle.LabelFG.RGB()
-	if r, g, b := generating.Cells[0].Style.Fg().RGB(); r != wantR || g != wantG || b != wantB {
-		t.Fatalf("expected the generating title to use the ordinary label color %#x %#x %#x, got %#x %#x %#x",
-			wantR, wantG, wantB, r, g, b)
-	}
-
-	// The plain 6-wide "Output" label centers in the 12-wide box: column 3.
-	idle := renderTitle(false)
-	if idle.Cells[3].Rune != 'O' {
-		t.Fatalf("expected centered title 'O' at (3,0), got %v", idle.Cells[3].Rune)
-	}
-	if r, g, b := idle.Cells[3].Style.Fg().RGB(); r != wantR || g != wantG || b != wantB {
-		t.Fatalf("expected the idle title to use the same label color, got %#x %#x %#x", r, g, b)
-	}
-}
-
 func TestTUIHandoffState(t *testing.T) {
 	tui := newTUIForTest()
-	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff, tui.blockProcessing, 0); label != "Output" {
-		t.Fatalf("expected plain Output label, got label %q", label)
+	if status := outputStatus(tui.finished, tui.generating, tui.handoff, tui.blockProcessing, 0); status != "" {
+		t.Fatalf("expected no status before any activity, got %q", status)
 	}
 	tui.handoff = true
-	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff, tui.blockProcessing, 0); label != "Output (handoff...)" {
-		t.Fatalf("expected handoff label, got label %q", label)
+	if status := outputStatus(tui.finished, tui.generating, tui.handoff, tui.blockProcessing, 0); status != "state handoff" {
+		t.Fatalf("expected the handoff status, got %q", status)
 	}
 	// Handoff takes precedence over generating.
 	tui.generating = true
-	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff, tui.blockProcessing, 0); label != "Output (handoff...)" {
-		t.Fatalf("expected handoff label to take precedence over generating, got label %q", label)
+	if status := outputStatus(tui.finished, tui.generating, tui.handoff, tui.blockProcessing, 0); status != "state handoff" {
+		t.Fatalf("expected the handoff status to take precedence over generating, got %q", status)
 	}
 	tui.handoff = false
-	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff, tui.blockProcessing, 0); label != "Output (generating...)" {
-		t.Fatalf("expected generating label after handoff cleared, got label %q", label)
+	if status := outputStatus(tui.finished, tui.generating, tui.handoff, tui.blockProcessing, 0); status != "state generating" {
+		t.Fatalf("expected the generating status after handoff cleared, got %q", status)
 	}
 	tui.generating = false
-	if label := outputTabLabel(tui.finished, tui.generating, tui.handoff, tui.blockProcessing, 0); label != "Output" {
-		t.Fatalf("expected plain Output label after handoff, got label %q", label)
+	if status := outputStatus(tui.finished, tui.generating, tui.handoff, tui.blockProcessing, 0); status != "" {
+		t.Fatalf("expected no status after handoff, got %q", status)
 	}
 }
 
@@ -806,6 +769,54 @@ func TestTuiShowThoughtsNotSuppressedBySummarizeThoughts(t *testing.T) {
 func TestTuiStateSummaryTabTitle(t *testing.T) {
 	if got := tabTitleOf(tabTree); got != "Tree" {
 		t.Fatalf("expected the tree tab title, got %q", got)
+	}
+}
+
+// TestTabTitleStatus pins the title row's split for every tab: the
+// center carries only the tab's fixed name, and the left status carries
+// the tab's mutable state as key value segments, rendered in the frame.
+// The clipping contract — the status never paints over the centered name
+// — is pinned by TestTitleStatusElement, because it is deterministic
+// there and width-dependent in a frame. See TheoryOfTabTitleStatus.
+func TestTabTitleStatus(t *testing.T) {
+	tui := newTUIForTest()
+	tui.width, tui.height = 80, 24
+	tui.setTree(planFixtureTree(t))
+
+	tui.mu.Lock()
+	planStatus := tui.planStatus()
+	tui.finished = true
+	outStatus := tui.tabStatus(tabOutput)
+	logStatus := tui.tabStatus(tabLogs)
+	for i := range tui.tabs.Expanded {
+		tui.tabs.Expanded[i] = true
+	}
+	tui.mu.Unlock()
+	if planStatus != "done 2 / pending 2" {
+		t.Fatalf("expected the plan status, got %q", planStatus)
+	}
+	if outStatus != "state done" {
+		t.Fatalf("expected the output status, got %q", outStatus)
+	}
+	if logStatus != "" {
+		t.Fatalf("the Logs tab carries no mutable state, got %q", logStatus)
+	}
+
+	// The frame carries the status at the title row's left side and the
+	// fixed name in the center of the same row. render() takes the TUI
+	// lock itself, so the caller must not hold it.
+	var sb strings.Builder
+	tui.screen = taiui.NewTerminalScreen(&sb, 80, 24)
+	tui.render()
+	rendered := sb.String()
+	if !strings.Contains(rendered, "done 2") {
+		t.Fatalf("expected the plan status on the title row, got:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "Plan") {
+		t.Fatalf("expected the Plan tab's fixed name beside the status, got:\n%s", rendered)
+	}
+	if strings.Contains(rendered, "Plan (") {
+		t.Fatalf("the title's center must carry only the fixed name, got:\n%s", rendered)
 	}
 }
 

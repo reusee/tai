@@ -71,8 +71,8 @@ func recordBrowserFixture(t *testing.T, output *strings.Builder) (*RecordBrowser
 // TestRecordBrowserListsAndOpensRecords verifies the browser's two views:
 // the list shows every record and opens the selected one, the open view
 // renders the record's tree with the shared Tree tab rendering and states
-// the record in the navigation and the tab label, and esc returns to the
-// list. See TheoryOfRecordBrowser.
+// the record count and id at the title row's left side, and esc returns
+// to the list. See TheoryOfRecordBrowser and TheoryOfTabTitleStatus.
 func TestRecordBrowserListsAndOpensRecords(t *testing.T) {
 	var out strings.Builder
 	b, tr := recordBrowserFixture(t, &out)
@@ -85,10 +85,13 @@ func TestRecordBrowserListsAndOpensRecords(t *testing.T) {
 	}
 	b.render()
 	rendered := out.String()
-	for _, want := range []string{"go_module", "next", "ai", "Record (3)"} {
+	for _, want := range []string{"go_module", "next", "ai", "count 3"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("expected %q in the list view, got %q", want, rendered)
 		}
+	}
+	if strings.Contains(rendered, "Record (") {
+		t.Fatalf("the title's center must carry only the fixed name, got %q", rendered)
 	}
 	out.Reset()
 
@@ -102,7 +105,7 @@ func TestRecordBrowserListsAndOpensRecords(t *testing.T) {
 	}
 	b.render()
 	rendered = out.String()
-	for _, want := range []string{"records › #3", "Record #3", "make a plan"} {
+	for _, want := range []string{"count 3 / id 3", "Record", "make a plan"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("expected %q in the tree view, got %q", want, rendered)
 		}

@@ -82,18 +82,18 @@ func TestTUIPlanTabClosesOnLoopChange(t *testing.T) {
 	}
 }
 
-// TestTUIPlanTabLabelCountsProgress pins the title's progress form: the
-// entries carrying a done mark over the entries still carrying work; a
-// soft-deleted entry counts in neither number. See
-// TheoryOfTUIDynamicPlanTab.
-func TestTUIPlanTabLabelCountsProgress(t *testing.T) {
+// TestTUIPlanTabStatusCountsProgress pins the left status's progress
+// form: the entries carrying a done mark over the entries still carrying
+// work; a soft-deleted entry counts in neither number. See
+// TheoryOfTUIDynamicPlanTab and TheoryOfTabTitleStatus.
+func TestTUIPlanTabStatusCountsProgress(t *testing.T) {
 	tui := newTUIForTest()
 	tui.setTree(planFixtureTree(t))
 
 	tui.mu.Lock()
 	defer tui.mu.Unlock()
-	if got := tui.planTabLabel(); got != "Plan (2 / 2)" {
-		t.Fatalf("expected the progress label %q, got %q", "Plan (2 / 2)", got)
+	if got := tui.planStatus(); got != "done 2 / pending 2" {
+		t.Fatalf("expected the progress status %q, got %q", "done 2 / pending 2", got)
 	}
 }
 
@@ -161,10 +161,10 @@ func TestTUIPlanDisplayRendersEntries(t *testing.T) {
 
 // TestTUIPlanTabRendersInFrame pins the rendered frame's dynamic layout:
 // with the Plan tab open and every tab expanded, one render carries the
-// Plan tab's progress label and every other tab's title, so the renderer
-// enumerates the layout instead of a fixed tab count and the Logs tab —
-// shifted to the last index by the insertion — still renders. See
-// TheoryOfTUIDynamicPlanTab.
+// Plan tab's left status and every other tab's fixed title, so the
+// renderer enumerates the layout instead of a fixed tab count and the
+// Logs tab — shifted to the last index by the insertion — still renders.
+// See TheoryOfTUIDynamicPlanTab and TheoryOfTabTitleStatus.
 func TestTUIPlanTabRendersInFrame(t *testing.T) {
 	tui := newTUIForTest()
 	tui.width, tui.height = 80, 24
@@ -180,10 +180,13 @@ func TestTUIPlanTabRendersInFrame(t *testing.T) {
 	tui.render()
 
 	rendered := sb.String()
-	if !strings.Contains(rendered, "Plan (2 / 2)") {
-		t.Fatalf("expected the Plan tab's progress label in the frame, got:\n%s", rendered)
+	if !strings.Contains(rendered, "done 2") {
+		t.Fatalf("expected the Plan tab's status in the frame, got:\n%s", rendered)
 	}
 	if !strings.Contains(rendered, "Logs") {
 		t.Fatalf("expected the Logs tab title in the frame after the Plan tab shifted it, got:\n%s", rendered)
+	}
+	if strings.Contains(rendered, "Plan (") {
+		t.Fatalf("the Plan title's center must carry only the fixed name, got:\n%s", rendered)
 	}
 }

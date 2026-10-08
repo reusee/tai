@@ -11,21 +11,35 @@ import (
 	"github.com/reusee/tai/tree"
 )
 
-// TheoryOfTreeTitleStatus states the Tree tab title's left status. See
-// also TheoryOfTreeTab.
-const TheoryOfTreeTitleStatus = `
-Tree tab title status theory:
-- The Tree tab's title row shows, two cells from the box's left edge,
-  the loop and attempt of the first visible entry: the node whose row
-  range contains the pane's scroll offset, walked up to its loop
-  ancestor (a loop-N node, number parsed from the name) and attempt
-  ancestor (an attempt node, number parsed from its content). An
-  available part renders alone; neither present leaves the title
-  unchanged.
+const TheoryOfTabTitleStatus = `
+Tab title status theory (cmd/tai):
+- A tab title's center carries only the tab's fixed name: Tree, Plan,
+  Output, Logs, Record. Every mutable state of the tab goes to the title
+  row's left side, two cells from the box's left edge, so the name never
+  moves while the state changes and the eye finds the state in one place.
+- The left status is a sequence of key value segments joined with " / ":
+  "view all / loop 2 / attempt 2" on the Tree tab, "done 2 / pending 2"
+  on the Plan tab, "state generating" on the Output tab, "count 3 / id 2"
+  in the record browser. A segment whose state is unavailable is dropped,
+  so the Tree tab reads "view all" alone when no loop is visible.
 - The two leading cells stay untouched, keeping the title row's dim
   strike-through rule intact at the box edge. The status is an overlay
   element over the panel, derived per render like the input bar and
   the submit glyph.
+- The status is clipped where the centered fixed name begins, so the
+  name is never painted over; a row too narrow to hold both shows the
+  name alone. The name wins because the tab's identity is what the
+  reader navigates by, and the state is secondary detail. The same clip
+  bounds the record browser's status press target, so what is drawn is
+  what is pressed.
+- The status per tab: the Tree tab shows the projection it renders and
+  the loop and attempt of its viewport's first entry — the node whose row
+  range contains the pane's scroll offset, walked up to its loop ancestor
+  (a loop-N node, number parsed from the name) and attempt ancestor (an
+  attempt node, number parsed from its content). The Plan tab shows the
+  done and pending entry counts. The Output tab shows the request
+  lifecycle: done, handoff, block processing, or generating. A tab with
+  no mutable state, such as the Logs tab, carries no status.
 `
 
 const TheoryOfTreeTab = `
@@ -44,7 +58,10 @@ Tree tab theory (cmd/tai):
   nodes; model, program, and user the nodes of that author; stream
   flattens the whole tree chronologically. The ancestor-based
   projections keep each shown node's ancestors (tree.Extract), so the
-  outline stays readable.
+  outline stays readable. The projection and the viewport's loop and
+  attempt render as the tab title's left status, never in its center:
+  the title's center stays the fixed name "Tree". See
+  TheoryOfTabTitleStatus.
 - The projection defaults to the stream form when the pane's content
   column would be narrower than its structure column — the depth
   indent plus the type fragment plus the fold column. On such a pane
@@ -63,7 +80,7 @@ Tree tab theory (cmd/tai):
   the attempt node's jump marker, and the right-aligned elapsed timer,
   in the node's configured line color. Stream rows record expandable
   false, so the fold controls and double-click toggles are inert, while
-  the click and title-status paths still map presses onto nodes.
+  the click path still maps presses onto nodes.
 - Every node renders one line by default: "{family emoji} {type first
   part} {type second part} {fold slot} first content line". The type
   text carries the complete classification in one column: the family
@@ -334,8 +351,9 @@ type treeTabState struct {
 	mode treeViewMode
 	// narrow records that the last render fell back to the stream form
 	// because the pane's content column would be narrower than its
-	// structure column: the label states the rendered projection, and
-	// the first explicit cycle starts from it. See TheoryOfTreeTab.
+	// structure column: the left status states the rendered projection,
+	// and the first explicit cycle starts from it. See TheoryOfTreeTab
+	// and TheoryOfTabTitleStatus.
 	narrow bool
 	// modeExplicit records that the user chose the projection with the
 	// v key, so the width-driven default never overrides an explicit
@@ -684,15 +702,15 @@ func (t *TUI) cycleTreeView() {
 	t.treeTab.modeExplicit = true
 }
 
-// treeTabLabel renders the Tree tab's label with the projection the
-// pane renders: the width-driven stream default while it applies, the
-// chosen projection otherwise. See TheoryOfTreeTab.
-func (t *TUI) treeTabLabel() string {
+// treeStatus renders the Tree tab's left status: the projection the pane
+// renders and the loop and attempt of its viewport's first entry, as key
+// value segments. See TheoryOfTabTitleStatus.
+func (t *TUI) treeStatus() string {
 	mode := t.treeTab.mode
 	if t.treeTab.narrow {
 		mode = treeViewStream
 	}
-	return "Tree (" + mode.label() + ")"
+	return statusText("view "+mode.label(), t.treeTitleStatus())
 }
 
 func (t *TUI) treeDisplay(contentWidth int, base taiui.Color) []taiui.Line {
@@ -1482,7 +1500,20 @@ func treeLoopNumberOf(n *tree.Node) (int, bool) {
 	return 0, false
 }
 
-func treeStatusElement(box taiui.Box, status string, focused bool) taiui.Element {
+// titleStatusElement renders a tab title's left status over the title
+// row: it starts two cells after the box's left edge and ends where the
+// centered fixed name begins, so the mutable state never paints over the
+// name. It returns nil when the row leaves no room between the two. See
+// TheoryOfTabTitleStatus.
+func titleStatusElement(box taiui.Box, label string, status string, focused bool) taiui.Element {
+	left := box.Left + 2
+	right := titleLabelStart(box, label)
+	if right <= left {
+		// The row cannot hold both the status and the fixed name: the
+		// name wins, because the tab's identity is what the reader
+		// navigates by. See TheoryOfTabTitleStatus.
+		return nil
+	}
 	base := panelStyle.BaseBG
 	fg := panelStyle.LabelFG
 	if focused {
@@ -1495,7 +1526,7 @@ func treeStatusElement(box taiui.Box, status string, focused bool) taiui.Element
 	// compile.
 	specs := []any{
 		status,
-		taiui.Box{Top: box.Top, Left: box.Left + 2, Bottom: box.Top + 1, Right: box.Right},
+		taiui.Box{Top: box.Top, Left: left, Bottom: box.Top + 1, Right: right},
 		taiui.FGColor(fg),
 	}
 	if base != taiui.NoColor {

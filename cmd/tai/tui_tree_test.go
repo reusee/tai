@@ -192,11 +192,11 @@ func TestTreeSummaryNodesExpandedByDefault(t *testing.T) {
 // TestTreeProjectionCycle verifies the projection cycling: the modes
 // walk all, events, summary, model, program, user, stream; the
 // ancestor-based projections keep the shown nodes' ancestors so the
-// outline stays readable; and the tab label states the current
+// outline stays readable; and the left status states the current
 // projection. The collapsed rows hide node names, so the assertions
 // read the content previews. The pane is wide enough that the tree
 // form is not replaced by the width-driven stream default. See
-// TheoryOfTreeTab.
+// TheoryOfTreeTab and TheoryOfTabTitleStatus.
 func TestTreeProjectionCycle(t *testing.T) {
 	tui := newTUIForTest()
 	tr, err := tree.New().WriteAll(
@@ -243,8 +243,8 @@ func TestTreeProjectionCycle(t *testing.T) {
 			t.Fatalf("the user node must be pruned from the events projection, got %v", display)
 		}
 	}
-	if tui.treeTabLabel() != "Tree (events)" {
-		t.Fatalf("unexpected projection label: %q", tui.treeTabLabel())
+	if got := tui.treeStatus(); got != "view events" {
+		t.Fatalf("unexpected projection status: %q", got)
 	}
 
 	// User projection: the user node plus its ancestors.
@@ -273,8 +273,8 @@ func TestTreeProjectionCycle(t *testing.T) {
 	if tui.treeTab.mode != treeViewStream {
 		t.Fatalf("expected the stream projection, got %d", tui.treeTab.mode)
 	}
-	if tui.treeTabLabel() != "Tree (stream)" {
-		t.Fatalf("unexpected projection label: %q", tui.treeTabLabel())
+	if got := tui.treeStatus(); !strings.HasPrefix(got, "view stream") {
+		t.Fatalf("unexpected projection status: %q", got)
 	}
 
 	// The projection wraps around to all.
@@ -894,19 +894,41 @@ func (s *titleFrameScreen) Height() int { return 1 }
 
 func (s *titleFrameScreen) Present(f taiui.Frame) { s.frame = f }
 
-func TestTreeTitleStatusOverlay(t *testing.T) {
+// TestTitleStatusElement pins the left status element: it starts two
+// cells after the box's left edge, the two leading cells stay untouched,
+// the status carries the ordinary label color of the tab's focus state,
+// and the status is clipped where the centered fixed name begins, so the
+// name always survives. See TheoryOfTabTitleStatus.
+func TestTitleStatusElement(t *testing.T) {
 	screen := &titleFrameScreen{}
 	row := taiui.Text(strings.Repeat(" ", 20), taiui.Box{Top: 0, Left: 0, Bottom: 1, Right: 20})
-	el := treeStatusElement(taiui.Box{Top: 0, Left: 0, Bottom: 1, Right: 20}, "loop 1", false)
+	el := titleStatusElement(taiui.Box{Top: 0, Left: 0, Bottom: 1, Right: 20}, "Tree", "view all / loop 1", false)
 	taiui.Render(taiui.Overlay(row, el), screen)
 	frame := screen.frame
-	if got := frame.Cells[2].Rune; got != 'l' {
+	if got := frame.Cells[2].Rune; got != 'v' {
 		t.Fatalf("expected the status to start at column 2, got %q", string(got))
 	}
 	for x := 0; x < 2; x++ {
 		if c := frame.Cells[x]; c.Rune != ' ' {
 			t.Fatalf("expected the two leading cells untouched, got %q at column %d", string(c.Rune), x)
 		}
+	}
+	wantR, wantG, wantB := panelStyle.LabelFG.RGB()
+	if r, g, b := frame.Cells[2].Style.Fg().RGB(); r != wantR || g != wantG || b != wantB {
+		t.Fatalf("expected the ordinary label color %#x %#x %#x, got %#x %#x %#x",
+			wantR, wantG, wantB, r, g, b)
+	}
+	// The 20-wide box centers the fixed name "Tree" at column 8: the
+	// status stops before it, so the name's cells stay unpainted.
+	if got := frame.Cells[8].Rune; got != ' ' {
+		t.Fatalf("expected the status to stop before the centered name, got %q at column 8", string(got))
+	}
+
+	// A row too narrow to hold both shows the fixed name alone: the left
+	// status element is dropped, because the tab's identity is what the
+	// reader navigates by.
+	if el := titleStatusElement(taiui.Box{Top: 0, Left: 0, Bottom: 1, Right: 6}, "Tree", "view all", false); el != nil {
+		t.Fatalf("a row without room must drop the status, got %#v", el)
 	}
 }
 
@@ -1416,8 +1438,9 @@ func TestTreeShowsAllLoops(t *testing.T) {
 // node ordered by insert time, the attempt node's row carrying the
 // jump marker, no indentation on any row, every row carrying the
 // complete classification (category and type together, because the
-// same type string may belong to different categories), and the tab
-// label stating the projection. See TheoryOfTreeTab.
+// same type string may belong to different categories), and the left
+// status stating the projection. See TheoryOfTreeTab and
+// TheoryOfTabTitleStatus.
 func TestTreeStreamView(t *testing.T) {
 	tui := newTUIForTest()
 	base := time.Now()
@@ -1471,8 +1494,8 @@ func TestTreeStreamView(t *testing.T) {
 			t.Fatalf("stream rows must carry no indentation, row %d: %q", i, line.Text)
 		}
 	}
-	if tui.treeTabLabel() != "Tree (stream)" {
-		t.Fatalf("unexpected projection label: %q", tui.treeTabLabel())
+	if got := tui.treeStatus(); !strings.HasPrefix(got, "view stream") {
+		t.Fatalf("unexpected projection status: %q", got)
 	}
 }
 
@@ -1482,7 +1505,7 @@ func TestTreeStreamView(t *testing.T) {
 // content follows the type fragment with no depth indent — so a small
 // pane still shows the content; the v key overrides the default and
 // starts from the form the pane renders; and a wide pane keeps the
-// tree form. See TheoryOfTreeTab.
+// tree form. See TheoryOfTreeTab and TheoryOfTabTitleStatus.
 func TestTreeNarrowPaneDefaultsToStream(t *testing.T) {
 	tui := newTUIForTest()
 	tr, err := tree.New().WriteAll(
@@ -1502,8 +1525,8 @@ func TestTreeNarrowPaneDefaultsToStream(t *testing.T) {
 	if len(wide) < 2 || !strings.HasPrefix(displayTexts(wide)[1], "  ") {
 		t.Fatalf("wide pane must keep the tree indent, got %v", displayTexts(wide))
 	}
-	if tui.treeTabLabel() != "Tree (all)" {
-		t.Fatalf("wide pane label must state the chosen projection, got %q", tui.treeTabLabel())
+	if got := tui.treeStatus(); !strings.HasPrefix(got, "view all") {
+		t.Fatalf("wide pane status must state the chosen projection, got %q", got)
 	}
 
 	// A narrow pane whose content column would be narrower than its
@@ -1530,8 +1553,8 @@ func TestTreeNarrowPaneDefaultsToStream(t *testing.T) {
 	if !found {
 		t.Fatalf("narrow pane must keep the content, got %v", texts)
 	}
-	if tui.treeTabLabel() != "Tree (stream)" {
-		t.Fatalf("narrow pane label must state the rendered projection, got %q", tui.treeTabLabel())
+	if got := tui.treeStatus(); !strings.HasPrefix(got, "view stream") {
+		t.Fatalf("narrow pane status must state the rendered projection, got %q", got)
 	}
 
 	// The v key overrides the width default, starting from the form the

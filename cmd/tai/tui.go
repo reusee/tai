@@ -36,12 +36,15 @@ command wires them with tai-specific capture:
 generators.Content is converted to taiui.Line by captureContent, the
 session tree pipeline.Run yields is rendered by the Tree tab
 (TheoryOfTreeTab), and the request lifecycle is tracked by
-isGeneratingLog and outputTabLabel.
+isGeneratingLog and outputStatus.
 
 The TUI interface replaces stdout with a terminal UI whose permanent tabs
 are ordered Tree, Output, Logs, plus the dynamic Plan tab, which sits
 directly after the Tree tab while the current loop carries a plan (its
-lifecycle and rendering live in TheoryOfTUIDynamicPlanTab). The Tree tab
+lifecycle and rendering live in TheoryOfTUIDynamicPlanTab). Every tab
+title's center carries only the tab's fixed name; the tab's mutable state
+renders at the title row's left side as key value segments (see
+TheoryOfTabTitleStatus). The Tree tab
 renders the session tree the pipeline
 writes — every node the run records: user inputs, responses and their
 summaries, blocks and their results, the attempt structure nodes, the
@@ -175,13 +178,14 @@ Dynamic Plan tab theory (cmd/tai):
   and closes when the loop ends: a newer loop node means a new loop, whose
   plan is its own, and the run's end closes the last loop's tab as well. No
   plan carries across loops, so the tab never shows another loop's work.
-- The title states the plan's progress as "Plan (done / pending)": the
+- The left status states the plan's progress as "done D / pending P": the
   entries carrying a done mark over the entries still carrying work, counted
   over the plan root's subtree and excluding the root itself — the
   container, not an entry. A deleted entry leaves the plan, so it counts in
   neither number; an aborted entry counts as neither for the same reason.
   The counts read the same marks the pipeline's pending-entry search reads,
-  so the title and the plan-driven round feedback agree.
+  so the status and the plan-driven round feedback agree. The title's
+  center stays the fixed name "Plan". See TheoryOfTabTitleStatus.
 `
 
 // The tab kinds of the TUI's layout. Every kind but the Plan tab is always
@@ -189,8 +193,9 @@ Dynamic Plan tab theory (cmd/tai):
 // loop carries a plan. See TheoryOfTUIDynamicPlanTab.
 type tuiTab int
 
-// tabTitleOf returns the collapsed strip's label of a tab kind. See
-// TheoryOfTUIDynamicPlanTab.
+// tabTitleOf returns a tab's fixed name: the only text the title row's
+// center carries, while the tab's mutable state renders at the row's left
+// side as key value segments. See TheoryOfTabTitleStatus.
 func tabTitleOf(kind tuiTab) string {
 	switch kind {
 	case tabTree:
@@ -381,15 +386,15 @@ no row is reserved.
 `
 
 const TheoryOfTUIHandoff = `
-The Output tab title reflects the handoff process: while a handoff
-request is being generated (see pipeline.TheoryOfHandoff), the title shows
-"Output (handoff...)", taking precedence over the "generating..." hint.
-The handoff request's contents reach the Output
+The Output tab's left status reflects the handoff process: while a
+handoff request is being generated (see pipeline.TheoryOfHandoff), it
+reads "state handoff", taking precedence over the "state generating"
+hint. The handoff request's contents reach the Output
 tab through the forked pipeline.HandoffStateDecorator, which observes
 every content part with its role and thinking state, so text and
 reasoning thoughts open their own sections with their own markers,
 the same as regular generation output. The pipeline.HandoffObserver
-provider drives the title state: HandoffStart sets the handoff flag,
+provider drives the status state: HandoffStart sets the handoff flag,
 HandoffEnd clears it.
 `
 
@@ -1277,7 +1282,7 @@ func (t *TUI) notify() {
 
 // HandoffStart marks the beginning of a handoff generation request. It
 // is called by the handoff process (see pipeline.TheoryOfHandoff) and sets
-// the handoff flag so the Output tab title shows "Output (handoff...)".
+// the handoff flag so the Output tab's left status reads "state handoff".
 func (t *TUI) HandoffStart() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -1286,8 +1291,8 @@ func (t *TUI) HandoffStart() {
 
 // HandoffEnd marks the end of a handoff generation request. It is called
 // by the handoff process after the last attempt, success or failure, and
-// clears the handoff flag so the Output tab title returns to its normal
-// state.
+// clears the handoff flag so the Output tab's left status returns to its
+// normal state.
 func (t *TUI) HandoffEnd() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
