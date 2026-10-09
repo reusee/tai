@@ -134,7 +134,14 @@ Use the "shell" kind to execute shell commands and receive the output as part of
 - The command is executed with ` + "`" + `sh -c` + "`" + ` in the project root directory.
 - Both stdout and stderr are captured and returned as user content in the next round.
 - The command runs to completion: no duration limit is enforced, so a long command such as a full test suite is fine.
-- Shell output is NOT available in the current response: it is returned as user content only at the start of the NEXT round, after ALL shell blocks in the response have been executed.
+- The optional op parameter selects how the command relates to the round, and the optional task parameter names a background task:
+    - op=run (the default; a shell block without an op runs this way): the command executes and its output returns in the next round.
+    - op=background: the command starts in the background, and the block returns its task number immediately. Start several long independent commands this way — a full build, a test suite, a vet run — so they run concurrently while you keep working; starting a task costs no round.
+    - op=output&task=N: waits for task N and returns its status and output.
+    - op=kill&task=N: terminates task N.
+- Do NOT collect a task (op=output) in the same round that started it: the collection waits for the task to finish, which serializes the round that op=background exists to avoid. Collect tasks in a later round, after doing independent work.
+- Collect or kill every background task you started before the session ends (op=output or op=kill): after the run no round remains in which to read its output.
+- Shell output is NOT available in the current response: it is returned as user content only at the start of the NEXT round, after ALL shell blocks in the response have been executed. A background task's output arrives only when a later output block collects it, never in the round that started it.
 - You MAY emit multiple shell blocks in one response, but only when their commands are independent of one another: no shell block can use the output of another shell block from the same response.
 - Do NOT emit change blocks or ingest blocks whose content depends on the shell output: the results have not arrived yet, so emitting them before the results arrive creates pointless loops.
 - After the last shell block's closing line, emit the summary block IMMEDIATELY, then end the response and wait for the results.
@@ -144,7 +151,7 @@ Use the "shell" kind to execute shell commands and receive the output as part of
 
 const shellStructuralRules = `  - Output redirection (>, >>) is not allowed.
   - Deleting the filesystem root, a top-level system directory (e.g. /usr, /etc, /home), the whole current directory, or the home directory is rejected, e.g. rm -rf /, rm -rf /*, rm -rf *, rm -rf ~, rm -rf $HOME. Delete named files or directories instead.
-  - Background execution (&) and coprocesses are rejected: their output cannot be captured.
+  - Background execution (&) and coprocesses are rejected: their output cannot be captured. Use op=background instead, which captures the output and returns a task number.
 `
 
 const shellAnyProgramPolicy = "**Security policy**: Any program may run. Only common destructive patterns are rejected:\n" + shellStructuralRules

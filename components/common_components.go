@@ -24,7 +24,10 @@ allowlist, which is the user's own decision to let the model run the listed
 commands: the component carries the matching policy prompt and enforces the
 allowlist on every block. An unconfigured allowlist keeps the previous
 behavior, so a session without either switch is unchanged. See
-blocks.TheoryOfShellAllowlist.
+blocks.TheoryOfShellAllowlist. The component also carries one background
+shell task registry per generation session, so a command a round starts with
+op=background is collectable in a later round of the same session (see
+blocks.TheoryOfShellTasks).
 
 Components carry no per-kind generation bounds: a session may chain any
 number of shell, continue, go-test, go-src, or ingest generations, so a
@@ -41,16 +44,19 @@ legitimate long workflows are never aborted mid-task by an internal bound.
 // block processing is enabled — the shell flag, or a configured command
 // allowlist, which is the user's own decision to let the model run the
 // listed commands (see blocks.TheoryOfShellAllowlist). The component
-// carries the policy prompt and enforces the allowlist on every block.
-// See TheoryOfCommonComponents.
+// carries the policy prompt and enforces the allowlist on every block. It
+// also carries one background shell task registry for the session, so a
+// task a round starts with op=background is collectable in a later round
+// (see blocks.TheoryOfShellTasks). See TheoryOfCommonComponents.
 func CommonComponents(shell bool, allowed blocks.AllowedShellCommands) ComponentSet {
 	var comps ComponentSet
 	if allowed.ShellEnabled(shell) {
+		tasks := blocks.NewShellTasks()
 		comps = append(comps, Component{
 			Kind:          "shell",
 			PromptSection: blocks.ShellBlockPrompt(allowed),
 			Process: func(ctx context.Context, pctx *ProcessContext) ProcessResult {
-				parts, err := blocks.ProcessShellBlocks(pctx.Blocks, ctx, allowed)
+				parts, err := blocks.ProcessShellBlocks(pctx.Blocks, ctx, allowed, tasks)
 				return ProcessResult{Parts: parts, Err: err}
 			},
 		})

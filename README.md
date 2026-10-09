@@ -14,6 +14,8 @@ The system still rejects dialogue-grown context: detail arrives through structur
 
 **In-memory apply with filesystem consistency.** Change blocks are applied to an in-memory store during streaming, not directly to disk. If a change block fails — invalid target, malformed code — generation stops immediately and the in-memory store is discarded. Only after a generation succeeds are changes flushed to disk in a single batch. The disk is never left in a partially modified state by an interrupted round.
 
+**Background shell work.** A shell block may run a long command in the background (`op=background`) and collect it in a later round (`op=output&task=N`) or stop it (`op=kill&task=N`), so several long commands — a full build, a test suite — run concurrently while the model keeps working. Command output is bounded: beyond a cap a stream's overflow spills to a temporary file, and the context keeps a head-and-tail excerpt naming the file, so no single command floods the context or stalls the round that waits for it.
+
 **Security by isolation.** On Linux, the tool re-executes itself in a user namespace with read-only-everything filesystem hardening. Only the current working directory, Go toolchain directories, the user config directory, `/tmp`, and `/dev/shm` are writable. Shell block execution permits any program when no allowlist is configured; a configured `allowed_shell_commands` list narrows execution to the listed commands, matched as whole commands, and AST-level parsing filters common destructive patterns such as `rm -rf /` in every case. Focus files outside writable directories are marked read-only at collection time.
 
 ## What It Is
