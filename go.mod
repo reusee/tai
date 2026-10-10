@@ -11,7 +11,7 @@ require (
 	github.com/gdamore/tcell/v3 v3.4.2
 	github.com/odvcencio/gotreesitter v0.52.0
 	github.com/peterh/liner v1.2.2
-	github.com/reusee/dscope v0.0.0-20261010093809-0b5a699c5f0f
+	github.com/reusee/dscope v0.0.0-20261010145914-2291c0606a13
 	github.com/reusee/e5 v0.0.0-20240926110821-c066ba825104
 	github.com/reusee/prompts v0.0.0-20261009093942-032beb725fd8
 	github.com/reusee/starlarkutil v0.0.0-20250731094927-719b21b7d2d5
