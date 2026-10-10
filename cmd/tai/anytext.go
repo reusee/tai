@@ -32,14 +32,15 @@ var AnyTextCommand = apps.New("any_text", "",
 	func(
 		generateWithResult pipeline.GenerateWithResult,
 		runReview pipeline.RunReview,
-	) {
+	) apps.MainErr {
 		result, err := generateWithResult(context.Background(), os.Stdout)
 		if err != nil {
-			panic(err)
+			return err
 		}
 		if err := runReview(context.Background(), os.Stdout, result.Diffs); err != nil {
-			panic(err)
+			return err
 		}
+		return nil
 	},
 	modes.ForProduction(),
 	func() anytexts.SkeletonFiles {

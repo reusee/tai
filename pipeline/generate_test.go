@@ -825,7 +825,7 @@ func TestCreateHandoffProvider(t *testing.T) {
 			"<<黿鼍 handoff\nhandoff prompt text\n黿鼍",
 		},
 	}
-	dscope.New(
+	createHandoff := dscope.New(
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
@@ -835,21 +835,18 @@ func TestCreateHandoffProvider(t *testing.T) {
 			}
 		},
 		func() *records.Recorder { return nil },
-	).Call(func(
-		createHandoff CreateHandoff,
-	) {
-		longInput := strings.Repeat("long incomplete text ", 10)
-		handoff, err := createHandoff(context.Background(), longInput)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if handoff.Summary != "handoff prompt text" {
-			t.Fatalf("expected summary 'handoff prompt text', got %q", handoff.Summary)
-		}
-		if handoff.Prompt != "handoff prompt text" {
-			t.Fatalf("expected prompt 'handoff prompt text', got %q", handoff.Prompt)
-		}
-	})
+	).Get[CreateHandoff]()
+	longInput := strings.Repeat("long incomplete text ", 10)
+	handoff, err := createHandoff(context.Background(), longInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if handoff.Summary != "handoff prompt text" {
+		t.Fatalf("expected summary 'handoff prompt text', got %q", handoff.Summary)
+	}
+	if handoff.Prompt != "handoff prompt text" {
+		t.Fatalf("expected prompt 'handoff prompt text', got %q", handoff.Prompt)
+	}
 }
 
 func TestCreateHandoffPreservesRawMaterial(t *testing.T) {
@@ -1202,7 +1199,7 @@ func TestGenerateDebugPromptsWrittenToOutput(t *testing.T) {
 	// asserts the dump lands there; before the fix the dump went to
 	// os.Stdout and the captured writer stayed empty. See TheoryOfTUI
 	// in cmd/tai/tui.go.
-	dscope.New(
+	generateWithResultWithStats := dscope.New(
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
@@ -1220,22 +1217,19 @@ func TestGenerateDebugPromptsWrittenToOutput(t *testing.T) {
 				return func(yield func(*tree.Tree, error) bool) {}
 			}
 		},
-	).Call(func(
-		generateWithResultWithStats GenerateWithResultWithStats,
-	) {
-		var buf bytes.Buffer
-		_, _, err := generateWithResultWithStats(context.Background(), &buf)
-		if err != nil {
-			t.Fatal(err)
-		}
-		output := buf.String()
-		if !strings.Contains(output, "system prompt:") {
-			t.Fatalf("expected the system prompt in the debug output, got: %q", output)
-		}
-		if !strings.Contains(output, "user prompt:") {
-			t.Fatalf("expected the user prompt in the debug output, got: %q", output)
-		}
-	})
+	).Get[GenerateWithResultWithStats]()
+	var buf bytes.Buffer
+	_, _, err := generateWithResultWithStats(context.Background(), &buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := buf.String()
+	if !strings.Contains(output, "system prompt:") {
+		t.Fatalf("expected the system prompt in the debug output, got: %q", output)
+	}
+	if !strings.Contains(output, "user prompt:") {
+		t.Fatalf("expected the user prompt in the debug output, got: %q", output)
+	}
 }
 
 func TestGenerateChatInputBracketsContext(t *testing.T) {
@@ -1252,7 +1246,7 @@ func TestGenerateChatInputBracketsContext(t *testing.T) {
 	// with the mock's zero token counts the restate would be omitted. See
 	// TheoryOfChatBracketing and components.SystemPromptRestateForUserPrompt.
 	var capturedState generators.State
-	dscope.New(
+	generateWithResultWithStats := dscope.New(
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
@@ -1271,14 +1265,11 @@ func TestGenerateChatInputBracketsContext(t *testing.T) {
 				return func(yield func(*tree.Tree, error) bool) {}
 			}
 		},
-	).Call(func(
-		generateWithResultWithStats GenerateWithResultWithStats,
-	) {
-		_, _, err := generateWithResultWithStats(context.Background(), &bytes.Buffer{})
-		if err != nil {
-			t.Fatal(err)
-		}
-	})
+	).Get[GenerateWithResultWithStats]()
+	_, _, err := generateWithResultWithStats(context.Background(), &bytes.Buffer{})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	var contents []*generators.Content
 	for content := range capturedState.Contents() {

@@ -135,11 +135,13 @@ var AICommand = apps.New("ai",
 		httpClient nets.HTTPClient,
 		getDefaultSummarizer pipeline.GetDefaultSummarizer,
 		summarizeThoughts flags.SummarizeThoughts,
-	) {
+	) apps.MainErr {
 		ctx := context.Background()
 
 		generator, err := getDefaultGenerator()
-		ce(err)
+		if err != nil {
+			return err
+		}
 
 		input := strings.Join(flagChats, "\n")
 		logger.InfoContext(ctx, "input", "len", len(input))
@@ -166,7 +168,9 @@ var AICommand = apps.New("ai",
 		baseState = generators.NewOutput(baseState, buf, false).WithTools(false)
 		if bool(summarizeThoughts) {
 			summarizer, err := getDefaultSummarizer()
-			ce(err)
+			if err != nil {
+				return err
+			}
 			baseState = pipeline.NewThoughtsSummarize(ctx, baseState, summarizer, os.Stdout)
 		}
 
@@ -175,7 +179,9 @@ var AICommand = apps.New("ai",
 		onIdle := buildChatIdle(generator, nil)
 
 		root, err := os.OpenRoot(".")
-		ce(err)
+		if err != nil {
+			return err
+		}
 		defer root.Close()
 
 		// Run the unified generation loop. The PhaseBuilder includes only
@@ -228,8 +234,11 @@ var AICommand = apps.New("ai",
 				err = e
 			}
 		}
-		ce(err)
+		if err != nil {
+			return err
+		}
 
+		return nil
 	},
 	modes.ForProduction(),
 	new(apps.Name("cmd_ai")),

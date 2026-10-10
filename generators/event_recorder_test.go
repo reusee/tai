@@ -27,30 +27,31 @@ func TestEventRecorderDefaultIsSink(t *testing.T) {
 	// default; the generation loop drains the sink and records every
 	// buffered event as a session-tree event node. See
 	// TheoryOfEventRecorder.
-	dscope.New(
+	scope := dscope.New(
 		modes.ForTest(t),
 		new(Module),
-	).Call(func(rec EventRecorder, sink *EventSink) {
-		if rec == nil {
-			t.Fatal("expected the default recorder to be the scope's EventSink")
-		}
-		if !rec.Enabled() {
-			t.Fatal("the default recorder must be enabled")
-		}
-		rec.Event("api_call", "openai chat completion: model=test-model")
-		rec.Event("api_error", "openai http status 503: upstream unavailable")
-		drained := sink.Drain()
-		if len(drained) != 2 {
-			t.Fatalf("expected 2 buffered events, got %d", len(drained))
-		}
-		if drained[0].Type != "api_call" || drained[1].Type != "api_error" {
-			t.Fatalf("unexpected drained events: %+v", drained)
-		}
-		if drained[0].Detail != "openai chat completion: model=test-model" {
-			t.Fatalf("unexpected detail: %q", drained[0].Detail)
-		}
-		if again := sink.Drain(); len(again) != 0 {
-			t.Fatalf("Drain must empty the sink, got %+v", again)
-		}
-	})
+	)
+	rec := scope.Get[EventRecorder]()
+	sink := scope.Get[*EventSink]()
+	if rec == nil {
+		t.Fatal("expected the default recorder to be the scope's EventSink")
+	}
+	if !rec.Enabled() {
+		t.Fatal("the default recorder must be enabled")
+	}
+	rec.Event("api_call", "openai chat completion: model=test-model")
+	rec.Event("api_error", "openai http status 503: upstream unavailable")
+	drained := sink.Drain()
+	if len(drained) != 2 {
+		t.Fatalf("expected 2 buffered events, got %d", len(drained))
+	}
+	if drained[0].Type != "api_call" || drained[1].Type != "api_error" {
+		t.Fatalf("unexpected drained events: %+v", drained)
+	}
+	if drained[0].Detail != "openai chat completion: model=test-model" {
+		t.Fatalf("unexpected detail: %q", drained[0].Detail)
+	}
+	if again := sink.Drain(); len(again) != 0 {
+		t.Fatalf("Drain must empty the sink, got %+v", again)
+	}
 }

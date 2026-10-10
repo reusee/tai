@@ -85,37 +85,34 @@ func TestExported(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dscope.New(
+	provider := dscope.New(
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
 		func() LoadDir { return LoadDir(root) },
 		func() AllSrc { return AllSrc(true) },
-	).Call(func(
-		provider PartsProvider,
-	) {
-		parts, err := provider.Parts(1<<20, generators.DeepseekTokenCounterFn, nil)
-		if err != nil {
-			t.Fatal(err)
+	).Get[PartsProvider]()
+	parts, err := provider.Parts(1<<20, generators.DeepseekTokenCounterFn, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var context strings.Builder
+	for _, part := range parts {
+		if text, ok := part.(generators.Text); ok {
+			context.WriteString(string(text))
 		}
-		var context strings.Builder
-		for _, part := range parts {
-			if text, ok := part.(generators.Text); ok {
-				context.WriteString(string(text))
-			}
-		}
-		got := context.String()
-		if strings.Contains(got, "begin of focus package") {
-			t.Fatalf("focus documentation block must not appear under -all-src:\n%s", got)
-		}
-		if !strings.Contains(got, `return helper()`) {
-			t.Fatalf("expected focus source bodies in the initial context:\n%s", got)
-		}
-		if !strings.Contains(got, `Exported() == ""`) {
-			t.Fatalf("expected the focus test file body in the initial context:\n%s", got)
-		}
-		if n := strings.Count(got, "focus note content"); n != 1 {
-			t.Fatalf("expected the non-Go focus file exactly once, got %d:\n%s", n, got)
-		}
-	})
+	}
+	got := context.String()
+	if strings.Contains(got, "begin of focus package") {
+		t.Fatalf("focus documentation block must not appear under -all-src:\n%s", got)
+	}
+	if !strings.Contains(got, `return helper()`) {
+		t.Fatalf("expected focus source bodies in the initial context:\n%s", got)
+	}
+	if !strings.Contains(got, `Exported() == ""`) {
+		t.Fatalf("expected the focus test file body in the initial context:\n%s", got)
+	}
+	if n := strings.Count(got, "focus note content"); n != 1 {
+		t.Fatalf("expected the non-Go focus file exactly once, got %d:\n%s", n, got)
+	}
 }

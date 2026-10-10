@@ -43,49 +43,47 @@ func TestModuleRootMarkdownListedWhenNoRootGoFiles(t *testing.T) {
 		new(Module),
 	)
 
-	scope.Fork(
+	scope = scope.Fork(
 		func() LoadDir {
 			return LoadDir(root)
 		},
-	).Call(func(
-		getFiles GetFiles,
-		getModuleFiles GetModuleFiles,
-	) {
-		files, err := getFiles()
-		if err != nil {
-			t.Fatal(err)
+	)
+	getFiles := scope.Get[GetFiles]()
+	getModuleFiles := scope.Get[GetModuleFiles]()
+	files, err := getFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		if filepath.Base(f.Path) == "README.md" {
+			t.Fatalf("README.md must not be a package file, got %s", f.Path)
 		}
-		for _, f := range files {
-			if filepath.Base(f.Path) == "README.md" {
-				t.Fatalf("README.md must not be a package file, got %s", f.Path)
-			}
-		}
+	}
 
-		listings, err := getModuleFiles()
-		if err != nil {
-			t.Fatal(err)
+	listings, err := getModuleFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, listing := range listings {
+		if filepath.Clean(listing.Dir) != filepath.Clean(root) {
+			continue
 		}
-		found := false
-		for _, listing := range listings {
-			if filepath.Clean(listing.Dir) != filepath.Clean(root) {
-				continue
-			}
-			found = true
-			readmePath := filepath.Join(root, "README.md")
-			foundReadme := false
-			for _, path := range listing.Files {
-				if filepath.Clean(path) == filepath.Clean(readmePath) {
-					foundReadme = true
-				}
-			}
-			if !foundReadme {
-				t.Fatalf("module-root listing of %s must contain README.md, got %v", root, listing.Files)
+		found = true
+		readmePath := filepath.Join(root, "README.md")
+		foundReadme := false
+		for _, path := range listing.Files {
+			if filepath.Clean(path) == filepath.Clean(readmePath) {
+				foundReadme = true
 			}
 		}
-		if !found {
-			t.Fatalf("module root %s must be listed even when it has no .go files, got %+v", root, listings)
+		if !foundReadme {
+			t.Fatalf("module-root listing of %s must contain README.md, got %v", root, listing.Files)
 		}
-	})
+	}
+	if !found {
+		t.Fatalf("module root %s must be listed even when it has no .go files, got %+v", root, listings)
+	}
 }
 
 func TestModuleRootMarkdownSkeletonsIncluded(t *testing.T) {
@@ -115,36 +113,34 @@ func TestModuleRootMarkdownSkeletonsIncluded(t *testing.T) {
 		new(Module),
 	)
 
-	scope.Fork(
+	scope = scope.Fork(
 		func() LoadDir {
 			return LoadDir(root)
 		},
-	).Call(func(
-		getModuleFiles GetModuleFiles,
-	) {
-		listings, err := getModuleFiles()
-		if err != nil {
-			t.Fatal(err)
+	)
+	getModuleFiles := scope.Get[GetModuleFiles]()
+	listings, err := getModuleFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	readmePath := filepath.Join(root, "README.md")
+	for _, listing := range listings {
+		if filepath.Clean(listing.Dir) != filepath.Clean(root) {
+			continue
 		}
-		readmePath := filepath.Join(root, "README.md")
-		for _, listing := range listings {
-			if filepath.Clean(listing.Dir) != filepath.Clean(root) {
-				continue
-			}
-			skeleton, ok := listing.Skeletons[readmePath]
-			if !ok {
-				t.Fatalf("README.md must carry a skeleton, got skeletons %v", listing.Skeletons)
-			}
-			if !strings.Contains(skeleton, "Guide") || !strings.Contains(skeleton, "Setup") {
-				t.Errorf("skeleton must contain the headings, got:\n%s", skeleton)
-			}
-			// Heading lines are indented under the file name, so the
-			// skeleton renders as an outline of the listing.
-			if strings.Contains(skeleton, "# Guide") {
-				t.Errorf("skeleton must strip heading markers, got:\n%s", skeleton)
-			}
+		skeleton, ok := listing.Skeletons[readmePath]
+		if !ok {
+			t.Fatalf("README.md must carry a skeleton, got skeletons %v", listing.Skeletons)
 		}
-	})
+		if !strings.Contains(skeleton, "Guide") || !strings.Contains(skeleton, "Setup") {
+			t.Errorf("skeleton must contain the headings, got:\n%s", skeleton)
+		}
+		// Heading lines are indented under the file name, so the
+		// skeleton renders as an outline of the listing.
+		if strings.Contains(skeleton, "# Guide") {
+			t.Errorf("skeleton must strip heading markers, got:\n%s", skeleton)
+		}
+	}
 }
 
 func TestModuleRootStructuralTextListed(t *testing.T) {
@@ -175,40 +171,38 @@ func TestModuleRootStructuralTextListed(t *testing.T) {
 		new(Module),
 	)
 
-	scope.Fork(
+	scope = scope.Fork(
 		func() LoadDir {
 			return LoadDir(root)
 		},
-	).Call(func(
-		getModuleFiles GetModuleFiles,
-	) {
-		listings, err := getModuleFiles()
-		if err != nil {
-			t.Fatal(err)
+	)
+	getModuleFiles := scope.Get[GetModuleFiles]()
+	listings, err := getModuleFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pyPath := filepath.Join(root, "app.py")
+	found := false
+	for _, listing := range listings {
+		if filepath.Clean(listing.Dir) != filepath.Clean(root) {
+			continue
 		}
-		pyPath := filepath.Join(root, "app.py")
-		found := false
-		for _, listing := range listings {
-			if filepath.Clean(listing.Dir) != filepath.Clean(root) {
-				continue
-			}
-			for _, path := range listing.Files {
-				if filepath.Clean(path) == filepath.Clean(pyPath) {
-					found = true
-				}
-			}
-			skeleton, ok := listing.Skeletons[pyPath]
-			if !ok {
-				t.Fatalf("app.py must carry a skeleton, got skeletons %v", listing.Skeletons)
-			}
-			if !strings.Contains(skeleton, "handler") {
-				t.Errorf("skeleton must contain the python function name, got:\n%s", skeleton)
+		for _, path := range listing.Files {
+			if filepath.Clean(path) == filepath.Clean(pyPath) {
+				found = true
 			}
 		}
-		if !found {
-			t.Fatalf("module root listing must contain app.py, got %+v", listings)
+		skeleton, ok := listing.Skeletons[pyPath]
+		if !ok {
+			t.Fatalf("app.py must carry a skeleton, got skeletons %v", listing.Skeletons)
 		}
-	})
+		if !strings.Contains(skeleton, "handler") {
+			t.Errorf("skeleton must contain the python function name, got:\n%s", skeleton)
+		}
+	}
+	if !found {
+		t.Fatalf("module root listing must contain app.py, got %+v", listings)
+	}
 }
 
 func TestModuleNonPackageDirsListed(t *testing.T) {
@@ -269,42 +263,40 @@ func TestModuleNonPackageDirsListed(t *testing.T) {
 		new(Module),
 	)
 
-	scope.Fork(
+	scope = scope.Fork(
 		func() LoadDir {
 			return LoadDir(root)
 		},
-	).Call(func(
-		getModuleFiles GetModuleFiles,
-	) {
-		listings, err := getModuleFiles()
-		if err != nil {
-			t.Fatal(err)
-		}
-		filesOf := make(map[string][]string)
-		for _, listing := range listings {
-			filesOf[filepath.Clean(listing.Dir)] = listing.Files
-		}
+	)
+	getModuleFiles := scope.Get[GetModuleFiles]()
+	listings, err := getModuleFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	filesOf := make(map[string][]string)
+	for _, listing := range listings {
+		filesOf[filepath.Clean(listing.Dir)] = listing.Files
+	}
 
-		files := filesOf[filepath.Clean(docsDir)]
-		if len(files) != 1 || filepath.Clean(files[0]) != filepath.Clean(guidePath) {
-			t.Fatalf("docs listing must contain guide.md, got %v", files)
-		}
+	files := filesOf[filepath.Clean(docsDir)]
+	if len(files) != 1 || filepath.Clean(files[0]) != filepath.Clean(guidePath) {
+		t.Fatalf("docs listing must contain guide.md, got %v", files)
+	}
 
-		files = filesOf[filepath.Clean(pkgDocsDir)]
-		if len(files) != 1 || filepath.Clean(files[0]) != filepath.Clean(designPath) {
-			t.Fatalf("pkg/docs listing must contain design.md, got %v", files)
-		}
+	files = filesOf[filepath.Clean(pkgDocsDir)]
+	if len(files) != 1 || filepath.Clean(files[0]) != filepath.Clean(designPath) {
+		t.Fatalf("pkg/docs listing must contain design.md, got %v", files)
+	}
 
-		if _, ok := filesOf[filepath.Clean(pkgDir)]; ok {
-			t.Fatalf("package directory %s must not produce a listing", pkgDir)
-		}
+	if _, ok := filesOf[filepath.Clean(pkgDir)]; ok {
+		t.Fatalf("package directory %s must not produce a listing", pkgDir)
+	}
 
-		for dir, files := range filesOf {
-			for _, path := range files {
-				if strings.Contains(path, ".notes") || strings.Contains(path, "vendor") {
-					t.Errorf("hidden and vendor directories must be skipped, got %s in listing %s", path, dir)
-				}
+	for dir, files := range filesOf {
+		for _, path := range files {
+			if strings.Contains(path, ".notes") || strings.Contains(path, "vendor") {
+				t.Errorf("hidden and vendor directories must be skipped, got %s in listing %s", path, dir)
 			}
 		}
-	})
+	}
 }

@@ -34,12 +34,12 @@ func withRecorderRun(t *testing.T, extra []any, fn func(run Run, recorder *recor
 	if len(extra) > 0 {
 		scope = scope.Fork(extra...)
 	}
-	scope.Call(func(run Run, recorder *records.Recorder) {
-		if recorder == nil {
-			t.Fatal("recorder is nil")
-		}
-		fn(run, recorder)
-	})
+	run := scope.Get[Run]()
+	recorder := scope.Get[*records.Recorder]()
+	if recorder == nil {
+		t.Fatal("recorder is nil")
+	}
+	fn(run, recorder)
 }
 
 // TestRunRecordsFreshSession verifies that a fresh run owns its

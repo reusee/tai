@@ -75,152 +75,151 @@ func TestResolveGoSymbols(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dscope.New(
+	resolve := dscope.New(
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
 		func() LoadDir { return LoadDir(dir) },
-	).Call(func(resolve ResolveGoSymbols) {
+	).Get[ResolveGoSymbols]()
 
-		parts, err := resolve([]string{
-			"FreeFunc", "Counter", "Counter.Add", "Counter.Value",
-			"Pair", "Pair.Swap", "*Pair.Swap", "Pair[B,A].Swap",
-			"ConstOne", "GroupedA", "VarOne", "VarTwo",
-			"Missing",
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		got := partsText(t, parts)
-		for _, want := range []string{
-			"``` begin of source example.com/symbols.FreeFunc",
-			"// FreeFunc is a free function.\nfunc FreeFunc() int { return 1 }",
-			"type Counter struct",
-			"// Add has a pointer receiver.\nfunc (c *Counter) Add(n int)",
-			"func (c Counter) Value() int",
-			"type Pair[A, B any] struct",
-			"func (p Pair[A, B]) Swap()",
-			"const ConstOne = 1",
-			"// GroupedA is grouped const A.\n\tGroupedA = 10",
-			"var VarOne = \"one\"",
-			"VarTwo, VarThree = 2, 3",
-			"[go-src: symbol or package \"Missing\" not found",
-		} {
-			if !strings.Contains(got, want) {
-				t.Fatalf("expected %q in resolved source:\n%s", want, got)
-			}
-		}
-
-		// The three method forms all resolve to the same declaration:
-		// begin markers count matches (each match emits begin and end
-		// markers carrying the qualified name).
-		parts, err = resolve([]string{"Pair.Swap", "*Pair.Swap", "Pair[B,A].Swap"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if n := strings.Count(partsText(t, parts), "``` begin of source example.com/symbols.Pair.Swap"); n != 3 {
-			t.Fatalf("expected 3 Pair.Swap matches, got %d", n)
-		}
-
-		// A plain name must not match a method; the method requires the
-		// TypeName.MethodName form. See TheoryOfGoSrcResolution.
-		parts, err = resolve([]string{"Add"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(parts) != 1 || !strings.Contains(string(parts[0].(generators.Text)), "not found") {
-			t.Fatalf("a plain name must not match methods, got %v", parts)
-		}
-
-		// A duplicated symbol is resolved once.
-		parts, err = resolve([]string{"FreeFunc", "FreeFunc"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if n := strings.Count(partsText(t, parts), "``` begin of source"); n != 1 {
-			t.Fatalf("expected 1 match for a duplicated symbol, got %d", n)
-		}
-
-		// Empty input resolves nothing.
-		parts, err = resolve(nil)
-		if err != nil || parts != nil {
-			t.Fatalf("expected nil parts and nil error for empty input, got %v, %v", parts, err)
-		}
-
-		// Package-qualified forms: the full import path and the "symbols"
-		// suffix both restrict matching to this package.
-		parts, err = resolve([]string{
-			"example.com/symbols.FreeFunc",
-			"symbols.FreeFunc",
-			"symbols.Counter.Add",
-			"example.com/symbols.Pair.Swap",
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		got = partsText(t, parts)
-		for _, want := range []string{
-			"``` begin of source example.com/symbols.FreeFunc",
-			"func FreeFunc() int",
-			"// Add has a pointer receiver.\nfunc (c *Counter) Add(n int)",
-			"func (p Pair[A, B]) Swap()",
-		} {
-			if !strings.Contains(got, want) {
-				t.Fatalf("expected %q in package-qualified resolved source:\n%s", want, got)
-			}
-		}
-
-		// A package qualifier for a non-loaded package yields not-found.
-		parts, err = resolve([]string{"nonexistent/pkg.FreeFunc"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(parts) != 1 || !strings.Contains(string(parts[0].(generators.Text)), "not found") {
-			t.Fatalf("a non-loaded package qualifier must yield not-found, got %v", parts)
-		}
-
-		// go doc case rule: a lower-case query letter matches either
-		// case in the target, an upper-case letter matches exactly.
-		parts, err = resolve([]string{
-			"freefunc",    // all lower-case matches FreeFunc
-			"counter",     // matches Counter type
-			"counter.add", // matches Counter.Add method
-			"COUNTER",     // upper-case letters match exactly; COUNTER != Counter → not-found
-			"FreeFunc",    // exact match works
-			"pair.swap",   // lower-case matches Pair.Swap
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		got = partsText(t, parts)
-		if !strings.Contains(got, "example.com/symbols.freefunc") ||
-			!strings.Contains(got, "func FreeFunc() int") {
-			// The qualified name in the marker uses the TARGET name, not
-			// the query; check for the target form.
-			if !strings.Contains(got, "example.com/symbols.FreeFunc") {
-				t.Fatalf("expected FreeFunc resolved via lower-case query, got:\n%s", got)
-			}
-		}
-		if !strings.Contains(got, "type Counter struct") {
-			t.Fatalf("expected Counter resolved via lower-case query, got:\n%s", got)
-		}
-		if !strings.Contains(got, "func (c *Counter) Add(n int)") {
-			t.Fatalf("expected Counter.Add resolved via lower-case query, got:\n%s", got)
-		}
-		if !strings.Contains(got, "func (p Pair[A, B]) Swap()") {
-			t.Fatalf("expected Pair.Swap resolved via lower-case query, got:\n%s", got)
-		}
-
-		// Upper-case query letters match exactly: COUNTER does not
-		// resolve Counter (the target has lower-case 'ounter').
-		parts, err = resolve([]string{"COUNTER"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(parts) != 1 || !strings.Contains(string(parts[0].(generators.Text)), "not found") {
-			t.Fatalf("an all-upper-case query must not match mixed-case target, got %v", parts)
-		}
+	parts, err := resolve([]string{
+		"FreeFunc", "Counter", "Counter.Add", "Counter.Value",
+		"Pair", "Pair.Swap", "*Pair.Swap", "Pair[B,A].Swap",
+		"ConstOne", "GroupedA", "VarOne", "VarTwo",
+		"Missing",
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := partsText(t, parts)
+	for _, want := range []string{
+		"``` begin of source example.com/symbols.FreeFunc",
+		"// FreeFunc is a free function.\nfunc FreeFunc() int { return 1 }",
+		"type Counter struct",
+		"// Add has a pointer receiver.\nfunc (c *Counter) Add(n int)",
+		"func (c Counter) Value() int",
+		"type Pair[A, B any] struct",
+		"func (p Pair[A, B]) Swap()",
+		"const ConstOne = 1",
+		"// GroupedA is grouped const A.\n\tGroupedA = 10",
+		"var VarOne = \"one\"",
+		"VarTwo, VarThree = 2, 3",
+		"[go-src: symbol or package \"Missing\" not found",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected %q in resolved source:\n%s", want, got)
+		}
+	}
+
+	// The three method forms all resolve to the same declaration:
+	// begin markers count matches (each match emits begin and end
+	// markers carrying the qualified name).
+	parts, err = resolve([]string{"Pair.Swap", "*Pair.Swap", "Pair[B,A].Swap"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(partsText(t, parts), "``` begin of source example.com/symbols.Pair.Swap"); n != 3 {
+		t.Fatalf("expected 3 Pair.Swap matches, got %d", n)
+	}
+
+	// A plain name must not match a method; the method requires the
+	// TypeName.MethodName form. See TheoryOfGoSrcResolution.
+	parts, err = resolve([]string{"Add"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parts) != 1 || !strings.Contains(string(parts[0].(generators.Text)), "not found") {
+		t.Fatalf("a plain name must not match methods, got %v", parts)
+	}
+
+	// A duplicated symbol is resolved once.
+	parts, err = resolve([]string{"FreeFunc", "FreeFunc"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(partsText(t, parts), "``` begin of source"); n != 1 {
+		t.Fatalf("expected 1 match for a duplicated symbol, got %d", n)
+	}
+
+	// Empty input resolves nothing.
+	parts, err = resolve(nil)
+	if err != nil || parts != nil {
+		t.Fatalf("expected nil parts and nil error for empty input, got %v, %v", parts, err)
+	}
+
+	// Package-qualified forms: the full import path and the "symbols"
+	// suffix both restrict matching to this package.
+	parts, err = resolve([]string{
+		"example.com/symbols.FreeFunc",
+		"symbols.FreeFunc",
+		"symbols.Counter.Add",
+		"example.com/symbols.Pair.Swap",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = partsText(t, parts)
+	for _, want := range []string{
+		"``` begin of source example.com/symbols.FreeFunc",
+		"func FreeFunc() int",
+		"// Add has a pointer receiver.\nfunc (c *Counter) Add(n int)",
+		"func (p Pair[A, B]) Swap()",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected %q in package-qualified resolved source:\n%s", want, got)
+		}
+	}
+
+	// A package qualifier for a non-loaded package yields not-found.
+	parts, err = resolve([]string{"nonexistent/pkg.FreeFunc"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parts) != 1 || !strings.Contains(string(parts[0].(generators.Text)), "not found") {
+		t.Fatalf("a non-loaded package qualifier must yield not-found, got %v", parts)
+	}
+
+	// go doc case rule: a lower-case query letter matches either
+	// case in the target, an upper-case letter matches exactly.
+	parts, err = resolve([]string{
+		"freefunc",    // all lower-case matches FreeFunc
+		"counter",     // matches Counter type
+		"counter.add", // matches Counter.Add method
+		"COUNTER",     // upper-case letters match exactly; COUNTER != Counter → not-found
+		"FreeFunc",    // exact match works
+		"pair.swap",   // lower-case matches Pair.Swap
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = partsText(t, parts)
+	if !strings.Contains(got, "example.com/symbols.freefunc") ||
+		!strings.Contains(got, "func FreeFunc() int") {
+		// The qualified name in the marker uses the TARGET name, not
+		// the query; check for the target form.
+		if !strings.Contains(got, "example.com/symbols.FreeFunc") {
+			t.Fatalf("expected FreeFunc resolved via lower-case query, got:\n%s", got)
+		}
+	}
+	if !strings.Contains(got, "type Counter struct") {
+		t.Fatalf("expected Counter resolved via lower-case query, got:\n%s", got)
+	}
+	if !strings.Contains(got, "func (c *Counter) Add(n int)") {
+		t.Fatalf("expected Counter.Add resolved via lower-case query, got:\n%s", got)
+	}
+	if !strings.Contains(got, "func (p Pair[A, B]) Swap()") {
+		t.Fatalf("expected Pair.Swap resolved via lower-case query, got:\n%s", got)
+	}
+
+	// Upper-case query letters match exactly: COUNTER does not
+	// resolve Counter (the target has lower-case 'ounter').
+	parts, err = resolve([]string{"COUNTER"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parts) != 1 || !strings.Contains(string(parts[0].(generators.Text)), "not found") {
+		t.Fatalf("an all-upper-case query must not match mixed-case target, got %v", parts)
+	}
 }
 
 func TestResolveGoSymbolsReferences(t *testing.T) {
@@ -292,65 +291,64 @@ func TestRefsUses(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dscope.New(
+	resolve := dscope.New(
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
 		func() LoadDir { return LoadDir(dir) },
-	).Call(func(resolve ResolveGoSymbols) {
-		parts, err := resolve([]string{"UsedFunc", "UnusedFunc"})
-		if err != nil {
-			t.Fatal(err)
+	).Get[ResolveGoSymbols]()
+	parts, err := resolve([]string{"UsedFunc", "UnusedFunc"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := partsText(t, parts)
+	for _, want := range []string{
+		"``` begin of references example.com/refs.UsedFunc",
+		"example.com/refs: CallUsedFunc (",
+		"example.com/refs: TestRefsUses (",
+		"``` begin of source example.com/refs.UnusedFunc",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected %q in resolved output:\n%s", want, got)
 		}
-		got := partsText(t, parts)
-		for _, want := range []string{
-			"``` begin of references example.com/refs.UsedFunc",
-			"example.com/refs: CallUsedFunc (",
-			"example.com/refs: TestRefsUses (",
-			"``` begin of source example.com/refs.UnusedFunc",
-		} {
-			if !strings.Contains(got, want) {
-				t.Fatalf("expected %q in resolved output:\n%s", want, got)
-			}
-		}
-		if strings.Contains(got, "begin of references example.com/refs.UnusedFunc") {
-			t.Fatalf("expected no references block for UnusedFunc, got:\n%s", got)
-		}
-		wantLine := "example.com/refs: CallUsedFunc (" + filepath.Join(dir, "user.go") + ")\n"
-		if !strings.Contains(got, wantLine) {
-			t.Fatalf("expected reference line %q, got:\n%s", wantLine, got)
-		}
-		if n := strings.Count(got, "example.com/refs: CallUsedFunc ("); n != 1 {
-			t.Fatalf("expected exactly 1 CallUsedFunc reference line, got %d", n)
-		}
+	}
+	if strings.Contains(got, "begin of references example.com/refs.UnusedFunc") {
+		t.Fatalf("expected no references block for UnusedFunc, got:\n%s", got)
+	}
+	wantLine := "example.com/refs: CallUsedFunc (" + filepath.Join(dir, "user.go") + ")\n"
+	if !strings.Contains(got, wantLine) {
+		t.Fatalf("expected reference line %q, got:\n%s", wantLine, got)
+	}
+	if n := strings.Count(got, "example.com/refs: CallUsedFunc ("); n != 1 {
+		t.Fatalf("expected exactly 1 CallUsedFunc reference line, got %d", n)
+	}
 
-		parts, err = resolve([]string{"Widget.Nudge"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		got = partsText(t, parts)
-		if !strings.Contains(got, "``` begin of references example.com/refs.Widget.Nudge") {
-			t.Fatalf("expected references block for Widget.Nudge, got:\n%s", got)
-		}
-		if !strings.Contains(got, "example.com/refs: UseWidget (") {
-			t.Fatalf("expected UseWidget reference, got:\n%s", got)
-		}
+	parts, err = resolve([]string{"Widget.Nudge"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = partsText(t, parts)
+	if !strings.Contains(got, "``` begin of references example.com/refs.Widget.Nudge") {
+		t.Fatalf("expected references block for Widget.Nudge, got:\n%s", got)
+	}
+	if !strings.Contains(got, "example.com/refs: UseWidget (") {
+		t.Fatalf("expected UseWidget reference, got:\n%s", got)
+	}
 
-		parts, err = resolve([]string{"TestRefsUses"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		got = partsText(t, parts)
-		if !strings.Contains(got, "``` begin of source example.com/refs.TestRefsUses") {
-			t.Fatalf("expected source block for TestRefsUses, got:\n%s", got)
-		}
-		if strings.Contains(got, "refs.test") {
-			t.Fatalf("expected no references from the test binary package, got:\n%s", got)
-		}
-		if strings.Contains(got, "begin of references example.com/refs.TestRefsUses") {
-			t.Fatalf("expected no references block for TestRefsUses, got:\n%s", got)
-		}
-	})
+	parts, err = resolve([]string{"TestRefsUses"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = partsText(t, parts)
+	if !strings.Contains(got, "``` begin of source example.com/refs.TestRefsUses") {
+		t.Fatalf("expected source block for TestRefsUses, got:\n%s", got)
+	}
+	if strings.Contains(got, "refs.test") {
+		t.Fatalf("expected no references from the test binary package, got:\n%s", got)
+	}
+	if strings.Contains(got, "begin of references example.com/refs.TestRefsUses") {
+		t.Fatalf("expected no references block for TestRefsUses, got:\n%s", got)
+	}
 
 	var gen strings.Builder
 	gen.WriteString("package refs\n\n")
@@ -363,30 +361,29 @@ func TestRefsUses(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "gen.go"), []byte(gen.String()), 0644); err != nil {
 		t.Fatal(err)
 	}
-	dscope.New(
+	resolve = dscope.New(
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
 		func() LoadDir { return LoadDir(dir) },
-	).Call(func(resolve ResolveGoSymbols) {
-		parts, err := resolve([]string{"UsedFunc"})
-		if err != nil {
-			t.Fatal(err)
+	).Get[ResolveGoSymbols]()
+	parts, err = resolve([]string{"UsedFunc"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = partsText(t, parts)
+	// The report is never truncated: every one of the 120 generated
+	// callers appears, and no truncation note is shown.
+	for i := 0; i < 120; i++ {
+		name := "W" + string(rune('a'+i/26)) + string(rune('a'+i%26))
+		wantLine := "example.com/refs: " + name + " (" + filepath.Join(dir, "gen.go") + ")\n"
+		if !strings.Contains(got, wantLine) {
+			t.Fatalf("expected reference line %q, got:\n%s", wantLine, got)
 		}
-		got := partsText(t, parts)
-		// The report is never truncated: every one of the 120 generated
-		// callers appears, and no truncation note is shown.
-		for i := 0; i < 120; i++ {
-			name := "W" + string(rune('a'+i/26)) + string(rune('a'+i%26))
-			wantLine := "example.com/refs: " + name + " (" + filepath.Join(dir, "gen.go") + ")\n"
-			if !strings.Contains(got, wantLine) {
-				t.Fatalf("expected reference line %q, got:\n%s", wantLine, got)
-			}
-		}
-		if strings.Contains(got, "truncated at") {
-			t.Fatalf("expected no truncation note, got:\n%s", got)
-		}
-	})
+	}
+	if strings.Contains(got, "truncated at") {
+		t.Fatalf("expected no truncation note, got:\n%s", got)
+	}
 }
 
 func TestResolveGoSymbolsSelectorPackagesAndInterfaceRelations(t *testing.T) {
@@ -455,98 +452,97 @@ func Loopy(n int) int {
 		t.Fatal(err)
 	}
 
-	dscope.New(
+	resolve := dscope.New(
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
 		func() LoadDir { return LoadDir(dir) },
-	).Call(func(resolve ResolveGoSymbols) {
+	).Get[ResolveGoSymbols]()
 
-		// The selector packages report lists the full import paths of
-		// packages used in selector expressions within the declaration.
-		// Render uses strings.TrimSpace, so "strings" is reported.
-		// Local selectors (c.Area, s.Area) do not contribute because
-		// their prefixes are local variables, not package names. See
-		// TheoryOfGoSrcReferences.
-		parts, err := resolve([]string{"Render"})
-		if err != nil {
-			t.Fatal(err)
+	// The selector packages report lists the full import paths of
+	// packages used in selector expressions within the declaration.
+	// Render uses strings.TrimSpace, so "strings" is reported.
+	// Local selectors (c.Area, s.Area) do not contribute because
+	// their prefixes are local variables, not package names. See
+	// TheoryOfGoSrcReferences.
+	parts, err := resolve([]string{"Render"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := partsText(t, parts)
+	if !strings.Contains(got, "``` begin of selector packages example.com/reports.Render") {
+		t.Fatalf("expected selector packages block for Render, got:\n%s", got)
+	}
+	if !strings.Contains(got, "\nstrings\n") {
+		t.Fatalf("expected \"strings\" in selector packages, got:\n%s", got)
+	}
+	// The report contains only package import paths, not local
+	// selectors or type names from the same package.
+	for _, unwanted := range []string{
+		"\nexample.com/reports.Circle\n",
+		"\nexample.com/reports.Shape\n",
+	} {
+		if strings.Contains(got, unwanted) {
+			t.Fatalf("unexpected %q in selector packages:\n%s", unwanted, got)
 		}
-		got := partsText(t, parts)
-		if !strings.Contains(got, "``` begin of selector packages example.com/reports.Render") {
-			t.Fatalf("expected selector packages block for Render, got:\n%s", got)
-		}
-		if !strings.Contains(got, "\nstrings\n") {
-			t.Fatalf("expected \"strings\" in selector packages, got:\n%s", got)
-		}
-		// The report contains only package import paths, not local
-		// selectors or type names from the same package.
-		for _, unwanted := range []string{
-			"\nexample.com/reports.Circle\n",
-			"\nexample.com/reports.Shape\n",
-		} {
-			if strings.Contains(got, unwanted) {
-				t.Fatalf("unexpected %q in selector packages:\n%s", unwanted, got)
-			}
-		}
+	}
 
-		// A declaration with no selector expressions produces no
-		// selector packages report.
-		parts, err = resolve([]string{"Loopy"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		got = partsText(t, parts)
-		if strings.Contains(got, "begin of selector packages") {
-			t.Fatalf("expected no selector packages block for Loopy, got:\n%s", got)
-		}
+	// A declaration with no selector expressions produces no
+	// selector packages report.
+	parts, err = resolve([]string{"Loopy"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = partsText(t, parts)
+	if strings.Contains(got, "begin of selector packages") {
+		t.Fatalf("expected no selector packages block for Loopy, got:\n%s", got)
+	}
 
-		// Fetching an interface lists the loaded concrete types
-		// implementing it; a leading * marks a pointer-only method set.
-		parts, err = resolve([]string{"Shape"})
-		if err != nil {
-			t.Fatal(err)
+	// Fetching an interface lists the loaded concrete types
+	// implementing it; a leading * marks a pointer-only method set.
+	parts, err = resolve([]string{"Shape"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = partsText(t, parts)
+	for _, want := range []string{
+		"``` begin of interface relations example.com/reports.Shape",
+		"implemented by example.com/reports.Circle\n",
+		"implemented by *example.com/reports.Pen\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected %q in resolved output:\n%s", want, got)
 		}
-		got = partsText(t, parts)
-		for _, want := range []string{
-			"``` begin of interface relations example.com/reports.Shape",
-			"implemented by example.com/reports.Circle\n",
-			"implemented by *example.com/reports.Pen\n",
-		} {
-			if !strings.Contains(got, want) {
-				t.Fatalf("expected %q in resolved output:\n%s", want, got)
-			}
-		}
-		if strings.Contains(got, "implemented by example.com/reports.Pen\n") {
-			t.Fatalf("expected Pen to be pointer-only, got:\n%s", got)
-		}
-		if strings.Contains(got, "implemented by example.com/reports.Plain") {
-			t.Fatalf("expected Plain not to implement Shape, got:\n%s", got)
-		}
+	}
+	if strings.Contains(got, "implemented by example.com/reports.Pen\n") {
+		t.Fatalf("expected Pen to be pointer-only, got:\n%s", got)
+	}
+	if strings.Contains(got, "implemented by example.com/reports.Plain") {
+		t.Fatalf("expected Plain not to implement Shape, got:\n%s", got)
+	}
 
-		// Fetching a concrete type lists the interfaces it satisfies,
-		// via value or pointer method set.
-		for _, symbol := range []string{"Circle", "Pen"} {
-			parts, err = resolve([]string{symbol})
-			if err != nil {
-				t.Fatal(err)
-			}
-			got = partsText(t, parts)
-			if !strings.Contains(got, "\nsatisfies example.com/reports.Shape\n") {
-				t.Fatalf("expected %s to satisfy Shape, got:\n%s", symbol, got)
-			}
-		}
-
-		// A type with no interface relations produces no report.
-		parts, err = resolve([]string{"Plain"})
+	// Fetching a concrete type lists the interfaces it satisfies,
+	// via value or pointer method set.
+	for _, symbol := range []string{"Circle", "Pen"} {
+		parts, err = resolve([]string{symbol})
 		if err != nil {
 			t.Fatal(err)
 		}
 		got = partsText(t, parts)
-		if strings.Contains(got, "begin of interface relations") {
-			t.Fatalf("expected no interface relations block for Plain, got:\n%s", got)
+		if !strings.Contains(got, "\nsatisfies example.com/reports.Shape\n") {
+			t.Fatalf("expected %s to satisfy Shape, got:\n%s", symbol, got)
 		}
-	})
+	}
+
+	// A type with no interface relations produces no report.
+	parts, err = resolve([]string{"Plain"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = partsText(t, parts)
+	if strings.Contains(got, "begin of interface relations") {
+		t.Fatalf("expected no interface relations block for Plain, got:\n%s", got)
+	}
 }
 
 func TestResolveGoSymbolsPackageNameQualifier(t *testing.T) {
@@ -598,67 +594,66 @@ func (Stars) Poll() int { return 7 }
 		t.Fatal(err)
 	}
 
-	dscope.New(
+	resolve := dscope.New(
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
 		func() LoadDir { return LoadDir(dir) },
 		func() LoadPatterns { return LoadPatterns{"."} },
-	).Call(func(resolve ResolveGoSymbols) {
+	).Get[ResolveGoSymbols]()
 
-		// Package-name qualifier: "stars.Twinkle" addresses the package
-		// whose declared name is stars even though no path segment is.
-		parts, err := resolve([]string{"stars.Twinkle"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		got := partsText(t, parts)
-		if !strings.Contains(got, "``` begin of source example.com/dep/v4.Twinkle") ||
-			!strings.Contains(got, "func Twinkle() int { return 42 }") {
-			t.Fatalf("expected package-name qualifier to resolve, got:\n%s", got)
-		}
+	// Package-name qualifier: "stars.Twinkle" addresses the package
+	// whose declared name is stars even though no path segment is.
+	parts, err := resolve([]string{"stars.Twinkle"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := partsText(t, parts)
+	if !strings.Contains(got, "``` begin of source example.com/dep/v4.Twinkle") ||
+		!strings.Contains(got, "func Twinkle() int { return 42 }") {
+		t.Fatalf("expected package-name qualifier to resolve, got:\n%s", got)
+	}
 
-		// The full import path still restricts to the same package.
-		parts, err = resolve([]string{"example.com/dep/v4.Twinkle"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got = partsText(t, parts); !strings.Contains(got, "example.com/dep/v4.Twinkle") {
-			t.Fatalf("expected full-path qualifier to resolve, got:\n%s", got)
-		}
+	// The full import path still restricts to the same package.
+	parts, err = resolve([]string{"example.com/dep/v4.Twinkle"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got = partsText(t, parts); !strings.Contains(got, "example.com/dep/v4.Twinkle") {
+		t.Fatalf("expected full-path qualifier to resolve, got:\n%s", got)
+	}
 
-		// A plain name resolves across every loaded package, including
-		// the major-version dependency.
-		parts, err = resolve([]string{"Twinkle"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got = partsText(t, parts); !strings.Contains(got, "example.com/dep/v4.Twinkle") {
-			t.Fatalf("expected plain name to resolve, got:\n%s", got)
-		}
+	// A plain name resolves across every loaded package, including
+	// the major-version dependency.
+	parts, err = resolve([]string{"Twinkle"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got = partsText(t, parts); !strings.Contains(got, "example.com/dep/v4.Twinkle") {
+		t.Fatalf("expected plain name to resolve, got:\n%s", got)
+	}
 
-		// pkg.Type.Method keeps working under a name qualifier.
-		parts, err = resolve([]string{"stars.Sky.Poll"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got = partsText(t, parts); !strings.Contains(got, "func (s Sky) Poll() int") {
-			t.Fatalf("expected pkg.Type.Method under a name qualifier to resolve, got:\n%s", got)
-		}
+	// pkg.Type.Method keeps working under a name qualifier.
+	parts, err = resolve([]string{"stars.Sky.Poll"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got = partsText(t, parts); !strings.Contains(got, "func (s Sky) Poll() int") {
+		t.Fatalf("expected pkg.Type.Method under a name qualifier to resolve, got:\n%s", got)
+	}
 
-		// A name qualifier that shadows a type name falls back to the
-		// receiver-type reading when the qualified form matches nothing:
-		// "stars.Poll" has no top-level Poll in the dep package, so it
-		// resolves Stars.Poll in the root package. See
-		// TheoryOfGoSrcResolution.
-		parts, err = resolve([]string{"stars.Poll"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got = partsText(t, parts); !strings.Contains(got, "func (Stars) Poll() int { return 7 }") {
-			t.Fatalf("expected shadowed qualifier to fall back to the type reading, got:\n%s", got)
-		}
-	})
+	// A name qualifier that shadows a type name falls back to the
+	// receiver-type reading when the qualified form matches nothing:
+	// "stars.Poll" has no top-level Poll in the dep package, so it
+	// resolves Stars.Poll in the root package. See
+	// TheoryOfGoSrcResolution.
+	parts, err = resolve([]string{"stars.Poll"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got = partsText(t, parts); !strings.Contains(got, "func (Stars) Poll() int { return 7 }") {
+		t.Fatalf("expected shadowed qualifier to fall back to the type reading, got:\n%s", got)
+	}
 }
 
 // TestResolveGoSymbolsUnloadedPackageDoc verifies that a package the
@@ -689,63 +684,62 @@ func Exported() {}
 		t.Fatal(err)
 	}
 
-	dscope.New(
+	resolve := dscope.New(
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
 		func() LoadDir { return LoadDir(dir) },
 		func() LoadPatterns { return LoadPatterns{"."} },
-	).Call(func(resolve ResolveGoSymbols) {
+	).Get[ResolveGoSymbols]()
 
-		parts, err := resolve([]string{"example.com/unloaded/sub"})
-		if err != nil {
-			t.Fatal(err)
+	parts, err := resolve([]string{"example.com/unloaded/sub"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := partsText(t, parts)
+	for _, want := range []string{
+		"``` begin of source package example.com/unloaded/sub",
+		"Package sub is not loaded by the session",
+		"func Exported()",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected %q in unloaded package doc:\n%s", want, got)
 		}
-		got := partsText(t, parts)
-		for _, want := range []string{
-			"``` begin of source package example.com/unloaded/sub",
-			"Package sub is not loaded by the session",
-			"func Exported()",
-		} {
-			if !strings.Contains(got, want) {
-				t.Fatalf("expected %q in unloaded package doc:\n%s", want, got)
-			}
-		}
+	}
 
-		// A bare standard-library path is an exact import path too: the
-		// standard library never enters the loaded file set, so fmt
-		// resolves only through the module context.
-		parts, err = resolve([]string{"fmt"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got = partsText(t, parts); !strings.Contains(got, "``` begin of source package fmt") ||
-			!strings.Contains(got, "Println") {
-			t.Fatalf("expected a bare standard-library path to resolve, got:\n%s", got)
-		}
+	// A bare standard-library path is an exact import path too: the
+	// standard library never enters the loaded file set, so fmt
+	// resolves only through the module context.
+	parts, err = resolve([]string{"fmt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got = partsText(t, parts); !strings.Contains(got, "``` begin of source package fmt") ||
+		!strings.Contains(got, "Println") {
+		t.Fatalf("expected a bare standard-library path to resolve, got:\n%s", got)
+	}
 
-		// A symbol expression must never widen into the whole package:
-		// the declaration is not loaded, so the resolver reports
-		// not-found instead of returning the package documentation.
-		parts, err = resolve([]string{"example.com/unloaded/sub.Exported"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got = partsText(t, parts); !strings.Contains(got, "not found") {
-			t.Fatalf("expected not-found for a symbol in an unloaded package, got:\n%s", got)
-		}
-		if strings.Contains(got, "begin of source package") {
-			t.Fatalf("a symbol expression must not return whole-package documentation, got:\n%s", got)
-		}
+	// A symbol expression must never widen into the whole package:
+	// the declaration is not loaded, so the resolver reports
+	// not-found instead of returning the package documentation.
+	parts, err = resolve([]string{"example.com/unloaded/sub.Exported"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got = partsText(t, parts); !strings.Contains(got, "not found") {
+		t.Fatalf("expected not-found for a symbol in an unloaded package, got:\n%s", got)
+	}
+	if strings.Contains(got, "begin of source package") {
+		t.Fatalf("a symbol expression must not return whole-package documentation, got:\n%s", got)
+	}
 
-		parts, err = resolve([]string{"example.com/unloaded/missing"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got = partsText(t, parts); !strings.Contains(got, "not found") {
-			t.Fatalf("expected not-found for an unresolvable import path, got:\n%s", got)
-		}
-	})
+	parts, err = resolve([]string{"example.com/unloaded/missing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got = partsText(t, parts); !strings.Contains(got, "not found") {
+		t.Fatalf("expected not-found for an unresolvable import path, got:\n%s", got)
+	}
 }
 
 func TestResolveGoSymbolsPackageDocs(t *testing.T) {
@@ -786,104 +780,103 @@ func secret() {}
 
 	// LoadPatterns{"."} makes only the root package focus; dep is
 	// loaded as a context package via the import walk.
-	dscope.New(
+	resolve := dscope.New(
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
 		func() LoadDir { return LoadDir(dir) },
 		func() LoadPatterns { return LoadPatterns{"."} },
-	).Call(func(resolve ResolveGoSymbols) {
+	).Get[ResolveGoSymbols]()
 
-		t.Run("FocusPackagePath", func(t *testing.T) {
-			parts, err := resolve([]string{"example.com/symbols"})
-			if err != nil {
-				t.Fatal(err)
+	t.Run("FocusPackagePath", func(t *testing.T) {
+		parts, err := resolve([]string{"example.com/symbols"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(parts) != 1 {
+			t.Fatalf("expected 1 part, got %d", len(parts))
+		}
+		got := string(parts[0].(generators.Text))
+		for _, want := range []string{
+			"``` begin of source package example.com/symbols",
+			"``` end of source package example.com/symbols",
+			"Package symbols demonstrates documentation",
+			// -u includes unexported symbols for focus packages.
+			"helper",
+		} {
+			if !strings.Contains(got, want) {
+				t.Fatalf("expected %q in focus package doc:\n%s", want, got)
 			}
-			if len(parts) != 1 {
-				t.Fatalf("expected 1 part, got %d", len(parts))
-			}
-			got := string(parts[0].(generators.Text))
-			for _, want := range []string{
-				"``` begin of source package example.com/symbols",
-				"``` end of source package example.com/symbols",
-				"Package symbols demonstrates documentation",
-				// -u includes unexported symbols for focus packages.
-				"helper",
-			} {
-				if !strings.Contains(got, want) {
-					t.Fatalf("expected %q in focus package doc:\n%s", want, got)
-				}
-			}
-		})
+		}
+	})
 
-		t.Run("FocusPackageName", func(t *testing.T) {
-			parts, err := resolve([]string{"symbols"})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(parts) != 1 {
-				t.Fatalf("expected 1 part, got %d", len(parts))
-			}
-			if got := string(parts[0].(generators.Text)); !strings.Contains(got, "``` begin of source package example.com/symbols") {
-				t.Fatalf("expected focus package doc via package name, got:\n%s", got)
-			}
-		})
+	t.Run("FocusPackageName", func(t *testing.T) {
+		parts, err := resolve([]string{"symbols"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(parts) != 1 {
+			t.Fatalf("expected 1 part, got %d", len(parts))
+		}
+		if got := string(parts[0].(generators.Text)); !strings.Contains(got, "``` begin of source package example.com/symbols") {
+			t.Fatalf("expected focus package doc via package name, got:\n%s", got)
+		}
+	})
 
-		t.Run("ContextPackagePath", func(t *testing.T) {
-			parts, err := resolve([]string{"example.com/symbols/dep"})
-			if err != nil {
-				t.Fatal(err)
+	t.Run("ContextPackagePath", func(t *testing.T) {
+		parts, err := resolve([]string{"example.com/symbols/dep"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := partsText(t, parts)
+		for _, want := range []string{
+			"``` begin of source package example.com/symbols/dep",
+			"Package dep is a dependency package",
+			"Foo",
+		} {
+			if !strings.Contains(got, want) {
+				t.Fatalf("expected %q in context package doc:\n%s", want, got)
 			}
-			got := partsText(t, parts)
-			for _, want := range []string{
-				"``` begin of source package example.com/symbols/dep",
-				"Package dep is a dependency package",
-				"Foo",
-			} {
-				if !strings.Contains(got, want) {
-					t.Fatalf("expected %q in context package doc:\n%s", want, got)
-				}
-			}
-			// No -u for context packages: unexported symbols stay hidden.
-			if strings.Contains(got, "secret") {
-				t.Fatalf("context package doc must not include unexported symbols:\n%s", got)
-			}
-		})
+		}
+		// No -u for context packages: unexported symbols stay hidden.
+		if strings.Contains(got, "secret") {
+			t.Fatalf("context package doc must not include unexported symbols:\n%s", got)
+		}
+	})
 
-		t.Run("ContextPackageName", func(t *testing.T) {
-			parts, err := resolve([]string{"dep"})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got := partsText(t, parts); !strings.Contains(got, "``` begin of source package example.com/symbols/dep") {
-				t.Fatalf("expected context package doc via package name, got:\n%s", got)
-			}
-		})
+	t.Run("ContextPackageName", func(t *testing.T) {
+		parts, err := resolve([]string{"dep"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := partsText(t, parts); !strings.Contains(got, "``` begin of source package example.com/symbols/dep") {
+			t.Fatalf("expected context package doc via package name, got:\n%s", got)
+		}
+	})
 
-		t.Run("PackageAndSymbolMixed", func(t *testing.T) {
-			parts, err := resolve([]string{"example.com/symbols/dep", "FreeFunc"})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(parts) != 2 {
-				t.Fatalf("expected 2 parts, got %d", len(parts))
-			}
-			if got := string(parts[0].(generators.Text)); !strings.Contains(got, "begin of source package example.com/symbols/dep") {
-				t.Fatalf("unexpected first part:\n%s", got)
-			}
-			if got := string(parts[1].(generators.Text)); !strings.Contains(got, "begin of source example.com/symbols.FreeFunc") {
-				t.Fatalf("unexpected second part:\n%s", got)
-			}
-		})
+	t.Run("PackageAndSymbolMixed", func(t *testing.T) {
+		parts, err := resolve([]string{"example.com/symbols/dep", "FreeFunc"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(parts) != 2 {
+			t.Fatalf("expected 2 parts, got %d", len(parts))
+		}
+		if got := string(parts[0].(generators.Text)); !strings.Contains(got, "begin of source package example.com/symbols/dep") {
+			t.Fatalf("unexpected first part:\n%s", got)
+		}
+		if got := string(parts[1].(generators.Text)); !strings.Contains(got, "begin of source example.com/symbols.FreeFunc") {
+			t.Fatalf("unexpected second part:\n%s", got)
+		}
+	})
 
-		t.Run("UnknownPackage", func(t *testing.T) {
-			parts, err := resolve([]string{"nonexistent/pkg"})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(parts) != 1 || !strings.Contains(string(parts[0].(generators.Text)), "not found") {
-				t.Fatalf("expected not-found for unknown package, got %v", parts)
-			}
-		})
+	t.Run("UnknownPackage", func(t *testing.T) {
+		parts, err := resolve([]string{"nonexistent/pkg"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(parts) != 1 || !strings.Contains(string(parts[0].(generators.Text)), "not found") {
+			t.Fatalf("expected not-found for unknown package, got %v", parts)
+		}
 	})
 }

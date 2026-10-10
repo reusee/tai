@@ -27,30 +27,29 @@ func TestForkTUIDisplayForwardsTreesToTUI(t *testing.T) {
 		tui,
 	)
 
-	scope.Call(func(run pipeline.Run) {
-		var result pipeline.Result
-		for _, err := range run(context.Background(), pipeline.RunOptions{
-			InitialState: generators.NewPrompts("", nil),
-			PhaseBuilder: func(_ generators.Generator) generators.Phase {
-				return func(_ context.Context, state generators.State) (generators.Phase, generators.State, error) {
-					state, err := state.AppendContent(&generators.Content{
-						Role: generators.RoleModel,
-						Parts: []generators.Part{
-							generators.Text("ok\n"),
-						},
-					})
-					if err != nil {
-						return nil, nil, err
-					}
-					return nil, state, nil
+	run := scope.Get[pipeline.Run]()
+	var result pipeline.Result
+	for _, err := range run(context.Background(), pipeline.RunOptions{
+		InitialState: generators.NewPrompts("", nil),
+		PhaseBuilder: func(_ generators.Generator) generators.Phase {
+			return func(_ context.Context, state generators.State) (generators.Phase, generators.State, error) {
+				state, err := state.AppendContent(&generators.Content{
+					Role: generators.RoleModel,
+					Parts: []generators.Part{
+						generators.Text("ok\n"),
+					},
+				})
+				if err != nil {
+					return nil, nil, err
 				}
-			},
-		}, &result) {
-			if err != nil {
-				t.Fatal(err)
+				return nil, state, nil
 			}
+		},
+	}, &result) {
+		if err != nil {
+			t.Fatal(err)
 		}
-	})
+	}
 
 	tui.mu.Lock()
 	defer tui.mu.Unlock()
@@ -75,19 +74,18 @@ func TestForkTUIDisplayDecoratesHandoffState(t *testing.T) {
 		tui,
 	)
 
-	scope.Call(func(decorate pipeline.HandoffStateDecorator) {
-		state := decorate(generators.NewPrompts("", nil))
-		_, err := state.AppendContent(&generators.Content{
-			Role: generators.RoleModel,
-			Parts: []generators.Part{
-				generators.Thought("handoff thinking"),
-				generators.Text("handoff text\n"),
-			},
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
+	decorate := scope.Get[pipeline.HandoffStateDecorator]()
+	state := decorate(generators.NewPrompts("", nil))
+	_, err := state.AppendContent(&generators.Content{
+		Role: generators.RoleModel,
+		Parts: []generators.Part{
+			generators.Thought("handoff thinking"),
+			generators.Text("handoff text\n"),
+		},
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	tui.mu.Lock()
 	defer tui.mu.Unlock()
@@ -136,12 +134,11 @@ func TestForkTUIDisplayForwardsGoalTreeToTUI(t *testing.T) {
 		tui,
 	)
 
-	scope.Call(func(observe pipeline.GoalTreeObserver) {
-		if observe == nil {
-			t.Fatal("expected the TUI fork to provide a goal tree observer")
-		}
-		observe(tree.New())
-	})
+	observe := scope.Get[pipeline.GoalTreeObserver]()
+	if observe == nil {
+		t.Fatal("expected the TUI fork to provide a goal tree observer")
+	}
+	observe(tree.New())
 
 	tui.mu.Lock()
 	defer tui.mu.Unlock()
@@ -175,33 +172,32 @@ func TestForkTUIDisplayKeepsSessionTreeContinuation(t *testing.T) {
 		return pipeline.SessionTreeContinuation{Tree: runTree, Parent: "loop-1"}
 	})
 
-	scope.Call(func(run pipeline.Run) {
-		var result pipeline.Result
-		for _, err := range run(context.Background(), pipeline.RunOptions{
-			InitialState: generators.NewPrompts("", nil),
-			PhaseBuilder: func(_ generators.Generator) generators.Phase {
-				return func(_ context.Context, state generators.State) (generators.Phase, generators.State, error) {
-					state, err := state.AppendContent(&generators.Content{
-						Role: generators.RoleModel,
-						Parts: []generators.Part{
-							generators.Text("ok\n"),
-						},
-					})
-					if err != nil {
-						return nil, nil, err
-					}
-					return nil, state, nil
+	run := scope.Get[pipeline.Run]()
+	var result pipeline.Result
+	for _, err := range run(context.Background(), pipeline.RunOptions{
+		InitialState: generators.NewPrompts("", nil),
+		PhaseBuilder: func(_ generators.Generator) generators.Phase {
+			return func(_ context.Context, state generators.State) (generators.Phase, generators.State, error) {
+				state, err := state.AppendContent(&generators.Content{
+					Role: generators.RoleModel,
+					Parts: []generators.Part{
+						generators.Text("ok\n"),
+					},
+				})
+				if err != nil {
+					return nil, nil, err
 				}
-			},
-		}, &result) {
-			if err != nil {
-				t.Fatal(err)
+				return nil, state, nil
 			}
+		},
+	}, &result) {
+		if err != nil {
+			t.Fatal(err)
 		}
-		if result.SessionTree == nil {
-			t.Fatal("expected the result to carry the continued tree")
-		}
-	})
+	}
+	if result.SessionTree == nil {
+		t.Fatal("expected the result to carry the continued tree")
+	}
 
 	tui.mu.Lock()
 	defer tui.mu.Unlock()

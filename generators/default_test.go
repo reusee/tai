@@ -30,7 +30,7 @@ func TestModelFamilyDerivesFromDefaultGenerator(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dscope.New(
+	modelFamily := dscope.New(
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
@@ -38,11 +38,8 @@ func TestModelFamilyDerivesFromDefaultGenerator(t *testing.T) {
 			return configs.NewLoader([]string{configPath}, configs.LoaderConfig{})
 		},
 		func() flags.ModelName { return "mygen" },
-	).Call(func(
-		modelFamily ModelFamily,
-	) {
-		if modelFamily != "my-family" {
-			t.Fatalf("expected family %q, got %q", "my-family", modelFamily)
-		}
-	})
+	).Get[ModelFamily]()
+	if modelFamily != "my-family" {
+		t.Fatalf("expected family %q, got %q", "my-family", modelFamily)
+	}
 }

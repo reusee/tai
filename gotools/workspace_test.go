@@ -64,76 +64,74 @@ use (
 		new(Module),
 	)
 
-	scope.Fork(
+	scope = scope.Fork(
 		func() LoadDir {
 			return LoadDir(mod1Dir)
 		},
-	).Call(func(
-		workspace Workspace,
-		getFiles GetFiles,
-		getModuleFiles GetModuleFiles,
-	) {
-		if workspace == "" {
-			t.Fatal("workspace not detected")
+	)
+	workspace := scope.Get[Workspace]()
+	getFiles := scope.Get[GetFiles]()
+	getModuleFiles := scope.Get[GetModuleFiles]()
+	if workspace == "" {
+		t.Fatal("workspace not detected")
+	}
+	if filepath.Clean(string(workspace)) != filepath.Clean(root) {
+		t.Fatalf("workspace root = %q, want %q", workspace, root)
+	}
+	files, err := getFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mod1Go, mod2Go *File
+	for _, f := range files {
+		switch f.Path {
+		case filepath.Join(mod1Dir, "main.go"):
+			mod1Go = f
+		case filepath.Join(mod2Dir, "sub", "mod2.go"):
+			mod2Go = f
 		}
-		if filepath.Clean(string(workspace)) != filepath.Clean(root) {
-			t.Fatalf("workspace root = %q, want %q", workspace, root)
-		}
-		files, err := getFiles()
-		if err != nil {
-			t.Fatal(err)
-		}
-		var mod1Go, mod2Go *File
-		for _, f := range files {
-			switch f.Path {
-			case filepath.Join(mod1Dir, "main.go"):
-				mod1Go = f
-			case filepath.Join(mod2Dir, "sub", "mod2.go"):
-				mod2Go = f
-			}
-		}
-		if mod1Go == nil {
-			t.Fatal("mod1 main.go not loaded")
-		}
-		if mod2Go == nil {
-			t.Fatal("mod2.go not loaded: workspace modules should all be loaded")
-		}
-		if !mod2Go.PackageIsRoot {
-			t.Error("mod2.go should be a root package in workspace mode")
-		}
-		if !mod2Go.ModuleIsRoot {
-			t.Error("mod2.go module should be a root module in workspace mode")
-		}
+	}
+	if mod1Go == nil {
+		t.Fatal("mod1 main.go not loaded")
+	}
+	if mod2Go == nil {
+		t.Fatal("mod2.go not loaded: workspace modules should all be loaded")
+	}
+	if !mod2Go.PackageIsRoot {
+		t.Error("mod2.go should be a root package in workspace mode")
+	}
+	if !mod2Go.ModuleIsRoot {
+		t.Error("mod2.go module should be a root module in workspace mode")
+	}
 
-		// The workspace module root's markdown is listed by
-		// GetModuleFiles; mod1Dir is itself a package directory
-		// (main.go at the root), so only mod2Dir produces a listing.
-		listings, err := getModuleFiles()
-		if err != nil {
-			t.Fatal(err)
+	// The workspace module root's markdown is listed by
+	// GetModuleFiles; mod1Dir is itself a package directory
+	// (main.go at the root), so only mod2Dir produces a listing.
+	listings, err := getModuleFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mod2Listing *ModuleFiles
+	for i, listing := range listings {
+		if filepath.Clean(listing.Dir) == filepath.Clean(mod1Dir) {
+			t.Fatalf("mod1Dir is a package directory and must not produce a listing")
 		}
-		var mod2Listing *ModuleFiles
-		for i, listing := range listings {
-			if filepath.Clean(listing.Dir) == filepath.Clean(mod1Dir) {
-				t.Fatalf("mod1Dir is a package directory and must not produce a listing")
-			}
-			if filepath.Clean(listing.Dir) == filepath.Clean(mod2Dir) {
-				mod2Listing = &listings[i]
-			}
+		if filepath.Clean(listing.Dir) == filepath.Clean(mod2Dir) {
+			mod2Listing = &listings[i]
 		}
-		if mod2Listing == nil {
-			t.Fatalf("mod2Dir listing not found in %+v", listings)
+	}
+	if mod2Listing == nil {
+		t.Fatalf("mod2Dir listing not found in %+v", listings)
+	}
+	foundReadme := false
+	for _, path := range mod2Listing.Files {
+		if filepath.Clean(path) == filepath.Clean(readmePath) {
+			foundReadme = true
 		}
-		foundReadme := false
-		for _, path := range mod2Listing.Files {
-			if filepath.Clean(path) == filepath.Clean(readmePath) {
-				foundReadme = true
-			}
-		}
-		if !foundReadme {
-			t.Fatalf("mod2Dir listing must contain README.md, got %v", mod2Listing.Files)
-		}
-	})
+	}
+	if !foundReadme {
+		t.Fatalf("mod2Dir listing must contain README.md, got %v", mod2Listing.Files)
+	}
 }
 
 func TestWorkspaceNotActivatedForUnlistedModule(t *testing.T) {
@@ -176,15 +174,15 @@ func TestWorkspaceNotActivatedForUnlistedModule(t *testing.T) {
 		new(Module),
 	)
 
-	scope.Fork(
+	scope = scope.Fork(
 		func() LoadDir {
 			return LoadDir(modBDir)
 		},
-	).Call(func(workspace Workspace) {
-		if workspace != "" {
-			t.Fatalf("workspace should not be activated for an unlisted module, got %q", workspace)
-		}
-	})
+	)
+	workspace := scope.Get[Workspace]()
+	if workspace != "" {
+		t.Fatalf("workspace should not be activated for an unlisted module, got %q", workspace)
+	}
 }
 
 func TestWorkspaceNotActivatedWhenLoadDirInWorkspaceRootModule(t *testing.T) {
@@ -214,15 +212,15 @@ func TestWorkspaceNotActivatedWhenLoadDirInWorkspaceRootModule(t *testing.T) {
 		new(Module),
 	)
 
-	scope.Fork(
+	scope = scope.Fork(
 		func() LoadDir {
 			return LoadDir(loadDir)
 		},
-	).Call(func(workspace Workspace) {
-		if workspace != "" {
-			t.Fatalf("workspace should not be activated inside the workspace root's own module, got %q", workspace)
-		}
-	})
+	)
+	workspace := scope.Get[Workspace]()
+	if workspace != "" {
+		t.Fatalf("workspace should not be activated inside the workspace root's own module, got %q", workspace)
+	}
 }
 
 func TestWorkspaceNotActivatedFromModuleSubdirectory(t *testing.T) {
@@ -252,15 +250,15 @@ func TestWorkspaceNotActivatedFromModuleSubdirectory(t *testing.T) {
 		new(Module),
 	)
 
-	scope.Fork(
+	scope = scope.Fork(
 		func() LoadDir {
 			return LoadDir(filepath.Join(mod1Dir, "sub"))
 		},
-	).Call(func(workspace Workspace) {
-		if workspace != "" {
-			t.Fatalf("workspace should not be activated from a module subdirectory, got %q", workspace)
-		}
-	})
+	)
+	workspace := scope.Get[Workspace]()
+	if workspace != "" {
+		t.Fatalf("workspace should not be activated from a module subdirectory, got %q", workspace)
+	}
 }
 
 func TestWorkspaceDisabledByGOWORKOff(t *testing.T) {
@@ -288,13 +286,13 @@ func TestWorkspaceDisabledByGOWORKOff(t *testing.T) {
 		new(Module),
 	)
 
-	scope.Fork(
+	scope = scope.Fork(
 		func() LoadDir {
 			return LoadDir(mod1Dir)
 		},
-	).Call(func(workspace Workspace) {
-		if workspace != "" {
-			t.Fatalf("workspace should be disabled by GOWORK=off, got %q", workspace)
-		}
-	})
+	)
+	workspace := scope.Get[Workspace]()
+	if workspace != "" {
+		t.Fatalf("workspace should be disabled by GOWORK=off, got %q", workspace)
+	}
 }

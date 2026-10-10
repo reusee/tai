@@ -21,7 +21,7 @@ var PatchCommand = apps.New("patch",
 	func(
 		output Output,
 		applyDiffFile changes.ApplyDiffFile,
-	) {
+	) apps.MainErr {
 		target := ".AI"
 		root, err := os.OpenRoot(".")
 		if err != nil {
@@ -36,5 +36,7 @@ var PatchCommand = apps.New("patch",
 
 			fmt.Fprintf(output, "Applied %s %s\n", block.Op, block.Target)
 		}
+
+		return nil
 	},
 )

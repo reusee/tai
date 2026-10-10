@@ -15,7 +15,7 @@ import (
 )
 
 func TestContextPrompt(t *testing.T) {
-	dscope.New(
+	scope := dscope.New(
 		new(Module),
 		modes.ForTest(t),
 	).Fork(
@@ -24,27 +24,25 @@ func TestContextPrompt(t *testing.T) {
 				return strings.HasSuffix(strings.ToLower(name), ".py")
 			}
 		},
-	).Call(func(
-		provider PartsProvider,
-		countTokens generators.BPETokenCounter,
-	) {
-		parts, err := provider.Parts(math.MaxInt, countTokens, []string{"."})
-		if err != nil {
-			t.Fatal(err)
-		}
-		// The parts are the file contents followed by the working
-		// directory hint. See TheoryOfWorkingDirectoryHint.
-		if len(parts) != 2 {
-			t.Fatalf("expected 2 parts (file content, working directory hint), got %d", len(parts))
-		}
-		text, ok := parts[0].(generators.Text)
-		if !ok {
-			t.Fatalf("got %#v", parts[0])
-		}
-		if !strings.Contains(string(text), "hello, world!") {
-			t.Fatalf("got %v", text)
-		}
-	})
+	)
+	provider := scope.Get[PartsProvider]()
+	countTokens := scope.Get[generators.BPETokenCounter]()
+	parts, err := provider.Parts(math.MaxInt, countTokens, []string{"."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The parts are the file contents followed by the working
+	// directory hint. See TheoryOfWorkingDirectoryHint.
+	if len(parts) != 2 {
+		t.Fatalf("expected 2 parts (file content, working directory hint), got %d", len(parts))
+	}
+	text, ok := parts[0].(generators.Text)
+	if !ok {
+		t.Fatalf("got %#v", parts[0])
+	}
+	if !strings.Contains(string(text), "hello, world!") {
+		t.Fatalf("got %v", text)
+	}
 }
 
 func TestPartsProviderFromCurrentDir(t *testing.T) {
@@ -62,30 +60,28 @@ func TestPartsProviderFromCurrentDir(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dscope.New(
+	scope := dscope.New(
 		new(Module),
 		modes.ForTest(t),
-	).Call(func(
-		provider PartsProvider,
-		countTokens generators.BPETokenCounter,
-	) {
-		parts, err := provider.Parts(math.MaxInt, countTokens, []string{"."})
-		if err != nil {
-			t.Fatal(err)
-		}
-		// The parts are the file contents followed by the working
-		// directory hint. See TheoryOfWorkingDirectoryHint.
-		if len(parts) != 2 {
-			t.Fatalf("expected 2 parts (file content, working directory hint), got %d", len(parts))
-		}
-		text, ok := parts[0].(generators.Text)
-		if !ok {
-			t.Fatalf("got %#v", parts)
-		}
-		if !strings.Contains(string(text), content) {
-			t.Fatalf("got %q, want to contain %q", string(text), content)
-		}
-	})
+	)
+	provider := scope.Get[PartsProvider]()
+	countTokens := scope.Get[generators.BPETokenCounter]()
+	parts, err := provider.Parts(math.MaxInt, countTokens, []string{"."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The parts are the file contents followed by the working
+	// directory hint. See TheoryOfWorkingDirectoryHint.
+	if len(parts) != 2 {
+		t.Fatalf("expected 2 parts (file content, working directory hint), got %d", len(parts))
+	}
+	text, ok := parts[0].(generators.Text)
+	if !ok {
+		t.Fatalf("got %#v", parts)
+	}
+	if !strings.Contains(string(text), content) {
+		t.Fatalf("got %q, want to contain %q", string(text), content)
+	}
 }
 
 func TestPartsSeparatesUnitsWithBlankLine(t *testing.T) {
@@ -105,30 +101,28 @@ func TestPartsSeparatesUnitsWithBlankLine(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dscope.New(
+	scope := dscope.New(
 		new(Module),
 		modes.ForTest(t),
-	).Call(func(
-		provider PartsProvider,
-		countTokens generators.BPETokenCounter,
-	) {
-		parts, err := provider.Parts(math.MaxInt, countTokens, []string{"."})
-		if err != nil {
-			t.Fatal(err)
+	)
+	provider := scope.Get[PartsProvider]()
+	countTokens := scope.Get[generators.BPETokenCounter]()
+	parts, err := provider.Parts(math.MaxInt, countTokens, []string{"."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parts) != 2 {
+		t.Fatalf("expected 2 parts (file content, working directory hint), got %d", len(parts))
+	}
+	for i, part := range parts {
+		text, ok := part.(generators.Text)
+		if !ok {
+			t.Fatalf("part %d: got %#v", i, part)
 		}
-		if len(parts) != 2 {
-			t.Fatalf("expected 2 parts (file content, working directory hint), got %d", len(parts))
+		if !strings.HasSuffix(string(text), "\n\n") {
+			t.Fatalf("part %d must end with a blank line so consecutive units stay separated, got %q", i, string(text))
 		}
-		for i, part := range parts {
-			text, ok := part.(generators.Text)
-			if !ok {
-				t.Fatalf("part %d: got %#v", i, part)
-			}
-			if !strings.HasSuffix(string(text), "\n\n") {
-				t.Fatalf("part %d must end with a blank line so consecutive units stay separated, got %q", i, string(text))
-			}
-		}
-	})
+	}
 }
 
 func TestPartsProviderIncludesWorkingDirectoryHint(t *testing.T) {
@@ -151,33 +145,31 @@ func TestPartsProviderIncludesWorkingDirectoryHint(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dscope.New(
+	scope := dscope.New(
 		new(Module),
 		modes.ForTest(t),
-	).Call(func(
-		provider PartsProvider,
-		countTokens generators.BPETokenCounter,
-	) {
-		parts, err := provider.Parts(math.MaxInt, countTokens, []string{"."})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(parts) < 2 {
-			t.Fatalf("expected the file content and the working directory hint, got %d parts", len(parts))
-		}
-		last, ok := parts[len(parts)-1].(generators.Text)
-		if !ok {
-			t.Fatalf("expected the last part to be Text, got %T", parts[len(parts)-1])
-		}
-		cwd, err := os.Getwd()
-		if err != nil {
-			t.Fatal(err)
-		}
-		want := "Working directory: " + cwd
-		if !strings.Contains(string(last), want) {
-			t.Fatalf("expected the last part to carry the working directory hint %q, got %q", want, string(last))
-		}
-	})
+	)
+	provider := scope.Get[PartsProvider]()
+	countTokens := scope.Get[generators.BPETokenCounter]()
+	parts, err := provider.Parts(math.MaxInt, countTokens, []string{"."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parts) < 2 {
+		t.Fatalf("expected the file content and the working directory hint, got %d parts", len(parts))
+	}
+	last, ok := parts[len(parts)-1].(generators.Text)
+	if !ok {
+		t.Fatalf("expected the last part to be Text, got %T", parts[len(parts)-1])
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "Working directory: " + cwd
+	if !strings.Contains(string(last), want) {
+		t.Fatalf("expected the last part to carry the working directory hint %q, got %q", want, string(last))
+	}
 }
 
 func TestSymlinks(t *testing.T) {
@@ -217,32 +209,30 @@ func TestSymlinks(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		dscope.New(
+		scope := dscope.New(
 			new(Module),
 			modes.ForTest(t),
-		).Call(func(
-			provider PartsProvider,
-			countTokens generators.BPETokenCounter,
-		) {
-			parts, err := provider.Parts(math.MaxInt, countTokens, []string{"link"})
-			if err != nil {
-				t.Fatal(err)
-			}
-			found := false
-			for _, part := range parts {
-				if text, ok := part.(generators.Text); ok {
-					if strings.Contains(string(text), "symlink content") {
-						found = true
-						if strings.Contains(string(text), "(read-only)") {
-							t.Fatal("internal symlink file should not be marked as read-only")
-						}
+		)
+		provider := scope.Get[PartsProvider]()
+		countTokens := scope.Get[generators.BPETokenCounter]()
+		parts, err := provider.Parts(math.MaxInt, countTokens, []string{"link"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, part := range parts {
+			if text, ok := part.(generators.Text); ok {
+				if strings.Contains(string(text), "symlink content") {
+					found = true
+					if strings.Contains(string(text), "(read-only)") {
+						t.Fatal("internal symlink file should not be marked as read-only")
 					}
 				}
 			}
-			if !found {
-				t.Fatal("symlinked file content not found")
-			}
-		})
+		}
+		if !found {
+			t.Fatal("symlinked file content not found")
+		}
 	})
 
 	t.Run("CycleDetection", func(t *testing.T) {
@@ -269,30 +259,28 @@ func TestSymlinks(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		dscope.New(
+		scope := dscope.New(
 			new(Module),
 			modes.ForTest(t),
-		).Call(func(
-			provider PartsProvider,
-			countTokens generators.BPETokenCounter,
-		) {
-			parts, err := provider.Parts(math.MaxInt, countTokens, []string{"."})
-			if err != nil {
-				t.Fatal(err)
-			}
-			// The traversal must terminate and find sub/file.txt exactly once.
-			count := 0
-			for _, part := range parts {
-				if text, ok := part.(generators.Text); ok {
-					if strings.Contains(string(text), "sub/file.txt") {
-						count++
-					}
+		)
+		provider := scope.Get[PartsProvider]()
+		countTokens := scope.Get[generators.BPETokenCounter]()
+		parts, err := provider.Parts(math.MaxInt, countTokens, []string{"."})
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The traversal must terminate and find sub/file.txt exactly once.
+		count := 0
+		for _, part := range parts {
+			if text, ok := part.(generators.Text); ok {
+				if strings.Contains(string(text), "sub/file.txt") {
+					count++
 				}
 			}
-			if count != 1 {
-				t.Fatalf("expected sub/file.txt to appear once, got %d", count)
-			}
-		})
+		}
+		if count != 1 {
+			t.Fatalf("expected sub/file.txt to appear once, got %d", count)
+		}
 	})
 
 	t.Run("ExternalSymlink", func(t *testing.T) {
@@ -316,32 +304,30 @@ func TestSymlinks(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		dscope.New(
+		scope := dscope.New(
 			new(Module),
 			modes.ForTest(t),
-		).Call(func(
-			provider PartsProvider,
-			countTokens generators.BPETokenCounter,
-		) {
-			// A directly-specified focus file that resolves outside
-			// writable directories is marked as read-only and included
-			// in the context. See TheoryOfFocusFileDirectoryCheck.
-			parts, err := provider.Parts(math.MaxInt, countTokens, []string{"link.txt"})
-			if err != nil {
-				t.Fatalf("expected no error for external symlink as focus file, got: %v", err)
-			}
-			foundReadOnly := false
-			for _, part := range parts {
-				if text, ok := part.(generators.Text); ok {
-					if strings.Contains(string(text), "(read-only)") && strings.Contains(string(text), "external content") {
-						foundReadOnly = true
-					}
+		)
+		provider := scope.Get[PartsProvider]()
+		countTokens := scope.Get[generators.BPETokenCounter]()
+		// A directly-specified focus file that resolves outside
+		// writable directories is marked as read-only and included
+		// in the context. See TheoryOfFocusFileDirectoryCheck.
+		parts, err := provider.Parts(math.MaxInt, countTokens, []string{"link.txt"})
+		if err != nil {
+			t.Fatalf("expected no error for external symlink as focus file, got: %v", err)
+		}
+		foundReadOnly := false
+		for _, part := range parts {
+			if text, ok := part.(generators.Text); ok {
+				if strings.Contains(string(text), "(read-only)") && strings.Contains(string(text), "external content") {
+					foundReadOnly = true
 				}
 			}
-			if !foundReadOnly {
-				t.Fatal("expected external symlink file to be included with read-only marker")
-			}
-		})
+		}
+		if !foundReadOnly {
+			t.Fatal("expected external symlink file to be included with read-only marker")
+		}
 	})
 
 	t.Run("ExternalSymlinkDirectory", func(t *testing.T) {
@@ -365,32 +351,30 @@ func TestSymlinks(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		dscope.New(
+		scope := dscope.New(
 			new(Module),
 			modes.ForTest(t),
-		).Call(func(
-			provider PartsProvider,
-			countTokens generators.BPETokenCounter,
-		) {
-			// A directly-specified focus directory that resolves outside
-			// writable directories is marked as read-only and included
-			// in the context. See TheoryOfFocusFileDirectoryCheck.
-			parts, err := provider.Parts(math.MaxInt, countTokens, []string{"ext"})
-			if err != nil {
-				t.Fatalf("expected no error for external symlink directory as focus file, got: %v", err)
-			}
-			foundReadOnly := false
-			for _, part := range parts {
-				if text, ok := part.(generators.Text); ok {
-					if strings.Contains(string(text), "(read-only)") && strings.Contains(string(text), "nested external content") {
-						foundReadOnly = true
-					}
+		)
+		provider := scope.Get[PartsProvider]()
+		countTokens := scope.Get[generators.BPETokenCounter]()
+		// A directly-specified focus directory that resolves outside
+		// writable directories is marked as read-only and included
+		// in the context. See TheoryOfFocusFileDirectoryCheck.
+		parts, err := provider.Parts(math.MaxInt, countTokens, []string{"ext"})
+		if err != nil {
+			t.Fatalf("expected no error for external symlink directory as focus file, got: %v", err)
+		}
+		foundReadOnly := false
+		for _, part := range parts {
+			if text, ok := part.(generators.Text); ok {
+				if strings.Contains(string(text), "(read-only)") && strings.Contains(string(text), "nested external content") {
+					foundReadOnly = true
 				}
 			}
-			if !foundReadOnly {
-				t.Fatal("expected external symlink directory file to be included with read-only marker")
-			}
-		})
+		}
+		if !foundReadOnly {
+			t.Fatal("expected external symlink directory file to be included with read-only marker")
+		}
 	})
 }
 
@@ -410,29 +394,27 @@ func TestFocusFileOutsideWritableDirs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dscope.New(
+	scope := dscope.New(
 		new(Module),
 		modes.ForTest(t),
-	).Call(func(
-		provider PartsProvider,
-		countTokens generators.BPETokenCounter,
-	) {
-		parts, err := provider.Parts(math.MaxInt, countTokens, []string{externalPath})
-		if err != nil {
-			t.Fatalf("expected no error for focus file outside writable directories, got: %v", err)
-		}
-		foundReadOnly := false
-		for _, part := range parts {
-			if text, ok := part.(generators.Text); ok {
-				if strings.Contains(string(text), "(read-only)") && strings.Contains(string(text), "external content") {
-					foundReadOnly = true
-				}
+	)
+	provider := scope.Get[PartsProvider]()
+	countTokens := scope.Get[generators.BPETokenCounter]()
+	parts, err := provider.Parts(math.MaxInt, countTokens, []string{externalPath})
+	if err != nil {
+		t.Fatalf("expected no error for focus file outside writable directories, got: %v", err)
+	}
+	foundReadOnly := false
+	for _, part := range parts {
+		if text, ok := part.(generators.Text); ok {
+			if strings.Contains(string(text), "(read-only)") && strings.Contains(string(text), "external content") {
+				foundReadOnly = true
 			}
 		}
-		if !foundReadOnly {
-			t.Fatal("expected focus file outside writable directories to be included with read-only marker")
-		}
-	})
+	}
+	if !foundReadOnly {
+		t.Fatal("expected focus file outside writable directories to be included with read-only marker")
+	}
 }
 
 func TestFileOrderingByPath(t *testing.T) {
@@ -465,38 +447,36 @@ func TestFileOrderingByPath(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dscope.New(
+	scope := dscope.New(
 		new(Module),
 		modes.ForTest(t),
-	).Call(func(
-		provider PartsProvider,
-		countTokens generators.BPETokenCounter,
-	) {
-		parts, err := provider.Parts(math.MaxInt, countTokens, []string{"."})
-		if err != nil {
-			t.Fatal(err)
-		}
-		// Files should be sorted by path, not by modification time.
-		// aaa.txt should appear before zzz.txt regardless of modification times.
-		aaaIdx := -1
-		zzzIdx := -1
-		for i, part := range parts {
-			if text, ok := part.(generators.Text); ok {
-				if strings.Contains(string(text), "begin of file ") && strings.Contains(string(text), "aaa.txt") {
-					aaaIdx = i
-				}
-				if strings.Contains(string(text), "begin of file ") && strings.Contains(string(text), "zzz.txt") {
-					zzzIdx = i
-				}
+	)
+	provider := scope.Get[PartsProvider]()
+	countTokens := scope.Get[generators.BPETokenCounter]()
+	parts, err := provider.Parts(math.MaxInt, countTokens, []string{"."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Files should be sorted by path, not by modification time.
+	// aaa.txt should appear before zzz.txt regardless of modification times.
+	aaaIdx := -1
+	zzzIdx := -1
+	for i, part := range parts {
+		if text, ok := part.(generators.Text); ok {
+			if strings.Contains(string(text), "begin of file ") && strings.Contains(string(text), "aaa.txt") {
+				aaaIdx = i
+			}
+			if strings.Contains(string(text), "begin of file ") && strings.Contains(string(text), "zzz.txt") {
+				zzzIdx = i
 			}
 		}
-		if aaaIdx == -1 || zzzIdx == -1 {
-			t.Fatalf("files not found in parts: aaa at %d, zzz at %d", aaaIdx, zzzIdx)
-		}
-		if aaaIdx > zzzIdx {
-			t.Fatalf("aaa.txt should appear before zzz.txt (path-based ordering), got aaa at index %d, zzz at index %d", aaaIdx, zzzIdx)
-		}
-	})
+	}
+	if aaaIdx == -1 || zzzIdx == -1 {
+		t.Fatalf("files not found in parts: aaa at %d, zzz at %d", aaaIdx, zzzIdx)
+	}
+	if aaaIdx > zzzIdx {
+		t.Fatalf("aaa.txt should appear before zzz.txt (path-based ordering), got aaa at index %d, zzz at index %d", aaaIdx, zzzIdx)
+	}
 }
 
 func TestExcludePatternDirectoryPrefix(t *testing.T) {
@@ -520,33 +500,31 @@ func TestExcludePatternDirectoryPrefix(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dscope.New(
+	scope := dscope.New(
 		new(Module),
 		modes.ForTest(t),
-	).Call(func(
-		provider PartsProvider,
-		countTokens generators.BPETokenCounter,
-	) {
-		parts, err := provider.Parts(math.MaxInt, countTokens, []string{".", "!./pkg"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		foundKeep := false
-		for _, part := range parts {
-			if text, ok := part.(generators.Text); ok {
-				s := string(text)
-				if strings.Contains(s, "keep content") {
-					foundKeep = true
-				}
-				if strings.Contains(s, "pkg/file.go") {
-					t.Fatal("pkg/file.go should be excluded by !./pkg pattern")
-				}
+	)
+	provider := scope.Get[PartsProvider]()
+	countTokens := scope.Get[generators.BPETokenCounter]()
+	parts, err := provider.Parts(math.MaxInt, countTokens, []string{".", "!./pkg"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundKeep := false
+	for _, part := range parts {
+		if text, ok := part.(generators.Text); ok {
+			s := string(text)
+			if strings.Contains(s, "keep content") {
+				foundKeep = true
+			}
+			if strings.Contains(s, "pkg/file.go") {
+				t.Fatal("pkg/file.go should be excluded by !./pkg pattern")
 			}
 		}
-		if !foundKeep {
-			t.Fatal("keep.txt should be included")
-		}
-	})
+	}
+	if !foundKeep {
+		t.Fatal("keep.txt should be included")
+	}
 }
 
 func TestIsExcludedPathMatchesBasename(t *testing.T) {
@@ -653,47 +631,45 @@ func TestBinaryFileTokenBudget(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dscope.New(
+	scope := dscope.New(
 		new(Module),
 		modes.ForTest(t),
 	).Fork(
 		new(IncludeMimeTypes{
 			"image/png": true,
 		}),
-	).Call(func(
-		provider PartsProvider,
-	) {
-		// With DeepseekTokenCounterFn, the text file markers + content
-		// ("``` begin of file a.txt\nhello\n``` end of file a.txt\n")
-		// are ~52 runes * 0.3 = 15 tokens. The binary file markers are
-		// ~65 runes * 0.3 = 19 tokens. With maxTokens=16, the text file
-		// fits (15 <= 16) but the binary file markers push the total to
-		// 34 > 16, so the binary file is skipped.
-		parts, err := provider.Parts(16, generators.DeepseekTokenCounterFn, []string{"."})
-		if err != nil {
-			t.Fatal(err)
-		}
+	)
+	provider := scope.Get[PartsProvider]()
+	// With DeepseekTokenCounterFn, the text file markers + content
+	// ("``` begin of file a.txt\nhello\n``` end of file a.txt\n")
+	// are ~52 runes * 0.3 = 15 tokens. The binary file markers are
+	// ~65 runes * 0.3 = 19 tokens. With maxTokens=16, the text file
+	// fits (15 <= 16) but the binary file markers push the total to
+	// 34 > 16, so the binary file is skipped.
+	parts, err := provider.Parts(16, generators.DeepseekTokenCounterFn, []string{"."})
+	if err != nil {
+		t.Fatal(err)
+	}
 
-		foundText := false
-		foundBinary := false
-		for _, part := range parts {
-			if text, ok := part.(generators.Text); ok {
-				s := string(text)
-				if strings.Contains(s, "a.txt") {
-					foundText = true
-				}
-				if strings.Contains(s, "b.png") {
-					foundBinary = true
-				}
+	foundText := false
+	foundBinary := false
+	for _, part := range parts {
+		if text, ok := part.(generators.Text); ok {
+			s := string(text)
+			if strings.Contains(s, "a.txt") {
+				foundText = true
+			}
+			if strings.Contains(s, "b.png") {
+				foundBinary = true
 			}
 		}
-		if !foundText {
-			t.Fatal("text file should be included within token budget")
-		}
-		if foundBinary {
-			t.Fatal("binary file should be skipped due to token limit (markers now counted)")
-		}
-	})
+	}
+	if !foundText {
+		t.Fatal("text file should be included within token budget")
+	}
+	if foundBinary {
+		t.Fatal("binary file should be skipped due to token limit (markers now counted)")
+	}
 }
 
 func TestBinaryFileSkippingAndDirectMatchException(t *testing.T) {
@@ -716,61 +692,59 @@ func TestBinaryFileSkippingAndDirectMatchException(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dscope.New(
+	scope := dscope.New(
 		new(Module),
 		modes.ForTest(t),
-	).Call(func(
-		provider PartsProvider,
-		countTokens generators.BPETokenCounter,
-	) {
-		// Directory traversal: the binary file must not appear at all.
-		parts, err := provider.Parts(math.MaxInt, countTokens, []string{"."})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(parts) == 0 {
-			t.Fatal("expected at least the working directory hint part")
-		}
-		for _, part := range parts {
-			if text, ok := part.(generators.Text); ok {
-				if strings.Contains(string(text), "b.png") {
-					t.Fatalf("traversal-discovered binary file must be skipped, got:\n%s", text)
-				}
-			}
-			if fc, ok := part.(generators.FileContent); ok {
-				if fc.MimeType == "image/png" {
-					t.Fatal("traversal-discovered binary content must be skipped")
-				}
+	)
+	provider := scope.Get[PartsProvider]()
+	countTokens := scope.Get[generators.BPETokenCounter]()
+	// Directory traversal: the binary file must not appear at all.
+	parts, err := provider.Parts(math.MaxInt, countTokens, []string{"."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parts) == 0 {
+		t.Fatal("expected at least the working directory hint part")
+	}
+	for _, part := range parts {
+		if text, ok := part.(generators.Text); ok {
+			if strings.Contains(string(text), "b.png") {
+				t.Fatalf("traversal-discovered binary file must be skipped, got:\n%s", text)
 			}
 		}
+		if fc, ok := part.(generators.FileContent); ok {
+			if fc.MimeType == "image/png" {
+				t.Fatal("traversal-discovered binary content must be skipped")
+			}
+		}
+	}
 
-		// Directly matched via -file: the binary file is attached with
-		// its markers and content.
-		parts, err = provider.Parts(math.MaxInt, countTokens, []string{"b.png"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		foundMarker := false
-		foundContent := false
-		for _, part := range parts {
-			if text, ok := part.(generators.Text); ok {
-				if strings.Contains(string(text), "begin of file b.png (binary, image/png)") {
-					foundMarker = true
-				}
-			}
-			if fc, ok := part.(generators.FileContent); ok {
-				if fc.MimeType == "image/png" && string(fc.Content) == string(png) {
-					foundContent = true
-				}
+	// Directly matched via -file: the binary file is attached with
+	// its markers and content.
+	parts, err = provider.Parts(math.MaxInt, countTokens, []string{"b.png"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundMarker := false
+	foundContent := false
+	for _, part := range parts {
+		if text, ok := part.(generators.Text); ok {
+			if strings.Contains(string(text), "begin of file b.png (binary, image/png)") {
+				foundMarker = true
 			}
 		}
-		if !foundMarker {
-			t.Fatal("directly matched binary file must carry the binary begin marker")
+		if fc, ok := part.(generators.FileContent); ok {
+			if fc.MimeType == "image/png" && string(fc.Content) == string(png) {
+				foundContent = true
+			}
 		}
-		if !foundContent {
-			t.Fatal("directly matched binary file content must be attached")
-		}
-	})
+	}
+	if !foundMarker {
+		t.Fatal("directly matched binary file must carry the binary begin marker")
+	}
+	if !foundContent {
+		t.Fatal("directly matched binary file content must be attached")
+	}
 }
 
 func TestIterFilesHiddenFileDirectlyMatched(t *testing.T) {
@@ -792,58 +766,56 @@ func TestIterFilesHiddenFileDirectlyMatched(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dscope.New(
+	scope := dscope.New(
 		new(Module),
 		modes.ForTest(t),
-	).Call(func(
-		provider PartsProvider,
-		countTokens generators.BPETokenCounter,
-	) {
-		// Directly specifying a hidden file via pattern should include it
-		parts, err := provider.Parts(math.MaxInt, countTokens, []string{".env"})
-		if err != nil {
-			t.Fatal(err)
-		}
+	)
+	provider := scope.Get[PartsProvider]()
+	countTokens := scope.Get[generators.BPETokenCounter]()
+	// Directly specifying a hidden file via pattern should include it
+	parts, err := provider.Parts(math.MaxInt, countTokens, []string{".env"})
+	if err != nil {
+		t.Fatal(err)
+	}
 
-		foundHidden := false
-		for _, part := range parts {
-			if text, ok := part.(generators.Text); ok {
-				if strings.Contains(string(text), "SECRET=abc123") {
-					foundHidden = true
-				}
+	foundHidden := false
+	for _, part := range parts {
+		if text, ok := part.(generators.Text); ok {
+			if strings.Contains(string(text), "SECRET=abc123") {
+				foundHidden = true
 			}
 		}
-		if !foundHidden {
-			t.Fatal("hidden file directly specified via pattern should be included")
-		}
+	}
+	if !foundHidden {
+		t.Fatal("hidden file directly specified via pattern should be included")
+	}
 
-		// Directory traversal should still skip hidden files
-		parts, err = provider.Parts(math.MaxInt, countTokens, []string{"."})
-		if err != nil {
-			t.Fatal(err)
-		}
+	// Directory traversal should still skip hidden files
+	parts, err = provider.Parts(math.MaxInt, countTokens, []string{"."})
+	if err != nil {
+		t.Fatal(err)
+	}
 
-		for _, part := range parts {
-			if text, ok := part.(generators.Text); ok {
-				if strings.Contains(string(text), "SECRET=abc123") {
-					t.Fatal("hidden file should be skipped during directory traversal")
-				}
+	for _, part := range parts {
+		if text, ok := part.(generators.Text); ok {
+			if strings.Contains(string(text), "SECRET=abc123") {
+				t.Fatal("hidden file should be skipped during directory traversal")
 			}
 		}
+	}
 
-		// Verify the non-hidden file is found during traversal
-		foundConfig := false
-		for _, part := range parts {
-			if text, ok := part.(generators.Text); ok {
-				if strings.Contains(string(text), "config content") {
-					foundConfig = true
-				}
+	// Verify the non-hidden file is found during traversal
+	foundConfig := false
+	for _, part := range parts {
+		if text, ok := part.(generators.Text); ok {
+			if strings.Contains(string(text), "config content") {
+				foundConfig = true
 			}
 		}
-		if !foundConfig {
-			t.Fatal("non-hidden file should be included during directory traversal")
-		}
-	})
+	}
+	if !foundConfig {
+		t.Fatal("non-hidden file should be included during directory traversal")
+	}
 }
 
 func TestMatchFlagFiltersFiles(t *testing.T) {
@@ -875,32 +847,29 @@ func TestMatchFlagFiltersFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	scope.Call(func(
-		provider PartsProvider,
-		countTokens generators.BPETokenCounter,
-	) {
-		parts, err := provider.Parts(math.MaxInt, countTokens, []string{"."})
-		if err != nil {
-			t.Fatal(err)
-		}
-		foundPy, foundTxt := false, false
-		for _, part := range parts {
-			if text, ok := part.(generators.Text); ok {
-				if strings.Contains(string(text), "foo.py") {
-					foundPy = true
-				}
-				if strings.Contains(string(text), "bar.txt") {
-					foundTxt = true
-				}
+	provider := scope.Get[PartsProvider]()
+	countTokens := scope.Get[generators.BPETokenCounter]()
+	parts, err := provider.Parts(math.MaxInt, countTokens, []string{"."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundPy, foundTxt := false, false
+	for _, part := range parts {
+		if text, ok := part.(generators.Text); ok {
+			if strings.Contains(string(text), "foo.py") {
+				foundPy = true
+			}
+			if strings.Contains(string(text), "bar.txt") {
+				foundTxt = true
 			}
 		}
-		if !foundPy {
-			t.Fatal("expected foo.py to be included by -match")
-		}
-		if foundTxt {
-			t.Fatal("expected bar.txt to be excluded by -match")
-		}
-	})
+	}
+	if !foundPy {
+		t.Fatal("expected foo.py to be included by -match")
+	}
+	if foundTxt {
+		t.Fatal("expected bar.txt to be excluded by -match")
+	}
 }
 
 func TestPartsProviderDirectMatchKeepsFullContent(t *testing.T) {
@@ -921,39 +890,37 @@ func TestPartsProviderDirectMatchKeepsFullContent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dscope.New(
+	scope := dscope.New(
 		new(Module),
 		modes.ForTest(t),
 	).Fork(
 		func() SkeletonFiles {
 			return true
 		},
-	).Call(func(
-		provider PartsProvider,
-		countTokens generators.BPETokenCounter,
-	) {
-		parts, err := provider.Parts(math.MaxInt, countTokens, []string{"widget.py"})
-		if err != nil {
-			t.Fatal(err)
+	)
+	provider := scope.Get[PartsProvider]()
+	countTokens := scope.Get[generators.BPETokenCounter]()
+	parts, err := provider.Parts(math.MaxInt, countTokens, []string{"widget.py"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundFull := false
+	for _, part := range parts {
+		text, ok := part.(generators.Text)
+		if !ok {
+			continue
 		}
-		foundFull := false
-		for _, part := range parts {
-			text, ok := part.(generators.Text)
-			if !ok {
-				continue
-			}
-			s := string(text)
-			if strings.Contains(s, "secret_body_value") {
-				foundFull = true
-			}
-			if strings.Contains(s, "begin of skeleton of file") {
-				t.Fatalf("directly matched file must not render as a skeleton, got:\n%s", s)
-			}
+		s := string(text)
+		if strings.Contains(s, "secret_body_value") {
+			foundFull = true
 		}
-		if !foundFull {
-			t.Fatal("directly matched file must keep full content")
+		if strings.Contains(s, "begin of skeleton of file") {
+			t.Fatalf("directly matched file must not render as a skeleton, got:\n%s", s)
 		}
-	})
+	}
+	if !foundFull {
+		t.Fatal("directly matched file must keep full content")
+	}
 }
 
 func TestPartsProviderSkeletonForTraversalFiles(t *testing.T) {
@@ -979,53 +946,51 @@ func TestPartsProviderSkeletonForTraversalFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dscope.New(
+	scope := dscope.New(
 		new(Module),
 		modes.ForTest(t),
 	).Fork(
 		func() SkeletonFiles {
 			return true
 		},
-	).Call(func(
-		provider PartsProvider,
-		countTokens generators.BPETokenCounter,
-	) {
-		parts, err := provider.Parts(math.MaxInt, countTokens, []string{"."})
-		if err != nil {
-			t.Fatal(err)
+	)
+	provider := scope.Get[PartsProvider]()
+	countTokens := scope.Get[generators.BPETokenCounter]()
+	parts, err := provider.Parts(math.MaxInt, countTokens, []string{"."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundSkeleton := false
+	foundFallback := false
+	for _, part := range parts {
+		text, ok := part.(generators.Text)
+		if !ok {
+			continue
 		}
-		foundSkeleton := false
-		foundFallback := false
-		for _, part := range parts {
-			text, ok := part.(generators.Text)
-			if !ok {
-				continue
+		s := string(text)
+		if strings.Contains(s, "begin of skeleton of file widget.py") {
+			foundSkeleton = true
+			if !strings.Contains(s, "end of skeleton of file widget.py") {
+				t.Fatalf("skeleton end marker must mirror the begin marker, got:\n%s", s)
 			}
-			s := string(text)
-			if strings.Contains(s, "begin of skeleton of file widget.py") {
-				foundSkeleton = true
-				if !strings.Contains(s, "end of skeleton of file widget.py") {
-					t.Fatalf("skeleton end marker must mirror the begin marker, got:\n%s", s)
-				}
-				if strings.Contains(s, "The content below is a structural skeleton") {
-					t.Fatalf("skeleton body must not carry a hint that can be mistaken for file content, got:\n%s", s)
-				}
-				if !strings.Contains(s, "Widget") {
-					t.Fatalf("skeleton must list the class, got:\n%s", s)
-				}
-				if strings.Contains(s, "secret_body_value") {
-					t.Fatalf("skeleton must omit function bodies, got:\n%s", s)
-				}
+			if strings.Contains(s, "The content below is a structural skeleton") {
+				t.Fatalf("skeleton body must not carry a hint that can be mistaken for file content, got:\n%s", s)
 			}
-			if strings.Contains(s, "plain notes content") {
-				foundFallback = true
+			if !strings.Contains(s, "Widget") {
+				t.Fatalf("skeleton must list the class, got:\n%s", s)
+			}
+			if strings.Contains(s, "secret_body_value") {
+				t.Fatalf("skeleton must omit function bodies, got:\n%s", s)
 			}
 		}
-		if !foundSkeleton {
-			t.Fatal("widget.py skeleton block not found")
+		if strings.Contains(s, "plain notes content") {
+			foundFallback = true
 		}
-		if !foundFallback {
-			t.Fatal("unsupported format must fall back to full content")
-		}
-	})
+	}
+	if !foundSkeleton {
+		t.Fatal("widget.py skeleton block not found")
+	}
+	if !foundFallback {
+		t.Fatal("unsupported format must fall back to full content")
+	}
 }

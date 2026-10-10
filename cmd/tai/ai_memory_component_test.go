@@ -19,7 +19,7 @@ import (
 // would leave the block childless, reading as unprocessed. See
 // TheoryOfAIComponents and pipeline.TheoryOfSessionTree.
 func TestMemoryComponentProcessIsInert(t *testing.T) {
-	dscope.New(
+	comps := dscope.New(
 		new(Module),
 	).Fork(
 		modes.ForTest(t),
@@ -28,20 +28,19 @@ func TestMemoryComponentProcessIsInert(t *testing.T) {
 				return aiMockGenerator{}, nil
 			}
 		},
-	).Call(func(comps AIComponents) {
-		found := false
-		for _, comp := range comps.Processable() {
-			if comp.Kind != "memory" {
-				continue
-			}
-			found = true
-			result := comp.Process(context.Background(), &components.ProcessContext{})
-			if len(result.Parts) != 0 || result.State != nil || result.Tree != nil || result.Err != nil {
-				t.Fatalf("memory component's Process must stay inert, got %+v", result)
-			}
+	).Get[AIComponents]()
+	found := false
+	for _, comp := range comps.Processable() {
+		if comp.Kind != "memory" {
+			continue
 		}
-		if !found {
-			t.Fatal("expected a processable memory component")
+		found = true
+		result := comp.Process(context.Background(), &components.ProcessContext{})
+		if len(result.Parts) != 0 || result.State != nil || result.Tree != nil || result.Err != nil {
+			t.Fatalf("memory component's Process must stay inert, got %+v", result)
 		}
-	})
+	}
+	if !found {
+		t.Fatal("expected a processable memory component")
+	}
 }

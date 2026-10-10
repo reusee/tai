@@ -15,11 +15,10 @@ func TestHandoffModel(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		result.Call(func(model HandoffModel) {
-			if string(model) != "gemini-flash" {
-				t.Fatalf("expected gemini-flash, got %v", model)
-			}
-		})
+		model := result.Get[HandoffModel]()
+		if string(model) != "gemini-flash" {
+			t.Fatalf("expected gemini-flash, got %v", model)
+		}
 	})
 
 	t.Run("FlagOverwritesPrevious", func(t *testing.T) {
@@ -28,11 +27,10 @@ func TestHandoffModel(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		result.Call(func(model HandoffModel) {
-			if string(model) != "deepseek-chat" {
-				t.Fatalf("expected deepseek-chat (last flag wins), got %v", model)
-			}
-		})
+		model := result.Get[HandoffModel]()
+		if string(model) != "deepseek-chat" {
+			t.Fatalf("expected deepseek-chat (last flag wins), got %v", model)
+		}
 	})
 
 	t.Run("FlagNoArg", func(t *testing.T) {

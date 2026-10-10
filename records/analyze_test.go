@@ -33,7 +33,7 @@ func (analysisMockGenerator) Generate(ctx context.Context, state generators.Stat
 }
 
 func TestRunAnalysis(t *testing.T) {
-	dscope.New(
+	scope := dscope.New(
 		modes.ForTest(t),
 		new(Module),
 		// RunAnalysis provider 的依赖必须在 new(Module) 同一层已定义，
@@ -74,27 +74,28 @@ func TestRunAnalysis(t *testing.T) {
 		func() Enabled {
 			return Enabled(true)
 		},
-	).Call(func(recorder *Recorder, runAnalysis RunAnalysis) {
-		recorder.StartSession("test")
-		tr := tree.New().WithOpSink(recorder.Sink())
-		if _, err := tr.Write("root", "user-1", tree.TypeUser, tree.AuthorUser, "task input"); err != nil {
-			t.Fatal(err)
-		}
-		recorder.EndSession(nil)
+	)
+	recorder := scope.Get[*Recorder]()
+	runAnalysis := scope.Get[RunAnalysis]()
+	recorder.StartSession("test")
+	tr := tree.New().WithOpSink(recorder.Sink())
+	if _, err := tr.Write("root", "user-1", tree.TypeUser, tree.AuthorUser, "task input"); err != nil {
+		t.Fatal(err)
+	}
+	recorder.EndSession(nil)
 
-		var id int64
-		if err := recorder.db.QueryRow(`SELECT id FROM sessions LIMIT 1`).Scan(&id); err != nil {
-			t.Fatal(err)
-		}
+	var id int64
+	if err := recorder.db.QueryRow(`SELECT id FROM sessions LIMIT 1`).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
 
-		var buf bytes.Buffer
-		if err := runAnalysis(context.Background(), id, &buf); err != nil {
-			t.Fatal(err)
-		}
-		if !strings.Contains(buf.String(), "analysis report output") {
-			t.Fatalf("expected analysis output, got: %s", buf.String())
-		}
-	})
+	var buf bytes.Buffer
+	if err := runAnalysis(context.Background(), id, &buf); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), "analysis report output") {
+		t.Fatalf("expected analysis output, got: %s", buf.String())
+	}
 }
 
 func TestAnalysisSystemPromptContent(t *testing.T) {

@@ -905,24 +905,24 @@ func makeGoalLoopGenerator(reset dscope.Reset) GoalLoopGenerator {
 		var result Result
 		var stats []AttemptStat
 		var err error
-		scope.Call(func(generate GenerateWithResultWithStats, chats flags.Chats) {
-			// The chat input is the task: without any non-empty chat
-			// argument the pipeline has nothing to generate against.
-			// Return the sentinel before the session runs, so the
-			// runner stops instead of looping. See ErrNoTask.
-			var hasTask bool
-			for _, chat := range chats {
-				if chat != "" {
-					hasTask = true
-					break
-				}
+		generate := scope.Get[GenerateWithResultWithStats]()
+		chats := scope.Get[flags.Chats]()
+		// The chat input is the task: without any non-empty chat
+		// argument the pipeline has nothing to generate against.
+		// Return the sentinel before the session runs, so the
+		// runner stops instead of looping. See ErrNoTask.
+		var hasTask bool
+		for _, chat := range chats {
+			if chat != "" {
+				hasTask = true
+				break
 			}
-			if !hasTask {
-				err = ErrNoTask
-				return
-			}
-			result, stats, err = generate(ctx, os.Stdout)
-		})
+		}
+		if !hasTask {
+			err = ErrNoTask
+			return result, stats, err
+		}
+		result, stats, err = generate(ctx, os.Stdout)
 		return result, stats, err
 	}
 }

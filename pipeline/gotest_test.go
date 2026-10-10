@@ -16,25 +16,22 @@ import (
 )
 
 func TestSystemPromptGoTestBlock(t *testing.T) {
-	dscope.New(
+	prompt := dscope.New(
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
 		func() codetypes.PartsProvider { return mockPartsProvider{} },
-	).Call(func(
-		prompt SystemPrompt,
-	) {
-		if !strings.Contains(string(prompt), "Go-Test Block Kind") {
-			t.Fatal("system prompt must include go-test block section")
-		}
-		// The go-test prompt must instruct the model to emit a summary block
-		// even when emitting a go-test block. Without this, the model may omit
-		// the summary, causing unnecessary retries (see TheoryOfSummaryCompletionRetry
-		// in generate.go and TheoryOfGoTestBlocks in gotools/gotest.go).
-		if !strings.Contains(string(prompt), "go-test block is NOT a completion signal") {
-			t.Fatal("system prompt must state that go-test block is not a completion signal and summary is still required")
-		}
-	})
+	).Get[SystemPrompt]()
+	if !strings.Contains(string(prompt), "Go-Test Block Kind") {
+		t.Fatal("system prompt must include go-test block section")
+	}
+	// The go-test prompt must instruct the model to emit a summary block
+	// even when emitting a go-test block. Without this, the model may omit
+	// the summary, causing unnecessary retries (see TheoryOfSummaryCompletionRetry
+	// in generate.go and TheoryOfGoTestBlocks in gotools/gotest.go).
+	if !strings.Contains(string(prompt), "go-test block is NOT a completion signal") {
+		t.Fatal("system prompt must state that go-test block is not a completion signal and summary is still required")
+	}
 }
 
 func TestGoTestComponentPassTriggersRoundWithOutput(t *testing.T) {
@@ -48,38 +45,35 @@ func TestGoTestComponentPassTriggersRoundWithOutput(t *testing.T) {
 		{Kind: "go-test", Body: "-run\n___nonexistent___"},
 	}
 
-	dscope.New(
+	comps := dscope.New(
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
 		func() codetypes.PartsProvider { return mockPartsProvider{} },
-	).Call(func(
-		comps CodesComponents,
-	) {
-		for _, comp := range comps.Processable() {
-			if comp.Kind != "go-test" {
-				continue
-			}
-			result := comp.Process(context.Background(), &components.ProcessContext{
-				Blocks: goTestBlocks,
-			})
-			if result.Err != nil {
-				t.Fatalf("unexpected error: %v", result.Err)
-			}
-			if len(result.Parts) != 1 {
-				t.Fatalf("expected Parts carrying the test output when tests pass, got %d parts", len(result.Parts))
-			}
-			text, ok := result.Parts[0].(generators.Text)
-			if !ok {
-				t.Fatalf("expected Text part, got %T", result.Parts[0])
-			}
-			if !strings.Contains(string(text), "Command succeeded") {
-				t.Fatalf("expected the passing test output in Parts, got %q", text)
-			}
-			return
+	).Get[CodesComponents]()
+	for _, comp := range comps.Processable() {
+		if comp.Kind != "go-test" {
+			continue
 		}
-		t.Fatal("go-test component not found")
-	})
+		result := comp.Process(context.Background(), &components.ProcessContext{
+			Blocks: goTestBlocks,
+		})
+		if result.Err != nil {
+			t.Fatalf("unexpected error: %v", result.Err)
+		}
+		if len(result.Parts) != 1 {
+			t.Fatalf("expected Parts carrying the test output when tests pass, got %d parts", len(result.Parts))
+		}
+		text, ok := result.Parts[0].(generators.Text)
+		if !ok {
+			t.Fatalf("expected Text part, got %T", result.Parts[0])
+		}
+		if !strings.Contains(string(text), "Command succeeded") {
+			t.Fatalf("expected the passing test output in Parts, got %q", text)
+		}
+		return
+	}
+	t.Fatal("go-test component not found")
 }
 
 func TestGoTestComponentFailTriggersRound(t *testing.T) {
@@ -87,35 +81,32 @@ func TestGoTestComponentFailTriggersRound(t *testing.T) {
 		{Kind: "go-test", Body: "-bogusflag"},
 	}
 
-	dscope.New(
+	comps := dscope.New(
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
 		func() codetypes.PartsProvider { return mockPartsProvider{} },
-	).Call(func(
-		comps CodesComponents,
-	) {
-		for _, comp := range comps.Processable() {
-			if comp.Kind != "go-test" {
-				continue
-			}
-			result := comp.Process(context.Background(), &components.ProcessContext{
-				Blocks: goTestBlocks,
-			})
-			if result.Err != nil {
-				t.Fatalf("unexpected error: %v", result.Err)
-			}
-			if len(result.Parts) == 0 {
-				t.Fatal("expected parts when tests fail; go-test must produce Parts to trigger a new round")
-			}
-			return
+	).Get[CodesComponents]()
+	for _, comp := range comps.Processable() {
+		if comp.Kind != "go-test" {
+			continue
 		}
-		t.Fatal("go-test component not found")
-	})
+		result := comp.Process(context.Background(), &components.ProcessContext{
+			Blocks: goTestBlocks,
+		})
+		if result.Err != nil {
+			t.Fatalf("unexpected error: %v", result.Err)
+		}
+		if len(result.Parts) == 0 {
+			t.Fatal("expected parts when tests fail; go-test must produce Parts to trigger a new round")
+		}
+		return
+	}
+	t.Fatal("go-test component not found")
 }
 
 func TestCodesComponentsIncludesFamilyExtraSystemPrompt(t *testing.T) {
-	dscope.New(
+	comps := dscope.New(
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
@@ -127,50 +118,46 @@ func TestCodesComponentsIncludesFamilyExtraSystemPrompt(t *testing.T) {
 		func() gotools.FamilyExtraSystemPrompt {
 			return gotools.FamilyExtraSystemPrompt{"gemini": {"go gemini family prompt"}}
 		},
-	).Call(func(comps CodesComponents) {
-		prompt := comps.PromptSections()
-		if !strings.Contains(prompt, "gemini family prompt") {
-			t.Fatal("expected top-level family prompt in system prompt")
-		}
-		if !strings.Contains(prompt, "go gemini family prompt") {
-			t.Fatal("expected go-specific family prompt in system prompt")
-		}
-	})
+	).Get[CodesComponents]()
+	prompt := comps.PromptSections()
+	if !strings.Contains(prompt, "gemini family prompt") {
+		t.Fatal("expected top-level family prompt in system prompt")
+	}
+	if !strings.Contains(prompt, "go gemini family prompt") {
+		t.Fatal("expected go-specific family prompt in system prompt")
+	}
 }
 
 func TestCodesComponentsIncludesHiddenPackages(t *testing.T) {
-	var defaultPrompt string
-	dscope.New(
+	comps := dscope.New(
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
 		func() codetypes.PartsProvider { return mockPartsProvider{} },
-	).Call(func(comps CodesComponents) {
-		defaultPrompt = comps.PromptSections()
-	})
+	).Get[CodesComponents]()
+	defaultPrompt := comps.PromptSections()
 	if strings.Contains(defaultPrompt, "Hidden Packages") {
 		t.Fatal("no hidden patterns configured must not produce a hidden-packages section")
 	}
 
-	dscope.New(
+	comps = dscope.New(
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
 		func() codetypes.PartsProvider { return mockPartsProvider{} },
 		func() gotools.HiddenPatterns { return gotools.HiddenPatterns{"example.com/foo/bar/..."} },
-	).Call(func(comps CodesComponents) {
-		prompt := comps.PromptSections()
-		if !strings.Contains(prompt, "Hidden Packages") {
-			t.Fatal("expected hidden-packages section in system prompt")
-		}
-		if !strings.Contains(prompt, "example.com/foo/bar/...") {
-			t.Fatal("expected the configured pattern in the system prompt")
-		}
-	})
+	).Get[CodesComponents]()
+	prompt := comps.PromptSections()
+	if !strings.Contains(prompt, "Hidden Packages") {
+		t.Fatal("expected hidden-packages section in system prompt")
+	}
+	if !strings.Contains(prompt, "example.com/foo/bar/...") {
+		t.Fatal("expected the configured pattern in the system prompt")
+	}
 }
 
 func TestCodesComponentsExcludesNonMatchingFamilyPrompt(t *testing.T) {
-	dscope.New(
+	comps := dscope.New(
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
@@ -179,18 +166,17 @@ func TestCodesComponentsExcludesNonMatchingFamilyPrompt(t *testing.T) {
 		func() flags.FamilyExtraSystemPrompt {
 			return flags.FamilyExtraSystemPrompt{"gemini": {"gemini family prompt"}}
 		},
-	).Call(func(comps CodesComponents) {
-		if strings.Contains(comps.PromptSections(), "gemini family prompt") {
-			t.Fatal("non-matching family prompt must not be included")
-		}
-	})
+	).Get[CodesComponents]()
+	if strings.Contains(comps.PromptSections(), "gemini family prompt") {
+		t.Fatal("non-matching family prompt must not be included")
+	}
 }
 
 func TestCodesComponentsExcludesGoFamilyPromptForNonGoProvider(t *testing.T) {
 	// The Go-specific family prompt is gated on the Go session: a mock
 	// (non-Go) parts provider must exclude it while the top-level family
 	// prompt still applies.
-	dscope.New(
+	comps := dscope.New(
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
@@ -202,13 +188,12 @@ func TestCodesComponentsExcludesGoFamilyPromptForNonGoProvider(t *testing.T) {
 		func() gotools.FamilyExtraSystemPrompt {
 			return gotools.FamilyExtraSystemPrompt{"gemini": {"go gemini family prompt"}}
 		},
-	).Call(func(comps CodesComponents) {
-		prompt := comps.PromptSections()
-		if !strings.Contains(prompt, "gemini family prompt") {
-			t.Fatal("top-level family prompt must apply to non-go sessions too")
-		}
-		if strings.Contains(prompt, "go gemini family prompt") {
-			t.Fatal("non-go session must not include go-specific family prompt")
-		}
-	})
+	).Get[CodesComponents]()
+	prompt := comps.PromptSections()
+	if !strings.Contains(prompt, "gemini family prompt") {
+		t.Fatal("top-level family prompt must apply to non-go sessions too")
+	}
+	if strings.Contains(prompt, "go gemini family prompt") {
+		t.Fatal("non-go session must not include go-specific family prompt")
+	}
 }

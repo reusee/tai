@@ -21,65 +21,62 @@ func TestContextPrompt(t *testing.T) {
 	)
 
 	dir := filepath.Join(testdataDir, "main")
-	scope.Fork(
+	scope = scope.Fork(
 		func() LoadDir {
 			return LoadDir(dir)
 		},
-	).Call(func(
-		provider PartsProvider,
-	) {
+	)
+	provider := scope.Get[PartsProvider]()
 
-		parts, err := provider.Parts(256, generators.DeepseekTokenCounterFn, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
+	parts, err := provider.Parts(256, generators.DeepseekTokenCounterFn, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 
-		// Focus packages are pinned at documentation level: dep1.go is
-		// loaded as a context file and the focus package appears as a
-		// documentation block. main.go's full content must not appear,
-		// and the non-Go focus file a.txt is present by name in the
-		// documentation block's file list only.
-		// See TheoryOfVisibilityAllocation and TheoryOfNonGoFiles in
-		// module_root.go.
-		if len(parts) < 2 {
-			t.Fatalf("got %v", len(parts))
-		}
+	// Focus packages are pinned at documentation level: dep1.go is
+	// loaded as a context file and the focus package appears as a
+	// documentation block. main.go's full content must not appear,
+	// and the non-Go focus file a.txt is present by name in the
+	// documentation block's file list only.
+	// See TheoryOfVisibilityAllocation and TheoryOfNonGoFiles in
+	// module_root.go.
+	if len(parts) < 2 {
+		t.Fatalf("got %v", len(parts))
+	}
 
-		var foundDep1, foundATxtName, foundFocusDoc bool
-		for _, part := range parts {
-			t.Logf("%s\n", part)
-			text, ok := part.(generators.Text)
-			if !ok {
-				t.Fatalf("got %#v", part)
-			}
-			s := string(text)
-			if strings.Contains(s, filepath.Join(dir, "..", "dep1", "dep1.go")) {
-				foundDep1 = true
-			}
-			if strings.Contains(s, "begin of focus file "+filepath.Join(dir, "main.go")) {
-				t.Fatalf("main.go must not appear at full content; focus packages are documentation-only:\n%s", s)
-			}
-			if strings.Contains(s, "begin of focus file "+filepath.Join(dir, "a.txt")) {
-				t.Fatalf("a.txt must not appear at full content; non-Go focus files are listed by name only:\n%s", s)
-			}
-			if strings.Contains(s, "begin of focus package") {
-				foundFocusDoc = true
-				if strings.Contains(s, filepath.Join(dir, "a.txt")) {
-					foundATxtName = true
-				}
+	var foundDep1, foundATxtName, foundFocusDoc bool
+	for _, part := range parts {
+		t.Logf("%s\n", part)
+		text, ok := part.(generators.Text)
+		if !ok {
+			t.Fatalf("got %#v", part)
+		}
+		s := string(text)
+		if strings.Contains(s, filepath.Join(dir, "..", "dep1", "dep1.go")) {
+			foundDep1 = true
+		}
+		if strings.Contains(s, "begin of focus file "+filepath.Join(dir, "main.go")) {
+			t.Fatalf("main.go must not appear at full content; focus packages are documentation-only:\n%s", s)
+		}
+		if strings.Contains(s, "begin of focus file "+filepath.Join(dir, "a.txt")) {
+			t.Fatalf("a.txt must not appear at full content; non-Go focus files are listed by name only:\n%s", s)
+		}
+		if strings.Contains(s, "begin of focus package") {
+			foundFocusDoc = true
+			if strings.Contains(s, filepath.Join(dir, "a.txt")) {
+				foundATxtName = true
 			}
 		}
-		if !foundDep1 {
-			t.Errorf("dep1.go not found")
-		}
-		if !foundFocusDoc {
-			t.Errorf("focus package documentation not found")
-		}
-		if !foundATxtName {
-			t.Errorf("a.txt not listed in the focus package documentation")
-		}
-
-	})
+	}
+	if !foundDep1 {
+		t.Errorf("dep1.go not found")
+	}
+	if !foundFocusDoc {
+		t.Errorf("focus package documentation not found")
+	}
+	if !foundATxtName {
+		t.Errorf("a.txt not listed in the focus package documentation")
+	}
 
 }
 
@@ -98,35 +95,33 @@ func TestPartsIncludesWorkingDirectoryHint(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dscope.New(
+	scope := dscope.New(
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
 		func() LoadDir { return LoadDir(root) },
-	).Call(func(
-		provider PartsProvider,
-		countTokens generators.BPETokenCounter,
-	) {
-		parts, err := provider.Parts(1<<20, countTokens, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(parts) == 0 {
-			t.Fatal("expected at least one part")
-		}
-		last, ok := parts[len(parts)-1].(generators.Text)
-		if !ok {
-			t.Fatalf("expected the last part to be Text, got %T", parts[len(parts)-1])
-		}
-		cwd, err := os.Getwd()
-		if err != nil {
-			t.Fatal(err)
-		}
-		want := "Working directory: " + cwd
-		if !strings.Contains(string(last), want) {
-			t.Fatalf("expected the last part to carry the working directory hint %q, got %q", want, string(last))
-		}
-	})
+	)
+	provider := scope.Get[PartsProvider]()
+	countTokens := scope.Get[generators.BPETokenCounter]()
+	parts, err := provider.Parts(1<<20, countTokens, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parts) == 0 {
+		t.Fatal("expected at least one part")
+	}
+	last, ok := parts[len(parts)-1].(generators.Text)
+	if !ok {
+		t.Fatalf("expected the last part to be Text, got %T", parts[len(parts)-1])
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "Working directory: " + cwd
+	if !strings.Contains(string(last), want) {
+		t.Fatalf("expected the last part to carry the working directory hint %q, got %q", want, string(last))
+	}
 }
 
 func TestExcludePatternExcludesWorkspaceMarkdown(t *testing.T) {
@@ -180,25 +175,23 @@ use (
 		new(Module),
 	)
 
-	scope.Fork(
+	scope = scope.Fork(
 		func() LoadDir {
 			return LoadDir(mod1Dir)
 		},
-	).Call(func(
-		provider PartsProvider,
-	) {
-		parts, err := provider.Parts(1<<20, generators.DeepseekTokenCounterFn, []string{"!*.md"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, part := range parts {
-			if text, ok := part.(generators.Text); ok {
-				if strings.Contains(string(text), readmePath) {
-					t.Fatalf("workspace sibling README.md should be excluded by !*.md pattern, including from the module-root listing")
-				}
+	)
+	provider := scope.Get[PartsProvider]()
+	parts, err := provider.Parts(1<<20, generators.DeepseekTokenCounterFn, []string{"!*.md"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, part := range parts {
+		if text, ok := part.(generators.Text); ok {
+			if strings.Contains(string(text), readmePath) {
+				t.Fatalf("workspace sibling README.md should be excluded by !*.md pattern, including from the module-root listing")
 			}
 		}
-	})
+	}
 }
 
 func TestLargeEmbedFileFiltered(t *testing.T) {
@@ -258,72 +251,70 @@ func main() {}
 	largePath := filepath.Join(dir, "large.txt")
 	smallPath := filepath.Join(dir, "small.txt")
 
-	scope.Fork(
+	scope = scope.Fork(
 		func() LoadDir {
 			return LoadDir(dir)
 		},
-	).Call(func(
-		provider PartsProvider,
-	) {
-		// Without patterns: the large embed file is excluded entirely
-		// (not even listed), and the small embed file is present by name
-		// in the focus documentation block's file list — neither is
-		// emitted at full content. See TheoryOfNonGoFiles in
-		// module_root.go.
-		parts, err := provider.Parts(1<<20, generators.DeepseekTokenCounterFn, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
+	)
+	provider := scope.Get[PartsProvider]()
+	// Without patterns: the large embed file is excluded entirely
+	// (not even listed), and the small embed file is present by name
+	// in the focus documentation block's file list — neither is
+	// emitted at full content. See TheoryOfNonGoFiles in
+	// module_root.go.
+	parts, err := provider.Parts(1<<20, generators.DeepseekTokenCounterFn, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 
-		var foundSmallName, foundLarge bool
-		for _, part := range parts {
-			if text, ok := part.(generators.Text); ok {
-				s := string(text)
-				if strings.Contains(s, "begin of focus file "+largePath) ||
-					strings.Contains(s, "begin of context file "+largePath) {
-					t.Fatal("large embed file must not be emitted at full content by default")
-				}
-				if strings.Contains(s, "begin of focus file "+smallPath) ||
-					strings.Contains(s, "begin of context file "+smallPath) {
-					t.Fatal("small embed file must not be emitted at full content; non-Go files are listed by name only")
-				}
-				if strings.Contains(s, smallPath) {
-					foundSmallName = true
-				}
-				if strings.Contains(s, largePath) {
-					foundLarge = true
-				}
+	var foundSmallName, foundLarge bool
+	for _, part := range parts {
+		if text, ok := part.(generators.Text); ok {
+			s := string(text)
+			if strings.Contains(s, "begin of focus file "+largePath) ||
+				strings.Contains(s, "begin of context file "+largePath) {
+				t.Fatal("large embed file must not be emitted at full content by default")
+			}
+			if strings.Contains(s, "begin of focus file "+smallPath) ||
+				strings.Contains(s, "begin of context file "+smallPath) {
+				t.Fatal("small embed file must not be emitted at full content; non-Go files are listed by name only")
+			}
+			if strings.Contains(s, smallPath) {
+				foundSmallName = true
+			}
+			if strings.Contains(s, largePath) {
+				foundLarge = true
 			}
 		}
-		if foundLarge {
-			t.Fatal("large embed file should be excluded by default")
-		}
-		if !foundSmallName {
-			t.Fatal("small embed file should be listed by name in the focus documentation")
-		}
+	}
+	if foundLarge {
+		t.Fatal("large embed file should be excluded by default")
+	}
+	if !foundSmallName {
+		t.Fatal("small embed file should be listed by name in the focus documentation")
+	}
 
-		// With an explicit -file pattern naming the file by its absolute
-		// path: the file is requested, so it is emitted at full content
-		// as an extra context file.
-		parts, err = provider.Parts(1<<20, generators.DeepseekTokenCounterFn, []string{largePath})
-		if err != nil {
-			t.Fatal(err)
-		}
+	// With an explicit -file pattern naming the file by its absolute
+	// path: the file is requested, so it is emitted at full content
+	// as an extra context file.
+	parts, err = provider.Parts(1<<20, generators.DeepseekTokenCounterFn, []string{largePath})
+	if err != nil {
+		t.Fatal(err)
+	}
 
-		foundLarge = false
-		for _, part := range parts {
-			if text, ok := part.(generators.Text); ok {
-				s := string(text)
-				if strings.Contains(s, "begin of focus file "+largePath) ||
-					strings.Contains(s, "begin of context file "+largePath) {
-					foundLarge = true
-				}
+	foundLarge = false
+	for _, part := range parts {
+		if text, ok := part.(generators.Text); ok {
+			s := string(text)
+			if strings.Contains(s, "begin of focus file "+largePath) ||
+				strings.Contains(s, "begin of context file "+largePath) {
+				foundLarge = true
 			}
 		}
-		if !foundLarge {
-			t.Fatal("large embed file should be included when explicitly requested via pattern")
-		}
-	})
+	}
+	if !foundLarge {
+		t.Fatal("large embed file should be included when explicitly requested via pattern")
+	}
 }
 
 func TestFocusFileOutsideWritableDirs(t *testing.T) {
@@ -381,33 +372,31 @@ func TestFocusFileOutsideWritableDirs(t *testing.T) {
 		new(Module),
 	)
 
-	scope.Fork(
+	scope = scope.Fork(
 		func() LoadDir {
 			return LoadDir(mainDir)
 		},
 		func() LoadPatterns {
 			return LoadPatterns{"../dep1"}
 		},
-	).Call(func(
-		provider PartsProvider,
-		countTokens generators.BPETokenCounter,
-	) {
-		parts, err := provider.Parts(1<<20, countTokens, nil)
-		if err != nil {
-			t.Fatalf("expected no error for focus file outside writable directories, got: %v", err)
-		}
-		foundReadOnly := false
-		for _, part := range parts {
-			if text, ok := part.(generators.Text); ok {
-				if strings.Contains(string(text), "focus package") && strings.Contains(string(text), "(read-only)") {
-					foundReadOnly = true
-				}
+	)
+	provider := scope.Get[PartsProvider]()
+	countTokens := scope.Get[generators.BPETokenCounter]()
+	parts, err := provider.Parts(1<<20, countTokens, nil)
+	if err != nil {
+		t.Fatalf("expected no error for focus file outside writable directories, got: %v", err)
+	}
+	foundReadOnly := false
+	for _, part := range parts {
+		if text, ok := part.(generators.Text); ok {
+			if strings.Contains(string(text), "focus package") && strings.Contains(string(text), "(read-only)") {
+				foundReadOnly = true
 			}
 		}
-		if !foundReadOnly {
-			t.Fatal("expected focus package documentation outside writable directories to carry the read-only marker")
-		}
-	})
+	}
+	if !foundReadOnly {
+		t.Fatal("expected focus package documentation outside writable directories to carry the read-only marker")
+	}
 }
 
 func TestPartsTokenCompositionLog(t *testing.T) {
@@ -437,38 +426,36 @@ func TestPartsTokenCompositionLog(t *testing.T) {
 	// handler). See TheoryOfUsageLogging in loops/run.go.
 	var buf bytes.Buffer
 	logger := logs.Logger{slog.New(slog.NewTextHandler(&buf, nil))}
-	dscope.New(
+	scope := dscope.New(
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
 		func() LoadDir { return LoadDir(root) },
 		func() logs.Logger { return logger },
-	).Call(func(
-		provider PartsProvider,
-		countTokens generators.BPETokenCounter,
-		treeSink *TreeEventSink,
-	) {
-		_, err := provider.Parts(1<<20, countTokens, nil)
-		if err != nil {
-			t.Fatal(err)
+	)
+	provider := scope.Get[PartsProvider]()
+	countTokens := scope.Get[generators.BPETokenCounter]()
+	treeSink := scope.Get[*TreeEventSink]()
+	_, err := provider.Parts(1<<20, countTokens, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Both compositions are buffered for the session tree: the
+	// allocation record from SimplifyFiles, then the assembled
+	// record from Parts. The generation loop replays them as
+	// context event nodes. See TheoryOfTokenComposition.
+	recorded := treeSink.Drain()
+	if len(recorded) != 2 {
+		t.Fatalf("expected 2 recorded compositions (allocation and assembled), got %d", len(recorded))
+	}
+	if !strings.Contains(recorded[0], "allocation tokens") {
+		t.Fatalf("expected the allocation composition first, got: %s", recorded[0])
+	}
+	for _, want := range []string{"assembled tokens", "focus ", "context ", "extra ", "doc ", "total "} {
+		if !strings.Contains(recorded[1], want) {
+			t.Fatalf("expected %q in assembled composition, got: %s", want, recorded[1])
 		}
-		// Both compositions are buffered for the session tree: the
-		// allocation record from SimplifyFiles, then the assembled
-		// record from Parts. The generation loop replays them as
-		// context event nodes. See TheoryOfTokenComposition.
-		recorded := treeSink.Drain()
-		if len(recorded) != 2 {
-			t.Fatalf("expected 2 recorded compositions (allocation and assembled), got %d", len(recorded))
-		}
-		if !strings.Contains(recorded[0], "allocation tokens") {
-			t.Fatalf("expected the allocation composition first, got: %s", recorded[0])
-		}
-		for _, want := range []string{"assembled tokens", "focus ", "context ", "extra ", "doc ", "total "} {
-			if !strings.Contains(recorded[1], want) {
-				t.Fatalf("expected %q in assembled composition, got: %s", want, recorded[1])
-			}
-		}
-	})
+	}
 
 	output := buf.String()
 	if !strings.Contains(output, `msg="token composition"`) {
@@ -510,41 +497,38 @@ func TestModuleFilesListingSummaryHint(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dscope.New(
+	provider := dscope.New(
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
 		func() LoadDir { return LoadDir(root) },
-	).Call(func(
-		provider PartsProvider,
-	) {
-		parts, err := provider.Parts(1<<20, generators.DeepseekTokenCounterFn, nil)
-		if err != nil {
-			t.Fatal(err)
+	).Get[PartsProvider]()
+	parts, err := provider.Parts(1<<20, generators.DeepseekTokenCounterFn, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundListing := false
+	for _, part := range parts {
+		text, ok := part.(generators.Text)
+		if !ok {
+			continue
 		}
-		foundListing := false
-		for _, part := range parts {
-			text, ok := part.(generators.Text)
-			if !ok {
-				continue
-			}
-			s := string(text)
-			if !strings.Contains(s, "begin of module files") {
-				continue
-			}
-			foundListing = true
-			if !strings.Contains(s, "app.py") {
-				t.Errorf("listing must contain app.py, got:\n%s", s)
-			}
-			if !strings.Contains(s, "handler") {
-				t.Errorf("listing must carry the skeleton of app.py, got:\n%s", s)
-			}
-			if !strings.Contains(s, "ingest block") {
-				t.Errorf("listing must state that the content is summary form requiring ingest fetches, got:\n%s", s)
-			}
+		s := string(text)
+		if !strings.Contains(s, "begin of module files") {
+			continue
 		}
-		if !foundListing {
-			t.Fatal("expected a module files listing part")
+		foundListing = true
+		if !strings.Contains(s, "app.py") {
+			t.Errorf("listing must contain app.py, got:\n%s", s)
 		}
-	})
+		if !strings.Contains(s, "handler") {
+			t.Errorf("listing must carry the skeleton of app.py, got:\n%s", s)
+		}
+		if !strings.Contains(s, "ingest block") {
+			t.Errorf("listing must state that the content is summary form requiring ingest fetches, got:\n%s", s)
+		}
+	}
+	if !foundListing {
+		t.Fatal("expected a module files listing part")
+	}
 }

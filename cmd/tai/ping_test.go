@@ -18,49 +18,41 @@ import (
 )
 
 func TestPingCommandRegistered(t *testing.T) {
-	dscope.New(
+	app := dscope.New(
 		new(Module),
-	).Call(func(
-		app apps.App,
-	) {
-		// The default app is always present and registers no
-		// selection key: defaults carry no Description. See
-		// apps.TheoryOfApps.
-		if keys := app.Keys(); len(keys) != 0 {
-			t.Fatalf("the default command must not register keys, got %v", keys)
-		}
+	).Get[apps.App]()
+	// The default app is always present and registers no
+	// selection key: defaults carry no Description. See
+	// apps.TheoryOfApps.
+	if keys := app.Keys(); len(keys) != 0 {
+		t.Fatalf("the default command must not register keys, got %v", keys)
+	}
 
-		keys := PingCommand.Keys()
-		if _, ok := keys["ping"]; !ok {
-			t.Fatal("ping command not registered in Keys()")
-		}
+	keys := PingCommand.Keys()
+	if _, ok := keys["ping"]; !ok {
+		t.Fatal("ping command not registered in Keys()")
+	}
 
-		newValue, _, err := PingCommand.Handle("ping", nil)
-		if err != nil {
-			t.Fatalf("Handle ping failed: %v", err)
-		}
-		// Handle returns *apps.App, matching the flags.Flag convention
-		// where Handle returns a definition for scope.Fork. See
-		// flags.Flag.Handle documentation and apps.TheoryOfApps.
-		pingApp, ok := newValue.(*apps.App)
-		if !ok {
-			t.Fatal("Handle ping did not return an *apps.App")
-		}
-		if appMainPointer(*pingApp) == 0 {
-			t.Fatal("PingCommand has no Main")
-		}
-	})
+	newValue, _, err := PingCommand.Handle("ping", nil)
+	if err != nil {
+		t.Fatalf("Handle ping failed: %v", err)
+	}
+	// Handle returns *apps.App, matching the flags.Flag convention
+	// where Handle returns a definition for scope.Fork. See
+	// flags.Flag.Handle documentation and apps.TheoryOfApps.
+	pingApp, ok := newValue.(*apps.App)
+	if !ok {
+		t.Fatal("Handle ping did not return an *apps.App")
+	}
+	if appMainPointer(*pingApp) == 0 {
+		t.Fatal("PingCommand has no Main")
+	}
 }
 
 func TestRandomPingBlocks(t *testing.T) {
-	var provider RandomPingBlocks
-	dscope.New(
+	provider := dscope.New(
 		new(Module),
-	).Call(func(
-		randomPingBlocks RandomPingBlocks,
-	) {
-		provider = randomPingBlocks
-	})
+	).Get[RandomPingBlocks]()
 	checkLowercase := func(s string) {
 		if s == "" {
 			t.Fatal("expected a non-empty string")
@@ -284,7 +276,7 @@ func TestPingCommandUsesRunLoop(t *testing.T) {
 		flags.FamilyExtraSystemPrompt,
 		generators.ModelFamily,
 		flags.Thoughts,
-	))
+	) apps.MainErr)
 
 	// Capture stdout so the success verdict is asserted and does not
 	// pollute the test output.
@@ -392,7 +384,7 @@ func TestPingCommandInjectsExtraSystemPrompt(t *testing.T) {
 		flags.FamilyExtraSystemPrompt,
 		generators.ModelFamily,
 		flags.Thoughts,
-	))
+	) apps.MainErr)
 
 	oldStdout := os.Stdout
 	r, w, err := os.Pipe()
@@ -474,7 +466,7 @@ func TestPingCommandThoughtsFlag(t *testing.T) {
 		flags.FamilyExtraSystemPrompt,
 		generators.ModelFamily,
 		flags.Thoughts,
-	))
+	) apps.MainErr)
 
 	noThoughts := false
 	for _, tc := range []struct {

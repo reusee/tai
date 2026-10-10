@@ -428,14 +428,13 @@ func TestGoplsLSPHandlerMissingTarget(t *testing.T) {
 func TestLSPHandlerProvider(t *testing.T) {
 	// modes.ForTest supplies *testing.T, which the module graph needs
 	// (logs.Module's Writer provider); without it dscope.New panics.
-	dscope.New(
+	handler := dscope.New(
 		modes.ForTest(t),
 		new(Module),
-	).Call(func(handler blocks.LSPHandler) {
-		if handler == nil {
-			t.Fatal("expected non-nil LSPHandler")
-		}
-	})
+	).Get[blocks.LSPHandler]()
+	if handler == nil {
+		t.Fatal("expected non-nil LSPHandler")
+	}
 }
 
 func TestGoplsIntegration(t *testing.T) {

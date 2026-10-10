@@ -9,21 +9,17 @@ import (
 )
 
 func TestGeneratorSpecs(t *testing.T) {
-	dscope.New(
+	get := dscope.New(
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
 		func() configs.Loader {
 			return configs.NewLoader([]string{"test_generator_specs.cue"}, configs.LoaderConfig{})
 		},
-	).Call(func(
-		get GetGenerator,
-	) {
+	).Get[GetGenerator]()
 
-		_, err := get("foo")
-		if err != nil {
-			t.Fatal(err)
-		}
-
-	})
+	_, err := get("foo")
+	if err != nil {
+		t.Fatal(err)
+	}
 }

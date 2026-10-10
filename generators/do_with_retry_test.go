@@ -134,28 +134,25 @@ func TestRetrierProvider(t *testing.T) {
 	// method infers T from the function's result type, so the same
 	// dscope-provided value serves State-returning and other callers
 	// without a monomorphic wrapper. See TheoryOfRetry.
-	dscope.New(
+	retrier := dscope.New(
 		modes.ForTest(t),
 		new(Module),
-	).Call(func(
-		retrier Retrier,
-	) {
-		calls := 0
-		result, err := retrier.Do(context.Background(), func() (State, error) {
-			calls++
-			if calls < 2 {
-				return nil, errors.Join(errors.New("transient"), ErrRetryable)
-			}
-			return NewPrompts("", nil), nil
-		}, 0)
-		if err != nil {
-			t.Fatalf("expected success on second attempt, got: %v", err)
+	).Get[Retrier]()
+	calls := 0
+	result, err := retrier.Do(context.Background(), func() (State, error) {
+		calls++
+		if calls < 2 {
+			return nil, errors.Join(errors.New("transient"), ErrRetryable)
 		}
-		if result == nil {
-			t.Fatal("expected a non-nil state")
-		}
-		if calls != 2 {
-			t.Fatalf("expected 2 calls, got %d", calls)
-		}
-	})
+		return NewPrompts("", nil), nil
+	}, 0)
+	if err != nil {
+		t.Fatalf("expected success on second attempt, got: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected a non-nil state")
+	}
+	if calls != 2 {
+		t.Fatalf("expected 2 calls, got %d", calls)
+	}
 }

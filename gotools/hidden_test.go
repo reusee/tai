@@ -119,63 +119,61 @@ func TestHiddenPackagesExcludeFilesAndDocs(t *testing.T) {
 	barDir := writePkg("bar", "bar")
 	subDir := writePkg("bar/sub", "sub")
 
-	dscope.New(
+	scope := dscope.New(
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
 		func() LoadDir { return LoadDir(root) },
 		func() HiddenPatterns { return HiddenPatterns{"example.com/hiddentest/bar/..."} },
-	).Call(func(
-		getFiles GetFiles,
-		simplifyFiles SimplifyFiles,
-	) {
-		files, err := getFiles()
-		if err != nil {
-			t.Fatal(err)
+	)
+	getFiles := scope.Get[GetFiles]()
+	simplifyFiles := scope.Get[SimplifyFiles]()
+	files, err := getFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fooFile, barFile, subFile *File
+	for _, f := range files {
+		switch f.Path {
+		case filepath.Join(fooDir, "foo.go"):
+			fooFile = f
+		case filepath.Join(barDir, "bar.go"):
+			barFile = f
+		case filepath.Join(subDir, "sub.go"):
+			subFile = f
 		}
-		var fooFile, barFile, subFile *File
-		for _, f := range files {
-			switch f.Path {
-			case filepath.Join(fooDir, "foo.go"):
-				fooFile = f
-			case filepath.Join(barDir, "bar.go"):
-				barFile = f
-			case filepath.Join(subDir, "sub.go"):
-				subFile = f
-			}
-		}
-		if fooFile == nil {
-			t.Fatal("foo.go must be loaded: foo is not hidden")
-		}
-		if barFile != nil {
-			t.Fatal("bar.go must not be loaded: bar is hidden")
-		}
-		if subFile != nil {
-			t.Fatal("bar/sub sub.go must not be loaded: bar/... hides subpackages")
-		}
+	}
+	if fooFile == nil {
+		t.Fatal("foo.go must be loaded: foo is not hidden")
+	}
+	if barFile != nil {
+		t.Fatal("bar.go must not be loaded: bar is hidden")
+	}
+	if subFile != nil {
+		t.Fatal("bar/sub sub.go must not be loaded: bar/... hides subpackages")
+	}
 
-		simplified, err := simplifyFiles(files, 32<<10, func(s string) (int, error) {
-			return len(s) / 4, nil
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		var fooDoc bool
-		for _, f := range simplified {
-			if f.Package != nil && strings.HasPrefix(f.Package.PkgPath, "example.com/hiddentest/bar") {
-				t.Errorf("hidden package %q must not appear in simplified output", f.Package.PkgPath)
-			}
-			switch f.Path {
-			case "example.com/hiddentest/foo":
-				fooDoc = true
-			case "example.com/hiddentest/bar", "example.com/hiddentest/bar/sub":
-				t.Errorf("hidden package documentation %q must not be emitted", f.Path)
-			}
-		}
-		if !fooDoc {
-			t.Fatal("focus package foo documentation must be emitted")
-		}
+	simplified, err := simplifyFiles(files, 32<<10, func(s string) (int, error) {
+		return len(s) / 4, nil
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fooDoc bool
+	for _, f := range simplified {
+		if f.Package != nil && strings.HasPrefix(f.Package.PkgPath, "example.com/hiddentest/bar") {
+			t.Errorf("hidden package %q must not appear in simplified output", f.Package.PkgPath)
+		}
+		switch f.Path {
+		case "example.com/hiddentest/foo":
+			fooDoc = true
+		case "example.com/hiddentest/bar", "example.com/hiddentest/bar/sub":
+			t.Errorf("hidden package documentation %q must not be emitted", f.Path)
+		}
+	}
+	if !fooDoc {
+		t.Fatal("focus package foo documentation must be emitted")
+	}
 }
 
 // TestHiddenPackagesBlockGoSrcFallback verifies that the go-src go doc
@@ -200,40 +198,39 @@ func TestHiddenPackagesBlockGoSrcFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dscope.New(
+	resolve := dscope.New(
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
 		func() LoadDir { return LoadDir(root) },
 		func() LoadPatterns { return LoadPatterns{"."} },
 		func() HiddenPatterns { return HiddenPatterns{"example.com/hiddensrc/bar"} },
-	).Call(func(resolve ResolveGoSymbols) {
-		parts, err := resolve([]string{"example.com/hiddensrc/bar"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		got := partsText(t, parts)
-		if !strings.Contains(got, "not found") {
-			t.Fatalf("expected not-found for a hidden import path, got:\n%s", got)
-		}
-		if strings.Contains(got, "Package bar is hidden") {
-			t.Fatalf("hidden package documentation must not leak through the go-src fallback, got:\n%s", got)
-		}
+	).Get[ResolveGoSymbols]()
+	parts, err := resolve([]string{"example.com/hiddensrc/bar"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := partsText(t, parts)
+	if !strings.Contains(got, "not found") {
+		t.Fatalf("expected not-found for a hidden import path, got:\n%s", got)
+	}
+	if strings.Contains(got, "Package bar is hidden") {
+		t.Fatalf("hidden package documentation must not leak through the go-src fallback, got:\n%s", got)
+	}
 
-		// The import-path prefix of a symbol expression is checked
-		// before any probe, so a symbol inside the hidden package is
-		// blocked like the package path itself.
-		parts, err = resolve([]string{"example.com/hiddensrc/bar.Baz"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got = partsText(t, parts); !strings.Contains(got, "not found") {
-			t.Fatalf("expected not-found for a symbol inside a hidden package, got:\n%s", got)
-		}
-		if strings.Contains(got, "Package bar is hidden") {
-			t.Fatalf("hidden package documentation must not leak for a symbol inside it, got:\n%s", got)
-		}
-	})
+	// The import-path prefix of a symbol expression is checked
+	// before any probe, so a symbol inside the hidden package is
+	// blocked like the package path itself.
+	parts, err = resolve([]string{"example.com/hiddensrc/bar.Baz"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got = partsText(t, parts); !strings.Contains(got, "not found") {
+		t.Fatalf("expected not-found for a symbol inside a hidden package, got:\n%s", got)
+	}
+	if strings.Contains(got, "Package bar is hidden") {
+		t.Fatalf("hidden package documentation must not leak for a symbol inside it, got:\n%s", got)
+	}
 }
 
 // TestUnhidePatternsForWorkingDirectory verifies the working-directory

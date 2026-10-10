@@ -29,33 +29,32 @@ func TestRunDecoratorsAppliedByModuleRun(t *testing.T) {
 			},
 		}
 	})
-	scope.Call(func(run Run) {
-		var result Result
-		for _, err := range run(context.Background(), RunOptions{
-			InitialState: generators.NewPrompts("", nil),
-			PhaseBuilder: func(_ generators.Generator) generators.Phase {
-				return func(_ context.Context, state generators.State) (generators.Phase, generators.State, error) {
-					state, err := state.AppendContent(&generators.Content{
-						Role: generators.RoleModel,
-						Parts: []generators.Part{
-							generators.Text("ok\n"),
-						},
-					})
-					if err != nil {
-						return nil, nil, err
-					}
-					return nil, state, nil
+	run := scope.Get[Run]()
+	var result Result
+	for _, err := range run(context.Background(), RunOptions{
+		InitialState: generators.NewPrompts("", nil),
+		PhaseBuilder: func(_ generators.Generator) generators.Phase {
+			return func(_ context.Context, state generators.State) (generators.Phase, generators.State, error) {
+				state, err := state.AppendContent(&generators.Content{
+					Role: generators.RoleModel,
+					Parts: []generators.Part{
+						generators.Text("ok\n"),
+					},
+				})
+				if err != nil {
+					return nil, nil, err
 				}
-			},
-		}, &result) {
-			if err != nil {
-				t.Fatal(err)
+				return nil, state, nil
 			}
+		},
+	}, &result) {
+		if err != nil {
+			t.Fatal(err)
 		}
-		if result.SessionTree == nil {
-			t.Fatal("expected the decorated run to complete with a session tree")
-		}
-	})
+	}
+	if result.SessionTree == nil {
+		t.Fatal("expected the decorated run to complete with a session tree")
+	}
 	if len(applied) != 2 || applied[0] != "first" || applied[1] != "second" {
 		t.Fatalf("expected both decorators applied in order, got %v", applied)
 	}

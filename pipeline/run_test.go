@@ -26,7 +26,7 @@ import (
 
 func withRun(t *testing.T, fn func(Run)) {
 	t.Helper()
-	dscope.New(
+	run := dscope.New(
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
@@ -36,9 +36,8 @@ func withRun(t *testing.T, fn func(Run)) {
 		// user's database. See
 		// records.TheoryOfInteractionRecording.
 		func() *records.Recorder { return nil },
-	).Call(func(run Run) {
-		fn(run)
-	})
+	).Get[Run]()
+	fn(run)
 }
 
 // runOnce runs the loop to completion and returns the result and the
@@ -1216,48 +1215,47 @@ func TestRunLogsAttemptUsage(t *testing.T) {
 	// handler. See TheoryOfUsageLogging and TheoryOfUsageTiming.
 	var buf bytes.Buffer
 	logger := logs.Logger{slog.New(slog.NewTextHandler(&buf, nil))}
-	dscope.New(
+	run := dscope.New(
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
 		func() logs.Logger { return logger },
-	).Call(func(run Run) {
-		usage := generators.Usage{}
-		usage.Prompt.TokenCount = 100
-		usage.Prompt.TokenCountCached = 20
-		usage.Candidates.TokenCount = 50
-		usage.Thoughts.TokenCount = 10
-		usage.TimeToFirstToken = time.Second * 3 / 2 // logs as ttft_seconds=1.5
-		usage.GenerateDuration = 2 * time.Second     // 60 generated tokens / 2s -> 30.0
+	).Get[Run]()
+	usage := generators.Usage{}
+	usage.Prompt.TokenCount = 100
+	usage.Prompt.TokenCountCached = 20
+	usage.Candidates.TokenCount = 50
+	usage.Thoughts.TokenCount = 10
+	usage.TimeToFirstToken = time.Second * 3 / 2 // logs as ttft_seconds=1.5
+	usage.GenerateDuration = 2 * time.Second     // 60 generated tokens / 2s -> 30.0
 
-		_, err := runOnce(run, RunOptions{
-			Generator:    nil,
-			InitialState: generators.NewPrompts("", nil),
-			Components:   nil,
-			PhaseBuilder: func(g generators.Generator) generators.Phase {
-				return appendPhaseWithUsage("model output", usage)
-			},
-		})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		output := buf.String()
-		for _, want := range []string{
-			"msg=usage",
-			"attempt=1",
-			"prompt=100",
-			"cached=20",
-			"completion=50",
-			"thoughts=10",
-			"ttft_seconds=1.5",
-			"tokens_per_second=30.0",
-		} {
-			if !strings.Contains(output, want) {
-				t.Fatalf("expected %q in log output, got: %s", want, output)
-			}
-		}
+	_, err := runOnce(run, RunOptions{
+		Generator:    nil,
+		InitialState: generators.NewPrompts("", nil),
+		Components:   nil,
+		PhaseBuilder: func(g generators.Generator) generators.Phase {
+			return appendPhaseWithUsage("model output", usage)
+		},
 	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	output := buf.String()
+	for _, want := range []string{
+		"msg=usage",
+		"attempt=1",
+		"prompt=100",
+		"cached=20",
+		"completion=50",
+		"thoughts=10",
+		"ttft_seconds=1.5",
+		"tokens_per_second=30.0",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("expected %q in log output, got: %s", want, output)
+		}
+	}
 }
 
 func TestRunHandoffUsageReachesAttemptUsageLog(t *testing.T) {
@@ -1271,58 +1269,57 @@ func TestRunHandoffUsageReachesAttemptUsageLog(t *testing.T) {
 	// TheoryOfHandoffUsageAccounting and TheoryOfUsageLogging.
 	var buf bytes.Buffer
 	logger := logs.Logger{slog.New(slog.NewTextHandler(&buf, nil))}
-	dscope.New(
+	run := dscope.New(
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
 		func() logs.Logger { return logger },
-	).Call(func(run Run) {
-		mainUsage := generators.Usage{}
-		mainUsage.Prompt.TokenCount = 100
-		mainUsage.Prompt.TokenCountCached = 20
-		mainUsage.Candidates.TokenCount = 50
-		mainUsage.Thoughts.TokenCount = 10
-		handoffUsage := generators.Usage{}
-		handoffUsage.Prompt.TokenCount = 7
-		handoffUsage.Candidates.TokenCount = 3
-		handoffUsage.Thoughts.TokenCount = 1
+	).Get[Run]()
+	mainUsage := generators.Usage{}
+	mainUsage.Prompt.TokenCount = 100
+	mainUsage.Prompt.TokenCountCached = 20
+	mainUsage.Candidates.TokenCount = 50
+	mainUsage.Thoughts.TokenCount = 10
+	handoffUsage := generators.Usage{}
+	handoffUsage.Prompt.TokenCount = 7
+	handoffUsage.Candidates.TokenCount = 3
+	handoffUsage.Thoughts.TokenCount = 1
 
-		callCount := 0
-		_, err := runOnce(run, RunOptions{
-			Generator:    nil,
-			InitialState: generators.NewPrompts("", nil),
-			Components:   nil,
-			PhaseBuilder: func(g generators.Generator) generators.Phase {
-				callCount++
-				return appendPhaseWithUsage(
-					fmt.Sprintf("incomplete attempt %d output", callCount),
-					mainUsage,
-				)
-			},
-			RetryOnMissingCompletion: true,
-			MaxRetries:               1,
-			Handoff: func(text string) (*Handoff, error) {
-				return &Handoff{Summary: "handoff summary", Prompt: "retry prompt", Usage: handoffUsage}, nil
-			},
-		})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		output := buf.String()
-		for _, want := range []string{
-			"msg=usage",
-			"attempt=2",
-			"prompt=107",
-			"cached=20",
-			"completion=53",
-			"thoughts=11",
-		} {
-			if !strings.Contains(output, want) {
-				t.Fatalf("expected %q in log output, got: %s", want, output)
-			}
-		}
+	callCount := 0
+	_, err := runOnce(run, RunOptions{
+		Generator:    nil,
+		InitialState: generators.NewPrompts("", nil),
+		Components:   nil,
+		PhaseBuilder: func(g generators.Generator) generators.Phase {
+			callCount++
+			return appendPhaseWithUsage(
+				fmt.Sprintf("incomplete attempt %d output", callCount),
+				mainUsage,
+			)
+		},
+		RetryOnMissingCompletion: true,
+		MaxRetries:               1,
+		Handoff: func(text string) (*Handoff, error) {
+			return &Handoff{Summary: "handoff summary", Prompt: "retry prompt", Usage: handoffUsage}, nil
+		},
 	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	output := buf.String()
+	for _, want := range []string{
+		"msg=usage",
+		"attempt=2",
+		"prompt=107",
+		"cached=20",
+		"completion=53",
+		"thoughts=11",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("expected %q in log output, got: %s", want, output)
+		}
+	}
 }
 
 func TestRunHandoffUsageRetryWindowIsPerAttempt(t *testing.T) {
@@ -1419,63 +1416,62 @@ func TestRunLogsRoundUsageMultipleUsageParts(t *testing.T) {
 	// detects a systemd service. See TheoryOfUsageLogging.
 	var buf bytes.Buffer
 	logger := logs.Logger{slog.New(slog.NewTextHandler(&buf, nil))}
-	dscope.New(
+	run := dscope.New(
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
 		func() logs.Logger { return logger },
-	).Call(func(run Run) {
-		usage1 := generators.Usage{}
-		usage1.Prompt.TokenCount = 100
-		usage1.Candidates.TokenCount = 10
+	).Get[Run]()
+	usage1 := generators.Usage{}
+	usage1.Prompt.TokenCount = 100
+	usage1.Candidates.TokenCount = 10
 
-		usage2 := generators.Usage{}
-		usage2.Prompt.TokenCount = 100
-		usage2.Candidates.TokenCount = 50
+	usage2 := generators.Usage{}
+	usage2.Prompt.TokenCount = 100
+	usage2.Candidates.TokenCount = 50
 
-		_, err := runOnce(run, RunOptions{
-			Generator:    nil,
-			InitialState: generators.NewPrompts("", nil),
-			Components:   nil,
-			PhaseBuilder: func(g generators.Generator) generators.Phase {
-				return func(ctx context.Context, state generators.State) (generators.Phase, generators.State, error) {
-					s, err := state.AppendContent(&generators.Content{
-						Role:  generators.RoleLog,
-						Parts: []generators.Part{usage1},
-					})
-					if err != nil {
-						return nil, state, err
-					}
-					s, err = s.AppendContent(&generators.Content{
-						Role:  generators.RoleAssistant,
-						Parts: []generators.Part{generators.Text("output")},
-					})
-					if err != nil {
-						return nil, state, err
-					}
-					s, err = s.AppendContent(&generators.Content{
-						Role:  generators.RoleLog,
-						Parts: []generators.Part{usage2},
-					})
-					if err != nil {
-						return nil, state, err
-					}
-					return nil, s, nil
+	_, err := runOnce(run, RunOptions{
+		Generator:    nil,
+		InitialState: generators.NewPrompts("", nil),
+		Components:   nil,
+		PhaseBuilder: func(g generators.Generator) generators.Phase {
+			return func(ctx context.Context, state generators.State) (generators.Phase, generators.State, error) {
+				s, err := state.AppendContent(&generators.Content{
+					Role:  generators.RoleLog,
+					Parts: []generators.Part{usage1},
+				})
+				if err != nil {
+					return nil, state, err
 				}
-			},
-		})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		output := buf.String()
-		if !strings.Contains(output, "prompt=100") {
-			t.Fatalf("expected prompt=100 (final snapshot, not 200 sum), got: %s", output)
-		}
-		if !strings.Contains(output, "completion=50") {
-			t.Fatalf("expected completion=50 (final snapshot, not 60 sum), got: %s", output)
-		}
+				s, err = s.AppendContent(&generators.Content{
+					Role:  generators.RoleAssistant,
+					Parts: []generators.Part{generators.Text("output")},
+				})
+				if err != nil {
+					return nil, state, err
+				}
+				s, err = s.AppendContent(&generators.Content{
+					Role:  generators.RoleLog,
+					Parts: []generators.Part{usage2},
+				})
+				if err != nil {
+					return nil, state, err
+				}
+				return nil, s, nil
+			}
+		},
 	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "prompt=100") {
+		t.Fatalf("expected prompt=100 (final snapshot, not 200 sum), got: %s", output)
+	}
+	if !strings.Contains(output, "completion=50") {
+		t.Fatalf("expected completion=50 (final snapshot, not 60 sum), got: %s", output)
+	}
 }
 
 func TestRunOnAttemptSuccessError(t *testing.T) {

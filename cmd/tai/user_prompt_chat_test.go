@@ -34,7 +34,7 @@ func TestUserPromptChatInputPrecedesContext(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dscope.New(
+	userPrompt := dscope.New(
 		new(Module),
 	).Fork(
 		modes.ForTest(t),
@@ -45,24 +45,21 @@ func TestUserPromptChatInputPrecedesContext(t *testing.T) {
 		},
 		func() flags.Chats { return flags.Chats{"do the next thing"} },
 		func() flags.Files { return flags.Files{"test.md": true} },
-	).Call(func(
-		userPrompt UserPrompt,
-	) {
-		if len(userPrompt) < 2 {
-			t.Fatalf("expected chat input and file context, got %d parts", len(userPrompt))
+	).Get[UserPrompt]()
+	if len(userPrompt) < 2 {
+		t.Fatalf("expected chat input and file context, got %d parts", len(userPrompt))
+	}
+	first, ok := userPrompt[0].(generators.Text)
+	if !ok || first != "do the next thing\n\n" {
+		t.Fatalf("first part must be the chat input ending with a blank line, got %#v", userPrompt[0])
+	}
+	second, ok := userPrompt[1].(generators.Text)
+	if !ok || !strings.Contains(string(second), "# Title") {
+		t.Fatalf("second part must be the file context part, got %#v", userPrompt[1])
+	}
+	for _, part := range userPrompt {
+		if text, ok := part.(generators.Text); ok && strings.HasPrefix(string(text), "[System note:") {
+			t.Fatal("a user prompt within the restate threshold must omit the verbatim system prompt restate")
 		}
-		first, ok := userPrompt[0].(generators.Text)
-		if !ok || first != "do the next thing\n\n" {
-			t.Fatalf("first part must be the chat input ending with a blank line, got %#v", userPrompt[0])
-		}
-		second, ok := userPrompt[1].(generators.Text)
-		if !ok || !strings.Contains(string(second), "# Title") {
-			t.Fatalf("second part must be the file context part, got %#v", userPrompt[1])
-		}
-		for _, part := range userPrompt {
-			if text, ok := part.(generators.Text); ok && strings.HasPrefix(string(text), "[System note:") {
-				t.Fatal("a user prompt within the restate threshold must omit the verbatim system prompt restate")
-			}
-		}
-	})
+	}
 }

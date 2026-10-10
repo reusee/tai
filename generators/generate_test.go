@@ -48,47 +48,41 @@ func TestBuildGenerateRetryLimit(t *testing.T) {
 	// flags modules, so new(Module) alone resolves every provider
 	// dependency; modes.ForTest supplies the *testing.T that logs.Writer
 	// consumes, routing test logs to t.Output.
-	dscope.New(
+	buildGenerate := dscope.New(
 		modes.ForTest(t),
 		new(Module),
-	).Call(func(
-		buildGenerate BuildGenerate,
-	) {
-		phase := buildGenerate(gen, nil)(nil)
+	).Get[BuildGenerate]()
+	phase := buildGenerate(gen, nil)(nil)
 
-		_, _, err := phase(context.Background(), NewPrompts("", nil))
-		if err == nil {
-			t.Fatal("expected error after retry limit exhausted")
-		}
-		if calls != 3 {
-			t.Fatalf("expected 3 generate calls (maxRetries), got %d", calls)
-		}
-	})
+	_, _, err := phase(context.Background(), NewPrompts("", nil))
+	if err == nil {
+		t.Fatal("expected error after retry limit exhausted")
+	}
+	if calls != 3 {
+		t.Fatalf("expected 3 generate calls (maxRetries), got %d", calls)
+	}
 }
 
 func TestBuildGenerateRetryThenSuccess(t *testing.T) {
 	calls := 0
 	gen := &retryThenSuccessGenerator{calls: &calls, succeedAt: 2}
 
-	dscope.New(
+	buildGenerate := dscope.New(
 		modes.ForTest(t),
 		new(Module),
-	).Call(func(
-		buildGenerate BuildGenerate,
-	) {
-		phase := buildGenerate(gen, nil)(nil)
+	).Get[BuildGenerate]()
+	phase := buildGenerate(gen, nil)(nil)
 
-		nextPhase, _, err := phase(context.Background(), NewPrompts("", nil))
-		if err != nil {
-			t.Fatalf("expected success on second attempt, got: %v", err)
-		}
-		if nextPhase != nil {
-			t.Fatal("expected nil next phase when cont is nil")
-		}
-		if calls != 2 {
-			t.Fatalf("expected 2 generate calls, got %d", calls)
-		}
-	})
+	nextPhase, _, err := phase(context.Background(), NewPrompts("", nil))
+	if err != nil {
+		t.Fatalf("expected success on second attempt, got: %v", err)
+	}
+	if nextPhase != nil {
+		t.Fatal("expected nil next phase when cont is nil")
+	}
+	if calls != 2 {
+		t.Fatalf("expected 2 generate calls, got %d", calls)
+	}
 }
 
 type nonRetryableErrorGenerator struct{}
@@ -107,23 +101,20 @@ func TestBuildGenerateNonRetryableErrorReturnsState(t *testing.T) {
 	// can pass a valid state to OnPhaseError.
 	gen := &nonRetryableErrorGenerator{}
 
-	dscope.New(
+	buildGenerate := dscope.New(
 		modes.ForTest(t),
 		new(Module),
-	).Call(func(
-		buildGenerate BuildGenerate,
-	) {
-		phase := buildGenerate(gen, nil)(nil)
+	).Get[BuildGenerate]()
+	phase := buildGenerate(gen, nil)(nil)
 
-		initialState := NewPrompts("", nil)
-		_, state, err := phase(context.Background(), initialState)
-		if err == nil {
-			t.Fatal("expected error")
-		}
-		if state == nil {
-			t.Fatal("expected non-nil state on non-retryable error, got nil")
-		}
-	})
+	initialState := NewPrompts("", nil)
+	_, state, err := phase(context.Background(), initialState)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if state == nil {
+		t.Fatal("expected non-nil state on non-retryable error, got nil")
+	}
 }
 
 type partialOutputGenerator struct {
@@ -150,38 +141,35 @@ func TestBuildGenerateNonRetryableErrorPreservesPartialOutput(t *testing.T) {
 	calls := 0
 	gen := &partialOutputGenerator{calls: &calls}
 
-	dscope.New(
+	buildGenerate := dscope.New(
 		modes.ForTest(t),
 		new(Module),
-	).Call(func(
-		buildGenerate BuildGenerate,
-	) {
-		phase := buildGenerate(gen, nil)(nil)
+	).Get[BuildGenerate]()
+	phase := buildGenerate(gen, nil)(nil)
 
-		initialState := NewPrompts("", nil)
-		_, state, err := phase(context.Background(), initialState)
-		if err == nil {
-			t.Fatal("expected error")
-		}
-		if state == nil {
-			t.Fatal("expected non-nil state")
-		}
-		// The returned state must contain the partial output so the caller
-		// (loops.Run) can detect the content increase and trigger a retry
-		// with summarization.
-		found := false
-		for c := range state.Contents() {
-			for _, p := range c.Parts {
-				if text, ok := p.(Text); ok && strings.Contains(string(text), "partial output") {
-					found = true
-				}
+	initialState := NewPrompts("", nil)
+	_, state, err := phase(context.Background(), initialState)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if state == nil {
+		t.Fatal("expected non-nil state")
+	}
+	// The returned state must contain the partial output so the caller
+	// (loops.Run) can detect the content increase and trigger a retry
+	// with summarization.
+	found := false
+	for c := range state.Contents() {
+		for _, p := range c.Parts {
+			if text, ok := p.(Text); ok && strings.Contains(string(text), "partial output") {
+				found = true
 			}
 		}
-		if !found {
-			t.Fatal("expected partial output in returned state")
-		}
-		if calls != 1 {
-			t.Fatalf("expected 1 call, got %d", calls)
-		}
-	})
+	}
+	if !found {
+		t.Fatal("expected partial output in returned state")
+	}
+	if calls != 1 {
+		t.Fatalf("expected 1 call, got %d", calls)
+	}
 }

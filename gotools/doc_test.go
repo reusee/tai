@@ -70,38 +70,36 @@ func Foo() int { return 42 }
 		t.Fatal(err)
 	}
 
-	dscope.New(
+	scope := dscope.New(
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
 		func() LoadDir { return LoadDir(root) },
 		func() DocPatterns { return DocPatterns{"example.com/docpkg/mypkg"} },
-	).Call(func(
-		provider PartsProvider,
-		countTokens generators.BPETokenCounter,
-	) {
-		parts, err := provider.Parts(1<<20, countTokens, nil)
-		if err != nil {
-			t.Fatalf("provider.Parts failed: %v", err)
+	)
+	provider := scope.Get[PartsProvider]()
+	countTokens := scope.Get[generators.BPETokenCounter]()
+	parts, err := provider.Parts(1<<20, countTokens, nil)
+	if err != nil {
+		t.Fatalf("provider.Parts failed: %v", err)
+	}
+	found := false
+	for _, part := range parts {
+		text, ok := part.(generators.Text)
+		if !ok {
+			continue
 		}
-		found := false
-		for _, part := range parts {
-			text, ok := part.(generators.Text)
-			if !ok {
-				continue
-			}
-			s := string(text)
-			if strings.Contains(s, "begin of context package example.com/docpkg/mypkg") {
-				found = true
-				if !strings.Contains(s, "Package mypkg demonstrates documentation") {
-					t.Fatalf("package doc block must contain the package documentation:\n%s", s)
-				}
+		s := string(text)
+		if strings.Contains(s, "begin of context package example.com/docpkg/mypkg") {
+			found = true
+			if !strings.Contains(s, "Package mypkg demonstrates documentation") {
+				t.Fatalf("package doc block must contain the package documentation:\n%s", s)
 			}
 		}
-		if !found {
-			t.Fatal("expected package doc in context parts")
-		}
-	})
+	}
+	if !found {
+		t.Fatal("expected package doc in context parts")
+	}
 }
 
 func TestPartsProviderDocErrorSurfaces(t *testing.T) {
@@ -119,24 +117,22 @@ func TestPartsProviderDocErrorSurfaces(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dscope.New(
+	scope := dscope.New(
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
 		func() LoadDir { return LoadDir(root) },
 		func() DocPatterns { return DocPatterns{"example.com/docpkg/nonexistent"} },
-	).Call(func(
-		provider PartsProvider,
-		countTokens generators.BPETokenCounter,
-	) {
-		_, err := provider.Parts(1<<20, countTokens, nil)
-		if err == nil {
-			t.Fatal("expected error for nonexistent doc package")
-		}
-		if !strings.Contains(err.Error(), "go doc") {
-			t.Fatalf("expected error to mention go doc, got: %v", err)
-		}
-	})
+	)
+	provider := scope.Get[PartsProvider]()
+	countTokens := scope.Get[generators.BPETokenCounter]()
+	_, err := provider.Parts(1<<20, countTokens, nil)
+	if err == nil {
+		t.Fatal("expected error for nonexistent doc package")
+	}
+	if !strings.Contains(err.Error(), "go doc") {
+		t.Fatalf("expected error to mention go doc, got: %v", err)
+	}
 }
 
 func TestRenderPackageDocWithoutUnexported(t *testing.T) {

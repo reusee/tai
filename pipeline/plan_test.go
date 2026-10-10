@@ -14,28 +14,25 @@ import (
 )
 
 func TestSystemPromptPlan(t *testing.T) {
-	dscope.New(
+	prompt := dscope.New(
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
 		func() codetypes.PartsProvider { return mockPartsProvider{} },
-	).Call(func(
-		prompt SystemPrompt,
-	) {
-		s := string(prompt)
-		if !strings.Contains(s, "Plan-Op Block Kind") {
-			t.Fatal("system prompt must include the plan-op section in every codes session")
-		}
-		if !strings.Contains(s, "You decide whether to plan") {
-			t.Fatal("system prompt must let the model decide whether to plan")
-		}
-		if !strings.Contains(s, "needs no plan") {
-			t.Fatal("system prompt must state that a simple task needs no plan")
-		}
-		if !strings.Contains(s, "the flow then ends") {
-			t.Fatal("system prompt must state that marking the plan root done ends the flow")
-		}
-	})
+	).Get[SystemPrompt]()
+	s := string(prompt)
+	if !strings.Contains(s, "Plan-Op Block Kind") {
+		t.Fatal("system prompt must include the plan-op section in every codes session")
+	}
+	if !strings.Contains(s, "You decide whether to plan") {
+		t.Fatal("system prompt must let the model decide whether to plan")
+	}
+	if !strings.Contains(s, "needs no plan") {
+		t.Fatal("system prompt must state that a simple task needs no plan")
+	}
+	if !strings.Contains(s, "the flow then ends") {
+		t.Fatal("system prompt must state that marking the plan root done ends the flow")
+	}
 }
 
 // TestPendingPlanEntries verifies the pending-entry collector behind

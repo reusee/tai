@@ -41,16 +41,15 @@ func TestConfigsLoaderIncludesGoModuleRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dscope.New(
+	loader := dscope.New(
 		modes.ForTest(t),
 		new(Module),
-	).Call(func(loader configs.Loader) {
-		var name flags.ModelName
-		if err := loader.AssignFirst("model_name", &name); err != nil {
-			t.Fatal(err)
-		}
-		if name != "module-config" {
-			t.Fatalf("expected %q, got %q", "module-config", name)
-		}
-	})
+	).Get[configs.Loader]()
+	var name flags.ModelName
+	if err := loader.AssignFirst("model_name", &name); err != nil {
+		t.Fatal(err)
+	}
+	if name != "module-config" {
+		t.Fatalf("expected %q, got %q", "module-config", name)
+	}
 }

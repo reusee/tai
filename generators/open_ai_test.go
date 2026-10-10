@@ -215,28 +215,25 @@ func TestStateToOpenAIMessages(t *testing.T) {
 }
 
 func TestAzureConfiguration(t *testing.T) {
-	dscope.New(
+	newAzure := dscope.New(
 		new(Module),
 		modes.ForTest(t),
-	).Call(func(
-		newAzure NewAzure,
-	) {
-		g := newAzure(Spec{
-			BaseURL:    "https://foo.openai.azure.com/",
-			Model:      "my-deployment",
-			APIVersion: "2024-05-01-preview",
-			APIKey:     "my-key",
-		})
-		if g.spec.IsAzure == nil || !*g.spec.IsAzure {
-			t.Fatal("IsAzure should be true")
-		}
-		if g.apiKey != "my-key" {
-			t.Fatalf("wrong key: %s", g.apiKey)
-		}
-		if g.spec.APIVersion != "2024-05-01-preview" {
-			t.Fatalf("wrong version: %s", g.spec.APIVersion)
-		}
+	).Get[NewAzure]()
+	g := newAzure(Spec{
+		BaseURL:    "https://foo.openai.azure.com/",
+		Model:      "my-deployment",
+		APIVersion: "2024-05-01-preview",
+		APIKey:     "my-key",
 	})
+	if g.spec.IsAzure == nil || !*g.spec.IsAzure {
+		t.Fatal("IsAzure should be true")
+	}
+	if g.apiKey != "my-key" {
+		t.Fatalf("wrong key: %s", g.apiKey)
+	}
+	if g.spec.APIVersion != "2024-05-01-preview" {
+		t.Fatalf("wrong version: %s", g.spec.APIVersion)
+	}
 }
 
 func TestOpenAIStreamingPreservesPartialState(t *testing.T) {
@@ -268,43 +265,40 @@ func TestOpenAIStreamingPreservesPartialState(t *testing.T) {
 	// setting them with setTestOpenAIInjects. The nets.HTTPClient is
 	// forked to point at the test server. See anytexts.TestContextPrompt
 	// for the reference dscope test pattern.
-	dscope.New(
+	newOpenAI := dscope.New(
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
 		func() nets.HTTPClient {
 			return nets.HTTPClient{server.Client()}
 		},
-	).Call(func(
-		newOpenAI NewOpenAI,
-	) {
-		baseState := NewPrompts("", []*Content{
-			{Role: RoleUser, Parts: []Part{Text("hi")}},
-		})
-
-		// Allow 1 successful AppendContent; the 2nd call (from the second
-		// flushed chunk) will fail. The first chunk's content is already
-		// in ret when the error occurs.
-		failingState := &errorAfterNState{
-			State:    baseState,
-			maxCalls: 1,
-		}
-
-		disableTools := true
-		openai := newOpenAI(Spec{
-			BaseURL:      server.URL,
-			Model:        "test-model",
-			DisableTools: &disableTools,
-		}, "test-key")
-
-		ret, err := openai.Generate(context.Background(), failingState, nil)
-		if err == nil {
-			t.Fatal("expected error from failing AppendContent")
-		}
-		if ret == nil {
-			t.Fatal("expected partial state to be preserved on error, got nil")
-		}
+	).Get[NewOpenAI]()
+	baseState := NewPrompts("", []*Content{
+		{Role: RoleUser, Parts: []Part{Text("hi")}},
 	})
+
+	// Allow 1 successful AppendContent; the 2nd call (from the second
+	// flushed chunk) will fail. The first chunk's content is already
+	// in ret when the error occurs.
+	failingState := &errorAfterNState{
+		State:    baseState,
+		maxCalls: 1,
+	}
+
+	disableTools := true
+	openai := newOpenAI(Spec{
+		BaseURL:      server.URL,
+		Model:        "test-model",
+		DisableTools: &disableTools,
+	}, "test-key")
+
+	ret, err := openai.Generate(context.Background(), failingState, nil)
+	if err == nil {
+		t.Fatal("expected error from failing AppendContent")
+	}
+	if ret == nil {
+		t.Fatal("expected partial state to be preserved on error, got nil")
+	}
 }
 
 func TestOpenAIErrorNoErrorField(t *testing.T) {
@@ -320,33 +314,30 @@ func TestOpenAIErrorNoErrorField(t *testing.T) {
 	// properly initialized by dscope.InjectStruct. The nets.HTTPClient
 	// is forked to point at the test server. See anytexts.TestContextPrompt
 	// for the reference dscope test pattern.
-	dscope.New(
+	newOpenAI := dscope.New(
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
 		func() nets.HTTPClient {
 			return nets.HTTPClient{server.Client()}
 		},
-	).Call(func(
-		newOpenAI NewOpenAI,
-	) {
-		disableTools := true
-		openai := newOpenAI(Spec{
-			BaseURL:      server.URL,
-			Model:        "test-model",
-			DisableTools: &disableTools,
-		}, "test-key")
+	).Get[NewOpenAI]()
+	disableTools := true
+	openai := newOpenAI(Spec{
+		BaseURL:      server.URL,
+		Model:        "test-model",
+		DisableTools: &disableTools,
+	}, "test-key")
 
-		state := NewPrompts("", []*Content{
-			{Role: RoleUser, Parts: []Part{Text("hi")}},
-		})
-
-		_, err := openai.Generate(context.Background(), state, nil)
-		// Should return an error, not panic
-		if err == nil {
-			t.Fatal("expected error for non-200 status without error field")
-		}
+	state := NewPrompts("", []*Content{
+		{Role: RoleUser, Parts: []Part{Text("hi")}},
 	})
+
+	_, err := openai.Generate(context.Background(), state, nil)
+	// Should return an error, not panic
+	if err == nil {
+		t.Fatal("expected error for non-200 status without error field")
+	}
 }
 
 func TestOpenAIRecordsAPIErrorThroughInjectedRecorder(t *testing.T) {
@@ -362,7 +353,7 @@ func TestOpenAIRecordsAPIErrorThroughInjectedRecorder(t *testing.T) {
 
 	rec := &fakeEventRecorder{enabled: true}
 
-	dscope.New(
+	newOpenAI := dscope.New(
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
@@ -370,25 +361,22 @@ func TestOpenAIRecordsAPIErrorThroughInjectedRecorder(t *testing.T) {
 			return nets.HTTPClient{server.Client()}
 		},
 		func() EventRecorder { return rec },
-	).Call(func(
-		newOpenAI NewOpenAI,
-	) {
-		disableTools := true
-		openai := newOpenAI(Spec{
-			BaseURL:      server.URL,
-			Model:        "test-model",
-			DisableTools: &disableTools,
-		}, "test-key")
+	).Get[NewOpenAI]()
+	disableTools := true
+	openai := newOpenAI(Spec{
+		BaseURL:      server.URL,
+		Model:        "test-model",
+		DisableTools: &disableTools,
+	}, "test-key")
 
-		state := NewPrompts("", []*Content{
-			{Role: RoleUser, Parts: []Part{Text("hi")}},
-		})
-
-		_, err := openai.Generate(context.Background(), state, nil)
-		if err == nil {
-			t.Fatal("expected error for non-200 status without error field")
-		}
+	state := NewPrompts("", []*Content{
+		{Role: RoleUser, Parts: []Part{Text("hi")}},
 	})
+
+	_, err := openai.Generate(context.Background(), state, nil)
+	if err == nil {
+		t.Fatal("expected error for non-200 status without error field")
+	}
 
 	foundAPIError := false
 	for _, e := range rec.events {
@@ -464,46 +452,43 @@ func TestOpenAINonStreamingArrayContent(t *testing.T) {
 	}))
 	defer server.Close()
 
-	dscope.New(
+	newOpenAI := dscope.New(
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
 		func() nets.HTTPClient {
 			return nets.HTTPClient{server.Client()}
 		},
-	).Call(func(
-		newOpenAI NewOpenAI,
-	) {
-		disableTools := true
-		openai := newOpenAI(Spec{
-			BaseURL:      server.URL,
-			Model:        "test-model",
-			DisableTools: &disableTools,
-		}, "test-key")
+	).Get[NewOpenAI]()
+	disableTools := true
+	openai := newOpenAI(Spec{
+		BaseURL:      server.URL,
+		Model:        "test-model",
+		DisableTools: &disableTools,
+	}, "test-key")
 
-		state := NewPrompts("", []*Content{
-			{Role: RoleUser, Parts: []Part{Text("hi")}},
-		})
+	state := NewPrompts("", []*Content{
+		{Role: RoleUser, Parts: []Part{Text("hi")}},
+	})
 
-		newState, err := openai.Generate(context.Background(), state, &GenerateOptions{
-			NonStreaming: true,
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
+	newState, err := openai.Generate(context.Background(), state, &GenerateOptions{
+		NonStreaming: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 
-		found := false
-		for c := range newState.Contents() {
-			for _, p := range c.Parts {
-				if text, ok := p.(Text); ok && strings.Contains(string(text), "hello from array") {
-					found = true
-				}
+	found := false
+	for c := range newState.Contents() {
+		for _, p := range c.Parts {
+			if text, ok := p.(Text); ok && strings.Contains(string(text), "hello from array") {
+				found = true
 			}
 		}
-		if !found {
-			t.Fatal("expected array-form content to be captured as text")
-		}
-	})
+	}
+	if !found {
+		t.Fatal("expected array-form content to be captured as text")
+	}
 }
 
 func TestOpenAIBaseURLTrailingSlash(t *testing.T) {
@@ -529,37 +514,34 @@ func TestOpenAIBaseURLTrailingSlash(t *testing.T) {
 	}))
 	defer server.Close()
 
-	dscope.New(
+	newOpenAI := dscope.New(
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
 		func() nets.HTTPClient {
 			return nets.HTTPClient{server.Client()}
 		},
-	).Call(func(
-		newOpenAI NewOpenAI,
-	) {
-		disableTools := true
-		openai := newOpenAI(Spec{
-			BaseURL:      server.URL + "/",
-			Model:        "test-model",
-			DisableTools: &disableTools,
-		}, "test-key")
+	).Get[NewOpenAI]()
+	disableTools := true
+	openai := newOpenAI(Spec{
+		BaseURL:      server.URL + "/",
+		Model:        "test-model",
+		DisableTools: &disableTools,
+	}, "test-key")
 
-		state := NewPrompts("", []*Content{
-			{Role: RoleUser, Parts: []Part{Text("hi")}},
-		})
-
-		if _, err := openai.Generate(context.Background(), state, &GenerateOptions{
-			NonStreaming: true,
-		}); err != nil {
-			t.Fatal(err)
-		}
-
-		if gotPath != "/chat/completions" {
-			t.Fatalf("unexpected request path %q, want /chat/completions", gotPath)
-		}
+	state := NewPrompts("", []*Content{
+		{Role: RoleUser, Parts: []Part{Text("hi")}},
 	})
+
+	if _, err := openai.Generate(context.Background(), state, &GenerateOptions{
+		NonStreaming: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if gotPath != "/chat/completions" {
+		t.Fatalf("unexpected request path %q, want /chat/completions", gotPath)
+	}
 }
 
 func TestOpenAIPreservedThinkingRequestKwargs(t *testing.T) {
@@ -575,44 +557,40 @@ func TestOpenAIPreservedThinkingRequestKwargs(t *testing.T) {
 	}))
 	defer server.Close()
 
-	dscope.New(
+	newOpenAI := dscope.New(
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
 		func() nets.HTTPClient {
 			return nets.HTTPClient{server.Client()}
 		},
-	).Call(func(
-		newOpenAI NewOpenAI,
-	) {
-		preservedThinking := true
-		openai := newOpenAI(Spec{
-			BaseURL:           server.URL,
-			Model:             "test-model",
-			PreservedThinking: &preservedThinking,
-		}, "test-key")
+	).Get[NewOpenAI]()
+	preservedThinking := true
+	openai := newOpenAI(Spec{
+		BaseURL:           server.URL,
+		Model:             "test-model",
+		PreservedThinking: &preservedThinking,
+	}, "test-key")
 
-		state := NewPrompts("", []*Content{
-			{Role: RoleUser, Parts: []Part{Text("hi")}},
-		})
-
-		if _, err := openai.Generate(context.Background(), state, &GenerateOptions{
-			NonStreaming: true,
-		}); err != nil {
-			t.Fatal(err)
-		}
-
-		var request ChatCompletionRequest
-		if err := json.Unmarshal(<-requestBody, &request); err != nil {
-			t.Fatal(err)
-		}
-		if request.ChatTemplateKwargs == nil {
-			t.Fatal("expected chat_template_kwargs in request")
-		}
-		if v, ok := request.ChatTemplateKwargs["preserve_thinking"].(bool); !ok || !v {
-			t.Fatalf("expected preserve_thinking=true, got %v", request.ChatTemplateKwargs)
-		}
+	state := NewPrompts("", []*Content{
+		{Role: RoleUser, Parts: []Part{Text("hi")}},
 	})
+	if _, err := openai.Generate(context.Background(), state, &GenerateOptions{
+		NonStreaming: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var request ChatCompletionRequest
+	if err := json.Unmarshal(<-requestBody, &request); err != nil {
+		t.Fatal(err)
+	}
+	if request.ChatTemplateKwargs == nil {
+		t.Fatal("expected chat_template_kwargs in request")
+	}
+	if v, ok := request.ChatTemplateKwargs["preserve_thinking"].(bool); !ok || !v {
+		t.Fatalf("expected preserve_thinking=true, got %v", request.ChatTemplateKwargs)
+	}
 }
 
 func TestTemperatureAndMaxTokensOmittedWhenNotSet(t *testing.T) {

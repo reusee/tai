@@ -92,9 +92,7 @@ func goLoadFallbackScope(t *testing.T, dir string) dscope.Scope {
 // goLoadFallbackProvider resolves the context provider from a scope the way
 // the generation pipeline does.
 func goLoadFallbackProvider(scope dscope.Scope) (provider PartsProvider) {
-	scope.Call(func(p PartsProvider) {
-		provider = p
-	})
+	provider = scope.Get[PartsProvider]()
 	return
 }
 

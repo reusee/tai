@@ -73,10 +73,7 @@ func TestDefaultCommandAutoDetection(t *testing.T) {
 func TestGoModuleCommandKeepsGoPartsProvider(t *testing.T) {
 	scope := dscope.New(new(Module)).Fork(modes.ForTest(t))
 	scope = GoModuleCommand.Scope(scope)
-	var provider codetypes.PartsProvider
-	scope.Call(func(p codetypes.PartsProvider) {
-		provider = p
-	})
+	provider := scope.Get[codetypes.PartsProvider]()
 	if _, ok := provider.(gotools.PartsProvider); !ok {
 		t.Fatalf("the go command's parts provider must satisfy gotools.PartsProvider, got %T", provider)
 	}

@@ -37,20 +37,24 @@ var RecordCommand = apps.New("record",
 		runAnalysis records.RunAnalysis,
 		showSession records.ShowSession,
 		listSessions records.ListSessions,
-	) {
+	) apps.MainErr {
 		ctx := context.Background()
 
 		if bool(analyze) {
-			ce(runAnalysis(ctx, int64(sessionID), output))
-			return
+			if err := runAnalysis(ctx, int64(sessionID), output); err != nil {
+				return err
+			}
+			return nil
 		}
 
 		if int64(sessionID) != 0 {
-			ce(showSession(int64(sessionID), output))
-			return
+			if err := showSession(int64(sessionID), output); err != nil {
+				return err
+			}
+			return nil
 		}
 
-		ce(listSessions(int(limit), output))
+		return listSessions(int(limit), output)
 	},
 	modes.ForProduction(),
 	// TUI mode swaps the command-line output of the browsing modes for

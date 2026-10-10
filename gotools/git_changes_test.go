@@ -283,37 +283,35 @@ func TestPartsOrdersFocusPackagesByGitChanges(t *testing.T) {
 		modes.ForTest(t),
 		new(Module),
 	)
-	scope.Fork(
+	scope = scope.Fork(
 		func() LoadDir { return LoadDir(root) },
-	).Call(func(
-		provider PartsProvider,
-		countTokens generators.BPETokenCounter,
-	) {
-		parts, err := provider.Parts(1<<20, countTokens, nil)
-		if err != nil {
-			t.Fatalf("Parts failed: %v", err)
+	)
+	provider := scope.Get[PartsProvider]()
+	countTokens := scope.Get[generators.BPETokenCounter]()
+	parts, err := provider.Parts(1<<20, countTokens, nil)
+	if err != nil {
+		t.Fatalf("Parts failed: %v", err)
+	}
+	posA, posB := -1, -1
+	for i, part := range parts {
+		text, ok := part.(generators.Text)
+		if !ok {
+			continue
 		}
-		posA, posB := -1, -1
-		for i, part := range parts {
-			text, ok := part.(generators.Text)
-			if !ok {
-				continue
-			}
-			s := string(text)
-			if strings.Contains(s, "begin of focus package example.com/changes/a") {
-				posA = i
-			}
-			if strings.Contains(s, "begin of focus package example.com/changes/b") {
-				posB = i
-			}
+		s := string(text)
+		if strings.Contains(s, "begin of focus package example.com/changes/a") {
+			posA = i
 		}
-		if posA == -1 || posB == -1 {
-			t.Fatalf("focus package documentation for a or b not found in parts (posA=%d posB=%d)", posA, posB)
+		if strings.Contains(s, "begin of focus package example.com/changes/b") {
+			posB = i
 		}
-		if posA <= posB {
-			t.Fatalf("a (3 commits) must appear after b (1 commit), got posA=%d posB=%d", posA, posB)
-		}
-	})
+	}
+	if posA == -1 || posB == -1 {
+		t.Fatalf("focus package documentation for a or b not found in parts (posA=%d posB=%d)", posA, posB)
+	}
+	if posA <= posB {
+		t.Fatalf("a (3 commits) must appear after b (1 commit), got posA=%d posB=%d", posA, posB)
+	}
 }
 
 func TestPartsOrdersContextPackagesByGitChanges(t *testing.T) {
@@ -368,40 +366,38 @@ func TestPartsOrdersContextPackagesByGitChanges(t *testing.T) {
 		modes.ForTest(t),
 		new(Module),
 	)
-	scope.Fork(
+	scope = scope.Fork(
 		func() LoadDir { return LoadDir(root) },
 		func() LoadPatterns { return LoadPatterns{"./focus/..."} },
 		func() ContextPatterns { return ContextPatterns{"./actx", "./bctx"} },
-	).Call(func(
-		provider PartsProvider,
-		countTokens generators.BPETokenCounter,
-	) {
-		parts, err := provider.Parts(1<<20, countTokens, nil)
-		if err != nil {
-			t.Fatalf("Parts failed: %v", err)
+	)
+	provider := scope.Get[PartsProvider]()
+	countTokens := scope.Get[generators.BPETokenCounter]()
+	parts, err := provider.Parts(1<<20, countTokens, nil)
+	if err != nil {
+		t.Fatalf("Parts failed: %v", err)
+	}
+	posActx, posBctx, posFocus := -1, -1, -1
+	for i, part := range parts {
+		text, ok := part.(generators.Text)
+		if !ok {
+			continue
 		}
-		posActx, posBctx, posFocus := -1, -1, -1
-		for i, part := range parts {
-			text, ok := part.(generators.Text)
-			if !ok {
-				continue
-			}
-			s := string(text)
-			if strings.Contains(s, "begin of context file "+filepath.Join(root, "actx", "actx.go")) {
-				posActx = i
-			}
-			if strings.Contains(s, "begin of context file "+filepath.Join(root, "bctx", "bctx.go")) {
-				posBctx = i
-			}
-			if strings.Contains(s, "begin of focus package example.com/mod/focus") {
-				posFocus = i
-			}
+		s := string(text)
+		if strings.Contains(s, "begin of context file "+filepath.Join(root, "actx", "actx.go")) {
+			posActx = i
 		}
-		if posActx == -1 || posBctx == -1 || posFocus == -1 {
-			t.Fatalf("context files or focus package documentation not found in parts (posActx=%d posBctx=%d posFocus=%d)", posActx, posBctx, posFocus)
+		if strings.Contains(s, "begin of context file "+filepath.Join(root, "bctx", "bctx.go")) {
+			posBctx = i
 		}
-		if posBctx >= posActx {
-			t.Fatalf("bctx (1 commit) must appear before actx (3 commits), got posBctx=%d posActx=%d", posBctx, posActx)
+		if strings.Contains(s, "begin of focus package example.com/mod/focus") {
+			posFocus = i
 		}
-	})
+	}
+	if posActx == -1 || posBctx == -1 || posFocus == -1 {
+		t.Fatalf("context files or focus package documentation not found in parts (posActx=%d posBctx=%d posFocus=%d)", posActx, posBctx, posFocus)
+	}
+	if posBctx >= posActx {
+		t.Fatalf("bctx (1 commit) must appear before actx (3 commits), got posBctx=%d posActx=%d", posBctx, posActx)
+	}
 }

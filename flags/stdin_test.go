@@ -30,11 +30,10 @@ func TestParseStdinFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	result.Call(func(chats Chats) {
-		if len(chats) != 1 || chats[0] != "stdin content" {
-			t.Fatalf("expected [stdin content], got %v", chats)
-		}
-	})
+	chats := result.Get[Chats]()
+	if len(chats) != 1 || chats[0] != "stdin content" {
+		t.Fatalf("expected [stdin content], got %v", chats)
+	}
 }
 
 func TestParseStdinAndChat(t *testing.T) {
@@ -44,11 +43,10 @@ func TestParseStdinAndChat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	result.Call(func(chats Chats) {
-		if len(chats) != 2 || chats[0] != "stdin content" || chats[1] != "hello" {
-			t.Fatalf("expected [stdin content hello], got %v", chats)
-		}
-	})
+	chats := result.Get[Chats]()
+	if len(chats) != 2 || chats[0] != "stdin content" || chats[1] != "hello" {
+		t.Fatalf("expected [stdin content hello], got %v", chats)
+	}
 }
 
 func TestParseChatAndStdin(t *testing.T) {
@@ -58,19 +56,17 @@ func TestParseChatAndStdin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	result.Call(func(chats Chats) {
-		if len(chats) != 2 || chats[0] != "hello" || chats[1] != "stdin content" {
-			t.Fatalf("expected [hello stdin content], got %v", chats)
-		}
-	})
+	chats := result.Get[Chats]()
+	if len(chats) != 2 || chats[0] != "hello" || chats[1] != "stdin content" {
+		t.Fatalf("expected [hello stdin content], got %v", chats)
+	}
 }
 
 func TestStdinFlagRegistered(t *testing.T) {
 	scope := dscope.New(Module{})
-	scope.Call(func(chats Chats) {
-		keys := chats.Keys()
-		if _, ok := keys["-stdin"]; !ok {
-			t.Fatal("-stdin flag not registered in Chats.Keys()")
-		}
-	})
+	chats := scope.Get[Chats]()
+	keys := chats.Keys()
+	if _, ok := keys["-stdin"]; !ok {
+		t.Fatal("-stdin flag not registered in Chats.Keys()")
+	}
 }

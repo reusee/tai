@@ -24,7 +24,7 @@ func (aiMockGenerator) Generate(context.Context, generators.State, *generators.G
 }
 
 func TestAISystemPromptAssemblesSections(t *testing.T) {
-	dscope.New(
+	getSystemPrompt := dscope.New(
 		new(Module),
 	).Fork(
 		modes.ForTest(t),
@@ -34,34 +34,31 @@ func TestAISystemPromptAssemblesSections(t *testing.T) {
 			}
 		},
 		func() flags.Shell { return flags.Shell(true) },
-	).Call(func(
-		getSystemPrompt AISystemPrompt,
-	) {
-		prompt, err := getSystemPrompt()
-		if err != nil {
-			t.Fatal(err)
+	).Get[AISystemPrompt]()
+	prompt, err := getSystemPrompt()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The system prompt assembles every section through
+	// PromptSections: the base assistant text, the unified block
+	// format, the shell kind prompt, and the memory section.
+	// Components carry no reminder text; the late reminder is the
+	// verbatim system prompt restate in the user prompt. See
+	// TheoryOfAIComponents.
+	for _, want := range []string{
+		"提供有用的帮助",
+		"Structured Output Format",
+		"Shell Block Kind",
+		"memory-delete",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("system prompt must include %q", want)
 		}
-		// The system prompt assembles every section through
-		// PromptSections: the base assistant text, the unified block
-		// format, the shell kind prompt, and the memory section.
-		// Components carry no reminder text; the late reminder is the
-		// verbatim system prompt restate in the user prompt. See
-		// TheoryOfAIComponents.
-		for _, want := range []string{
-			"提供有用的帮助",
-			"Structured Output Format",
-			"Shell Block Kind",
-			"memory-delete",
-		} {
-			if !strings.Contains(prompt, want) {
-				t.Fatalf("system prompt must include %q", want)
-			}
-		}
-		// The continue component is excluded, so its prompt is absent.
-		if strings.Contains(prompt, "Continue Block Kind") {
-			t.Fatal("system prompt must not include continue block prompt; the ai command does not process continue blocks")
-		}
-	})
+	}
+	// The continue component is excluded, so its prompt is absent.
+	if strings.Contains(prompt, "Continue Block Kind") {
+		t.Fatal("system prompt must not include continue block prompt; the ai command does not process continue blocks")
+	}
 }
 
 func TestAIPromptSectionsGating(t *testing.T) {
@@ -98,23 +95,20 @@ func TestAIPromptSectionsGating(t *testing.T) {
 				},
 			}
 			defs = append(defs, tc.defs...)
-			dscope.New(
+			comps := dscope.New(
 				new(Module),
-			).Fork(defs...).Call(func(
-				comps AIComponents,
-			) {
-				sections := comps.PromptSections()
-				for _, want := range tc.wantSubstr {
-					if !strings.Contains(sections, want) {
-						t.Fatalf("prompt sections must include %q", want)
-					}
+			).Fork(defs...).Get[AIComponents]()
+			sections := comps.PromptSections()
+			for _, want := range tc.wantSubstr {
+				if !strings.Contains(sections, want) {
+					t.Fatalf("prompt sections must include %q", want)
 				}
-				for _, not := range tc.notSubstr {
-					if strings.Contains(sections, not) {
-						t.Fatalf("prompt sections must not include %q", not)
-					}
+			}
+			for _, not := range tc.notSubstr {
+				if strings.Contains(sections, not) {
+					t.Fatalf("prompt sections must not include %q", not)
 				}
-			})
+			}
 		})
 	}
 }
@@ -132,7 +126,7 @@ func TestMemoryPromptsUseUncommonChineseDelimiter(t *testing.T) {
 	if strings.Contains(prompt, "<<MEMEND") {
 		t.Fatal("memoryBlockSystemPrompt must not display the legacy MEMEND example delimiter")
 	}
-	dscope.New(
+	comps := dscope.New(
 		new(Module),
 	).Fork(
 		modes.ForTest(t),
@@ -141,11 +135,10 @@ func TestMemoryPromptsUseUncommonChineseDelimiter(t *testing.T) {
 				return aiMockGenerator{}, nil
 			}
 		},
-	).Call(func(comps AIComponents) {
-		if !strings.Contains(comps.PromptSections(), "uncommon Chinese two-character word") {
-			t.Fatal("AIComponents must embed the unified BlockFormatSystemPrompt, which states the delimiter policy")
-		}
-	})
+	).Get[AIComponents]()
+	if !strings.Contains(comps.PromptSections(), "uncommon Chinese two-character word") {
+		t.Fatal("AIComponents must embed the unified BlockFormatSystemPrompt, which states the delimiter policy")
+	}
 }
 
 func TestMemoryPromptsTeachDeletion(t *testing.T) {
@@ -165,7 +158,7 @@ func TestMemoryPromptsTeachDeletion(t *testing.T) {
 }
 
 func TestAIComponentsExcludesContinueComponent(t *testing.T) {
-	dscope.New(
+	comps := dscope.New(
 		new(Module),
 	).Fork(
 		modes.ForTest(t),
@@ -174,53 +167,50 @@ func TestAIComponentsExcludesContinueComponent(t *testing.T) {
 				return aiMockGenerator{}, nil
 			}
 		},
-	).Call(func(
-		comps AIComponents,
-	) {
-		// The interactive ai chat receives user input through OnIdle, so a
-		// continue component would only feed the model's own body back as
-		// user content, allowing meaningless self-prompts (e.g., "Please
-		// provide the next task or user input") to bypass the prompt.
-		// See TheoryOfAIComponents.
-		if strings.Contains(comps.PromptSections(), "Continue Block Kind") {
-			t.Fatal("ai command must not include the continue block prompt section")
+	).Get[AIComponents]()
+	// The interactive ai chat receives user input through OnIdle, so a
+	// continue component would only feed the model's own body back as
+	// user content, allowing meaningless self-prompts (e.g., "Please
+	// provide the next task or user input") to bypass the prompt.
+	// See TheoryOfAIComponents.
+	if strings.Contains(comps.PromptSections(), "Continue Block Kind") {
+		t.Fatal("ai command must not include the continue block prompt section")
+	}
+	for _, comp := range comps.Processable() {
+		if comp.Kind == "continue" {
+			t.Fatal("ai command must not include a processable continue component")
 		}
-		for _, comp := range comps.Processable() {
-			if comp.Kind == "continue" {
-				t.Fatal("ai command must not include a processable continue component")
-			}
-		}
+	}
 
-		// Disabled kinds are announced explicitly so the model does not
-		// emit them from habit; unprocessed blocks would be silently
-		// ignored while implying actions that never happened. See
-		// components.TheoryOfDisabledBlocks.
-		prompt := comps.PromptSections()
-		if !strings.Contains(prompt, "Disabled Block Kinds") {
-			t.Fatal("ai command should carry the disabled-blocks notice")
+	// Disabled kinds are announced explicitly so the model does not
+	// emit them from habit; unprocessed blocks would be silently
+	// ignored while implying actions that never happened. See
+	// components.TheoryOfDisabledBlocks.
+	prompt := comps.PromptSections()
+	if !strings.Contains(prompt, "Disabled Block Kinds") {
+		t.Fatal("ai command should carry the disabled-blocks notice")
+	}
+	if !strings.Contains(prompt, "continue blocks are not accepted") {
+		t.Fatal("disabled-blocks notice should list continue")
+	}
+	if !strings.Contains(prompt, "change blocks are not processed") {
+		t.Fatal("disabled-blocks notice should list change")
+	}
+	if !strings.Contains(prompt, "shell execution is disabled") {
+		t.Fatal("disabled-blocks notice should list shell when the flag is off")
+	}
+	if strings.Contains(prompt, "the user profile is not updated") {
+		t.Fatal("disabled-blocks notice must not list memory when memory is enabled")
+	}
+	for _, comp := range comps.Processable() {
+		if comp.PromptSection != "" && strings.Contains(comp.PromptSection, "Disabled Block Kinds") {
+			t.Fatal("the notice component must be prompt-only, never processable")
 		}
-		if !strings.Contains(prompt, "continue blocks are not accepted") {
-			t.Fatal("disabled-blocks notice should list continue")
-		}
-		if !strings.Contains(prompt, "change blocks are not processed") {
-			t.Fatal("disabled-blocks notice should list change")
-		}
-		if !strings.Contains(prompt, "shell execution is disabled") {
-			t.Fatal("disabled-blocks notice should list shell when the flag is off")
-		}
-		if strings.Contains(prompt, "the user profile is not updated") {
-			t.Fatal("disabled-blocks notice must not list memory when memory is enabled")
-		}
-		for _, comp := range comps.Processable() {
-			if comp.PromptSection != "" && strings.Contains(comp.PromptSection, "Disabled Block Kinds") {
-				t.Fatal("the notice component must be prompt-only, never processable")
-			}
-		}
-	})
+	}
 }
 
 func TestAIComponentsIncludesIngestComponent(t *testing.T) {
-	dscope.New(
+	comps := dscope.New(
 		new(Module),
 	).Fork(
 		modes.ForTest(t),
@@ -229,40 +219,37 @@ func TestAIComponentsIncludesIngestComponent(t *testing.T) {
 				return aiMockGenerator{}, nil
 			}
 		},
-	).Call(func(
-		comps AIComponents,
-	) {
-		// Ingest blocks are processed in the ai generation loop: the
-		// shared component (pipeline.NewIngestComponent) teaches the kind
-		// and fetches the requested context, so the disabled-blocks
-		// notice must not list ingest. See TheoryOfAIComponents and
-		// blocks.TheoryOfIngestBlocks.
-		sections := comps.PromptSections()
-		if !strings.Contains(sections, "Ingest Block Kind") {
-			t.Fatal("prompt sections must include the ingest block prompt")
+	).Get[AIComponents]()
+	// Ingest blocks are processed in the ai generation loop: the
+	// shared component (pipeline.NewIngestComponent) teaches the kind
+	// and fetches the requested context, so the disabled-blocks
+	// notice must not list ingest. See TheoryOfAIComponents and
+	// blocks.TheoryOfIngestBlocks.
+	sections := comps.PromptSections()
+	if !strings.Contains(sections, "Ingest Block Kind") {
+		t.Fatal("prompt sections must include the ingest block prompt")
+	}
+	var processable bool
+	for _, comp := range comps.Processable() {
+		if comp.Kind == "ingest" {
+			processable = true
 		}
-		var processable bool
-		for _, comp := range comps.Processable() {
-			if comp.Kind == "ingest" {
-				processable = true
-			}
-		}
-		if !processable {
-			t.Fatal("ai command must include a processable ingest component")
-		}
-		if strings.Contains(sections, "additional files and network resources are not fetched") {
-			t.Fatal("disabled-blocks notice must not list ingest; the ai command processes ingest blocks")
-		}
-		// The Go-specific lsp tag documentation joins the prompt when the
-		// session's language-server handler resolves.
-		if !strings.Contains(sections, "LSP Tag") {
-			t.Fatal("prompt sections must include the lsp tag documentation when the gopls handler resolves")
-		}
-	})
+	}
+	if !processable {
+		t.Fatal("ai command must include a processable ingest component")
+	}
+	if strings.Contains(sections, "additional files and network resources are not fetched") {
+		t.Fatal("disabled-blocks notice must not list ingest; the ai command processes ingest blocks")
+	}
+	// The Go-specific lsp tag documentation joins the prompt when the
+	// session's language-server handler resolves.
+	if !strings.Contains(sections, "LSP Tag") {
+		t.Fatal("prompt sections must include the lsp tag documentation when the gopls handler resolves")
+	}
 }
 
 func TestNextSystemPromptListsDisabledBlocks(t *testing.T) {
-	dscope.New(
+	systemPrompt := dscope.New(
 		new(Module),
 	).Fork(
 		modes.ForTest(t),
@@ -271,35 +258,32 @@ func TestNextSystemPromptListsDisabledBlocks(t *testing.T) {
 				return aiMockGenerator{}, nil
 			}
 		},
-	).Call(func(
-		systemPrompt SystemPrompt,
-	) {
-		// The next command is a text-output command: it runs a
-		// single-shot loop with no components and no change-block
-		// handler, so no block kind is processed here. The notice states
-		// that explicitly. See components.TheoryOfDisabledBlocks
-		// and TheoryOfNextCommand.
-		prompt := string(systemPrompt)
-		if !strings.Contains(prompt, "Disabled Block Kinds") {
-			t.Fatal("next system prompt should carry the disabled-blocks notice")
-		}
-		if !strings.Contains(prompt, "shell execution is disabled") {
-			t.Fatal("next disabled-blocks notice should list shell")
-		}
-		if !strings.Contains(prompt, "continue blocks are not accepted") {
-			t.Fatal("next disabled-blocks notice should list continue")
-		}
-		if !strings.Contains(prompt, "change blocks are not processed") {
-			t.Fatal("next disabled-blocks notice should list change; the next command never applies change blocks")
-		}
-		if !strings.Contains(prompt, "additional files and network resources are not fetched") {
-			t.Fatal("next disabled-blocks notice should list ingest")
-		}
-	})
+	).Get[SystemPrompt]()
+	// The next command is a text-output command: it runs a
+	// single-shot loop with no components and no change-block
+	// handler, so no block kind is processed here. The notice states
+	// that explicitly. See components.TheoryOfDisabledBlocks
+	// and TheoryOfNextCommand.
+	prompt := string(systemPrompt)
+	if !strings.Contains(prompt, "Disabled Block Kinds") {
+		t.Fatal("next system prompt should carry the disabled-blocks notice")
+	}
+	if !strings.Contains(prompt, "shell execution is disabled") {
+		t.Fatal("next disabled-blocks notice should list shell")
+	}
+	if !strings.Contains(prompt, "continue blocks are not accepted") {
+		t.Fatal("next disabled-blocks notice should list continue")
+	}
+	if !strings.Contains(prompt, "change blocks are not processed") {
+		t.Fatal("next disabled-blocks notice should list change; the next command never applies change blocks")
+	}
+	if !strings.Contains(prompt, "additional files and network resources are not fetched") {
+		t.Fatal("next disabled-blocks notice should list ingest")
+	}
 }
 
 func TestAIComponentsIncludesFamilyExtraSystemPrompt(t *testing.T) {
-	dscope.New(
+	comps := dscope.New(
 		new(Module),
 	).Fork(
 		modes.ForTest(t),
@@ -312,9 +296,8 @@ func TestAIComponentsIncludesFamilyExtraSystemPrompt(t *testing.T) {
 		func() flags.FamilyExtraSystemPrompt {
 			return flags.FamilyExtraSystemPrompt{"gemini": {"gemini family prompt"}}
 		},
-	).Call(func(comps AIComponents) {
-		if !strings.Contains(comps.PromptSections(), "gemini family prompt") {
-			t.Fatal("expected family prompt in AI system prompt")
-		}
-	})
+	).Get[AIComponents]()
+	if !strings.Contains(comps.PromptSections(), "gemini family prompt") {
+		t.Fatal("expected family prompt in AI system prompt")
+	}
 }

@@ -40,7 +40,7 @@ func stubBuildGenerate() generators.BuildGenerate {
 
 func withRecorder(t *testing.T, enabled bool, fn func(*Recorder)) {
 	t.Helper()
-	dscope.New(
+	recorder := dscope.New(
 		modes.ForTest(t),
 		new(Module),
 		stubGetDefaultGenerator,
@@ -52,12 +52,11 @@ func withRecorder(t *testing.T, enabled bool, fn func(*Recorder)) {
 		func() Enabled {
 			return Enabled(enabled)
 		},
-	).Call(func(recorder *Recorder) {
-		if recorder == nil {
-			t.Fatal("recorder is nil")
-		}
-		fn(recorder)
-	})
+	).Get[*Recorder]()
+	if recorder == nil {
+		t.Fatal("recorder is nil")
+	}
+	fn(recorder)
 }
 
 func TestRecorderWritesTreeOperations(t *testing.T) {
@@ -155,7 +154,7 @@ func TestRecorderDisabledWritesNothing(t *testing.T) {
 }
 
 func TestRecorderNilWhenDBUnavailable(t *testing.T) {
-	dscope.New(
+	recorder := dscope.New(
 		modes.ForTest(t),
 		new(Module),
 		stubGetDefaultGenerator,
@@ -163,14 +162,13 @@ func TestRecorderNilWhenDBUnavailable(t *testing.T) {
 	).Fork(
 		func() DBPath { return "" },
 		func() Enabled { return Enabled(true) },
-	).Call(func(recorder *Recorder) {
-		if recorder != nil {
-			t.Fatal("expected nil recorder when db path is empty")
-		}
-		if recorder.Sink() != nil {
-			t.Fatal("a nil recorder must yield a nil sink")
-		}
-	})
+	).Get[*Recorder]()
+	if recorder != nil {
+		t.Fatal("expected nil recorder when db path is empty")
+	}
+	if recorder.Sink() != nil {
+		t.Fatal("a nil recorder must yield a nil sink")
+	}
 }
 
 func TestRecorderRecordsFullContentWithoutTruncation(t *testing.T) {

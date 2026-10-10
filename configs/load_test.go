@@ -51,9 +51,8 @@ secondary: "second"`), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	scope.Call(func(config overrideConfig) {
-		if config.Value != "second" {
-			t.Fatalf("expected %q (last path wins), got %q", "second", config.Value)
-		}
-	})
+	config := scope.Get[overrideConfig]()
+	if config.Value != "second" {
+		t.Fatalf("expected %q (last path wins), got %q", "second", config.Value)
+	}
 }

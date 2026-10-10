@@ -9,18 +9,22 @@ import (
 const TheoryOfApps = `
 An App is a self-contained application: a name, a usage description,
 a main function, the dscope modules that build its base scope, and the
-definitions layered on top. Main holds the function value untyped: the
-scope resolves its parameters at call time, so one concrete App type
-describes every application and New takes the function value as-is.
+definitions layered on top. Main holds the function value untyped; its
+result type is MainErr, and the host forks the function into the scope
+and gets its result — dscope's computation model, see
+dscope.TheoryOfScopeCore — so one concrete App type describes every
+application and New takes the function value as-is. A non-nil MainErr
+is raised as a panic: the app is the last frame of the run, so the
+error has no caller to return to.
 
 App unifies the two ways an application runs. Run builds a standalone
-scope from Modules, layers Name and Defs, and calls Main. A host that
+scope from Modules, layers Name and Defs, and forks Main. A host that
 already built a scope — a command dispatcher, a display frontend —
 composes Scope and Call instead: Scope layers the app's Defs onto the
-host scope, Call invokes Main with scope injection. Scope must be
-applied exactly once per run: each fork branch evaluates providers
-independently, so layering the same defs twice evaluates side-effecting
-providers twice.
+host scope, Call forks Main into it and raises a non-nil MainErr.
+Scope must be applied exactly once per run: each fork branch evaluates
+providers independently, so layering the same defs twice evaluates
+side-effecting providers twice.
 
 Apps is the subcommand mechanism. A host holds the selectable
 subcommands as one Apps registry definition in the scope; Apps carries
@@ -42,9 +46,9 @@ other configuration.
 
 // App is a self-contained application: its name and usage description,
 // the dscope modules that build its base scope, the definitions layered
-// on top, and the main function the scope calls. Main holds any
-// function value; New constructs an App without spelling the function
-// type. See TheoryOfApps.
+// on top, and the main function the scope runs. Main holds any function
+// value whose result type is MainErr; New constructs an App without
+// spelling the function type. See TheoryOfApps.
 type App struct {
 	Name        Name
 	Description string
@@ -53,6 +57,16 @@ type App struct {
 	Main        any
 }
 
+// MainErr is the result type of every app main function. It is a
+// defined type rather than an alias for error, so the scoped result
+// type is distinct: dscope resolves a provider's declared result type
+// exactly (see dscope.TheoryOfScopeCore). Run and Call raise a non-nil
+// MainErr as a panic. See TheoryOfApps.
+type MainErr error
+
+// Run runs the app standalone: it builds a scope from its Modules,
+// layers Name and Defs, forks Main, and raises a non-nil MainErr as a
+// panic. See TheoryOfApps.
 func (a App) Run() {
 	var defs []any
 	for _, mod := range a.Modules {
@@ -61,7 +75,10 @@ func (a App) Run() {
 	scope := dscope.New(defs...)
 	scope = scope.Fork(&a.Name)
 	scope = scope.Fork(a.Defs...)
-	scope.Call(a.Main)
+	err := scope.Fork(a.Main).Get[MainErr]()
+	if err != nil {
+		panic(err)
+	}
 }
 
 // Apps is the registry of selectable subcommand apps, held in a scope
@@ -117,10 +134,14 @@ func (a App) Scope(base dscope.Scope) dscope.Scope {
 	return base.Fork(a.Defs...)
 }
 
-// Call invokes the app's main function in scope, which must already
-// carry the app's definitions (see Scope). See TheoryOfApps.
+// Call runs the app's main function in scope, which must already carry
+// the app's definitions (see Scope), and raises a non-nil MainErr as a
+// panic. See TheoryOfApps.
 func (a App) Call(scope dscope.Scope) {
-	scope.Call(a.Main)
+	err := scope.Fork(a.Main).Get[MainErr]()
+	if err != nil {
+		panic(err)
+	}
 }
 
 // Keys registers the app as a selectable subcommand keyed by its name,

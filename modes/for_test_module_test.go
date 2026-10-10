@@ -7,12 +7,8 @@ import (
 )
 
 func TestForTest(t *testing.T) {
-	dscope.New(ForTest(t)).Call(func(
-		t *testing.T,
-		mode Mode,
-	) {
-		if mode != ModeDevelopment {
-			t.Fatal()
-		}
-	})
+	mode := dscope.New(ForTest(t)).Get[Mode]()
+	if mode != ModeDevelopment {
+		t.Fatal()
+	}
 }

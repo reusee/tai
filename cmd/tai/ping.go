@@ -277,11 +277,13 @@ var PingCommand = apps.New("ping",
 		familyExtra flags.FamilyExtraSystemPrompt,
 		modelFamily generators.ModelFamily,
 		flagThoughts flags.Thoughts,
-	) {
+	) apps.MainErr {
 		ctx := context.Background()
 
 		generator, err := getDefaultGenerator()
-		ce(err)
+		if err != nil {
+			return err
+		}
 
 		specs := randomPingBlocks()
 
@@ -345,7 +347,9 @@ var PingCommand = apps.New("ping",
 				err = e
 			}
 		}
-		ce(err)
+		if err != nil {
+			return err
+		}
 
 		if err := validatePingBlocks(result, specs); err != nil {
 			fmt.Fprintf(os.Stderr, "ping failed: %v\n", err)
@@ -362,6 +366,8 @@ var PingCommand = apps.New("ping",
 		}
 		fmt.Fprintf(output, "ping ok: model emitted %d blocks in order with exact parameters and bodies (%s)\n",
 			len(specs), strings.Join(rendered, ", "))
+
+		return nil
 	},
 	modes.ForProduction(),
 )

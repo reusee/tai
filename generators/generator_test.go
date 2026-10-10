@@ -30,8 +30,7 @@ func testGenerator(
 			},
 		)
 
-		var generator Generator
-		scope.Call(newGenerator).Assign(&generator)
+		generator := scope.Fork(newGenerator).Get[Generator]()
 
 		timezone := "Asia/Hong_Kong"
 		prompts := NewPrompts("", []*Content{
@@ -116,8 +115,7 @@ func testGenerator(
 			},
 		)
 
-		var generator Generator
-		scope.Call(newGenerator).Assign(&generator)
+		generator := scope.Fork(newGenerator).Get[Generator]()
 
 		schema := &Var{
 			Type: TypeObject,
@@ -189,8 +187,7 @@ func TestNonStreaming(t *testing.T) {
 			},
 		)
 
-		var generator Generator
-		scope.Call(newGenerator).Assign(&generator)
+		generator := scope.Fork(newGenerator).Get[Generator]()
 
 		prompts := NewPrompts("", []*Content{
 			{
@@ -1286,7 +1283,7 @@ func TestConfidentialModeRejectsNonZeroDataRetention(t *testing.T) {
 
 	// Confidential mode: only the zero-data-retention generator is
 	// usable; built-in shortcuts and the ollama shorthand are rejected.
-	dscope.New(
+	scope := dscope.New(
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
@@ -1294,51 +1291,51 @@ func TestConfidentialModeRejectsNonZeroDataRetention(t *testing.T) {
 			return configs.NewLoader([]string{configPath}, configs.LoaderConfig{})
 		},
 		func() ConfidentialMode { return true },
-	).Call(func(get GetGenerator) {
-		gen, err := get("zdr")
-		if err != nil {
-			t.Fatalf("zero-data-retention model should be allowed: %v", err)
-		}
-		if gen == nil {
-			t.Fatal("expected non-nil generator")
-		}
+	)
+	get := scope.Get[GetGenerator]()
+	gen, err := get("zdr")
+	if err != nil {
+		t.Fatalf("zero-data-retention model should be allowed: %v", err)
+	}
+	if gen == nil {
+		t.Fatal("expected non-nil generator")
+	}
 
-		_, err = get("plain")
-		if err == nil {
-			t.Fatal("non-zero-data-retention model must be rejected in confidential mode")
-		}
-		if !strings.Contains(err.Error(), "confidential mode") {
-			t.Fatalf("expected confidential mode error, got: %v", err)
-		}
+	_, err = get("plain")
+	if err == nil {
+		t.Fatal("non-zero-data-retention model must be rejected in confidential mode")
+	}
+	if !strings.Contains(err.Error(), "confidential mode") {
+		t.Fatalf("expected confidential mode error, got: %v", err)
+	}
 
-		_, err = get("flash")
-		if err == nil {
-			t.Fatal("built-in model must be rejected in confidential mode")
-		}
-		if !strings.Contains(err.Error(), "confidential mode") {
-			t.Fatalf("expected confidential mode error, got: %v", err)
-		}
+	_, err = get("flash")
+	if err == nil {
+		t.Fatal("built-in model must be rejected in confidential mode")
+	}
+	if !strings.Contains(err.Error(), "confidential mode") {
+		t.Fatalf("expected confidential mode error, got: %v", err)
+	}
 
-		_, err = get("ollama:llama3")
-		if err == nil {
-			t.Fatal("ollama model must be rejected in confidential mode")
-		}
-		if !strings.Contains(err.Error(), "confidential mode") {
-			t.Fatalf("expected confidential mode error, got: %v", err)
-		}
-	})
+	_, err = get("ollama:llama3")
+	if err == nil {
+		t.Fatal("ollama model must be rejected in confidential mode")
+	}
+	if !strings.Contains(err.Error(), "confidential mode") {
+		t.Fatalf("expected confidential mode error, got: %v", err)
+	}
 
 	// Sanity: without confidential mode, the plain model is usable.
-	dscope.New(
+	scope = dscope.New(
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
 		func() configs.Loader {
 			return configs.NewLoader([]string{configPath}, configs.LoaderConfig{})
 		},
-	).Call(func(get GetGenerator) {
-		if _, err := get("plain"); err != nil {
-			t.Fatalf("non-confidential mode should allow plain model: %v", err)
-		}
-	})
+	)
+	get = scope.Get[GetGenerator]()
+	if _, err := get("plain"); err != nil {
+		t.Fatalf("non-confidential mode should allow plain model: %v", err)
+	}
 }

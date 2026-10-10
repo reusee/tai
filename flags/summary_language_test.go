@@ -15,11 +15,10 @@ func TestSummaryLanguage(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		result.Call(func(language SummaryLanguage) {
-			if string(language) != "zh" {
-				t.Fatalf("expected zh, got %v", language)
-			}
-		})
+		language := result.Get[SummaryLanguage]()
+		if string(language) != "zh" {
+			t.Fatalf("expected zh, got %v", language)
+		}
 	})
 
 	t.Run("FlagNoArg", func(t *testing.T) {

@@ -123,9 +123,7 @@ func (Module) RunReview(
 				return flags.ModelName(model)
 			})
 			var reviewErr error
-			scope.Call(func(generateWithResultWithStats GenerateWithResultWithStats) {
-				_, _, reviewErr = generateWithResultWithStats(ctx, output)
-			})
+			_, _, reviewErr = scope.Get[GenerateWithResultWithStats]()(ctx, output)
 			if reviewErr != nil {
 				return fmt.Errorf("review with model %s: %w", model, reviewErr)
 			}

@@ -213,7 +213,7 @@ func TestUpdateMemoryFromBlockCombinesBlockAndPseudoCall(t *testing.T) {
 	text := "<<龘靐 memory\n<memory>\n  <memory-item>from block</memory-item>\n</memory>\n龘靐\n" +
 		"update_user_profile(items=['from pseudo-call'])"
 
-	dscope.New(
+	updateFn := dscope.New(
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
@@ -224,23 +224,20 @@ func TestUpdateMemoryFromBlockCombinesBlockAndPseudoCall(t *testing.T) {
 		},
 		func() CurrentMemory { return currentMemory },
 		func() AppendMemory { return appendMemory },
-	).Call(func(
-		updateFn UpdateMemoryFromBlock,
-	) {
-		err := updateFn("test-model", text)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if appended == nil {
-			t.Fatal("expected memory entry to be appended")
-		}
-		if len(appended.Items) != 2 {
-			t.Fatalf("expected 2 items, got %d: %v", len(appended.Items), appended.Items)
-		}
-		if appended.Items[0] != "from block" || appended.Items[1] != "from pseudo-call" {
-			t.Fatalf("unexpected items: %v", appended.Items)
-		}
-	})
+	).Get[UpdateMemoryFromBlock]()
+	err := updateFn("test-model", text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if appended == nil {
+		t.Fatal("expected memory entry to be appended")
+	}
+	if len(appended.Items) != 2 {
+		t.Fatalf("expected 2 items, got %d: %v", len(appended.Items), appended.Items)
+	}
+	if appended.Items[0] != "from block" || appended.Items[1] != "from pseudo-call" {
+		t.Fatalf("unexpected items: %v", appended.Items)
+	}
 }
 
 func TestUpdateMemoryFromBlockDeduplicates(t *testing.T) {
@@ -256,7 +253,7 @@ func TestUpdateMemoryFromBlockDeduplicates(t *testing.T) {
 	text := "<<龘靐 memory\n<memory>\n  <memory-item>duplicate</memory-item>\n</memory>\n龘靐\n" +
 		"update_user_profile(items=['duplicate'])"
 
-	dscope.New(
+	updateFn := dscope.New(
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
@@ -267,20 +264,17 @@ func TestUpdateMemoryFromBlockDeduplicates(t *testing.T) {
 		},
 		func() CurrentMemory { return currentMemory },
 		func() AppendMemory { return appendMemory },
-	).Call(func(
-		updateFn UpdateMemoryFromBlock,
-	) {
-		err := updateFn("test-model", text)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if appended == nil {
-			t.Fatal("expected memory entry to be appended")
-		}
-		if len(appended.Items) != 1 {
-			t.Fatalf("expected 1 deduplicated item, got %d: %v", len(appended.Items), appended.Items)
-		}
-	})
+	).Get[UpdateMemoryFromBlock]()
+	err := updateFn("test-model", text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if appended == nil {
+		t.Fatal("expected memory entry to be appended")
+	}
+	if len(appended.Items) != 1 {
+		t.Fatalf("expected 1 deduplicated item, got %d: %v", len(appended.Items), appended.Items)
+	}
 }
 
 func TestMergeMemoryItemsOrder(t *testing.T) {
@@ -313,7 +307,7 @@ func TestUpdateMemoryFromBlockWithPseudoCallOnly(t *testing.T) {
 
 	text := `I'll remember that. update_user_profile(items=["user likes Go"])`
 
-	dscope.New(
+	updateFn := dscope.New(
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
@@ -324,23 +318,20 @@ func TestUpdateMemoryFromBlockWithPseudoCallOnly(t *testing.T) {
 		},
 		func() CurrentMemory { return currentMemory },
 		func() AppendMemory { return appendMemory },
-	).Call(func(
-		updateFn UpdateMemoryFromBlock,
-	) {
-		err := updateFn("test-model", text)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if appended == nil {
-			t.Fatal("expected memory entry to be appended")
-		}
-		if len(appended.Items) != 1 {
-			t.Fatalf("expected 1 item from pseudo-call, got %d: %v", len(appended.Items), appended.Items)
-		}
-		if appended.Items[0] != "user likes Go" {
-			t.Fatalf("expected 'user likes Go', got %q", appended.Items[0])
-		}
-	})
+	).Get[UpdateMemoryFromBlock]()
+	err := updateFn("test-model", text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if appended == nil {
+		t.Fatal("expected memory entry to be appended")
+	}
+	if len(appended.Items) != 1 {
+		t.Fatalf("expected 1 item from pseudo-call, got %d: %v", len(appended.Items), appended.Items)
+	}
+	if appended.Items[0] != "user likes Go" {
+		t.Fatalf("expected 'user likes Go', got %q", appended.Items[0])
+	}
 }
 
 func TestUpdateMemoryFromBlockDeletesItems(t *testing.T) {
@@ -358,7 +349,7 @@ func TestUpdateMemoryFromBlockDeletesItems(t *testing.T) {
 
 	text := "<<龘靐 memory\n<memory>\n  <memory-item>user likes Go</memory-item>\n  <memory-delete>stale item</memory-delete>\n</memory>\n龘靐\n"
 
-	dscope.New(
+	updateFn := dscope.New(
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
@@ -369,23 +360,20 @@ func TestUpdateMemoryFromBlockDeletesItems(t *testing.T) {
 		},
 		func() CurrentMemory { return currentMemory },
 		func() AppendMemory { return appendMemory },
-	).Call(func(
-		updateFn UpdateMemoryFromBlock,
-	) {
-		err := updateFn("test-model", text)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if appended == nil {
-			t.Fatal("expected memory entry to be appended")
-		}
-		if len(appended.Items) != 2 {
-			t.Fatalf("expected 2 items after deletion, got %d: %v", len(appended.Items), appended.Items)
-		}
-		if appended.Items[0] != "user likes Go" || appended.Items[1] != "user knows Python" {
-			t.Fatalf("unexpected items: %v", appended.Items)
-		}
-	})
+	).Get[UpdateMemoryFromBlock]()
+	err := updateFn("test-model", text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if appended == nil {
+		t.Fatal("expected memory entry to be appended")
+	}
+	if len(appended.Items) != 2 {
+		t.Fatalf("expected 2 items after deletion, got %d: %v", len(appended.Items), appended.Items)
+	}
+	if appended.Items[0] != "user likes Go" || appended.Items[1] != "user knows Python" {
+		t.Fatalf("unexpected items: %v", appended.Items)
+	}
 }
 
 func TestUpdateMemoryFromBlockDeleteWinsOverAdd(t *testing.T) {
@@ -400,7 +388,7 @@ func TestUpdateMemoryFromBlockDeleteWinsOverAdd(t *testing.T) {
 
 	text := "<<龘靐 memory\n<memory>\n  <memory-item>item</memory-item>\n  <memory-delete>item</memory-delete>\n</memory>\n龘靐\n"
 
-	dscope.New(
+	updateFn := dscope.New(
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
@@ -411,20 +399,17 @@ func TestUpdateMemoryFromBlockDeleteWinsOverAdd(t *testing.T) {
 		},
 		func() CurrentMemory { return currentMemory },
 		func() AppendMemory { return appendMemory },
-	).Call(func(
-		updateFn UpdateMemoryFromBlock,
-	) {
-		err := updateFn("test-model", text)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if appended == nil {
-			t.Fatal("expected memory entry to be appended")
-		}
-		if len(appended.Items) != 0 {
-			t.Fatalf("expected deletion to win over addition, got %v", appended.Items)
-		}
-	})
+	).Get[UpdateMemoryFromBlock]()
+	err := updateFn("test-model", text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if appended == nil {
+		t.Fatal("expected memory entry to be appended")
+	}
+	if len(appended.Items) != 0 {
+		t.Fatalf("expected deletion to win over addition, got %v", appended.Items)
+	}
 }
 
 func TestUpdateMemoryFromBlockDeleteOnlyPersistsEntry(t *testing.T) {
@@ -442,7 +427,7 @@ func TestUpdateMemoryFromBlockDeleteOnlyPersistsEntry(t *testing.T) {
 
 	text := `That fact is outdated. delete_user_profile(items=["stale item"])`
 
-	dscope.New(
+	updateFn := dscope.New(
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
@@ -453,18 +438,15 @@ func TestUpdateMemoryFromBlockDeleteOnlyPersistsEntry(t *testing.T) {
 		},
 		func() CurrentMemory { return currentMemory },
 		func() AppendMemory { return appendMemory },
-	).Call(func(
-		updateFn UpdateMemoryFromBlock,
-	) {
-		err := updateFn("test-model", text)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if appended == nil {
-			t.Fatal("expected a deletion-only round to persist an entry")
-		}
-		if len(appended.Items) != 0 {
-			t.Fatalf("expected 0 items after deleting the only item, got %v", appended.Items)
-		}
-	})
+	).Get[UpdateMemoryFromBlock]()
+	err := updateFn("test-model", text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if appended == nil {
+		t.Fatal("expected a deletion-only round to persist an entry")
+	}
+	if len(appended.Items) != 0 {
+		t.Fatalf("expected 0 items after deleting the only item, got %v", appended.Items)
+	}
 }

@@ -36,7 +36,7 @@ func TestUserPromptNoFilesSkipsDirectoryScan(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dscope.New(
+	userPrompt := dscope.New(
 		new(Module),
 	).Fork(
 		modes.ForTest(t),
@@ -47,13 +47,10 @@ func TestUserPromptNoFilesSkipsDirectoryScan(t *testing.T) {
 		},
 		func() flags.Chats { return flags.Chats{"hello"} },
 		func() UserPromptDirectoryFallback { return false },
-	).Call(func(
-		userPrompt UserPrompt,
-	) {
-		if len(userPrompt) != 0 {
-			t.Fatalf("expected no user prompt parts, got %d", len(userPrompt))
-		}
-	})
+	).Get[UserPrompt]()
+	if len(userPrompt) != 0 {
+		t.Fatalf("expected no user prompt parts, got %d", len(userPrompt))
+	}
 }
 
 // TestAICommandDefsForkNoDirectoryFallback verifies the wiring itself:
@@ -76,7 +73,7 @@ func TestAICommandDefsForkNoDirectoryFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dscope.New(
+	userPrompt := dscope.New(
 		new(Module),
 	).Fork(
 		AICommand.Defs...,
@@ -95,11 +92,8 @@ func TestAICommandDefsForkNoDirectoryFallback(t *testing.T) {
 		func() memories.AppendMemory {
 			return func(*memories.MemoryEntry) error { return nil }
 		},
-	).Call(func(
-		userPrompt UserPrompt,
-	) {
-		if len(userPrompt) != 0 {
-			t.Fatalf("expected no user prompt parts, got %d", len(userPrompt))
-		}
-	})
+	).Get[UserPrompt]()
+	if len(userPrompt) != 0 {
+		t.Fatalf("expected no user prompt parts, got %d", len(userPrompt))
+	}
 }

@@ -663,9 +663,8 @@ func TestForkTUIDisplayRoutesChatInput(t *testing.T) {
 		dscope.New(modes.ForTest(t), new(pipeline.Module)),
 		tui,
 	)
-	scope.Call(func(chatInput pipeline.ChatInput) {
-		go chatInput(">> ")
-	})
+	chatInput := scope.Get[pipeline.ChatInput]()
+	go chatInput(">> ")
 	waitChatInputWaiting(t, tui)
 	tui.cancelChatInput()
 }

@@ -98,36 +98,33 @@ func TestLoadPatternsLimitsFocusPackages(t *testing.T) {
 	}
 	patterns := newDef.(*LoadPatterns)
 
-	dscope.New(
+	getFiles := dscope.New(
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
 		func() LoadDir { return LoadDir(root) },
 		func() LoadPatterns { return *patterns },
-	).Call(func(
-		getFiles GetFiles,
-	) {
-		files, err := getFiles()
-		if err != nil {
-			t.Fatal(err)
+	).Get[GetFiles]()
+	files, err := getFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fooFile, barFile *File
+	for _, f := range files {
+		switch f.Path {
+		case filepath.Join(fooDir, "foo.go"):
+			fooFile = f
+		case filepath.Join(barDir, "bar.go"):
+			barFile = f
 		}
-		var fooFile, barFile *File
-		for _, f := range files {
-			switch f.Path {
-			case filepath.Join(fooDir, "foo.go"):
-				fooFile = f
-			case filepath.Join(barDir, "bar.go"):
-				barFile = f
-			}
-		}
-		if fooFile == nil {
-			t.Fatal("foo.go not loaded")
-		}
-		if !fooFile.PackageIsRoot {
-			t.Fatal("foo.go should be a root package")
-		}
-		if barFile != nil {
-			t.Fatal("bar.go must not be loaded when -pkg ./foo limits focus to foo")
-		}
-	})
+	}
+	if fooFile == nil {
+		t.Fatal("foo.go not loaded")
+	}
+	if !fooFile.PackageIsRoot {
+		t.Fatal("foo.go should be a root package")
+	}
+	if barFile != nil {
+		t.Fatal("bar.go must not be loaded when -pkg ./foo limits focus to foo")
+	}
 }

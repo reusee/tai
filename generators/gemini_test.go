@@ -35,39 +35,36 @@ func TestGemini(t *testing.T) {
 
 func TestGeminiListModels(t *testing.T) {
 	t.Skip()
-	dscope.New(
+	scope := dscope.New(
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
 		func() nets.ProxyAddr {
 			return nets.ProxyAddr(os.Getenv("TAI_TEST_PROXY"))
 		},
-	).Call(func(
-		httpClient nets.HTTPClient,
-		apiKey GoogleAPIKey,
-	) {
-		ctx := t.Context()
+	)
+	httpClient := scope.Get[nets.HTTPClient]()
+	apiKey := scope.Get[GoogleAPIKey]()
+	ctx := t.Context()
 
-		client, err := genai.NewClient(ctx, &genai.ClientConfig{
-			APIKey:     string(apiKey),
-			Backend:    genai.BackendGeminiAPI,
-			HTTPClient: httpClient.Client,
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		resp, err := client.Models.List(ctx, &genai.ListModelsConfig{
-			PageSize: 1000,
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, model := range resp.Items {
-			_ = model
-		}
-
+	client, err := genai.NewClient(ctx, &genai.ClientConfig{
+		APIKey:     string(apiKey),
+		Backend:    genai.BackendGeminiAPI,
+		HTTPClient: httpClient.Client,
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := client.Models.List(ctx, &genai.ListModelsConfig{
+		PageSize: 1000,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, model := range resp.Items {
+		_ = model
+	}
 }
 
 type geminiMockTransport struct {
@@ -136,7 +133,7 @@ func TestGeminiStreamingPreservesPartialState(t *testing.T) {
 
 	mockTransport := &geminiMockTransport{body: sseBody}
 
-	dscope.New(
+	newGemini := dscope.New(
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
@@ -145,43 +142,40 @@ func TestGeminiStreamingPreservesPartialState(t *testing.T) {
 				Client: &http.Client{Transport: mockTransport},
 			}
 		},
-	).Call(func(
-		newGemini NewGemini,
-	) {
-		baseState := NewPrompts("", []*Content{
-			{Role: RoleUser, Parts: []Part{Text("hi")}},
-		})
-
-		// immutableErrorAfterNState returns a new instance on each
-		// successful AppendContent, preserving State immutability.
-		// maxCalls=1 allows the first chunk's content to be appended;
-		// the second chunk's AppendContent fails. The first chunk's
-		// content is in newState when the error occurs.
-		failingState := &immutableErrorAfterNState{
-			State:    baseState,
-			maxCalls: 1,
-		}
-
-		inputCount := CountContents(failingState)
-		disableSearch := true
-		disableTools := true
-		gemini := newGemini(Spec{
-			Model:         "test-model",
-			APIKey:        "test-key",
-			DisableSearch: &disableSearch,
-			DisableTools:  &disableTools,
-		})
-
-		ret, err := gemini.Generate(context.Background(), failingState, nil)
-		if err == nil {
-			t.Fatal("expected error from failing AppendContent")
-		}
-		if ret == nil {
-			t.Fatal("expected partial state to be preserved on error, got nil")
-		}
-		retCount := CountContents(ret)
-		if retCount <= inputCount {
-			t.Fatalf("expected partial state to have more content than input (%d > %d)", retCount, inputCount)
-		}
+	).Get[NewGemini]()
+	baseState := NewPrompts("", []*Content{
+		{Role: RoleUser, Parts: []Part{Text("hi")}},
 	})
+
+	// immutableErrorAfterNState returns a new instance on each
+	// successful AppendContent, preserving State immutability.
+	// maxCalls=1 allows the first chunk's content to be appended;
+	// the second chunk's AppendContent fails. The first chunk's
+	// content is in newState when the error occurs.
+	failingState := &immutableErrorAfterNState{
+		State:    baseState,
+		maxCalls: 1,
+	}
+
+	inputCount := CountContents(failingState)
+	disableSearch := true
+	disableTools := true
+	gemini := newGemini(Spec{
+		Model:         "test-model",
+		APIKey:        "test-key",
+		DisableSearch: &disableSearch,
+		DisableTools:  &disableTools,
+	})
+
+	ret, err := gemini.Generate(context.Background(), failingState, nil)
+	if err == nil {
+		t.Fatal("expected error from failing AppendContent")
+	}
+	if ret == nil {
+		t.Fatal("expected partial state to be preserved on error, got nil")
+	}
+	retCount := CountContents(ret)
+	if retCount <= inputCount {
+		t.Fatalf("expected partial state to have more content than input (%d > %d)", retCount, inputCount)
+	}
 }

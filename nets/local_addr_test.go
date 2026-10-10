@@ -11,27 +11,24 @@ import (
 )
 
 func TestIsLocalAddr(t *testing.T) {
-	dscope.New(
+	isLocalAddr := dscope.New(
 		modes.ForTest(t),
 		new(Module),
-	).Call(func(
-		isLocalAddr IsLocalAddr,
-	) {
-		yes, err := isLocalAddr("127.0.0.1:10000")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !yes {
-			t.Fatal()
-		}
-		yes, err = isLocalAddr("qq.com")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if yes {
-			t.Fatal()
-		}
-	})
+	).Get[IsLocalAddr]()
+	yes, err := isLocalAddr("127.0.0.1:10000")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !yes {
+		t.Fatal()
+	}
+	yes, err = isLocalAddr("qq.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if yes {
+		t.Fatal()
+	}
 }
 
 func TestIsLocalAddrCachesLookups(t *testing.T) {

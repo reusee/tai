@@ -33,12 +33,13 @@ var GoModuleCommand = apps.New("go_module", "",
 		output Output,
 		tap debugs.Tap,
 		repl Repl,
-	) {
+	) apps.MainErr {
 		if bool(repl) {
 			tap(context.Background(), "repl", map[string]any{})
-			return
+			return nil
 		}
 		goalRun(context.Background(), output)
+		return nil
 	},
 	modes.ForProduction(),
 	func(

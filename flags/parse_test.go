@@ -35,11 +35,10 @@ func TestParseEmptyArgs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	result.Call(func(chats Chats) {
-		if len(chats) != 0 {
-			t.Fatalf("expected empty chats, got %v", chats)
-		}
-	})
+	chats := result.Get[Chats]()
+	if len(chats) != 0 {
+		t.Fatalf("expected empty chats, got %v", chats)
+	}
 }
 
 func TestParseSingleChat(t *testing.T) {
@@ -48,11 +47,10 @@ func TestParseSingleChat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	result.Call(func(chats Chats) {
-		if len(chats) != 1 || chats[0] != "hello" {
-			t.Fatalf("expected [hello], got %v", chats)
-		}
-	})
+	chats := result.Get[Chats]()
+	if len(chats) != 1 || chats[0] != "hello" {
+		t.Fatalf("expected [hello], got %v", chats)
+	}
 }
 
 // TestParseMultipleChatsAccumulate verifies that repeated chat flags
@@ -63,11 +61,10 @@ func TestParseMultipleChatsAccumulate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	result.Call(func(chats Chats) {
-		if len(chats) != 2 || chats[0] != "a" || chats[1] != "b" {
-			t.Fatalf("expected [a b], got %v", chats)
-		}
-	})
+	chats := result.Get[Chats]()
+	if len(chats) != 2 || chats[0] != "a" || chats[1] != "b" {
+		t.Fatalf("expected [a b], got %v", chats)
+	}
 }
 
 func TestParseUnknownFlag(t *testing.T) {
@@ -111,11 +108,10 @@ func TestParseDoesNotMutateOriginalScope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	scope.Call(func(chats Chats) {
-		if len(chats) != 0 {
-			t.Fatalf("original scope should be unchanged, got %v", chats)
-		}
-	})
+	chats := scope.Get[Chats]()
+	if len(chats) != 0 {
+		t.Fatalf("original scope should be unchanged, got %v", chats)
+	}
 }
 
 func TestParseNilNewValue(t *testing.T) {
@@ -132,11 +128,10 @@ func TestParseEffort(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	result.Call(func(effort Effort) {
-		if effort != "high" {
-			t.Fatalf("expected high, got %v", effort)
-		}
-	})
+	effort := result.Get[Effort]()
+	if effort != "high" {
+		t.Fatalf("expected high, got %v", effort)
+	}
 }
 
 func TestParseFiles(t *testing.T) {
@@ -145,11 +140,10 @@ func TestParseFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	result.Call(func(files Files) {
-		if !files["a.go"] || !files["b.go"] {
-			t.Fatalf("expected a.go and b.go, got %v", files)
-		}
-	})
+	files := result.Get[Files]()
+	if !files["a.go"] || !files["b.go"] {
+		t.Fatalf("expected a.go and b.go, got %v", files)
+	}
 }
 
 func TestParseFocus(t *testing.T) {
@@ -158,11 +152,10 @@ func TestParseFocus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	result.Call(func(focus Focus) {
-		if len(focus) != 2 || focus[0] != "foo" || focus[1] != "bar" {
-			t.Fatalf("expected [foo bar], got %v", focus)
-		}
-	})
+	focus := result.Get[Focus]()
+	if len(focus) != 2 || focus[0] != "foo" || focus[1] != "bar" {
+		t.Fatalf("expected [foo bar], got %v", focus)
+	}
 }
 
 func TestParseIgnoreWithAlias(t *testing.T) {
@@ -171,11 +164,10 @@ func TestParseIgnoreWithAlias(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	result.Call(func(ignore Ignore) {
-		if !ignore["a"] || !ignore["b"] || !ignore["c"] {
-			t.Fatalf("expected a, b, c, got %v", ignore)
-		}
-	})
+	ignore := result.Get[Ignore]()
+	if !ignore["a"] || !ignore["b"] || !ignore["c"] {
+		t.Fatalf("expected a, b, c, got %v", ignore)
+	}
 }
 
 func TestParseMatchWithAlias(t *testing.T) {
@@ -184,11 +176,10 @@ func TestParseMatchWithAlias(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	result.Call(func(match Match) {
-		if !match["a"] || !match["b"] {
-			t.Fatalf("expected a, b, got %v", match)
-		}
-	})
+	match := result.Get[Match]()
+	if !match["a"] || !match["b"] {
+		t.Fatalf("expected a, b, got %v", match)
+	}
 }
 
 func TestParseModelName(t *testing.T) {
@@ -197,11 +188,10 @@ func TestParseModelName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	result.Call(func(name ModelName) {
-		if name != "gpt-4" {
-			t.Fatalf("expected gpt-4, got %v", name)
-		}
-	})
+	name := result.Get[ModelName]()
+	if name != "gpt-4" {
+		t.Fatalf("expected gpt-4, got %v", name)
+	}
 }
 
 func TestParseFastModelName(t *testing.T) {
@@ -210,11 +200,10 @@ func TestParseFastModelName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	result.Call(func(name FastModelName) {
-		if name != "gpt-4o-mini" {
-			t.Fatalf("expected gpt-4o-mini, got %v", name)
-		}
-	})
+	name := result.Get[FastModelName]()
+	if name != "gpt-4o-mini" {
+		t.Fatalf("expected gpt-4o-mini, got %v", name)
+	}
 }
 
 func TestParseShell(t *testing.T) {
@@ -231,11 +220,10 @@ func TestParseShell(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		result.Call(func(shell Shell) {
-			if bool(shell) != tt.want {
-				t.Errorf("args %v: expected %v, got %v", tt.args, tt.want, shell)
-			}
-		})
+		shell := result.Get[Shell]()
+		if bool(shell) != tt.want {
+			t.Errorf("args %v: expected %v, got %v", tt.args, tt.want, shell)
+		}
 	}
 }
 
@@ -252,11 +240,10 @@ func TestParseThoughts(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		result.Call(func(thoughts Thoughts) {
-			if thoughts.Value == nil || *thoughts.Value != tt.want {
-				t.Errorf("args %v: expected %v, got %v", tt.args, tt.want, thoughts.Value)
-			}
-		})
+		thoughts := result.Get[Thoughts]()
+		if thoughts.Value == nil || *thoughts.Value != tt.want {
+			t.Errorf("args %v: expected %v, got %v", tt.args, tt.want, thoughts.Value)
+		}
 	}
 }
 
@@ -272,27 +259,24 @@ func TestParseMixedFlags(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	result.Call(func(
-		name ModelName,
-		effort Effort,
-		shell Shell,
-		chats Chats,
-		focus Focus,
-	) {
-		if name != "gpt-4" {
-			t.Fatalf("expected model gpt-4, got %v", name)
-		}
-		if effort != "high" {
-			t.Fatalf("expected effort high, got %v", effort)
-		}
-		if !bool(shell) {
-			t.Fatalf("expected shell true, got %v", shell)
-		}
-		if len(chats) != 1 || chats[0] != "hello" {
-			t.Fatalf("expected chats [hello], got %v", chats)
-		}
-		if len(focus) != 1 || focus[0] != "target" {
-			t.Fatalf("expected focus [target], got %v", focus)
-		}
-	})
+	name := result.Get[ModelName]()
+	effort := result.Get[Effort]()
+	shell := result.Get[Shell]()
+	chats := result.Get[Chats]()
+	focus := result.Get[Focus]()
+	if name != "gpt-4" {
+		t.Fatalf("expected model gpt-4, got %v", name)
+	}
+	if effort != "high" {
+		t.Fatalf("expected effort high, got %v", effort)
+	}
+	if !bool(shell) {
+		t.Fatalf("expected shell true, got %v", shell)
+	}
+	if len(chats) != 1 || chats[0] != "hello" {
+		t.Fatalf("expected chats [hello], got %v", chats)
+	}
+	if len(focus) != 1 || focus[0] != "target" {
+		t.Fatalf("expected focus [target], got %v", focus)
+	}
 }

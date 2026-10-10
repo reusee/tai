@@ -23,71 +23,69 @@ func TestSimplify(t *testing.T) {
 	)
 
 	dir := filepath.Join(testdataDir, "main")
-	scope.Fork(
+	scope = scope.Fork(
 		func() LoadDir {
 			return LoadDir(dir)
 		},
-	).Call(func(
-		getFiles GetFiles,
-		getGenerator generators.GetGenerator,
-		simplifyFiles SimplifyFiles,
-	) {
+	)
+	getFiles := scope.Get[GetFiles]()
+	_ = scope.Get[generators.GetGenerator]()
+	simplifyFiles := scope.Get[SimplifyFiles]()
 
-		files, err := getFiles()
-		if err != nil {
-			t.Fatal(err)
-		}
+	files, err := getFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
 
-		// A large budget keeps the focus pin at full documentation: a
-		// small maxTokens would trigger the overflow downgrade to short
-		// doc and replace the focus documentation block this test
-		// asserts on. See TheoryOfVisibilityAllocation.
-		files, err = simplifyFiles(files, 1<<20, generators.DeepseekTokenCounterFn)
-		if err != nil {
-			t.Fatal(err)
-		}
-		// Focus packages are pinned at documentation level: the output is
-		// the dep1 context file and the focus package's go doc block.
-		// main.go and the non-Go focus file a.txt are never emitted as
-		// files — every focus file is present by name in the focus
-		// documentation block's file list. See TheoryOfNonGoFiles in
-		// module_root.go.
-		if len(files) < 2 {
-			t.Fatalf("got %v", len(files))
-		}
-		t.Logf("num files: %v", len(files))
-		var foundDep1, foundFocusDoc bool
-		for _, f := range files {
-			switch f.Path {
-			case filepath.Join(dir, "..", "dep1", "dep1.go"):
-				foundDep1 = true
-				if !strings.Contains(f.Confirmed.What, "visibility level") {
-					t.Fatalf("dep1.go should be at a code visibility level, got %q", f.Confirmed.What)
-				}
-			case filepath.Join(dir, "a.txt"):
-				t.Fatalf("a.txt must not be emitted at full content; non-Go focus files are listed by name only")
-			case filepath.Join(dir, "main.go"):
-				t.Fatalf("main.go must not appear at full content; focus packages are documentation-only")
+	// A large budget keeps the focus pin at full documentation: a
+	// small maxTokens would trigger the overflow downgrade to short
+	// doc and replace the focus documentation block this test
+	// asserts on. See TheoryOfVisibilityAllocation.
+	files, err = simplifyFiles(files, 1<<20, generators.DeepseekTokenCounterFn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Focus packages are pinned at documentation level: the output is
+	// the dep1 context file and the focus package's go doc block.
+	// main.go and the non-Go focus file a.txt are never emitted as
+	// files — every focus file is present by name in the focus
+	// documentation block's file list. See TheoryOfNonGoFiles in
+	// module_root.go.
+	if len(files) < 2 {
+		t.Fatalf("got %v", len(files))
+	}
+	t.Logf("num files: %v", len(files))
+	var foundDep1, foundFocusDoc bool
+	for _, f := range files {
+		switch f.Path {
+		case filepath.Join(dir, "..", "dep1", "dep1.go"):
+			foundDep1 = true
+			if !strings.Contains(f.Confirmed.What, "visibility level") {
+				t.Fatalf("dep1.go should be at a code visibility level, got %q", f.Confirmed.What)
 			}
-			if strings.Contains(f.Confirmed.What, "focus go doc -u") {
-				foundFocusDoc = true
-				content := string(f.Confirmed.Content)
-				if !strings.Contains(content, "begin of focus package") {
-					t.Fatalf("focus documentation block missing its marker:\n%s", content)
-				}
-				if !strings.Contains(content, filepath.Join(dir, "a.txt")) {
-					t.Fatalf("focus documentation block must list a.txt in its file list:\n%s", content)
-				}
+		case filepath.Join(dir, "a.txt"):
+			t.Fatalf("a.txt must not be emitted at full content; non-Go focus files are listed by name only")
+		case filepath.Join(dir, "main.go"):
+			t.Fatalf("main.go must not appear at full content; focus packages are documentation-only")
+		}
+		if strings.Contains(f.Confirmed.What, "focus go doc -u") {
+			foundFocusDoc = true
+			content := string(f.Confirmed.Content)
+			if !strings.Contains(content, "begin of focus package") {
+				t.Fatalf("focus documentation block missing its marker:\n%s", content)
+			}
+			if !strings.Contains(content, filepath.Join(dir, "a.txt")) {
+				t.Fatalf("focus documentation block must list a.txt in its file list:\n%s", content)
 			}
 		}
-		if !foundDep1 {
-			t.Fatal("dep1.go not found in output")
-		}
-		if !foundFocusDoc {
-			t.Fatal("focus package documentation block not found in output")
-		}
+	}
+	if !foundDep1 {
+		t.Fatal("dep1.go not found in output")
+	}
+	if !foundFocusDoc {
+		t.Fatal("focus package documentation block not found in output")
+	}
 
-	})
 }
 
 func TestFocusPackageDocumentationContext(t *testing.T) {
@@ -145,49 +143,46 @@ func BenchmarkExported(b *testing.B) {
 		t.Fatal(err)
 	}
 
-	dscope.New(
+	provider := dscope.New(
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
 		func() LoadDir { return LoadDir(root) },
-	).Call(func(
-		provider PartsProvider,
-	) {
-		parts, err := provider.Parts(1<<20, generators.DeepseekTokenCounterFn, nil)
-		if err != nil {
-			t.Fatal(err)
+	).Get[PartsProvider]()
+	parts, err := provider.Parts(1<<20, generators.DeepseekTokenCounterFn, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var context strings.Builder
+	for _, part := range parts {
+		if text, ok := part.(generators.Text); ok {
+			context.WriteString(string(text))
 		}
-		var context strings.Builder
-		for _, part := range parts {
-			if text, ok := part.(generators.Text); ok {
-				context.WriteString(string(text))
-			}
-		}
-		got := context.String()
-		if !strings.Contains(got, "begin of focus package example.com/focusdoc") {
-			t.Fatalf("expected the focus package documentation block:\n%s", got)
-		}
-		if !strings.Contains(got, "helper") {
-			t.Fatalf("expected unexported symbols via -u:\n%s", got)
-		}
-		if strings.Contains(got, "return helper()") {
-			t.Fatalf("focus package bodies must not appear in the initial context:\n%s", got)
-		}
-		if !strings.Contains(got, "TestExported") || !strings.Contains(got, "BenchmarkExported") {
-			t.Fatalf("expected the test function names:\n%s", got)
-		}
-		if !strings.Contains(got, "Files in this package") ||
-			!strings.Contains(got, "focusdoc.go") ||
-			!strings.Contains(got, "focusdoc_test.go") {
-			t.Fatalf("expected the package file names in the focus block:\n%s", got)
-		}
-		if !strings.Contains(got, "notes.txt") {
-			t.Fatalf("expected the non-Go focus file to be listed by name:\n%s", got)
-		}
-		if strings.Contains(got, "focus note content") {
-			t.Fatalf("non-Go focus file contents must not appear in the initial context:\n%s", got)
-		}
-	})
+	}
+	got := context.String()
+	if !strings.Contains(got, "begin of focus package example.com/focusdoc") {
+		t.Fatalf("expected the focus package documentation block:\n%s", got)
+	}
+	if !strings.Contains(got, "helper") {
+		t.Fatalf("expected unexported symbols via -u:\n%s", got)
+	}
+	if strings.Contains(got, "return helper()") {
+		t.Fatalf("focus package bodies must not appear in the initial context:\n%s", got)
+	}
+	if !strings.Contains(got, "TestExported") || !strings.Contains(got, "BenchmarkExported") {
+		t.Fatalf("expected the test function names:\n%s", got)
+	}
+	if !strings.Contains(got, "Files in this package") ||
+		!strings.Contains(got, "focusdoc.go") ||
+		!strings.Contains(got, "focusdoc_test.go") {
+		t.Fatalf("expected the package file names in the focus block:\n%s", got)
+	}
+	if !strings.Contains(got, "notes.txt") {
+		t.Fatalf("expected the non-Go focus file to be listed by name:\n%s", got)
+	}
+	if strings.Contains(got, "focus note content") {
+		t.Fatalf("non-Go focus file contents must not appear in the initial context:\n%s", got)
+	}
 }
 
 func TestFocusTestNamesGroupedByFile(t *testing.T) {
@@ -275,20 +270,18 @@ module test
 		t.Fatal(err)
 	}
 
-	scope.Fork(
+	scope = scope.Fork(
 		func() LoadDir {
 			return LoadDir(dir)
 		},
-	).Call(func(
-		provider PartsProvider,
-		countTokens generators.BPETokenCounter,
-	) {
-		parts, err := provider.Parts(8192, countTokens, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		_ = parts
-	})
+	)
+	provider := scope.Get[PartsProvider]()
+	countTokens := scope.Get[generators.BPETokenCounter]()
+	parts, err := provider.Parts(8192, countTokens, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = parts
 
 }
 
@@ -1286,46 +1279,44 @@ func Foo() {
 		t.Fatal(err)
 	}
 
-	scope.Fork(
+	scope = scope.Fork(
 		func() LoadDir {
 			return LoadDir(dir)
 		},
-	).Call(func(
-		provider PartsProvider,
-		countTokens generators.BPETokenCounter,
-	) {
-		// Simplification stops when the context fits within the dynamic
-		// context token budget, so small context files are never
-		// simplified, preserving the LLM prefix cache. With the small
-		// focus package in this test, the budget is the 32K floor.
-		// See TheoryOfVisibilityAllocation.
-		parts, err := provider.Parts(1, countTokens, nil)
-		if err != nil {
-			t.Fatalf("Parts returned error: %v", err)
-		}
+	)
+	provider := scope.Get[PartsProvider]()
+	countTokens := scope.Get[generators.BPETokenCounter]()
+	// Simplification stops when the context fits within the dynamic
+	// context token budget, so small context files are never
+	// simplified, preserving the LLM prefix cache. With the small
+	// focus package in this test, the budget is the 32K floor.
+	// See TheoryOfVisibilityAllocation.
+	parts, err := provider.Parts(1, countTokens, nil)
+	if err != nil {
+		t.Fatalf("Parts returned error: %v", err)
+	}
 
-		var dep1Content string
-		for _, part := range parts {
-			text, ok := part.(generators.Text)
-			if !ok {
-				continue
-			}
-			s := string(text)
-			if strings.Contains(s, "dep1.go") {
-				dep1Content = s
-			}
+	var dep1Content string
+	for _, part := range parts {
+		text, ok := part.(generators.Text)
+		if !ok {
+			continue
 		}
-		if dep1Content == "" {
-			t.Fatal("dep1.go not found in parts")
+		s := string(text)
+		if strings.Contains(s, "dep1.go") {
+			dep1Content = s
 		}
+	}
+	if dep1Content == "" {
+		t.Fatal("dep1.go not found in parts")
+	}
 
-		if strings.Contains(dep1Content, `panic("function body omitted")`) {
-			t.Errorf("dep1.go was simplified despite context being within budget:\n%s", dep1Content)
-		}
-		if !strings.Contains(dep1Content, `println("hello from dep1")`) {
-			t.Errorf("dep1.go function body was removed:\n%s", dep1Content)
-		}
-	})
+	if strings.Contains(dep1Content, `panic("function body omitted")`) {
+		t.Errorf("dep1.go was simplified despite context being within budget:\n%s", dep1Content)
+	}
+	if !strings.Contains(dep1Content, `println("hello from dep1")`) {
+		t.Errorf("dep1.go function body was removed:\n%s", dep1Content)
+	}
 
 }
 
@@ -1342,34 +1333,32 @@ func TestPackagesLoadOmitsNeedTypes(t *testing.T) {
 	)
 
 	dir := filepath.Join(testdataDir, "main")
-	scope.Fork(
+	scope = scope.Fork(
 		func() LoadDir {
 			return LoadDir(dir)
 		},
-	).Call(func(
-		getRoot GetRootPackages,
-	) {
-		pkgs, err := getRoot()
-		if err != nil {
-			t.Fatal(err)
+	)
+	getRoot := scope.Get[GetRootPackages]()
+	pkgs, err := getRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pkgs) == 0 {
+		t.Fatal("expected at least one root package")
+	}
+	// NeedTypes is offline: Types stays nil; TypesInfo stays nil.
+	// NeedDeps loads dependencies but NeedTypes is omitted so no
+	// type checking occurs, keeping memory bounded.
+	for _, pkg := range pkgs {
+		if pkg.Types != nil {
+			t.Fatalf("pkg.Types must be nil without NeedTypes, got non-nil for %s", pkg.PkgPath)
 		}
-		if len(pkgs) == 0 {
-			t.Fatal("expected at least one root package")
+		if pkg.TypesInfo != nil {
+			t.Fatalf("pkg.TypesInfo must be nil without NeedTypesInfo, got non-nil for %s", pkg.PkgPath)
 		}
-		// NeedTypes is offline: Types stays nil; TypesInfo stays nil.
-		// NeedDeps loads dependencies but NeedTypes is omitted so no
-		// type checking occurs, keeping memory bounded.
-		for _, pkg := range pkgs {
-			if pkg.Types != nil {
-				t.Fatalf("pkg.Types must be nil without NeedTypes, got non-nil for %s", pkg.PkgPath)
-			}
-			if pkg.TypesInfo != nil {
-				t.Fatalf("pkg.TypesInfo must be nil without NeedTypesInfo, got non-nil for %s", pkg.PkgPath)
-			}
-			// GoFiles must still be available for free file discovery.
-			if len(pkg.GoFiles) == 0 {
-				t.Fatalf("pkg.GoFiles must be populated via NeedFiles for %s", pkg.PkgPath)
-			}
+		// GoFiles must still be available for free file discovery.
+		if len(pkg.GoFiles) == 0 {
+			t.Fatalf("pkg.GoFiles must be populated via NeedFiles for %s", pkg.PkgPath)
 		}
-	})
+	}
 }

@@ -126,11 +126,13 @@ var NextCommand = apps.New("next",
 		loopRun pipeline.Run,
 		getDefaultSummarizer pipeline.GetDefaultSummarizer,
 		summarizeThoughts flags.SummarizeThoughts,
-	) {
+	) apps.MainErr {
 		ctx := context.Background()
 
 		generator, err := getDefaultGenerator()
-		ce(err)
+		if err != nil {
+			return err
+		}
 
 		logger.Info("generate", "model", generator.Spec().Model)
 		var state generators.State
@@ -150,7 +152,9 @@ var NextCommand = apps.New("next",
 
 		if showThoughts && bool(summarizeThoughts) {
 			summarizer, err := getDefaultSummarizer()
-			ce(err)
+			if err != nil {
+				return err
+			}
 			state = generators.NewOutput(state, os.Stdout, false)
 			state = pipeline.NewThoughtsSummarize(ctx, state, summarizer, os.Stdout)
 		} else {
@@ -187,8 +191,11 @@ var NextCommand = apps.New("next",
 				err = e
 			}
 		}
-		ce(err)
+		if err != nil {
+			return err
+		}
 
+		return nil
 	},
 	modes.ForProduction(),
 	new(apps.Interactive(true)),
