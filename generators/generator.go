@@ -14,7 +14,10 @@ const (
 Model resolution resolves one name to one generator spec. The name is tried
 in order: a configured generator path (aliases expanded, redirects followed),
 the ollama shorthand ollama:<model>, and the built-in shortcuts (flash,
-gemini). A name that matches none of them is a configuration fault, and its
+gemini). A generator path may be absolute: a leading "/" is stripped at the
+entry, so "/foo/bar" resolves from the root exactly like "foo/bar" — the
+same syntax an absolute Redirect accepts. A name that matches none of them
+is a configuration fault, and its
 failure report must carry everything needed to repair it without re-running
 the process:
 
@@ -110,6 +113,10 @@ func formatNameList(names []string) string {
 
 func resolveSpec(name string, roots []Spec) (Spec, error) {
 	requested := name
+	// A leading "/" marks an absolute path resolved from the spec root,
+	// the same syntax an absolute Redirect accepts, so "/foo/bar"
+	// resolves like "foo/bar".
+	name = strings.TrimPrefix(name, "/")
 	visited := make(map[string]bool)
 	var process []string
 

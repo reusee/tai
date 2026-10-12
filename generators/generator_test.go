@@ -480,6 +480,51 @@ func TestResolveSpec(t *testing.T) {
 	})
 }
 
+func TestResolveSpecLeadingSlash(t *testing.T) {
+	roots := []Spec{
+		{
+			Name:    "foo",
+			Type:    "gemini",
+			Model:   "foo-model",
+			Aliases: []string{"myfoo"},
+			Variants: []Spec{
+				{
+					Name: "bar",
+					Variants: []Spec{
+						{
+							Name:  "baz",
+							Model: "baz-model",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	t.Run("absolute path resolves from root", func(t *testing.T) {
+		s, err := resolveSpec("/foo/bar/baz", roots)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s.Name != "foo/bar/baz" {
+			t.Errorf("expected name 'foo/bar/baz', got %q", s.Name)
+		}
+		if s.Model != "baz-model" {
+			t.Errorf("expected model baz-model, got %q", s.Model)
+		}
+	})
+
+	t.Run("leading slash before alias", func(t *testing.T) {
+		s, err := resolveSpec("/myfoo", roots)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s.Name != "foo" {
+			t.Errorf("expected name 'foo', got %q", s.Name)
+		}
+	})
+}
+
 func TestResolveSpecRedirect(t *testing.T) {
 	t.Run("redirect to child", func(t *testing.T) {
 		localRoots := []Spec{
