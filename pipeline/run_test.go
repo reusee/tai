@@ -1210,7 +1210,7 @@ func TestRunLogsAttemptUsage(t *testing.T) {
 	// The Run loop must record the aggregated token usage of each
 	// attempt to the logger, so token consumption is visible in log
 	// output and in the TUI's Logs pane, not only in the
-	// end-of-session statistics table. Streaming timings ride along as
+	// end-of-session statistics table. Measured timings ride along as
 	// one-decimal string keys so the fractional digit survives the text
 	// handler. See TheoryOfUsageLogging and TheoryOfUsageTiming.
 	var buf bytes.Buffer
@@ -1227,7 +1227,7 @@ func TestRunLogsAttemptUsage(t *testing.T) {
 	usage.Candidates.TokenCount = 50
 	usage.Thoughts.TokenCount = 10
 	usage.TimeToFirstToken = time.Second * 3 / 2 // logs as ttft_seconds=1.5
-	usage.GenerateDuration = 2 * time.Second     // 60 generated tokens / 2s -> 30.0
+	usage.TotalDuration = 2 * time.Second        // 60 generated tokens / 2s -> 30.0
 
 	_, err := runOnce(run, RunOptions{
 		Generator:    nil,
@@ -1255,6 +1255,45 @@ func TestRunLogsAttemptUsage(t *testing.T) {
 		if !strings.Contains(output, want) {
 			t.Fatalf("expected %q in log output, got: %s", want, output)
 		}
+	}
+}
+
+func TestRunLogsAttemptUsageNonStreaming(t *testing.T) {
+	// A non-streaming request measures the total request duration, so
+	// the usage log carries tokens_per_second but no ttft_seconds key.
+	// See TheoryOfUsageLogging and TheoryOfUsageTiming.
+	var buf bytes.Buffer
+	logger := logs.Logger{slog.New(slog.NewTextHandler(&buf, nil))}
+	run := dscope.New(
+		modes.ForTest(t),
+		new(Module),
+	).Fork(
+		func() logs.Logger { return logger },
+	).Get[Run]()
+	usage := generators.Usage{}
+	usage.Prompt.TokenCount = 100
+	usage.Candidates.TokenCount = 50
+	usage.Thoughts.TokenCount = 10
+	usage.TotalDuration = 2 * time.Second // 60 generated tokens / 2s -> 30.0
+
+	_, err := runOnce(run, RunOptions{
+		Generator:    nil,
+		InitialState: generators.NewPrompts("", nil),
+		Components:   nil,
+		PhaseBuilder: func(g generators.Generator) generators.Phase {
+			return appendPhaseWithUsage("model output", usage)
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "tokens_per_second=30.0") {
+		t.Fatalf("expected tokens_per_second in log output, got: %s", output)
+	}
+	if strings.Contains(output, "ttft_seconds") {
+		t.Fatalf("unexpected ttft_seconds in log output: %s", output)
 	}
 }
 

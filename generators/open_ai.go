@@ -260,12 +260,13 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 		httpReq.Header.Set("Accept", "text/event-stream")
 	}
 
-	// Streaming speed measurements: TimeToFirstToken spans from sending
-	// the request to the arrival of the first streamed output content
-	// part (body text or reasoning thought), and GenerateDuration spans
-	// from that token to the emission of the final usage. The
-	// non-streaming path never calls markFirstToken, keeping the
-	// durations at zero so display sites omit the speed section.
+	// Request timing: TotalDuration spans from sending the request to
+	// the end of the response, measured for both streaming and
+	// non-streaming requests, so every measured request reports a
+	// speed. TimeToFirstToken spans from sending the request to the
+	// arrival of the first streamed output content part (body text or
+	// reasoning thought); the non-streaming path never calls
+	// markFirstToken, so no ttft is reported there.
 	// See TheoryOfUsageTiming.
 	requestStarted := time.Now()
 	var firstTokenAt time.Time
@@ -280,11 +281,13 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 		}
 	}
 	finalizeUsage := func(usage *Usage) {
-		if usage == nil || firstTokenAt.IsZero() {
+		if usage == nil {
 			return
 		}
-		usage.TimeToFirstToken = firstTokenAt.Sub(requestStarted)
-		usage.GenerateDuration = time.Since(firstTokenAt)
+		usage.TotalDuration = time.Since(requestStarted)
+		if !firstTokenAt.IsZero() {
+			usage.TimeToFirstToken = firstTokenAt.Sub(requestStarted)
+		}
 	}
 
 	resp, err := client.Do(httpReq)

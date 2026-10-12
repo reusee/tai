@@ -196,9 +196,9 @@ func (s Output) AppendContent(content *Content) (_ State, err error) {
 				if _, err := fmt.Fprint(s.w, "\n"); err != nil {
 					return fail(err)
 				}
-				// SpeedSuffix appends the streaming speed measurements
-				// when present, and is empty otherwise, keeping the
-				// plain line intact for unmeasured usages.
+				// SpeedSuffix appends the measured speed fragment when
+				// present, and is empty otherwise, keeping the plain
+				// line intact for unmeasured usages.
 				// See TheoryOfUsageTiming.
 				usageLine := fmt.Sprintf(
 					"[Usage: prompt=%d, cached=%d, completion=%d, thoughts=%d",

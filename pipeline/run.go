@@ -207,14 +207,15 @@ the log entry, in the usage node's content, and in the rendered line's
 "(error)" suffix), so token consumption is traceable for every attempt,
 including retries. Attempts that record no token usage emit nothing.
 
-Streaming requests measure speed onto the final usage (see
-generators.TheoryOfUsageTiming): the loop appends the one-decimal keys
-ttft_seconds and tokens_per_second to the usage log entry, and the
-usage node's content ends with the same fragment rendered by
-generators.Usage.SpeedSuffix. Non-streaming usages carry no timings, so
-the keys and the fragment are omitted rather than printed as zeros. The
-statistics table keeps count-only columns and takes its duration from
-the loop's own clock, not from these per-request measurements.
+Requests measure speed onto the final usage (see
+generators.TheoryOfUsageTiming): the loop appends the one-decimal key
+tokens_per_second to the usage log entry — and ttft_seconds as well
+when a first-token measurement exists, which only streaming requests
+carry — and the usage node's content ends with the same fragment
+rendered by generators.Usage.SpeedSuffix. Unmeasured usages carry
+neither key nor fragment, so nothing prints zeros. The statistics table
+keeps count-only columns and takes its duration from the loop's own
+clock, not from these per-request measurements.
 
 The usage is extracted by scanning the state's contents appended since
 the start of the attempt and taking the final Usage part, rather than
@@ -1275,9 +1276,9 @@ func describeGenerator(
 // recordAttemptUsage records the aggregated token usage of one attempt:
 // as a usage event node in the session tree (the display source for a
 // live consumer) and as a "usage" log entry. Attempts that record no
-// token usage emit nothing. Streaming attempts additionally append the
-// measured timing fragment to the node's content; unmeasured usages
-// leave it out. See TheoryOfUsageLogging and TheoryOfLoopEvents.
+// token usage emit nothing. Measured usages append the speed fragment
+// to the node's content; unmeasured usages leave it out. See
+// TheoryOfUsageLogging and TheoryOfLoopEvents.
 func (ls *loopState) recordAttemptUsage(state generators.State, attemptBaseCount int, outcome string) {
 	// The usage is the last Usage part among the contents appended since
 	// the attempt started, not a sum of streaming snapshots.
@@ -1293,7 +1294,7 @@ func (ls *loopState) recordAttemptUsage(state generators.State, attemptBaseCount
 	if outcome != "" {
 		outcomeSuffix = " (" + outcome + ")"
 	}
-	// SpeedSuffix carries the streaming ttft and average generation
+	// SpeedSuffix carries the measured ttft (streaming only) and average
 	// speed when measured, staying empty for unmeasured usages.
 	// See TheoryOfUsageTiming.
 	ls.writeEventNode("usage", fmt.Sprintf("attempt %d usage%s: prompt %d, cached %d, completion %d, thoughts %d",
@@ -1317,10 +1318,14 @@ func (ls *loopState) recordAttemptUsage(state generators.State, attemptBaseCount
 	// text handler output; float values would print "30" instead of
 	// "30.0". See TheoryOfUsageTiming.
 	if usage.HasSpeed() {
+		if usage.TimeToFirstToken > 0 {
+			args = append(args,
+				"ttft_seconds", fmt.Sprintf("%.1f", usage.TimeToFirstToken.Seconds()),
+			)
+		}
 		args = append(args,
-			"ttft_seconds", fmt.Sprintf("%.1f", usage.TimeToFirstToken.Seconds()),
 			"tokens_per_second", fmt.Sprintf("%.1f",
-				float64(usage.GeneratedTokens())/usage.GenerateDuration.Seconds()),
+				float64(usage.GeneratedTokens())/usage.TotalDuration.Seconds()),
 		)
 	}
 	ls.logger.InfoContext(ls.ctx, "usage", args...)

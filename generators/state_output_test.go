@@ -320,9 +320,9 @@ func TestOutputUsage(t *testing.T) {
 	})
 
 	t.Run("no speed when unmeasured", func(t *testing.T) {
-		// An unmeasured usage (zero durations, e.g. a non-streaming
-		// request) must render without the speed section instead of
-		// printing zeros. See TheoryOfUsageTiming.
+		// An unmeasured usage (zero total duration) must render without
+		// the speed section instead of printing zeros.
+		// See TheoryOfUsageTiming.
 		buf := new(bytes.Buffer)
 		output := NewOutput(NewPrompts("", nil), buf, true)
 		state := State(output)
@@ -345,7 +345,7 @@ func TestOutputUsage(t *testing.T) {
 	t.Run("streaming speed", func(t *testing.T) {
 		// The measured fragment is rendered once per usage: ttft keeps
 		// one decimal place, and speed divides generated tokens by the
-		// generation duration, also at one decimal place.
+		// total request duration, also at one decimal place.
 		// See TheoryOfUsageTiming.
 		buf := new(bytes.Buffer)
 		output := NewOutput(NewPrompts("", nil), buf, true)
@@ -354,7 +354,7 @@ func TestOutputUsage(t *testing.T) {
 		usage := Usage{}
 		usage.Candidates.TokenCount = 453
 		usage.TimeToFirstToken = 6 * time.Second / 5 // renders as ttft 1.2s
-		usage.GenerateDuration = 10 * time.Second    // 453 tokens / 10s -> 45.3 tok/s
+		usage.TotalDuration = 10 * time.Second       // 453 tokens / 10s -> 45.3 tok/s
 		state, _ = state.AppendContent(&Content{
 			Role:  RoleLog,
 			Parts: []Part{usage},
@@ -365,6 +365,34 @@ func TestOutputUsage(t *testing.T) {
 		})
 		if !strings.Contains(buf.String(), ", ttft 1.2s, 45.3 tok/s") {
 			t.Fatalf("got %q", buf.String())
+		}
+	})
+
+	t.Run("non-streaming speed", func(t *testing.T) {
+		// A non-streaming request measures only the total request
+		// duration, so the fragment carries the speed without the ttft
+		// segment. See TheoryOfUsageTiming.
+		buf := new(bytes.Buffer)
+		output := NewOutput(NewPrompts("", nil), buf, true)
+		state := State(output)
+
+		usage := Usage{}
+		usage.Candidates.TokenCount = 453
+		usage.TotalDuration = 10 * time.Second // 453 tokens / 10s -> 45.3 tok/s
+		state, _ = state.AppendContent(&Content{
+			Role:  RoleLog,
+			Parts: []Part{usage},
+		})
+		state, _ = state.AppendContent(&Content{
+			Role:  RoleLog,
+			Parts: []Part{FinishReason("stop")},
+		})
+		got := buf.String()
+		if !strings.Contains(got, ", 45.3 tok/s") {
+			t.Fatalf("got %q", got)
+		}
+		if strings.Contains(got, "ttft") {
+			t.Fatalf("unexpected ttft segment in %q", got)
 		}
 	})
 }

@@ -277,21 +277,24 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 			"non_streaming", nonStreaming,
 		)
 
-		// Streaming speed measurements: TimeToFirstToken spans from the
-		// attempt start to the arrival of the first output content part
-		// (body text or reasoning thought), and GenerateDuration spans
-		// from that token to the emission of the final usage.
-		// Non-streaming attempts never set firstTokenAt, so the durations
-		// stay zero and display sites omit the speed section.
-		// See TheoryOfUsageTiming.
+		// Request timing: TotalDuration spans from the attempt start —
+		// the sending of the request — to the end of the response,
+		// measured for both streaming and non-streaming attempts, so
+		// every measured request reports a speed. TimeToFirstToken
+		// spans from the attempt start to the arrival of the first
+		// output content part (body text or reasoning thought);
+		// non-streaming attempts never set firstTokenAt, so no ttft is
+		// reported there. See TheoryOfUsageTiming.
 		attemptStarted := time.Now()
 		var firstTokenAt time.Time
 		finalizeUsage := func(usage *Usage) {
-			if usage == nil || firstTokenAt.IsZero() {
+			if usage == nil {
 				return
 			}
-			usage.TimeToFirstToken = firstTokenAt.Sub(attemptStarted)
-			usage.GenerateDuration = time.Since(firstTokenAt)
+			usage.TotalDuration = time.Since(attemptStarted)
+			if !firstTokenAt.IsZero() {
+				usage.TimeToFirstToken = firstTokenAt.Sub(attemptStarted)
+			}
 		}
 
 		newState := ret
