@@ -3,8 +3,49 @@ package generators
 import (
 	"context"
 	"fmt"
+	"maps"
 	"math/rand/v2"
+	"slices"
 	"strings"
+)
+
+const (
+	TheoryOfModelResolution = `
+Model resolution resolves one name to one generator spec. The name is tried
+in order: a configured generator path (aliases expanded, redirects followed),
+the ollama shorthand ollama:<model>, and the built-in shortcuts (flash,
+gemini). A name that matches none of them is a configuration fault, and its
+failure report must carry everything needed to repair it without re-running
+the process:
+
+- the reason: the immediate cause — an empty name, a path component no spec
+  defines, a redirect cycle, or an unknown generator type;
+- the process: how the name was resolved — every alias expanded, every
+  redirect followed, the path prefix that matched, and the names available
+  at the failing level;
+- the configured generator names with their aliases, so the user sees the
+  names the configuration actually offers;
+- a hint naming the ways to set a usable name.
+
+The report is a ModelResolutionError rendered as multiple lines; the first
+line keeps the invalid-model framing so existing diagnostics and log searches
+keep working. Name lists are sorted and capped: the report stays readable and
+byte-identical for equal configurations.
+`
+
+	// knownGeneratorTypes lists the generator type values the resolver
+	// accepts, mirroring the type switch in Module.GetGenerator. An unknown
+	// type is reported with this list so the configuration can be fixed
+	// without guessing.
+	knownGeneratorTypes = "openai, openrouter, deepseek, baidu, tencent, huoshan, gemini, aliyun, zhipu, ollama, vercel, nvidia, azure, bedrock, opencode-go"
+
+	// maxReportedNames caps a name list in a resolution failure report so a
+	// large configuration cannot flood the message.
+	maxReportedNames = 12
+
+	// modelHint tells the user how to set a usable model name: the flag and
+	// the config paths the name is read from, and the accepted name forms.
+	modelHint = `set the model with the -model flag or the "model" (or "model_name") config path; an accepted name is a configured generator, the built-in flash or gemini, or the ollama shorthand ollama:<model>`
 )
 
 type Generator interface {
@@ -19,10 +60,58 @@ type GenerateOptions struct {
 	NonStreaming      bool
 }
 
+// ModelResolutionError reports that a model name resolved to no generator.
+// It carries the detailed reason, the resolution process that led to the
+// failure, and an actionable hint, so a misconfigured name is diagnosable
+// from the error text alone. See TheoryOfModelResolution.
+type ModelResolutionError struct {
+	Model   string
+	Reason  string
+	Process []string
+	Hint    string
+}
+
+func (e *ModelResolutionError) Error() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "invalid model: %q", e.Model)
+	if e.Reason != "" {
+		fmt.Fprintf(&b, "\nreason: %s", e.Reason)
+	}
+	if len(e.Process) > 0 {
+		b.WriteString("\nprocess:")
+		for _, line := range e.Process {
+			b.WriteString("\n  - ")
+			b.WriteString(line)
+		}
+	}
+	if e.Hint != "" {
+		fmt.Fprintf(&b, "\nhint: %s", e.Hint)
+	}
+	return b.String()
+}
+
 type GetGenerator func(name string) (Generator, error)
 
+// formatNameList renders candidate names for a failure report: sorted,
+// deduplicated, and capped so the report stays readable. An empty list
+// reads "none". See TheoryOfModelResolution.
+func formatNameList(names []string) string {
+	if len(names) == 0 {
+		return "none"
+	}
+	slices.Sort(names)
+	names = slices.Compact(names)
+	if len(names) > maxReportedNames {
+		more := len(names) - maxReportedNames
+		return strings.Join(names[:maxReportedNames], ", ") + fmt.Sprintf(", ... and %d more", more)
+	}
+	return strings.Join(names, ", ")
+}
+
 func resolveSpec(name string, roots []Spec) (Spec, error) {
+	requested := name
 	visited := make(map[string]bool)
+	var process []string
 
 	for {
 		// build alias map
@@ -48,18 +137,28 @@ func resolveSpec(name string, roots []Spec) (Spec, error) {
 
 		// resolve alias
 		if target, ok := aliasMap[name]; ok {
+			process = append(process, fmt.Sprintf("alias: %q -> %q", name, target))
 			name = target
 		}
 
 		if visited[name] {
-			return Spec{}, fmt.Errorf("redirect cycle detected: %s", name)
+			return Spec{}, &ModelResolutionError{
+				Model:   requested,
+				Reason:  fmt.Sprintf("redirect cycle detected: %q was already resolved", name),
+				Process: process,
+			}
 		}
 		visited[name] = true
 
-		parts := strings.Split(name, "/")
-		if len(parts) == 0 || name == "" {
-			return Spec{}, fmt.Errorf("empty name")
+		if name == "" {
+			return Spec{}, &ModelResolutionError{
+				Model:   requested,
+				Reason:  "empty model name",
+				Process: process,
+			}
 		}
+
+		parts := strings.Split(name, "/")
 
 		// build root map
 		rootMap := make(map[string]Spec)
@@ -79,11 +178,30 @@ func resolveSpec(name string, roots []Spec) (Spec, error) {
 		currentMap := rootMap
 		var lastRedirect string
 		var lastRandomRedirects []string
+		var resolvedPrefix string
 
 		for _, part := range parts {
 			spec, ok := currentMap[part]
 			if !ok {
-				return Spec{}, fmt.Errorf("spec not found: %s", name)
+				where := "the root level"
+				if resolvedPrefix != "" {
+					where = fmt.Sprintf("the level of %q", resolvedPrefix)
+				}
+				failure := &ModelResolutionError{
+					Model:   requested,
+					Reason:  fmt.Sprintf("spec not found: path component %q of %q is not defined at %s", part, name, where),
+					Process: process,
+				}
+				if resolvedPrefix != "" {
+					failure.Process = append(failure.Process,
+						"available at that level: "+formatNameList(slices.Sorted(maps.Keys(currentMap))))
+				}
+				return Spec{}, failure
+			}
+			if resolvedPrefix == "" {
+				resolvedPrefix = part
+			} else {
+				resolvedPrefix += "/" + part
 			}
 			// merge fields
 			if spec.Type != "" {
@@ -177,11 +295,14 @@ func resolveSpec(name string, roots []Spec) (Spec, error) {
 		// components. An absolute redirect starting with "/" (e.g.,
 		// "/foo/bar") resolves from the root, replacing the current path.
 		if lastRedirect != "" {
-			if strings.HasPrefix(lastRedirect, "/") {
-				name = lastRedirect[1:]
+			target := lastRedirect
+			if strings.HasPrefix(target, "/") {
+				target = target[1:]
 			} else {
-				name = name + "/" + lastRedirect
+				target = name + "/" + target
 			}
+			process = append(process, fmt.Sprintf("redirect: %q -> %q", name, target))
+			name = target
 			continue
 		}
 
@@ -193,15 +314,49 @@ func resolveSpec(name string, roots []Spec) (Spec, error) {
 		// current path, absolute paths starting with "/" replace it.
 		if len(lastRandomRedirects) > 0 {
 			picked := lastRandomRedirects[rand.IntN(len(lastRandomRedirects))]
-			if strings.HasPrefix(picked, "/") {
-				name = picked[1:]
+			target := picked
+			if strings.HasPrefix(target, "/") {
+				target = target[1:]
 			} else {
-				name = name + "/" + picked
+				target = name + "/" + target
 			}
+			process = append(process, fmt.Sprintf("random redirect: %q -> %q", name, target))
+			name = target
 			continue
 		}
 
 		return merged, nil
+	}
+}
+
+// invalidModelError builds the failure report for a name that resolved to no
+// generator: the reason and the resolution steps of the failed attempt, the
+// configured generator names, and the hint. See TheoryOfModelResolution.
+func invalidModelError(name, reason string, steps []string, hint string, specs []Spec) *ModelResolutionError {
+	var names []string
+	for _, spec := range specs {
+		if spec.Name == "" {
+			continue
+		}
+		entry := spec.Name
+		var aliases []string
+		for _, alias := range spec.Aliases {
+			if alias != "" {
+				aliases = append(aliases, alias)
+			}
+		}
+		if len(aliases) > 0 {
+			entry += " (aliases: " + strings.Join(aliases, ", ") + ")"
+		}
+		names = append(names, entry)
+	}
+	process := slices.Clone(steps)
+	process = append(process, "configured generators: "+formatNameList(names))
+	return &ModelResolutionError{
+		Model:   name,
+		Reason:  reason,
+		Process: process,
+		Hint:    hint,
 	}
 }
 
@@ -230,6 +385,7 @@ func (Module) GetGenerator(
 		if err != nil {
 			return nil, err
 		}
+		var resolveErr error
 		if resolvedSpec, err := resolveSpec(name, specs); err == nil {
 			if err := confidential.check(resolvedSpec, name); err != nil {
 				return nil, err
@@ -269,8 +425,15 @@ func (Module) GetGenerator(
 			case "opencode-go", "opencode_go", "opencodego":
 				return newOpenCodeGo(resolvedSpec), nil
 			default:
-				return nil, fmt.Errorf("unknown generator type: %q", resolvedSpec.Type)
+				reason := fmt.Sprintf("the resolved generator %q has unknown type %q", resolvedSpec.Name, resolvedSpec.Type)
+				if resolvedSpec.Type == "" {
+					reason = fmt.Sprintf("the resolved generator %q sets no type", resolvedSpec.Name)
+				}
+				return nil, invalidModelError(name, reason, nil,
+					"set the generator's type in the generators config to one of: "+knownGeneratorTypes, specs)
 			}
+		} else {
+			resolveErr = err
 		}
 
 		// ollama
@@ -316,6 +479,14 @@ func (Module) GetGenerator(
 
 		}
 
-		return nil, fmt.Errorf("invalid model: %s", name)
+		reason := "the name resolved to no generator"
+		var steps []string
+		if detail, ok := resolveErr.(*ModelResolutionError); ok {
+			reason = detail.Reason
+			steps = detail.Process
+		} else if resolveErr != nil {
+			reason = "resolving the configured generators failed: " + resolveErr.Error()
+		}
+		return nil, invalidModelError(name, reason, steps, modelHint, specs)
 	}
 }

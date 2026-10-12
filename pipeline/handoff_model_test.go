@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/reusee/tai/flags"
@@ -85,6 +86,43 @@ func TestGetHandoffGeneratorSelection(t *testing.T) {
 			t.Fatal("expected resolution error for configured model")
 		}
 	})
+}
+
+// TestGetHandoffGeneratorErrorNamesSelection pins the failure report of a
+// handoff model that does not resolve: the error names the selection that
+// produced the name and wraps the resolver's invalid-model report, so the
+// configuration holding the wrong name is known from the error alone.
+func TestGetHandoffGeneratorErrorNamesSelection(t *testing.T) {
+	m := new(Module)
+	resolveErr := errors.New(`invalid model: "bad"`)
+	get := func(name string) (generators.Generator, error) {
+		return nil, resolveErr
+	}
+	defaultGen := func() (generators.Generator, error) {
+		return &mockSummarizerGenerator{}, nil
+	}
+
+	_, err := m.GetHandoffGenerator(flags.HandoffModel("bad"), "", defaultGen, get)()
+	if err == nil {
+		t.Fatal("expected a resolution error")
+	}
+	msg := err.Error()
+	for _, want := range []string{"handoff model", `"bad"`, "handoff_model", `invalid model: "bad"`} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error message does not contain %q:\n%s", want, msg)
+		}
+	}
+
+	_, err = m.GetHandoffGenerator("", flags.FastModelName("fast"), defaultGen, get)()
+	if err == nil {
+		t.Fatal("expected a resolution error")
+	}
+	msg = err.Error()
+	for _, want := range []string{"fast model", `"fast"`, `invalid model: "bad"`} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error message does not contain %q:\n%s", want, msg)
+		}
+	}
 }
 
 // TestGetHandoffGenerators covers the wrapper's own contract: the resolved

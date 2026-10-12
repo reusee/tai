@@ -1339,3 +1339,126 @@ func TestConfidentialModeRejectsNonZeroDataRetention(t *testing.T) {
 		t.Fatalf("non-confidential mode should allow plain model: %v", err)
 	}
 }
+
+// TestInvalidModelErrorReportsReasonAndProcess pins the invalid-model report:
+// every failure path carries the detailed reason, the resolution process, and
+// a repair hint, so a misconfigured name is diagnosable from the error text
+// alone. See TheoryOfModelResolution.
+func TestInvalidModelErrorReportsReasonAndProcess(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.cue")
+	configContent := `generators: [
+  {
+    name: "base"
+    type: "gemini"
+    model: "models/base"
+    aliases: ["b"]
+    variants: [
+      {
+        name: "child"
+        type: "openai"
+        model: "gpt-4o"
+      },
+    ]
+  },
+  {
+    name: "redir"
+    type: "openai"
+    model: "gpt-4o"
+    redirect: "missing"
+  },
+  {
+    name: "typed"
+    type: "nope"
+    model: "gpt-4o"
+  },
+  {
+    name: "untyped"
+    model: "gpt-4o"
+  },
+]
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	scope := dscope.New(
+		modes.ForTest(t),
+		new(Module),
+	).Fork(
+		func() configs.Loader {
+			return configs.NewLoader([]string{configPath}, configs.LoaderConfig{})
+		},
+	)
+	get := scope.Get[GetGenerator]()
+
+	expect := func(t *testing.T, err error, wants ...string) {
+		t.Helper()
+		if err == nil {
+			t.Fatal("expected an error")
+		}
+		msg := err.Error()
+		for _, want := range wants {
+			if !strings.Contains(msg, want) {
+				t.Errorf("error message does not contain %q:\n%s", want, msg)
+			}
+		}
+	}
+
+	t.Run("unknown root name", func(t *testing.T) {
+		_, err := get("bogus")
+		expect(t, err,
+			`invalid model: "bogus"`,
+			`reason: spec not found`,
+			`path component "bogus"`,
+			`at the root level`,
+			`configured generators: base (aliases: b)`,
+			`hint: `,
+			`ollama:<model>`,
+		)
+	})
+
+	t.Run("empty name", func(t *testing.T) {
+		_, err := get("")
+		expect(t, err,
+			`invalid model: ""`,
+			`reason: empty model name`,
+			`configured generators: base (aliases: b)`,
+		)
+	})
+
+	t.Run("unknown nested component", func(t *testing.T) {
+		_, err := get("base/missing")
+		expect(t, err,
+			`path component "missing" of "base/missing"`,
+			`at the level of "base"`,
+			`available at that level: child`,
+		)
+	})
+
+	t.Run("redirect target missing", func(t *testing.T) {
+		_, err := get("redir")
+		expect(t, err,
+			`redirect: "redir" -> "redir/missing"`,
+			`path component "missing" of "redir/missing"`,
+		)
+	})
+
+	t.Run("unknown type", func(t *testing.T) {
+		_, err := get("typed")
+		expect(t, err,
+			`invalid model: "typed"`,
+			`unknown type "nope"`,
+			`generators config`,
+			`openai, openrouter`,
+		)
+	})
+
+	t.Run("no type", func(t *testing.T) {
+		_, err := get("untyped")
+		expect(t, err,
+			`invalid model: "untyped"`,
+			`sets no type`,
+		)
+	})
+}

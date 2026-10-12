@@ -1,6 +1,8 @@
 package pipeline
 
 import (
+	"fmt"
+
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
 )
@@ -15,6 +17,10 @@ tai handoff model theory:
   summarization, which needs a single stable generator. GetHandoffGenerators
   provides a single-element slice containing the resolved handoff model for
   handoff generation.
+- A resolution failure names the selection that produced the name — the
+  handoff model flag or the fast model flag — and wraps the resolver's
+  detailed invalid-model report, so the configuration that holds the wrong
+  name is known from the error alone.
 `
 
 // GetHandoffGenerator returns the primary handoff generator: the
@@ -31,10 +37,18 @@ func (Module) GetHandoffGenerator(
 ) GetHandoffGenerator {
 	return func() (generators.Generator, error) {
 		if handoffModel != "" {
-			return getGenerator(string(handoffModel))
+			generator, err := getGenerator(string(handoffModel))
+			if err != nil {
+				return nil, fmt.Errorf("handoff model %q (set by the -handoff-model flag or the handoff_model config path): %w", handoffModel, err)
+			}
+			return generator, nil
 		}
 		if fastModel != "" {
-			return getGenerator(string(fastModel))
+			generator, err := getGenerator(string(fastModel))
+			if err != nil {
+				return nil, fmt.Errorf("fast model %q (selected as the fallback handoff model): %w", fastModel, err)
+			}
+			return generator, nil
 		}
 		return defaultGenerator()
 	}
