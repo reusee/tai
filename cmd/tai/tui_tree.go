@@ -121,16 +121,19 @@ Tree tab theory (cmd/tai):
   an explicit collapse records false — and a node the map has never
   seen takes its type's default. A summary node whose content is a
   single line hides nothing, so it keeps the one-row index form.
-- The tab is a four-column layout: the type column (the depth indent
-  plus the type fragment), the fold column, the content column, and the
-  right-aligned time column. The fragment's prefix field — the family
-  emoji plus the type's first part — pads to the widest visible prefix,
-  so the second parts line up at every indent; the full fragment pads
-  to the widest visible fragment across every indent level, and the fold
-  column sits right of every type fragment, so the content column
-  starts at one fixed display column on every row and never
-  interleaves with the type column; the pad widths and the fold and
-  content columns derive from the projected entries.
+- The tab is a five-column layout: the subtree control column (the
+  pane's leftmost cells, carrying the structural fold glyph of every
+  node with children; see TheoryOfTreeSubtreeFold), the type column
+  (the depth indent plus the type fragment), the fold column, the
+  content column, and the right-aligned time column. The fragment's
+  prefix field — the family emoji plus the type's first part — pads to
+  the widest visible prefix, so the second parts line up at every
+  indent; the full fragment pads to the widest visible fragment across
+  every indent level, and the fold column sits right of every type
+  fragment, so the content column starts at one fixed display column
+  on every row and never interleaves with the type column; the pad
+  widths and the fold and content columns derive from the projected
+  entries and the control column width.
 - The fold column carries one fold slot per node on the header row:
   every expandable node shows the fold glyph ▾ while expanded and ▸
   while collapsed, and a node that is neither multi-line nor
@@ -195,6 +198,44 @@ Tree tab theory (cmd/tai):
   machine's. The Plan tab shares this rendering, its own pane state,
   and its own row ranges through the paneIdx parameterization (see
   TheoryOfTUIDynamicPlanTab).
+`
+
+const TheoryOfTreeSubtreeFold = `
+Tree tab subtree fold theory (cmd/tai):
+- The subtree control column occupies the leftmost controlColumnWidth
+  cells of every tree row, left of the depth indent. A node with children
+  carries one control there: ▾ while its children show, ▸ while its whole
+  subtree is hidden. A leaf carries blank cells, so the content column
+  stays aligned on every row. The stream projection carries no subtree
+  control: every row is flat, so folding would hide nothing the reader
+  can see.
+- The fold is structural: it hides the node's children and all their
+  descendants. It is not the content fold, which hides one node's own body
+  inside the header text (see TheoryOfTreeTab). The two states are
+  recorded per node name and never mutate each other, so a node can show
+  its own body while its subtree stays hidden, and unfolding restores the
+  descendants with their own subtree folds and content expansions intact.
+- The control follows the content: a node whose control row scrolled above
+  the viewport top carries its glyph on its first visible display row,
+  clamped to the viewport top. The render path and the press path share
+  one clamped-row computation (treeControlRow), so what is drawn is what
+  is pressed, and the glyph replaces the row's control cells only when
+  they hold blank cells.
+- A press on the control column's cells toggles the node's subtree; the
+  press preempts the ordinary handling — the double-click content toggle
+  and the attempt jump marker. Hovering the column on a control's row
+  renders the glyph reversed, the affordance the content fold column and
+  the Output tab's control column show (see TheoryOfOutputControls).
+- Search suspends the fold: while a pane's search is active with a
+  non-empty keyword, the walk does not stop at folded nodes and the
+  column paints no glyph, because the search view shows matching paths
+  that must stay reachable. The fold state is never discarded, so closing
+  the search restores the folded structure unchanged. See
+  TheoryOfTreeSearch.
+- The state is per pane: the Tree and Plan panes hold their own subtree
+  folds through the shared pane parameterization (see
+  TheoryOfTUIDynamicPlanTab), and the record browser's tree view shares
+  the same render and press paths (see TheoryOfRecordBrowser).
 `
 
 // treeViewMode selects one projection of the session tree the Tree tab
@@ -268,13 +309,17 @@ const treeDoubleClickWindow = 400 * time.Millisecond
 // first row, the row a press folds an expanded node through.
 // Expandable records the node's expandability at the rendering width:
 // multi-line content, or a header truncated at that width, so the
-// fold column and the press paths share one fact. See
-// TheoryOfTreeTab.
+// fold column and the press paths share one fact. Subtree records that
+// the row carries the subtree control — the node has children and the
+// rendered projection shows structure and folds — so the subtree
+// control column paints the node's subtree glyph on the node's control
+// row. See TheoryOfTreeTab and TheoryOfTreeSubtreeFold.
 type treeRowRange struct {
 	name       string
 	startRow   int
 	endRow     int
 	expandable bool
+	subtree    bool
 }
 
 // treeControlRow returns the display row carrying the node's fold
@@ -355,12 +400,21 @@ type treeTabState struct {
 	// rendering and press paths read the pane's scroll state and tab
 	// box; the Tree pane keeps 0, the Plan pane takes its inserted
 	// index. See TheoryOfTUIDynamicPlanTab.
-	paneIdx  int
+	paneIdx int
+	// expanded records the content fold of each node: whether the
+	// node's own body shows below its header. See TheoryOfTreeTab.
 	expanded map[string]bool
-	seen     map[string]bool
-	cache    map[string]treeCached
-	rows     []treeRowRange
-	align    treeAlignments
+	// subtreeCollapsed records the structural fold of each node:
+	// whether the node's whole subtree — its children and all their
+	// descendants — is hidden. A missing entry means the subtree
+	// shows. It is independent of the content fold expanded carries:
+	// the two states never mutate each other. See
+	// TheoryOfTreeSubtreeFold.
+	subtreeCollapsed map[string]bool
+	seen             map[string]bool
+	cache            map[string]treeCached
+	rows             []treeRowRange
+	align            treeAlignments
 	// collapseAllSaved carries the nodes the last c-key fold had
 	// expanded, so pressing the key again while every node is
 	// collapsed restores them. Nil until the first fold. See
@@ -405,9 +459,10 @@ func treeAlignmentsOf(tr *tree.Tree, options displaywidth.Options) treeAlignment
 	// and the name; every fragment of the projected tree pads to the
 	// widest of them, so the fold column sits right of every fragment.
 	align.typeWidth = align.prefixWidth + 1 + align.nameWidth
-	// The fold column sits one space right of the deepest indent plus
-	// the widest fragment. The content column follows the fold slot.
-	align.foldX = treeIndentWidth*align.maxDepth + align.typeWidth + 1
+	// The subtree control column occupies the pane's leftmost cells on
+	// every row, so the structure columns start right of it. See
+	// TheoryOfTreeSubtreeFold.
+	align.foldX = controlColumnWidth + treeIndentWidth*align.maxDepth + align.typeWidth + 1
 	align.contentX = align.foldX + treeFoldSlotWidth(options) + 1
 	return align
 }
@@ -483,21 +538,22 @@ func treeNodeExpandable(n *tree.Node) bool {
 	return len(treeBodyLines(n)) > 0
 }
 
-// treeHeaderText renders the node's header text: the depth indent, the
-// type fragment padded to the widest type fragment, the fold
-// slot at the global fold column, and — collapsed only — the first
-// non-blank content line as the index preview with the ⤷ more-lines hint
-// on multi-line content. The node name and author are secondary to the
-// user and hidden while collapsed; the expanded header reveals them
-// after the fold column and drops the preview, so the content starts on
-// the row below the header. The jump marker on an attempt node stays on
-// the header. The type fragments and the fold column align globally
-// across every indent level, so the content column starts at one fixed
-// display column on every row. See TheoryOfTreeTab.
+// treeHeaderText renders the node's header text: the subtree control
+// column's cells, the depth indent, the type fragment padded to the
+// widest type fragment, the fold slot at the global fold column, and —
+// collapsed only — the first non-blank content line as the index preview
+// with the ⤷ more-lines hint on multi-line content. The node name and
+// author are secondary to the user and hidden while collapsed; the
+// expanded header reveals them after the fold column and drops the
+// preview, so the content starts on the row below the header. The jump
+// marker on an attempt node stays on the header. The type fragments, the
+// fold column, and the content column align globally across every indent
+// level, so the content column starts at one fixed display column on
+// every row. See TheoryOfTreeTab and TheoryOfTreeSubtreeFold.
 func treeHeaderText(n *tree.Node, depth int, expanded bool, slot string, options displaywidth.Options, align treeAlignments) string {
 	typ := treeNodeTypeText(n, align, options)
 	var b strings.Builder
-	b.WriteString(strings.Repeat(" ", treeIndentWidth*depth))
+	b.WriteString(strings.Repeat(" ", controlColumnWidth+treeIndentWidth*depth))
 	b.WriteString(typ)
 	if pad := align.typeWidth - options.String(typ); pad > 0 {
 		b.WriteString(strings.Repeat(" ", pad))
@@ -505,7 +561,7 @@ func treeHeaderText(n *tree.Node, depth int, expanded bool, slot string, options
 	// The fold slot sits at the global fold column on every row, so a
 	// shallower row carries the extra spacing its smaller indent
 	// leaves. See TheoryOfTreeTab.
-	if pad := align.foldX - (treeIndentWidth*depth + align.typeWidth); pad > 0 {
+	if pad := align.foldX - (controlColumnWidth + treeIndentWidth*depth + align.typeWidth); pad > 0 {
 		b.WriteString(strings.Repeat(" ", pad))
 	}
 	b.WriteString(slot)
@@ -758,6 +814,12 @@ func (t *TUI) treeDisplay(contentWidth int, base taiui.Color) []taiui.Line {
 	var out []taiui.Line
 	t.treeTab.rows = t.treeTab.rows[:0]
 	index := 0
+	// A folded node hides its whole subtree: the walk stops there, so no
+	// descendant renders and no descendant records a press row. The
+	// search view shows matching paths, which must stay reachable, so it
+	// suspends the fold and the control column paints no glyph there.
+	// See TheoryOfTreeSubtreeFold.
+	folding := !searching
 	var walk func(n *tree.Node, depth int)
 	walk = func(n *tree.Node, depth int) {
 		shade := base
@@ -768,10 +830,16 @@ func (t *TUI) treeDisplay(contentWidth int, base taiui.Color) []taiui.Line {
 		lines, expandable := t.treeNodeLines(n, depth, shade, contentWidth, options, align)
 		start := len(out)
 		out = append(out, lines...)
+		children := n.Children()
 		t.treeTab.rows = append(t.treeTab.rows, treeRowRange{
-			name: n.Name, startRow: start, endRow: len(out), expandable: expandable,
+			name: n.Name, startRow: start, endRow: len(out),
+			expandable: expandable,
+			subtree:    folding && len(children) > 0,
 		})
-		for _, c := range n.Children() {
+		if folding && t.treeTab.subtreeCollapsed[n.Name] {
+			return
+		}
+		for _, c := range children {
 			walk(c, depth+1)
 		}
 	}
@@ -1041,6 +1109,19 @@ func (t *TUI) toggleTreeNodeByName(name string) {
 	}
 }
 
+// toggleTreeNodeSubtree flips one node's subtree fold, lazily creating the
+// map because a press can arrive before any fold was recorded. A folded
+// node hides its children and all their descendants; unfolding restores
+// them with their own subtree folds and content expansions intact,
+// because both states are recorded per node name. The caller holds t.mu.
+// See TheoryOfTreeSubtreeFold.
+func (t *TUI) toggleTreeNodeSubtree(name string) {
+	if t.treeTab.subtreeCollapsed == nil {
+		t.treeTab.subtreeCollapsed = make(map[string]bool)
+	}
+	t.treeTab.subtreeCollapsed[name] = !t.treeTab.subtreeCollapsed[name]
+}
+
 // toggleLastTreeExpandable expands or collapses the last expandable
 // node of the session tree in depth-first order — typically the latest
 // handoff or completion summary — so Enter works on the most recent
@@ -1175,6 +1256,12 @@ func (t *TUI) treeFoldHoverElement(box taiui.Box, display []taiui.Line) taiui.El
 		return nil
 	}
 	idx := t.treeTab.paneIdx
+	// The pane's leftmost cells carry the subtree control column, whose
+	// glyph the render path paints; the content fold column sits inside
+	// the header text. See TheoryOfTreeSubtreeFold.
+	if t.ctlHoverX >= box.Left && t.ctlHoverX < box.Left+controlColumnWidth {
+		return t.treeSubtreeHoverElement(box, display, idx)
+	}
 	options := taiui.DisplayWidthOptions()
 	foldWidth := treeFoldSlotWidth(options)
 	foldLeft := box.Left + t.treeTab.align.foldX
@@ -1205,6 +1292,36 @@ func (t *TUI) treeFoldHoverElement(box taiui.Box, display []taiui.Line) taiui.El
 	return nil
 }
 
+// treeSubtreeHoverElement reports the subtree control column's affordance:
+// the glyph of the node whose control lies under the pointer, rendered
+// reversed so the press target is visible before any press. It mirrors
+// treeFoldHoverElement for the leftmost column. See
+// TheoryOfTreeSubtreeFold.
+func (t *TUI) treeSubtreeHoverElement(box taiui.Box, display []taiui.Line, idx int) taiui.Element {
+	if t.ctlHoverY <= box.Top || t.ctlHoverY >= box.Bottom {
+		return nil
+	}
+	offset := 0
+	if sc := t.paneScrollLocked(idx); sc != nil {
+		offset = taiui.ClampOffset(sc.Offset, len(display), t.tuiPaneHeight(idx, box))
+	}
+	paneHeight := t.tuiPaneHeight(idx, box)
+	row := offset + (t.ctlHoverY - box.Top - 1)
+	for _, r := range t.treeTab.rows {
+		if !r.subtree {
+			continue
+		}
+		controlRow, visible := treeControlRow(r, offset, paneHeight)
+		if !visible || controlRow != row {
+			continue
+		}
+		return taiui.Text(treeSubtreeGlyph(t.treeTab.subtreeCollapsed[r.name]), taiui.Box{
+			Top: t.ctlHoverY, Left: box.Left, Bottom: t.ctlHoverY + 1, Right: box.Left + controlColumnWidth,
+		}, taiui.Reverse(true))
+	}
+	return nil
+}
+
 // treeFoldGlyph returns the fold column's glyph of a node: ▾ while
 // expanded, ▸ while collapsed. See TheoryOfTreeTab.
 func treeFoldGlyph(expanded bool) string {
@@ -1212,6 +1329,13 @@ func treeFoldGlyph(expanded bool) string {
 		return sectionGlyphExpanded
 	}
 	return sectionGlyphCollapsed
+}
+
+// treeSubtreeGlyph returns the subtree control column's glyph of a node:
+// ▾ while the node's children show, ▸ while its whole subtree is hidden.
+// See TheoryOfTreeSubtreeFold.
+func treeSubtreeGlyph(collapsed bool) string {
+	return treeFoldGlyph(!collapsed)
 }
 
 func (t *TUI) floatTreeControls(box taiui.Box, display []taiui.Line) {
@@ -1251,18 +1375,27 @@ func (t *TUI) floatTreeControls(box taiui.Box, display []taiui.Line) {
 			display[controlRow] = line
 		}
 	}
+	// The subtree control column: every node with children paints its
+	// subtree glyph on the node's control row — the header row, or the
+	// node's first visible row when the header scrolled above the
+	// viewport. The header text carries blank cells there, so the
+	// replacement never overwrites content. See
+	// TheoryOfTreeSubtreeFold.
+	for _, r := range t.treeTab.rows {
+		if !r.subtree {
+			continue
+		}
+		controlRow, visible := treeControlRow(r, offset, paneHeight)
+		if !visible {
+			continue
+		}
+		glyph := treeSubtreeGlyph(t.treeTab.subtreeCollapsed[r.name])
+		if line, ok := treeFloatGlyph(display[controlRow], 0, controlColumnWidth, glyph, options); ok {
+			display[controlRow] = line
+		}
+	}
 }
 
-// toggleTreeControlAtClick toggles the node whose fold glyph the press
-// hit: the press must land on the fold column's cells on the row
-// carrying the node's control — the header row, or the node's first
-// visible row when the header scrolled above the viewport. Expanding
-// a collapsed node scrolls the view to the node's first display row,
-// mirroring the Output tab's control behavior. It reports whether a
-// control consumed the press. The pane's own layout index drives the
-// box and the scroll state, so a press in the Plan pane acts on the
-// Plan pane. The caller holds t.mu. See TheoryOfTreeTab,
-// TheoryOfTUIDynamicPlanTab, and TheoryOfTreeSearch.
 func (t *TUI) toggleTreeControlAtClick(x, y int) bool {
 	idx := t.treeTab.paneIdx
 	if idx < 0 || idx >= len(t.tabs.Expanded) || !t.tabs.Expanded[idx] || t.treeView == nil {
@@ -1285,9 +1418,15 @@ func (t *TUI) toggleTreeControlAtClick(x, y int) bool {
 		return false
 	}
 	align := t.treeTab.align
-	foldWidth := treeFoldSlotWidth(taiui.DisplayWidthOptions())
+	options := taiui.DisplayWidthOptions()
+	foldWidth := treeFoldSlotWidth(options)
 	foldLeft := box.Left + align.foldX
-	if x < foldLeft || x >= foldLeft+foldWidth {
+	// Two columns carry controls: the pane's leftmost cells carry the
+	// subtree control, and the header's fold column carries the content
+	// fold. A press outside both is not a control press. See
+	// TheoryOfTreeSubtreeFold.
+	inSubtreeColumn := x >= box.Left && x < box.Left+controlColumnWidth
+	if !inSubtreeColumn && (x < foldLeft || x >= foldLeft+foldWidth) {
 		return false
 	}
 	offset := 0
@@ -1296,6 +1435,24 @@ func (t *TUI) toggleTreeControlAtClick(x, y int) bool {
 	}
 	paneHeight := t.tuiPaneHeight(idx, box)
 	row := offset + (y - box.Top - 1)
+	if inSubtreeColumn {
+		// A press on the pane's left cells toggles the node's whole
+		// subtree, the control the column paints. The clamped-row
+		// computation is shared with the render path, so what is drawn
+		// is what is pressed. See TheoryOfTreeSubtreeFold.
+		for _, r := range t.treeTab.rows {
+			if !r.subtree {
+				continue
+			}
+			controlRow, visible := treeControlRow(r, offset, paneHeight)
+			if !visible || controlRow != row {
+				continue
+			}
+			t.toggleTreeNodeSubtree(r.name)
+			return true
+		}
+		return false
+	}
 	for _, r := range t.treeTab.rows {
 		if !r.expandable {
 			continue

@@ -41,6 +41,12 @@ Tree tab search theory (cmd/tai):
   because neither state holds a match; a manual toggle and the
   collapse-all key discard the search's record of the node's earlier
   state, so the user's explicit structure is never overwritten.
+- The structural fold (see TheoryOfTreeSubtreeFold) is suspended while
+  a non-empty keyword searches: the filtered view walks through folded
+  nodes, so a match inside a hidden subtree stays reachable, and the
+  subtree control column paints no glyph there. The fold state itself
+  is never discarded, so emptying the keyword or closing the search
+  restores the folded structure unchanged.
 - While searching, the whole panel shifts down one row and the search
   bar occupies the freed row. tabRenderBox is the one geometry source
   for the inset panel, fold controls, toolbar, status overlay, and

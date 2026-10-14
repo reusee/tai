@@ -940,8 +940,11 @@ func TestTitleStatusElement(t *testing.T) {
 // collapsed renders one truncated header row, and expanding moves the
 // content — first line included — onto the body rows below the header,
 // wrapped at the pane width instead of truncated, so the full content
-// becomes visible and no body row carries the truncation mark. See
-// TheoryOfTreeTab.
+// becomes visible and no body row carries the truncation mark. The
+// width keeps the pane on the tree form: the subtree control column
+// widened the row's structure, so a narrower pane would fall back to
+// the stream projection. See TheoryOfTreeTab and
+// TheoryOfTreeSubtreeFold.
 func TestTreeExpansionWrapsBody(t *testing.T) {
 	tui := newTUIForTest()
 	tr, err := tree.New().Write("root", "wide-1", tree.TypeHandoff, tree.AuthorProgram,
@@ -953,7 +956,7 @@ func TestTreeExpansionWrapsBody(t *testing.T) {
 	tui.mu.Lock()
 	defer tui.mu.Unlock()
 	// Collapsed: exactly one truncated header row.
-	display := tui.treeDisplay(40, panelStyle.BaseBG)
+	display := tui.treeDisplay(46, panelStyle.BaseBG)
 	if len(display) != 1 {
 		t.Fatalf("expected 1 collapsed row, got %d", len(display))
 	}
@@ -963,10 +966,10 @@ func TestTreeExpansionWrapsBody(t *testing.T) {
 	// Expanded: body lines wrap, never truncate; every row fits the
 	// content width.
 	tui.toggleTreeNodeAtRow(0)
-	display = tui.treeDisplay(40, panelStyle.BaseBG)
+	display = tui.treeDisplay(46, panelStyle.BaseBG)
 	body := ""
 	for i, line := range display {
-		if w := displaywidth.String(line.Text); w > 40 {
+		if w := displaywidth.String(line.Text); w > 46 {
 			t.Fatalf("a display row must not exceed the content width, got %d: %q", w, line.Text)
 		}
 		if i == 0 {
@@ -1227,6 +1230,187 @@ func TestTreeControlRow(t *testing.T) {
 	below := treeRowRange{name: "b", startRow: 10, endRow: 12, expandable: true}
 	if _, ok := treeControlRow(below, 0, 4); ok {
 		t.Fatal("a node below the viewport carries no control")
+	}
+}
+
+// TestTreeSubtreeFold verifies the subtree control column: a node with
+// children carries the expand glyph in the pane's leftmost cells, a press
+// there hides the node's whole subtree — every descendant — and turns the
+// glyph, a second press restores the descendants, a leaf carries blank
+// cells, and the content fold stays independent of the structural fold.
+// The display-line counts are asserted on the display, because the fold
+// hides nodes while the content fold adds lines to the node that stays.
+// See TheoryOfTreeSubtreeFold.
+func TestTreeSubtreeFold(t *testing.T) {
+	tui := newTUIForTest()
+	tr, err := tree.New().WriteAll(
+		tree.WriteOp{Parent: "root", Name: "parent-1", Type: tree.TypeHandoff, Author: tree.AuthorProgram, Content: "head\nbody"},
+		tree.WriteOp{Parent: "parent-1", Name: "child-1", Type: tree.TypeModel, Author: tree.AuthorModel, Content: "child"},
+		tree.WriteOp{Parent: "child-1", Name: "grand-1", Type: tree.TypeSummary, Author: tree.AuthorModel, Content: "grand"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tui.treeView = tr
+	tui.mu.Lock()
+	defer tui.mu.Unlock()
+	tui.width, tui.height = 80, 25
+	tui.tabs.Expanded[0] = true
+	tui.scrolls[0].Offset = 0
+	tui.scrolls[0].Follow = false
+	box := tui.tabs.Boxes(tui.width, tui.height)[0]
+	contentWidth := treeContentWidth(box.Width())
+	display := tui.treeDisplay(contentWidth, panelStyle.BaseBG)
+	if len(tui.treeTab.rows) != 3 {
+		t.Fatalf("expected one row range per collapsed node, got %d", len(tui.treeTab.rows))
+	}
+	if !tui.treeTab.rows[0].subtree || !tui.treeTab.rows[1].subtree || tui.treeTab.rows[2].subtree {
+		t.Fatalf("expected the nodes with children to carry the subtree control, got %+v", tui.treeTab.rows)
+	}
+	leafRow := tui.treeTab.rows[2].startRow
+	tui.floatTreeControls(box, display)
+	if !strings.HasPrefix(display[0].Text, sectionGlyphExpanded+" ") {
+		t.Fatalf("expected the expanded subtree glyph first, got %q", display[0].Text)
+	}
+	if !strings.HasPrefix(display[leafRow].Text, "  ") {
+		t.Fatalf("a leaf must carry blank cells in the control column, got %q", display[leafRow].Text)
+	}
+	// Hovering the control column on a control row shows the reversed
+	// glyph affordance; a leaf row shows none.
+	tui.ctlHover, tui.mouseReporting = true, true
+	tui.ctlHoverX, tui.ctlHoverY = box.Left, box.Top+1
+	if el := tui.treeFoldHoverElement(box, display); el == nil {
+		t.Fatal("expected the subtree hover affordance")
+	}
+	tui.ctlHoverY = box.Top + 1 + leafRow
+	if el := tui.treeFoldHoverElement(box, display); el != nil {
+		t.Fatal("a leaf row must carry no subtree affordance")
+	}
+	tui.ctlHover = false
+	// A press on the control column hides the whole subtree: both
+	// descendants leave the display.
+	if !tui.toggleTreeControlAtClick(box.Left, box.Top+1) {
+		t.Fatal("the press must toggle the subtree of parent-1")
+	}
+	if !tui.treeTab.subtreeCollapsed["parent-1"] {
+		t.Fatal("expected parent-1 folded")
+	}
+	display = tui.treeDisplay(contentWidth, panelStyle.BaseBG)
+	if len(display) != 1 {
+		t.Fatalf("the folded subtree must hide every descendant, got %d rows", len(display))
+	}
+	tui.floatTreeControls(box, display)
+	if !strings.HasPrefix(display[0].Text, sectionGlyphCollapsed+" ") {
+		t.Fatalf("expected the collapsed subtree glyph, got %q", display[0].Text)
+	}
+	// The content fold stays independent: expanding the folded node's
+	// content shows its own body while the subtree stays hidden.
+	tui.toggleTreeNodeByName("parent-1")
+	display = tui.treeDisplay(contentWidth, panelStyle.BaseBG)
+	if len(display) != 3 {
+		t.Fatalf("expected the node's own body under the folded subtree, got %d rows", len(display))
+	}
+	if len(tui.treeTab.rows) != 1 {
+		t.Fatalf("the folded subtree must still show one node, got %d", len(tui.treeTab.rows))
+	}
+	// Unfolding restores the descendants and keeps the content expanded.
+	if !tui.toggleTreeControlAtClick(box.Left, box.Top+1) {
+		t.Fatal("the second press must unfold the subtree")
+	}
+	display = tui.treeDisplay(contentWidth, panelStyle.BaseBG)
+	if len(display) != 5 {
+		t.Fatalf("unfolding must restore the descendants, got %d rows", len(display))
+	}
+	if !tui.treeTab.expanded["parent-1"] {
+		t.Fatal("unfolding must keep the content expansion")
+	}
+}
+
+// TestTreeSubtreeControlFloats verifies the clamped subtree control row:
+// with a node's header scrolled above the viewport top, the subtree glyph
+// renders on the node's first visible display row, and a press there folds
+// the node. See TheoryOfTreeSubtreeFold.
+func TestTreeSubtreeControlFloats(t *testing.T) {
+	tui := newTUIForTest()
+	tr, err := tree.New().WriteAll(
+		tree.WriteOp{Parent: "root", Name: "parent-1", Type: tree.TypeHandoff, Author: tree.AuthorProgram,
+			Content: "head\n" + strings.Repeat("body line\n", 40) + "tail"},
+		tree.WriteOp{Parent: "parent-1", Name: "child-1", Type: tree.TypeModel, Author: tree.AuthorModel, Content: "child"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tui.treeView = tr
+	tui.mu.Lock()
+	defer tui.mu.Unlock()
+	tui.width, tui.height = 80, 25
+	tui.tabs.Expanded[0] = true
+	tui.treeTab.expanded = map[string]bool{"parent-1": true}
+	tui.scrolls[0].Offset = 1
+	tui.scrolls[0].Follow = false
+	box := tui.tabs.Boxes(tui.width, tui.height)[0]
+	display := tui.treeDisplay(treeContentWidth(box.Width()), panelStyle.BaseBG)
+	rows := tui.treeTab.rows
+	if len(rows) != 2 || !rows[0].subtree {
+		t.Fatalf("expected the parent to carry the subtree control, got %+v", rows)
+	}
+	controlRow, visible := treeControlRow(rows[0], tui.scrolls[0].Offset, tui.tuiPaneHeight(0, box))
+	if !visible || controlRow != 1 {
+		t.Fatalf("expected the control clamped to the viewport top, got row %d visible=%v", controlRow, visible)
+	}
+	tui.floatTreeControls(box, display)
+	if !strings.HasPrefix(display[controlRow].Text, sectionGlyphExpanded+" ") {
+		t.Fatalf("expected the floated subtree glyph on the first visible row, got %q", display[controlRow].Text)
+	}
+	if !tui.toggleTreeControlAtClick(box.Left, box.Top+1) {
+		t.Fatal("the press on the floated control must fold the subtree")
+	}
+	if !tui.treeTab.subtreeCollapsed["parent-1"] {
+		t.Fatal("expected parent-1 folded")
+	}
+}
+
+// TestTreeSubtreeFoldSuspendedWhileSearching verifies that an active
+// search suspends the structural fold — matching paths must stay
+// reachable — and that closing the search restores the folded subtree
+// unchanged. See TheoryOfTreeSubtreeFold and TheoryOfTreeSearch.
+func TestTreeSubtreeFoldSuspendedWhileSearching(t *testing.T) {
+	tui := newTUIForTest()
+	tr, err := tree.New().WriteAll(
+		tree.WriteOp{Parent: "root", Name: "parent-1", Type: tree.TypeHandoff, Author: tree.AuthorProgram, Content: "head\nbody"},
+		tree.WriteOp{Parent: "parent-1", Name: "child-1", Type: tree.TypeModel, Author: tree.AuthorModel, Content: "child"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tui.treeView = tr
+	tui.mu.Lock()
+	defer tui.mu.Unlock()
+	tui.tabs.Expanded[0] = true
+	tui.treeTab.subtreeCollapsed = map[string]bool{"parent-1": true}
+	if display := tui.treeDisplay(80, panelStyle.BaseBG); len(display) != 1 {
+		t.Fatalf("the folded subtree must render one row, got %d", len(display))
+	}
+	// The searching view walks the full tree and shows the matched child
+	// with its ancestor, and no row claims the subtree control.
+	tui.treeTab.searching = true
+	for _, r := range "child" {
+		tui.treeTab.searchBar.Insert(r)
+	}
+	tui.collectTreeSearchLocked("child")
+	display := tui.treeDisplay(80, panelStyle.BaseBG)
+	if len(display) != 2 {
+		t.Fatalf("the search view must show the matched child and its ancestor, got %d rows", len(display))
+	}
+	for _, r := range tui.treeTab.rows {
+		if r.subtree {
+			t.Fatalf("the suspended fold must claim no subtree control, got %+v", r)
+		}
+	}
+	// Closing the search restores the folded subtree.
+	tui.closeTreeSearchLocked()
+	if display := tui.treeDisplay(80, panelStyle.BaseBG); len(display) != 1 {
+		t.Fatalf("closing the search must restore the folded subtree, got %d rows", len(display))
 	}
 }
 

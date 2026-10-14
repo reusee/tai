@@ -445,9 +445,11 @@ in taiui.TheoryOfMouseInteraction and taiui.TheoryOfMouseInput.
 Press routing in the TUI: a press on the Tree tab's attempt node
 👉 jump marker jumps the Output tab to the section that attempt wrote
 (see TheoryOfTUIOutputSections). A double-click on a tree node's text
-toggles its expansion, and the node's fold column toggles on a single
-press; a single press on the text is inert, so a reading press never
-toggles a node by accident (see TheoryOfTreeTab). A press on the Output
+toggles its content expansion, the node's fold column toggles it on a
+single press, and the pane's leftmost subtree column folds or unfolds
+the node's whole subtree on a single press; a single press on the text
+is inert, so a reading press never toggles a node by accident (see
+TheoryOfTreeTab and TheoryOfTreeSubtreeFold). A press on the Output
 tab's control column toggles the section under it; a double-click on a
 collapsed section's row expands it, and a single press on the content
 is inert, so reading never expands a section by accident (see
@@ -455,14 +457,15 @@ TheoryOfOutputControls).
 Both the control press and the expanding double-click preempt the
 ordinary press handling; the first press of the double-click falls
 through to it, so the tab focuses like any content press. A press on
-the Tree tab's fold column toggles the node under it, preempting
-ordinary handling like the control column (see TheoryOfTreeTab). A
-press on an expanded tab's title toolbar runs the button's action or
-toggles the collapsed toolbar, preempting ordinary handling; an action
-press keeps the toolbar expanded, so consecutive actions need no
-re-expansion, and a press that hits no toolbar button folds an open
-toolbar while keeping its ordinary handling. The collapsed toolbar —
-the default — shows only its collapse icon (see TheoryOfToolbars).
+a tree pane's fold column or subtree control column toggles the node
+under it, preempting ordinary handling like the control column (see
+TheoryOfTreeTab and TheoryOfTreeSubtreeFold). A press on an expanded
+tab's title toolbar runs the button's action or toggles the collapsed
+toolbar, preempting ordinary handling; an action press keeps the
+toolbar expanded, so consecutive actions need no re-expansion, and a
+press that hits no toolbar button folds an open toolbar while keeping
+its ordinary handling. The collapsed toolbar — the default — shows
+only its collapse icon (see TheoryOfToolbars).
 Presses outside
 every panel, and middle and right presses, are ignored; no-button
 motion (mode 1003) drives the control column's hover strip and the tab

@@ -86,6 +86,7 @@ var recordBrowserHelp = []string{
 	"click\tselect a record",
 	"double-click\topen a record; toggle a tree node's expansion",
 	"tree column\tclick ▸ / ▾ to collapse / expand the node",
+	"subtree column\tclick ▸ / ▾ at a node's left to hide / show its whole subtree",
 	"c\tfold every node of the tree; press again to restore",
 	"v\tcycle the tree's projection (all / summary / model / stream)",
 	"wheel\tscroll the tree; move the record selection",
