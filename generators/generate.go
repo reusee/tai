@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+
+	"github.com/reusee/tai/logs"
 )
 
 const TheoryOfGenerateRetry = `
@@ -35,19 +37,37 @@ by returning newState (which accumulates streamed content) instead of ret
 // analysis pass) already depends on generators.
 type BuildGenerate func(generator Generator, options *GenerateOptions) PhaseBuilder
 
-func (Module) BuildGenerate() BuildGenerate {
+func (Module) BuildGenerate(logger logs.Logger) BuildGenerate {
 	return func(generator Generator, options *GenerateOptions) PhaseBuilder {
 		return func(cont Phase) Phase {
 			return func(ctx context.Context, state State) (Phase, State, error) {
 
 				state0 := state
+				spec := generator.Spec()
+
+				logger.InfoContext(ctx, "generate phase start",
+					"generator", spec.Name,
+					"model", spec.Model,
+					"content_count", CountContents(state),
+				)
 
 				const maxRetries = 3
 				var lastErr error
-				for range maxRetries {
+				for attempt := range maxRetries {
+					logger.InfoContext(ctx, "generate attempt",
+						"model", spec.Model,
+						"attempt", attempt+1,
+						"max_attempts", maxRetries,
+					)
 					newState, err := generator.Generate(ctx, state, options)
 					if err != nil {
 						lastErr = err
+						logger.WarnContext(ctx, "generate attempt failed",
+							"model", spec.Model,
+							"attempt", attempt+1,
+							"retryable", errors.Is(err, ErrRetryable),
+							"error", err,
+						)
 						if errors.Is(err, ErrRetryable) {
 							continue
 						}
@@ -56,13 +76,26 @@ func (Module) BuildGenerate() BuildGenerate {
 						// can detect the content increase and trigger a retry
 						// with summarization. See TheoryOfGenerateRetry.
 						if newState != nil && CountContents(newState) > CountContents(state) {
+							logger.WarnContext(ctx, "generate phase returns partial state",
+								"model", spec.Model,
+								"content_count", CountContents(newState),
+								"error", err,
+							)
 							return nil, newState, err
 						}
 						// Return the input state (not nil) so callers like
 						// pipeline.Run can pass a valid state to OnPhaseError.
+						logger.WarnContext(ctx, "generate phase failed",
+							"model", spec.Model,
+							"error", err,
+						)
 						return nil, state, err
 					}
 					state = newState
+					logger.InfoContext(ctx, "generate phase done",
+						"model", spec.Model,
+						"content_count", CountContents(state),
+					)
 					return cont, RedoCheckpoint{
 						upstream:  state,
 						State0:    state0,
@@ -75,6 +108,11 @@ func (Module) BuildGenerate() BuildGenerate {
 				// so callers do not re-trigger retries. Return the input
 				// state (not nil) so callers like pipeline.Run can pass a
 				// valid state to OnPhaseError.
+				logger.WarnContext(ctx, "generate phase exhausted retries",
+					"model", spec.Model,
+					"max_attempts", maxRetries,
+					"error", lastErr,
+				)
 				return nil, state, fmt.Errorf("generate failed after %d retries: %v", maxRetries, lastErr)
 
 			}

@@ -66,11 +66,27 @@ func (o *OpenAI) CountTokens(text string) (int, error) {
 func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOptions) (ret State, err error) {
 	ret = state
 
+	o.Logger().InfoContext(ctx, "openai generate start",
+		"name", o.spec.Name,
+		"model", o.spec.Model,
+		"base_url", o.spec.BaseURL,
+		"api_key_set", o.apiKey != "",
+	)
+
 	preservedThinking := o.spec.PreservedThinking != nil && *o.spec.PreservedThinking
 	messages, err := stateToOpenAIMessages(ret, preservedThinking)
 	if err != nil {
+		o.Logger().WarnContext(ctx, "building openai messages failed",
+			"model", o.spec.Model,
+			"error", err,
+		)
 		return nil, err
 	}
+	o.Logger().InfoContext(ctx, "openai messages built",
+		"model", o.spec.Model,
+		"messages", len(messages),
+		"preserved_thinking", preservedThinking,
+	)
 
 	var tools []Tool
 
@@ -91,6 +107,12 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 		for _, fn := range allFuncs {
 			tools = append(tools, fn.ToOpenAI())
 		}
+		o.Logger().InfoContext(ctx, "openai tools collected",
+			"functions", len(allFuncs),
+			"tools", len(tools),
+		)
+	} else {
+		o.Logger().InfoContext(ctx, "openai tools disabled")
 	}
 
 	// Use pointer types so that nil (not specified) is omitted from the
@@ -213,10 +235,42 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 		}
 	}
 
+	var temperatureValue float32
+	if temperature != nil {
+		temperatureValue = *temperature
+	}
+	var maxCompletionTokensValue int
+	if maxCompletionTokens != nil {
+		maxCompletionTokensValue = *maxCompletionTokens
+	}
+	o.Logger().InfoContext(ctx, "openai request parameters",
+		"model", o.spec.Model,
+		"stream", !nonStreaming,
+		"messages", len(req.Messages),
+		"tools", len(req.Tools),
+		"max_completion_tokens", maxCompletionTokensValue,
+		"max_completion_tokens_set", maxCompletionTokens != nil,
+		"temperature", temperatureValue,
+		"temperature_set", temperature != nil,
+		"reasoning_effort", req.ReasoningEffort,
+		"open_router_reasoning", req.Reasoning != nil,
+		"provider", req.Provider != nil,
+		"response_format", req.ResponseFormat != nil,
+		"preserved_thinking", preservedThinking,
+	)
+
 	bodyBytes, err := json.Marshal(req)
 	if err != nil {
+		o.Logger().WarnContext(ctx, "marshalling openai request failed",
+			"model", o.spec.Model,
+			"error", err,
+		)
 		return nil, err
 	}
+	o.Logger().InfoContext(ctx, "openai request built",
+		"model", o.spec.Model,
+		"body_bytes", len(bodyBytes),
+	)
 
 	// Trim a trailing slash from BaseURL so both "http://host" and
 	// "http://host/" produce the same request path. A trailing slash
@@ -248,6 +302,11 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(bodyBytes))
 	if err != nil {
+		o.Logger().WarnContext(ctx, "creating openai http request failed",
+			"model", o.spec.Model,
+			"url", url,
+			"error", err,
+		)
 		return nil, err
 	}
 	if o.spec.IsAzure != nil && *o.spec.IsAzure {
@@ -259,6 +318,15 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 	if !nonStreaming {
 		httpReq.Header.Set("Accept", "text/event-stream")
 	}
+
+	o.Logger().InfoContext(ctx, "sending openai request",
+		"model", o.spec.Model,
+		"url", url,
+		"stream", !nonStreaming,
+		"no_proxy", o.spec.NoProxy != nil && *o.spec.NoProxy,
+		"azure", o.spec.IsAzure != nil && *o.spec.IsAzure,
+		"body_bytes", len(bodyBytes),
+	)
 
 	// Request timing: TotalDuration spans from sending the request to
 	// the end of the response, measured for both streaming and
@@ -292,6 +360,11 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 
 	resp, err := client.Do(httpReq)
 	if err != nil {
+		o.Logger().WarnContext(ctx, "openai request failed",
+			"model", o.spec.Model,
+			"url", url,
+			"error", err,
+		)
 		o.recordEvent("api_error", fmt.Sprintf("openai request failed: %v", err))
 		return ret, OpenAIError{
 			Err:     err,
@@ -300,9 +373,21 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 	}
 	defer resp.Body.Close()
 
+	o.Logger().InfoContext(ctx, "openai response status",
+		"model", o.spec.Model,
+		"status", resp.StatusCode,
+		"status_text", resp.Status,
+		"content_type", resp.Header.Get("Content-Type"),
+	)
+
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		statusMsg := fmt.Sprintf("openai http status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		o.Logger().WarnContext(ctx, "openai http status",
+			"model", o.spec.Model,
+			"status", resp.StatusCode,
+			"body", strings.TrimSpace(string(body)),
+		)
 		var errResp ErrorResponse
 		// Check both unmarshal failure and nil Error field: some providers
 		// return valid JSON without an "error" field (e.g. {"message": "..."}),
@@ -352,6 +437,15 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 			usage.Thoughts.TokenCount = lastUsage.CompletionTokensDetails.ReasoningTokens
 		}
 		finalizeUsage(&usage)
+		o.Logger().InfoContext(ctx, "openai usage",
+			"model", o.spec.Model,
+			"prompt", usage.Prompt.TokenCount,
+			"cached", usage.Prompt.TokenCountCached,
+			"completion", usage.Candidates.TokenCount,
+			"thoughts", usage.Thoughts.TokenCount,
+			"total_duration", usage.TotalDuration,
+			"ttft", usage.TimeToFirstToken,
+		)
 		var err error
 		if ret, err = ret.AppendContent(&Content{
 			Role:  RoleLog,
@@ -366,9 +460,17 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 	if nonStreaming {
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
+			o.Logger().WarnContext(ctx, "reading openai non-streaming response failed",
+				"model", o.spec.Model,
+				"error", err,
+			)
 			o.recordEvent("api_error", fmt.Sprintf("openai non-streaming response read failed: %v", err))
 			return ret, err
 		}
+		o.Logger().InfoContext(ctx, "openai non-streaming response received",
+			"model", o.spec.Model,
+			"body_bytes", len(body),
+		)
 		if o.Debug() {
 			o.Logger().InfoContext(ctx, "OpenAI response",
 				"body", string(body),
@@ -376,9 +478,18 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 		}
 		var response ChatCompletionResponse
 		if err := json.Unmarshal(body, &response); err != nil {
+			o.Logger().WarnContext(ctx, "unmarshalling openai non-streaming response failed",
+				"model", o.spec.Model,
+				"error", err,
+			)
 			o.recordEvent("api_error", fmt.Sprintf("openai non-streaming unmarshal failed: %v", err))
 			return ret, err
 		}
+		o.Logger().InfoContext(ctx, "openai non-streaming response parsed",
+			"model", o.spec.Model,
+			"choices", len(response.Choices),
+			"usage", response.Usage != nil,
+		)
 
 		if response.Usage != nil {
 			handleUsage(response.Usage)
@@ -411,6 +522,11 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 				var arguments map[string]any
 				if call.Function.Arguments != "" {
 					if err := json.Unmarshal([]byte(call.Function.Arguments), &arguments); err != nil {
+						o.Logger().WarnContext(ctx, "unmarshalling openai tool call arguments failed",
+							"model", o.spec.Model,
+							"call", call.Function.Name,
+							"error", err,
+						)
 						o.recordEvent("api_error", fmt.Sprintf("openai tool call arguments unmarshal failed: %v", err))
 						return ret, err
 					}
@@ -422,10 +538,20 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 				})
 			}
 			if ret, err = ret.AppendContent(content); err != nil {
+				o.Logger().WarnContext(ctx, "appending openai content failed",
+					"model", o.spec.Model,
+					"role", string(content.Role),
+					"parts", len(content.Parts),
+					"error", err,
+				)
 				return ret, err
 			}
 
 			if choice.FinishReason != "" {
+				o.Logger().InfoContext(ctx, "openai finish reason",
+					"model", o.spec.Model,
+					"reason", choice.FinishReason,
+				)
 				if ret, err = ret.AppendContent(&Content{
 					Role: RoleLog,
 					Parts: []Part{
@@ -435,6 +561,10 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 					return ret, err
 				}
 				if choice.FinishReason == "error" {
+					o.Logger().WarnContext(ctx, "openai finish reason error",
+						"model", o.spec.Model,
+						"reason", choice.FinishReason,
+					)
 					o.recordEvent("api_error", fmt.Sprintf("openai finish reason: %s", choice.FinishReason))
 					return ret, errors.New(string(choice.FinishReason))
 				}
@@ -443,8 +573,15 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 
 	} else {
 		parser := new(OpenAIParser)
+		o.Logger().InfoContext(ctx, "openai streaming started",
+			"model", o.spec.Model,
+		)
 		finish := func() error {
 			if contents, err := parser.End(); err != nil {
+				o.Logger().WarnContext(ctx, "openai stream parse end failed",
+					"model", o.spec.Model,
+					"error", err,
+				)
 				o.recordEvent("api_error", fmt.Sprintf("openai stream parse failed: %v", err))
 				return err
 			} else {
@@ -472,6 +609,9 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 			}
 
 			if strings.HasPrefix(line, "data: [DONE]") {
+				o.Logger().DebugContext(ctx, "openai stream done marker received",
+					"model", o.spec.Model,
+				)
 				break
 			}
 
@@ -482,6 +622,10 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 
 			var streamResp ChatCompletionStreamResponse
 			if err := json.Unmarshal([]byte(data), &streamResp); err != nil {
+				o.Logger().WarnContext(ctx, "unmarshalling openai stream response failed",
+					"model", o.spec.Model,
+					"error", err,
+				)
 				o.recordEvent("api_error", fmt.Sprintf("openai stream unmarshal failed: %v", err))
 				return ret, fmt.Errorf("error unmarshalling stream response: %w", err)
 			}
@@ -500,6 +644,10 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 
 			newContents, err := parser.Input(streamResp.Choices[0].Delta)
 			if err != nil {
+				o.Logger().WarnContext(ctx, "parsing openai stream delta failed",
+					"model", o.spec.Model,
+					"error", err,
+				)
 				o.recordEvent("api_error", fmt.Sprintf("openai stream parse failed: %v", err))
 				return ret, err
 			}
@@ -517,11 +665,19 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 				// previous successful AppendContent calls, losing all
 				// streamed content received before the error.
 				if ret, err = ret.AppendContent(content); err != nil {
+					o.Logger().WarnContext(ctx, "appending openai content failed",
+						"model", o.spec.Model,
+						"error", err,
+					)
 					return ret, err
 				}
 			}
 
 			if reason := streamResp.Choices[0].FinishReason; reason != "" {
+				o.Logger().InfoContext(ctx, "openai finish reason",
+					"model", o.spec.Model,
+					"reason", reason,
+				)
 				if err := finish(); err != nil {
 					return ret, err
 				}
@@ -537,6 +693,10 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 					return ret, err
 				}
 				if reason == "error" {
+					o.Logger().WarnContext(ctx, "openai finish reason error",
+						"model", o.spec.Model,
+						"reason", reason,
+					)
 					o.recordEvent("api_error", fmt.Sprintf("openai finish reason: %s", reason))
 					return ret, errors.New(string(reason))
 				}
@@ -544,6 +704,10 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 
 		}
 		if err := scanner.Err(); err != nil {
+			o.Logger().WarnContext(ctx, "reading openai stream failed",
+				"model", o.spec.Model,
+				"error", err,
+			)
 			o.recordEvent("api_error", fmt.Sprintf("openai stream read failed: %v", err))
 			return ret, fmt.Errorf("error reading stream: %w", err)
 		}
@@ -557,8 +721,17 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 	}
 
 	if ret, err = ret.Flush(); err != nil {
+		o.Logger().WarnContext(ctx, "flushing openai state failed",
+			"model", o.spec.Model,
+			"error", err,
+		)
 		return ret, err
 	}
+
+	o.Logger().InfoContext(ctx, "openai generate done",
+		"model", o.spec.Model,
+		"content_count", CountContents(ret),
+	)
 
 	return ret, nil
 }

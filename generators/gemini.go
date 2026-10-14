@@ -84,13 +84,24 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 			HTTPClient: directClient,
 		})
 		if err != nil {
+			g.Logger().WarnContext(ctx, "creating direct gemini client failed",
+				"error", err,
+			)
 			return ret, err
 		}
+		g.Logger().InfoContext(ctx, "using direct gemini client",
+			"reason", "no_proxy",
+			"api_key_set", key != "",
+		)
 	} else {
 		client, err = g.GetClient()(ctx, g.spec.APIKey)
 		if err != nil {
+			g.Logger().WarnContext(ctx, "creating gemini client failed",
+				"error", err,
+			)
 			return ret, err
 		}
+		g.Logger().InfoContext(ctx, "using shared gemini client")
 	}
 
 	ret = state
@@ -138,6 +149,11 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 		}
 	}
 
+	var thinkingBudget int32
+	if thinkingConfig.ThinkingBudget != nil {
+		thinkingBudget = *thinkingConfig.ThinkingBudget
+	}
+
 	var tools []*genai.Tool
 	var toolConfig *genai.ToolConfig
 	if g.spec.DisableTools == nil || !*g.spec.DisableTools {
@@ -168,6 +184,10 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 				},
 			}
 		}
+		g.Logger().InfoContext(ctx, "gemini tools collected",
+			"functions", len(allFuncs),
+			"tools", len(tools),
+		)
 	}
 
 	safetySettings := []*genai.SafetySetting{
@@ -268,6 +288,21 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 		nonStreaming = true
 	}
 
+	g.Logger().InfoContext(ctx, "gemini generate start",
+		"name", g.spec.Name,
+		"model", g.spec.Model,
+		"non_streaming", nonStreaming,
+		"contents", len(contents),
+		"tools", len(tools),
+		"max_output_tokens", maxOutputTokens,
+		"temperature", temperature,
+		"thinking_level", string(thinkingConfig.ThinkingLevel),
+		"thinking_budget", thinkingBudget,
+		"service_tier", string(serviceTier),
+		"system_prompt_len", len(ret.SystemPrompt()),
+		"response_schema", config.ResponseSchema != nil,
+	)
+
 	ret, err = g.Retrier().Do(ctx, func() (State, error) {
 
 		g.Logger().InfoContext(ctx, "generating",
@@ -332,12 +367,17 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 			}
 
 			if len(resp.Candidates) == 0 {
+				g.Logger().DebugContext(ctx, "gemini response without candidates")
 				return nil
 			}
 			candidate := resp.Candidates[0]
 
 			if isTerminalFinishReason(candidate.FinishReason) {
 				terminalReason = string(candidate.FinishReason)
+				g.Logger().WarnContext(ctx, "gemini terminal finish reason",
+					"model", g.spec.Model,
+					"reason", terminalReason,
+				)
 			}
 
 			if candidate.Content != nil {
@@ -356,18 +396,41 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 				}
 				var err error
 				if newState, err = newState.AppendContent(newContent); err != nil {
+					g.Logger().WarnContext(ctx, "appending gemini content failed",
+						"model", g.spec.Model,
+						"role", string(newContent.Role),
+						"parts", len(newContent.Parts),
+						"error", err,
+					)
 					return err
 				}
 			}
 
 			if reason := candidate.FinishReason; reason != "" {
+				g.Logger().InfoContext(ctx, "gemini finish reason",
+					"model", g.spec.Model,
+					"reason", string(reason),
+				)
 				if lastUsage != nil {
 					finalizeUsage(lastUsage)
+					g.Logger().InfoContext(ctx, "gemini usage",
+						"model", g.spec.Model,
+						"prompt", lastUsage.Prompt.TokenCount,
+						"cached", lastUsage.Prompt.TokenCountCached,
+						"completion", lastUsage.Candidates.TokenCount,
+						"thoughts", lastUsage.Thoughts.TokenCount,
+						"total_duration", lastUsage.TotalDuration,
+						"ttft", lastUsage.TimeToFirstToken,
+					)
 					var err error
 					if newState, err = newState.AppendContent(&Content{
 						Role:  RoleLog,
 						Parts: []Part{*lastUsage},
 					}); err != nil {
+						g.Logger().WarnContext(ctx, "appending gemini usage failed",
+							"model", g.spec.Model,
+							"error", err,
+						)
 						return err
 					}
 					lastUsage = nil
@@ -379,6 +442,11 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 						FinishReason(string(reason)),
 					},
 				}); err != nil {
+					g.Logger().WarnContext(ctx, "appending gemini finish reason failed",
+						"model", g.spec.Model,
+						"reason", string(reason),
+						"error", err,
+					)
 					return err
 				}
 			}
@@ -388,9 +456,17 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 		if nonStreaming {
 			resp, err := client.Models.GenerateContent(ctx, g.spec.Model, contents, config)
 			if err != nil {
+				g.Logger().WarnContext(ctx, "gemini non-streaming call failed",
+					"model", g.spec.Model,
+					"error", err,
+				)
 				g.recordEvent("api_error", fmt.Sprintf("gemini non-streaming API call failed: %v", err))
 				return ret, wrap(err)
 			}
+			g.Logger().InfoContext(ctx, "gemini non-streaming response received",
+				"model", g.spec.Model,
+				"candidates", len(resp.Candidates),
+			)
 			if err := handleResponse(resp); err != nil {
 				// Return newState (not ret) to preserve partial output
 				// appended before the error. See TheoryOfGenerateRetry.
@@ -403,6 +479,10 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 					if errors.Is(err, io.EOF) {
 						break
 					}
+					g.Logger().WarnContext(ctx, "gemini streaming call failed",
+						"model", g.spec.Model,
+						"error", err,
+					)
 					g.recordEvent("api_error", fmt.Sprintf("gemini streaming API call failed: %v", err))
 					// Return newState (not ret) to preserve partial output
 					// appended before the error. See TheoryOfGenerateRetry.
@@ -425,6 +505,10 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 			}); err != nil {
 				// Return newState (not ret) to preserve partial output
 				// appended before the error. See TheoryOfGenerateRetry.
+				g.Logger().WarnContext(ctx, "appending gemini usage failed",
+					"model", g.spec.Model,
+					"error", err,
+				)
 				return newState, err
 			}
 			lastUsage = nil
@@ -432,9 +516,16 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 
 		if !hasContent {
 			if terminalReason != "" {
+				g.Logger().WarnContext(ctx, "gemini returned no output",
+					"model", g.spec.Model,
+					"finish_reason", terminalReason,
+				)
 				g.recordEvent("api_error", fmt.Sprintf("gemini terminal finish reason: %s", terminalReason))
 				return ret, fmt.Errorf("terminal finish reason: %s", terminalReason)
 			}
+			g.Logger().WarnContext(ctx, "gemini returned no output",
+				"model", g.spec.Model,
+			)
 			g.recordEvent("api_error", "gemini returned no output")
 			// no output
 			return ret, fmt.Errorf("no output")
@@ -443,12 +534,24 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 		return newState, nil
 	})
 	if err != nil {
+		g.Logger().WarnContext(ctx, "gemini generate failed",
+			"model", g.spec.Model,
+			"error", err,
+		)
 		return ret, err
 	}
 
 	if ret, err = ret.Flush(); err != nil {
+		g.Logger().WarnContext(ctx, "flushing gemini state failed",
+			"error", err,
+		)
 		return ret, err
 	}
+
+	g.Logger().InfoContext(ctx, "gemini generate done",
+		"model", g.spec.Model,
+		"content_count", CountContents(ret),
+	)
 
 	return ret, nil
 }
@@ -506,29 +609,51 @@ func (r Retrier) Do[T any](
 	}
 
 	for i := range maxRetries {
+		attempt := i + 1
+		r.logger.InfoContext(ctx, "retry attempt",
+			"attempt", attempt,
+			"max_attempts", maxRetries,
+			"initial_backoff", initialBackoff,
+		)
 		ret, err = fn()
 		if err == nil {
+			r.logger.InfoContext(ctx, "retry attempt succeeded",
+				"attempt", attempt,
+				"max_attempts", maxRetries,
+			)
 			return
 		}
 		if isRetryable(err) {
+			delay := initialBackoff * time.Duration(1<<i)
 			r.logger.WarnContext(ctx, "retry",
-				"attempt", i+1, "error", err,
+				"attempt", attempt,
+				"max_attempts", maxRetries,
+				"delay", delay,
+				"error", err,
 			)
 			// Each retryable API error is recorded so the interaction
 			// transcript shows the raw API errors even when a later
 			// attempt succeeds. The recorder is bound at provider
 			// resolution. See generators.TheoryOfEventRecorder.
 			if r.eventRecorder != nil && r.eventRecorder.Enabled() {
-				r.eventRecorder.Event("api_error", fmt.Sprintf("retryable API error (attempt %d/%d): %v", i+1, maxRetries, err))
+				r.eventRecorder.Event("api_error", fmt.Sprintf("retryable API error (attempt %d/%d): %v", attempt, maxRetries, err))
 			}
 			select {
 			case <-ctx.Done():
+				r.logger.WarnContext(ctx, "retry aborted",
+					"attempt", attempt,
+					"error", ctx.Err(),
+				)
 				err = ctx.Err()
 				return
-			case <-time.After(initialBackoff * time.Duration(1<<i)):
+			case <-time.After(delay):
 			}
 			continue
 		}
+		r.logger.InfoContext(ctx, "non-retryable error",
+			"attempt", attempt,
+			"error", err,
+		)
 		return ret, err
 	}
 
@@ -537,6 +662,10 @@ func (r Retrier) Do[T any](
 	// phases/generate.go) from re-triggering indefinitely.
 	// See TheoryOfGenerateRetry in phases/generate.go.
 	if errors.Is(err, ErrRetryable) {
+		r.logger.WarnContext(ctx, "retries exhausted",
+			"attempts", maxRetries,
+			"error", err,
+		)
 		if r.eventRecorder != nil && r.eventRecorder.Enabled() {
 			r.eventRecorder.Event("api_error", fmt.Sprintf("API retry exhausted after %d attempts: %v", maxRetries, err))
 		}

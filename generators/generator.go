@@ -7,6 +7,8 @@ import (
 	"math/rand/v2"
 	"slices"
 	"strings"
+
+	"github.com/reusee/tai/logs"
 )
 
 const (
@@ -384,19 +386,52 @@ func (Module) GetGenerator(
 	newBedrock NewBedrock,
 	newOpenCodeGo NewOpenCodeGo,
 	confidential ConfidentialMode,
+	logger logs.Logger,
 ) GetGenerator {
 	return func(name string) (Generator, error) {
+
+		logger.InfoContext(context.Background(), "resolving generator",
+			"name", name,
+			"confidential", bool(confidential),
+		)
 
 		// user-defined first
 		specs, err := getSpecs()
 		if err != nil {
+			logger.WarnContext(context.Background(), "loading generator specs failed",
+				"name", name,
+				"error", err,
+			)
 			return nil, err
 		}
+		logger.InfoContext(context.Background(), "generator specs available",
+			"name", name,
+			"count", len(specs),
+		)
 		var resolveErr error
 		if resolvedSpec, err := resolveSpec(name, specs); err == nil {
+			logger.InfoContext(context.Background(), "generator spec resolved",
+				"name", name,
+				"generator", resolvedSpec.Name,
+				"type", resolvedSpec.Type,
+				"model", resolvedSpec.Model,
+				"base_url", resolvedSpec.BaseURL,
+				"context_tokens", resolvedSpec.ContextTokens,
+				"family", resolvedSpec.Family,
+			)
 			if err := confidential.check(resolvedSpec, name); err != nil {
+				logger.WarnContext(context.Background(), "confidential mode rejected generator",
+					"name", name,
+					"generator", resolvedSpec.Name,
+					"error", err,
+				)
 				return nil, err
 			}
+			logger.InfoContext(context.Background(), "creating generator",
+				"name", name,
+				"generator", resolvedSpec.Name,
+				"type", strings.ToLower(resolvedSpec.Type),
+			)
 			switch strings.ToLower(resolvedSpec.Type) {
 			case "open-router", "open_router", "openrouter":
 				return newOpenRouter(resolvedSpec), nil
@@ -436,22 +471,39 @@ func (Module) GetGenerator(
 				if resolvedSpec.Type == "" {
 					reason = fmt.Sprintf("the resolved generator %q sets no type", resolvedSpec.Name)
 				}
+				logger.WarnContext(context.Background(), "unknown generator type",
+					"name", name,
+					"generator", resolvedSpec.Name,
+					"type", resolvedSpec.Type,
+				)
 				return nil, invalidModelError(name, reason, nil,
 					"set the generator's type in the generators config to one of: "+knownGeneratorTypes, specs)
 			}
 		} else {
 			resolveErr = err
+			logger.InfoContext(context.Background(), "no configured generator matched",
+				"name", name,
+				"error", err,
+			)
 		}
 
 		// ollama
 		provider, modelName, ok := strings.Cut(name, ":")
 		if ok && provider == "ollama" {
+			logger.InfoContext(context.Background(), "using ollama shorthand",
+				"name", name,
+				"model", modelName,
+			)
 			spec := Spec{
 				BaseURL:       "http://127.0.0.1:11434/v1",
 				Model:         modelName,
 				DisableSearch: new(true),
 			}
 			if err := confidential.check(spec, name); err != nil {
+				logger.WarnContext(context.Background(), "confidential mode rejected generator",
+					"name", name,
+					"error", err,
+				)
 				return nil, err
 			}
 			return newOpenAI(spec, ""), nil
@@ -468,8 +520,16 @@ func (Module) GetGenerator(
 				Temperature:       new(float32(0.1)),
 			}
 			if err := confidential.check(spec, name); err != nil {
+				logger.WarnContext(context.Background(), "confidential mode rejected generator",
+					"name", name,
+					"error", err,
+				)
 				return nil, err
 			}
+			logger.InfoContext(context.Background(), "using built-in generator",
+				"name", name,
+				"model", spec.Model,
+			)
 			return newGemini(spec), nil
 
 		case "gemini", "pro", "gemini-pro":
@@ -480,8 +540,16 @@ func (Module) GetGenerator(
 				Temperature:       new(float32(0.1)),
 			}
 			if err := confidential.check(spec, name); err != nil {
+				logger.WarnContext(context.Background(), "confidential mode rejected generator",
+					"name", name,
+					"error", err,
+				)
 				return nil, err
 			}
+			logger.InfoContext(context.Background(), "using built-in generator",
+				"name", name,
+				"model", spec.Model,
+			)
 			return newGemini(spec), nil
 
 		}
@@ -494,6 +562,10 @@ func (Module) GetGenerator(
 		} else if resolveErr != nil {
 			reason = "resolving the configured generators failed: " + resolveErr.Error()
 		}
+		logger.WarnContext(context.Background(), "generator resolution failed",
+			"name", name,
+			"reason", reason,
+		)
 		return nil, invalidModelError(name, reason, steps, modelHint, specs)
 	}
 }
