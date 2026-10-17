@@ -213,3 +213,19 @@ func (o OpenCodeGoAPIKey) HandleConfig(path string, values []*cue.Value) (any, e
 func (Module) OpenCodeGoAPIKey() OpenCodeGoAPIKey {
 	return OpenCodeGoAPIKey(os.Getenv("OPENCODE_GO_API_KEY"))
 }
+
+type TypeSafeAPIKey string
+
+var _ configs.Config = TypeSafeAPIKey("")
+
+func (t TypeSafeAPIKey) ConfigPaths() []string {
+	return []string{"typesafe_api_key"}
+}
+
+func (t TypeSafeAPIKey) HandleConfig(path string, values []*cue.Value) (any, error) {
+	return configs.DecodeConfig[TypeSafeAPIKey](values)
+}
+
+func (Module) TypeSafeAPIKey() TypeSafeAPIKey {
+	return TypeSafeAPIKey(os.Getenv("TYPESAFE_API_KEY"))
+}

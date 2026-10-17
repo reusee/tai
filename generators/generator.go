@@ -38,11 +38,7 @@ keep working. Name lists are sorted and capped: the report stays readable and
 byte-identical for equal configurations.
 `
 
-	// knownGeneratorTypes lists the generator type values the resolver
-	// accepts, mirroring the type switch in Module.GetGenerator. An unknown
-	// type is reported with this list so the configuration can be fixed
-	// without guessing.
-	knownGeneratorTypes = "openai, openrouter, deepseek, baidu, tencent, huoshan, gemini, aliyun, zhipu, ollama, vercel, nvidia, azure, bedrock, opencode-go"
+	knownGeneratorTypes = "openai, openrouter, deepseek, baidu, tencent, huoshan, gemini, aliyun, zhipu, ollama, vercel, nvidia, azure, bedrock, opencode-go, jev"
 
 	// maxReportedNames caps a name list in a resolution failure report so a
 	// large configuration cannot flood the message.
@@ -370,6 +366,7 @@ func invalidModelError(name, reason string, steps []string, hint string, specs [
 }
 
 func (Module) GetGenerator(
+	newJev NewJev,
 	newGemini NewGemini,
 	newHuoshan NewHuoshan,
 	newBaidu NewBaidu,
@@ -427,12 +424,15 @@ func (Module) GetGenerator(
 				)
 				return nil, err
 			}
+			generatorType := strings.ToLower(resolvedSpec.Type)
 			logger.InfoContext(context.Background(), "creating generator",
 				"name", name,
 				"generator", resolvedSpec.Name,
-				"type", strings.ToLower(resolvedSpec.Type),
+				"type", generatorType,
 			)
-			switch strings.ToLower(resolvedSpec.Type) {
+			switch generatorType {
+			case "jev":
+				return newJev(resolvedSpec), nil
 			case "open-router", "open_router", "openrouter":
 				return newOpenRouter(resolvedSpec), nil
 			case "deepseek":

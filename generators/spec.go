@@ -24,6 +24,9 @@ as chat_template_kwargs: {"preserve_thinking": true} in the request body.
 ZeroDataRetention marks a generator whose provider retains no input or output data. It is consumed by
 confidential mode (see TheoryOfConfidentialMode), which rejects any generator that does not set the field
 when enabled. Like the other optional booleans, it is not merged from parent to child unless explicitly set.
+The Type field names the generator implementation, and it is the only protocol selector: the value "jev"
+selects the TypeSafe System One protocol (see TheoryOfJev), so no separate marker field exists. Type is
+merged from parent to child when non-empty, so a variant inherits its parent's protocol.
 
 Provider holds routing preferences forwarded to OpenRouter in the request
 body; see TheoryOfProviderRouting for the routing model and the field-wise
