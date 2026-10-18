@@ -2,6 +2,7 @@ package generators
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -18,11 +19,11 @@ import (
 	"github.com/reusee/tai/nets"
 )
 
-// newTestJev builds a Jev generator for tests: the given HTTP client, a
-// discarding logger, no event recorder, and the given function
+// newTestSystemOne builds a SystemOne generator for tests: the given HTTP
+// client, a discarding logger, no event recorder, and the given function
 // declarations as the request's questions.
-func newTestJev(spec Spec, client *http.Client, decls FuncDecls) Jev {
-	ret := Jev{
+func newTestSystemOne(spec Spec, client *http.Client, decls FuncDecls) SystemOne {
+	ret := SystemOne{
 		spec:   spec,
 		apiKey: "test-key",
 		client: nets.HTTPClient{Client: client},
@@ -46,7 +47,7 @@ func newTestJev(spec Spec, client *http.Client, decls FuncDecls) Jev {
 	return ret
 }
 
-func TestJevGenerate(t *testing.T) {
+func TestSystemOneGenerate(t *testing.T) {
 	var got SystemOneRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/systemone" {
@@ -66,7 +67,7 @@ func TestJevGenerate(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(SystemOneResponse{
-			Model: "jev-1.13.0",
+			Model: "systemone-1.13.0",
 			Answers: map[string]SystemOneAnswer{
 				"lookup": {
 					Type: "noul",
@@ -84,11 +85,11 @@ func TestJevGenerate(t *testing.T) {
 	defer server.Close()
 
 	spec := Spec{
-		Name:    "jev",
-		Model:   "jev-latest",
+		Name:    "systemone",
+		Model:   "systemone-latest",
 		BaseURL: server.URL + "/v1",
 	}
-	jev := newTestJev(spec, server.Client(), FuncDecls{
+	gen := newTestSystemOne(spec, server.Client(), FuncDecls{
 		{
 			Name:        "lookup",
 			Description: "look up a record",
@@ -101,13 +102,13 @@ func TestJevGenerate(t *testing.T) {
 			Parts: []Part{Text("hello")},
 		},
 	})
-	ret, err := jev.Generate(context.Background(), state, nil)
+	ret, err := gen.Generate(context.Background(), state, nil)
 	if err != nil {
 		t.Fatalf("generate: %v", err)
 	}
 
 	// the request carried the model, the state, and one noul question per function
-	if got.Model != "jev-latest" {
+	if got.Model != "systemone-latest" {
 		t.Errorf("unexpected model %q", got.Model)
 	}
 	if got.State.System != "system prompt" {
@@ -141,11 +142,11 @@ func TestJevGenerate(t *testing.T) {
 	}
 }
 
-func TestJevGenerateBelowThreshold(t *testing.T) {
+func TestSystemOneGenerateBelowThreshold(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(SystemOneResponse{
-			Model: "jev-1.13.0",
+			Model: "systemone-1.13.0",
 			Answers: map[string]SystemOneAnswer{
 				"lookup": {
 					Type: "noul",
@@ -159,10 +160,10 @@ func TestJevGenerateBelowThreshold(t *testing.T) {
 	defer server.Close()
 
 	spec := Spec{
-		Model:   "jev-latest",
+		Model:   "systemone-latest",
 		BaseURL: server.URL + "/v1",
 	}
-	jev := newTestJev(spec, server.Client(), FuncDecls{
+	gen := newTestSystemOne(spec, server.Client(), FuncDecls{
 		{Name: "lookup"},
 	})
 
@@ -172,7 +173,7 @@ func TestJevGenerateBelowThreshold(t *testing.T) {
 			Parts: []Part{Text("hello")},
 		},
 	})
-	ret, err := jev.Generate(context.Background(), state, nil)
+	ret, err := gen.Generate(context.Background(), state, nil)
 	if err != nil {
 		t.Fatalf("generate: %v", err)
 	}
@@ -185,18 +186,18 @@ func TestJevGenerateBelowThreshold(t *testing.T) {
 	}
 }
 
-func TestJevGenerateNoQuestions(t *testing.T) {
+func TestSystemOneGenerateNoQuestions(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Errorf("unexpected request %s", r.URL)
 	}))
 	defer server.Close()
 
 	spec := Spec{
-		Model:        "jev-latest",
+		Model:        "systemone-latest",
 		BaseURL:      server.URL + "/v1",
 		DisableTools: new(true),
 	}
-	jev := newTestJev(spec, server.Client(), nil)
+	gen := newTestSystemOne(spec, server.Client(), nil)
 
 	state := NewPrompts("", []*Content{
 		{
@@ -204,12 +205,126 @@ func TestJevGenerateNoQuestions(t *testing.T) {
 			Parts: []Part{Text("hello")},
 		},
 	})
-	if _, err := jev.Generate(context.Background(), state, nil); err == nil {
+	if _, err := gen.Generate(context.Background(), state, nil); err == nil {
 		t.Fatal("expected an error for a request without questions")
 	}
 }
 
-func TestJevSelectedFunctions(t *testing.T) {
+// TestSystemOneGenerateImages covers the Ollama decision image path: image
+// file parts leave the state text and travel in the request's top-level
+// images array as bare base64 strings. See TheoryOfSystemOne.
+func TestSystemOneGenerateImages(t *testing.T) {
+	var got SystemOneRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read body: %v", err)
+			return
+		}
+		if err := json.Unmarshal(body, &got); err != nil {
+			t.Errorf("unmarshal body: %v", err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(SystemOneResponse{
+			Model: "clef-flash",
+			Answers: map[string]SystemOneAnswer{
+				"describe": {
+					Type: "noul",
+					Noul: new(0.7),
+				},
+			},
+		}); err != nil {
+			t.Errorf("encode response: %v", err)
+		}
+	}))
+	defer server.Close()
+
+	spec := Spec{
+		Model:   "clef-flash",
+		BaseURL: server.URL + "/v1",
+	}
+	gen := newTestSystemOne(spec, server.Client(), FuncDecls{
+		{Name: "describe"},
+	})
+
+	imageBytes := []byte("fake-image-bytes")
+	state := NewPrompts("", []*Content{
+		{
+			Role:  RoleUser,
+			Parts: []Part{Text("what does this image show?")},
+		},
+		{
+			Role: RoleUser,
+			Parts: []Part{
+				FileContent{
+					Content:  imageBytes,
+					MimeType: "image/png",
+				},
+			},
+		},
+	})
+	if _, err := gen.Generate(context.Background(), state, nil); err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+
+	expected := base64.StdEncoding.EncodeToString(imageBytes)
+	if len(got.Images) != 1 || got.Images[0] != expected {
+		t.Fatalf("expected images [%q], got %#v", expected, got.Images)
+	}
+	if len(got.State.Messages) != 1 || got.State.Messages[0].Text != "what does this image show?" {
+		t.Fatalf("unexpected messages %#v", got.State.Messages)
+	}
+}
+
+// TestSystemOneNoAPIKeyHeader covers the local Ollama decision server: an
+// empty API key sends no Authorization header at all. See
+// TheoryOfSystemOne.
+func TestSystemOneNoAPIKeyHeader(t *testing.T) {
+	var authHeader string
+	var authHeaderSet bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authHeader = r.Header.Get("Authorization")
+		_, authHeaderSet = r.Header["Authorization"]
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(SystemOneResponse{
+			Model: "nimble",
+			Answers: map[string]SystemOneAnswer{
+				"lookup": {
+					Type: "noul",
+					Noul: new(0.9),
+				},
+			},
+		}); err != nil {
+			t.Errorf("encode response: %v", err)
+		}
+	}))
+	defer server.Close()
+
+	spec := Spec{
+		Model:   "nimble",
+		BaseURL: server.URL + "/v1",
+	}
+	gen := newTestSystemOne(spec, server.Client(), FuncDecls{
+		{Name: "lookup"},
+	})
+	gen.apiKey = ""
+
+	state := NewPrompts("", []*Content{
+		{
+			Role:  RoleUser,
+			Parts: []Part{Text("hello")},
+		},
+	})
+	if _, err := gen.Generate(context.Background(), state, nil); err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	if authHeaderSet {
+		t.Fatalf("expected no Authorization header, got %q", authHeader)
+	}
+}
+
+func TestSystemOneSelectedFunctions(t *testing.T) {
 	answers := map[string]SystemOneAnswer{
 		"a": {Type: "noul", Noul: new(0.9)},
 		"b": {Type: "noul", Noul: new(0.4)},
@@ -217,7 +332,7 @@ func TestJevSelectedFunctions(t *testing.T) {
 		"d": {Type: "choice", Choice: "x"},
 		"e": {Type: "noul"},
 	}
-	got := jevSelectedFunctions(answers)
+	got := systemOneSelectedFunctions(answers)
 	expected := []string{"a", "c"}
 	if len(got) != len(expected) {
 		t.Fatalf("expected %v, got %v", expected, got)
@@ -229,18 +344,19 @@ func TestJevSelectedFunctions(t *testing.T) {
 	}
 }
 
-// TestGetGeneratorJev covers the jev dispatch: the type "jev" routes to the
-// Jev generator. It also guards the provider graph: building the generator
-// resolves the TypeSafe API key from the scope, so a missing key provider
-// fails here before any request is made. See TheoryOfJev.
-func TestGetGeneratorJev(t *testing.T) {
+// TestGetGeneratorSystemOne covers the systemone dispatch: the type
+// "systemone" routes to the SystemOne generator. It also guards the
+// provider graph: building the generator resolves the TypeSafe API key
+// from the scope, so a missing key provider fails here before any request
+// is made. See TheoryOfSystemOne.
+func TestGetGeneratorSystemOne(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.cue")
 	configContent := `generators: [
   {
-    name: "myjev"
-    type: "jev"
-    model: "jev-latest"
+    name: "mysystemone"
+    type: "systemone"
+    model: "systemone-latest"
   },
 ]
 `
@@ -257,19 +373,19 @@ func TestGetGeneratorJev(t *testing.T) {
 		},
 	).Get[GetGenerator]()
 
-	generator, err := getGenerator("myjev")
+	generator, err := getGenerator("mysystemone")
 	if err != nil {
 		t.Fatal(err)
 	}
-	jev, ok := generator.(Jev)
+	systemOne, ok := generator.(SystemOne)
 	if !ok {
-		t.Fatalf("expected a Jev generator, got %T", generator)
+		t.Fatalf("expected a SystemOne generator, got %T", generator)
 	}
-	spec := jev.Spec()
+	spec := systemOne.Spec()
 	if spec.BaseURL != "https://api.typesafe.ai/v1" {
 		t.Errorf("unexpected base url %q", spec.BaseURL)
 	}
-	if spec.Model != "jev-latest" {
+	if spec.Model != "systemone-latest" {
 		t.Errorf("unexpected model %q", spec.Model)
 	}
 }

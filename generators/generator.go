@@ -38,7 +38,7 @@ keep working. Name lists are sorted and capped: the report stays readable and
 byte-identical for equal configurations.
 `
 
-	knownGeneratorTypes = "openai, openrouter, deepseek, baidu, tencent, huoshan, gemini, aliyun, zhipu, ollama, vercel, nvidia, azure, bedrock, opencode-go, jev"
+	knownGeneratorTypes = "openai, openrouter, deepseek, baidu, tencent, huoshan, gemini, aliyun, zhipu, ollama, vercel, nvidia, azure, bedrock, opencode-go, systemone"
 
 	// maxReportedNames caps a name list in a resolution failure report so a
 	// large configuration cannot flood the message.
@@ -366,7 +366,7 @@ func invalidModelError(name, reason string, steps []string, hint string, specs [
 }
 
 func (Module) GetGenerator(
-	newJev NewJev,
+	newSystemOne NewSystemOne,
 	newGemini NewGemini,
 	newHuoshan NewHuoshan,
 	newBaidu NewBaidu,
@@ -431,8 +431,8 @@ func (Module) GetGenerator(
 				"type", generatorType,
 			)
 			switch generatorType {
-			case "jev":
-				return newJev(resolvedSpec), nil
+			case "systemone", "system-one", "system_one":
+				return newSystemOne(resolvedSpec), nil
 			case "open-router", "open_router", "openrouter":
 				return newOpenRouter(resolvedSpec), nil
 			case "deepseek":
