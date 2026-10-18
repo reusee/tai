@@ -15,8 +15,32 @@ RFC 3986 it is a relative reference with no scheme, so the kind would
 be lost. Query keys and values are percent-decoded; a pair without
 '=', an empty key, or a malformed escape rejects the header. A '#'
 fragment ends the scan, and the remainder is trailing content that the
-caller rejects, so fragments are unused. Kind names support letters,
-digits, hyphens, underscores, and periods; the colon ends the name.
+caller rejects, so fragments are unused; parseHeader admits only the
+lenient trailing tag markers (see TheoryOfLenientTrailingTagMarkers).
+Kind names support letters, digits, hyphens, underscores, and periods;
+the colon ends the name.
+`
+
+// TheoryOfLenientTrailingTagMarkers documents the lenient acceptance of an
+// opening marker whose header line ends with a closing tag marker.
+const TheoryOfLenientTrailingTagMarkers = `
+Models sometimes close an opening marker the way they close an XML tag: the
+header line ends with ">" or "/>", as in <<DELIMITER change:?op=MODIFY> or
+<<DELIMITER change:?/>. The strict parse fails on both shapes: the marker is
+trailing content, and a ">" glued to the last value is swallowed into the
+value, so the block is dropped or carries a corrupted attribute.
+
+parseHeader drops trailing ">" characters, the optional "/" before a dropped
+">", and the whitespace around them, before the strict parse. The taught
+format requires a value character outside the unreserved set to be
+percent-encoded, so a conforming header never ends with ">" or "/>";
+trimming the line end leaves every conforming header unchanged, and a marker
+inside a value is never touched. Nested opening detection calls the same
+parse, so an inner marker follows the rule that admits the outer one.
+
+Like the lenient opening and closing markers, this is a recovery path for
+nonconforming output, not an advertised format: no prompt teaches it, and
+the header without the trailing marker remains the only taught form.
 `
 
 // HeaderToken is one parsed block header: the kind, the optional URI
@@ -144,10 +168,13 @@ func tokenizeURIHeader(s string, pos int, kind string) (token HeaderToken, consu
 }
 
 // parseHeader parses a block header in RFC 3986 URI form and ensures no
-// trailing content: the header must consume the whole line. The parsed
-// path is validated but not returned; consumers needing it call
-// TokenizeHeader directly.
+// trailing content: the header must consume the whole line, apart from
+// trailing tag markers, which are accepted and dropped as a lenient
+// recovery (see TheoryOfLenientTrailingTagMarkers). The parsed path is
+// validated but not returned; consumers needing it call TokenizeHeader
+// directly.
 func parseHeader(s string) (kind string, attrs map[string]string, ok bool) {
+	s = trimTrailingTagMarkers(s)
 	token, consumed, ok2 := TokenizeHeader(s)
 	if !ok2 {
 		return "", nil, false
@@ -156,6 +183,24 @@ func parseHeader(s string) (kind string, attrs map[string]string, ok bool) {
 		return "", nil, false
 	}
 	return token.Kind, token.Attributes, true
+}
+
+// trimTrailingTagMarkers drops the closing tag markers a model appends to
+// an opening marker's header: the trailing ">" characters, the optional
+// "/" before a dropped ">", and the whitespace around them. The taught
+// format requires a value character outside the unreserved set to be
+// percent-encoded, so a conforming header never ends with ">" or "/>" and
+// trimming the line end never changes one. See
+// TheoryOfLenientTrailingTagMarkers.
+func trimTrailingTagMarkers(s string) string {
+	for {
+		s = strings.TrimSpace(s)
+		if !strings.HasSuffix(s, ">") {
+			return s
+		}
+		s = s[:len(s)-1]
+		s = strings.TrimSuffix(s, "/")
+	}
 }
 
 // extractKindName extracts the kind name from a possibly-incomplete

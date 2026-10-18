@@ -506,6 +506,29 @@ func TestParseFirstBlockTrailingContent(t *testing.T) {
 	}
 }
 
+// TestParseFirstBlockTrailingTagMarker covers the reported nonconforming
+// opening line: the model closes the opening marker with ">" as if it were
+// an XML tag. See TheoryOfLenientTrailingTagMarkers.
+func TestParseFirstBlockTrailingTagMarker(t *testing.T) {
+	content := []byte("<<踯躅 change:?>\nfunc Foo() {}\n踯躅\n")
+	block, _, _, ok, err := ParseFirstBlock(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected block to be found")
+	}
+	if block.Kind != "change" {
+		t.Fatalf("expected kind change, got %q", block.Kind)
+	}
+	if block.Boundary != "踯躅" {
+		t.Fatalf("expected boundary 踯躅, got %q", block.Boundary)
+	}
+	if block.Body != "func Foo() {}" {
+		t.Fatalf("unexpected body: %q", block.Body)
+	}
+}
+
 func TestParseFirstBlockLenientAfterFullStop(t *testing.T) {
 	// A marker glued directly after a Chinese full stop parses as a
 	// block when the closing delimiter follows. See

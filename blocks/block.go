@@ -521,6 +521,10 @@ func precededByPunctuation(content []byte, idx int) bool {
 	return false
 }
 
+// nestedOpeningDelimiter reports whether a line inside a block body opens
+// a nested block, and returns its delimiter. It applies the header rules of
+// a real opening line, so an inner marker is admitted exactly when an outer
+// one is.
 func nestedOpeningDelimiter(line string) (delimiter string, ok bool) {
 	if !strings.HasPrefix(line, "<<") {
 		return "", false
@@ -535,12 +539,7 @@ func nestedOpeningDelimiter(line string) (delimiter string, ok bool) {
 	if rest == "" {
 		return delimiter, true
 	}
-	token, consumed, valid := TokenizeHeader(rest)
-	if !valid || token.Kind == "" {
-		return "", false
-	}
-	remaining := strings.TrimSpace(rest[consumed:])
-	if remaining != "" {
+	if kind, _, valid := parseHeader(rest); !valid || kind == "" {
 		return "", false
 	}
 	return delimiter, true

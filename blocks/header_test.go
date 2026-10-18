@@ -243,6 +243,62 @@ func TestParseHeader(t *testing.T) {
 	})
 }
 
+// TestParseHeaderLenientTrailingTagMarker covers the XML-tag-confusion
+// shapes: a header line closed with ">" or "/>" parses as if the marker
+// were absent, and a marker inside a value survives. See
+// TheoryOfLenientTrailingTagMarkers.
+func TestParseHeaderLenientTrailingTagMarker(t *testing.T) {
+	t.Run("BareQueryClosedByTagMarker", func(t *testing.T) {
+		kind, attrs, ok := parseHeader(`change:?>`)
+		if !ok {
+			t.Fatal("expected ok")
+		}
+		if kind != "change" || len(attrs) != 0 {
+			t.Fatalf("unexpected parse: %s %v", kind, attrs)
+		}
+	})
+
+	t.Run("ValueNotPolluted", func(t *testing.T) {
+		kind, attrs, ok := parseHeader(`change:?op=MODIFY&target=Foo>`)
+		if !ok {
+			t.Fatal("expected ok")
+		}
+		if kind != "change" || attrs["op"] != "MODIFY" || attrs["target"] != "Foo" {
+			t.Fatalf("unexpected parse: %s %v", kind, attrs)
+		}
+	})
+
+	t.Run("SelfClosingTagMarker", func(t *testing.T) {
+		kind, _, ok := parseHeader(`change:?/>`)
+		if !ok {
+			t.Fatal("expected ok")
+		}
+		if kind != "change" {
+			t.Fatalf("unexpected kind: %s", kind)
+		}
+	})
+
+	t.Run("SpacedDoubleMarker", func(t *testing.T) {
+		kind, attrs, ok := parseHeader(`summary: >>`)
+		if !ok {
+			t.Fatal("expected ok")
+		}
+		if kind != "summary" || len(attrs) != 0 {
+			t.Fatalf("unexpected parse: %s %v", kind, attrs)
+		}
+	})
+
+	t.Run("InnerValueMarkerKept", func(t *testing.T) {
+		_, attrs, ok := parseHeader(`change:?op=REPLACE&find=a>b`)
+		if !ok {
+			t.Fatal("expected ok")
+		}
+		if attrs["find"] != "a>b" {
+			t.Fatalf("expected the inner marker kept, got %q", attrs["find"])
+		}
+	})
+}
+
 func TestExtractKindName(t *testing.T) {
 	tests := []struct {
 		input string
