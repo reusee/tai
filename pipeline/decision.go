@@ -33,11 +33,15 @@ task decision theory:
   file or edits a document changes files without being a programming task.
 - Only these two introductions depend on the judgment: the component sections,
   the generation pipeline, and every other prompt part are unchanged.
-- The decision model's inputs are the user prompt and the session facts
+- The decision model's inputs are the user prompt, the session facts
   (TaskEnvironment: whether the session runs inside a Go module, plus every
-  fact a later field adds). They travel in the decision request: the task and
-  the facts form its user message, and the judgment criteria are the declared
-  functions' descriptions.
+  fact a later field adds), and the session's configured extra system prompts
+  (flags.ExtraSystemPrompt, the extra_system_prompt config path). The extra
+  prompts often state the task's nature — its subject and its boundaries — so
+  the judgment reads them with the task, exactly as the generation session
+  runs on them. All three travel in the decision request: the task, the facts,
+  and the extra instructions form its user message, and the judgment criteria
+  are the declared functions' descriptions.
 - The decision model currently always speaks the System One protocol: the
   decision declares the criterion functions and reads the model's noul answer
   to "does this function handle the latest user message?". The mechanism runs
@@ -76,28 +80,37 @@ task decision theory:
   the base prompt and the change component stayed included.
 `
 
-// TaskEnvironment carries the session facts the decision model receives
-// besides the user prompt. A new fact is a new field; decisionInputText
-// renders it into the decision request. See TheoryOfTaskDecision.
+// TaskEnvironment carries the session facts and configured instructions the
+// decision model receives besides the user prompt. A new fact is a new field;
+// decisionInputText renders it into the decision request. See
+// TheoryOfTaskDecision.
 type TaskEnvironment struct {
 	// InGoModule reports whether the session runs inside a Go module: the
 	// nearest go.mod at or above the working directory, the same fact the
 	// default-command auto-detection consults (see
 	// cmd/tai.TheoryOfCommandAutoDetection).
 	InGoModule bool
+
+	// ExtraSystemPrompt carries the user-configured extra instruction
+	// sections (flags.ExtraSystemPrompt, the extra_system_prompt config
+	// path). The sections often state the task's nature — its subject and
+	// its boundaries — so the judgment reads them with the task, exactly as
+	// the generation session runs on them. Empty sections contribute
+	// nothing. See TheoryOfTaskDecision.
+	ExtraSystemPrompt flags.ExtraSystemPrompt
 }
 
-// TaskEnvironment provider: the facts of the current session. See
-// TheoryOfTaskDecision.
-func (Module) TaskEnvironment() TaskEnvironment {
+// TaskEnvironment provider: the facts and configured instructions of the
+// current session. See TheoryOfTaskDecision.
+func (Module) TaskEnvironment(extra flags.ExtraSystemPrompt) TaskEnvironment {
+	taskEnvironment := TaskEnvironment{ExtraSystemPrompt: extra}
 	dir, err := os.Getwd()
 	if err != nil {
-		return TaskEnvironment{}
+		return taskEnvironment
 	}
 	_, inGoModule := pathutil.FindGoModuleRoot(dir)
-	return TaskEnvironment{
-		InGoModule: inGoModule,
-	}
+	taskEnvironment.InGoModule = inGoModule
+	return taskEnvironment
 }
 
 // GetDecisionGenerator resolves the decision model of the session: the
@@ -330,7 +343,8 @@ func judgeTask(
 }
 
 // decisionInputText renders the decision request's user message: the task to
-// judge, followed by the session facts. See TheoryOfTaskDecision.
+// judge, the session facts, and the session's configured extra instructions,
+// each rendered verbatim. See TheoryOfTaskDecision.
 func decisionInputText(prompt string, taskEnvironment TaskEnvironment) string {
 	var sb strings.Builder
 	sb.WriteString("Task:\n")
@@ -340,6 +354,17 @@ func decisionInputText(prompt string, taskEnvironment TaskEnvironment) string {
 		sb.WriteString("- inside a Go module: yes\n")
 	} else {
 		sb.WriteString("- inside a Go module: no\n")
+	}
+	var extras []string
+	for _, section := range taskEnvironment.ExtraSystemPrompt {
+		if section = strings.TrimSpace(section); section != "" {
+			extras = append(extras, section)
+		}
+	}
+	if len(extras) > 0 {
+		sb.WriteString("\nExtra instructions:\n\n")
+		sb.WriteString(strings.Join(extras, "\n\n"))
+		sb.WriteString("\n")
 	}
 	return sb.String()
 }

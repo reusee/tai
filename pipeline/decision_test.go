@@ -168,6 +168,72 @@ func TestDecisionInputTextCarriesSessionFacts(t *testing.T) {
 	}
 }
 
+// TestDecisionRequestCarriesExtraSystemPrompt pins the wiring: the session's
+// configured extra system prompts reach the decision request's input, so the
+// judgment reads the instructions the generation session runs on instead of
+// judging the task from the prompt alone. The scope resolves the module
+// provider — the helper scope forks the facts directly — so the injection the
+// session runs is the one under test. See TheoryOfTaskDecision.
+func TestDecisionRequestCarriesExtraSystemPrompt(t *testing.T) {
+	generator := &decisionTestGenerator{programming: true}
+	scope := dscope.New(
+		modes.ForTest(t),
+		new(Module),
+	).Fork(
+		func() flags.Chats { return flags.Chats{"explain the parser"} },
+		func() flags.DecisionModel { return flags.DecisionModel("decision-test") },
+		func() flags.ExtraSystemPrompt {
+			return flags.ExtraSystemPrompt{"reply in Chinese"}
+		},
+		func() generators.GetGenerator {
+			return func(name string) (generators.Generator, error) {
+				return generator, nil
+			}
+		},
+	)
+	scope.Get[TaskDecision]()
+	record := scope.Get[*TaskDecisionSink]().Drain()
+	if record == nil {
+		t.Fatal("expected a recorded task decision")
+	}
+	if !strings.Contains(record.Input, "reply in Chinese") {
+		t.Fatalf("the decision request's input must carry the extra system prompt, got %q", record.Input)
+	}
+}
+
+// TestDecisionInputTextCarriesExtraSystemPrompt pins the third decision input:
+// the session's configured extra system prompt sections travel with the task,
+// so the judgment reads the instructions the generation session runs on. The
+// section is labeled, and blank entries render nothing, so an unconfigured
+// session's request stays byte-identical. See TheoryOfTaskDecision.
+func TestDecisionInputTextCarriesExtraSystemPrompt(t *testing.T) {
+	text := decisionInputText("do something", TaskEnvironment{
+		ExtraSystemPrompt: flags.ExtraSystemPrompt{
+			"this is a documentation task",
+			"",
+			"   ",
+		},
+	})
+	if !strings.Contains(text, "Extra instructions:") {
+		t.Fatalf("the decision input must label the extra instructions, got %q", text)
+	}
+	if !strings.Contains(text, "this is a documentation task") {
+		t.Fatalf("the decision input must carry the extra prompt, got %q", text)
+	}
+	if strings.Contains(text, "\n\n\n\n") {
+		t.Fatalf("blank extra prompts must not widen the section, got %q", text)
+	}
+	for _, taskEnvironment := range []TaskEnvironment{
+		{},
+		{ExtraSystemPrompt: flags.ExtraSystemPrompt{"", "   "}},
+	} {
+		got := decisionInputText("do something", taskEnvironment)
+		if strings.Contains(got, "Extra instructions:") {
+			t.Fatalf("an unconfigured session must render no extra section, got %q", got)
+		}
+	}
+}
+
 // TestDecisionRequestCarriesCriterionFunction pins the declaration seam: each
 // criterion must travel to the decision model as a declared function, because
 // decisionFuncSelected reads a function call under the same name. A
