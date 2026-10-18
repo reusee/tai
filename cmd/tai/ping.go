@@ -73,9 +73,14 @@ parameter pairs, and their exact bodies — without repeating the format
 description. The system prompt of either test also carries the user-configured
 extra system prompts (extra_system_prompt and family_extra_system_prompt), so
 ping honors the same configuration as the other generation commands. A
-validation failure reports the observed outcome through pingFailed and exits
-with status 1, making the command scriptable; on success the verdict goes to
-the command Output writer after the streamed output.
+validation failure reports the observed outcome as the command's error
+through pingFailed, never as a direct process exit: under the TUI the
+generation runs on the session's goroutine, and a process exit would skip the
+session's terminal restoration (cursor restore, mouse reporting off, raw mode
+off) and kill the display before the failure is shown. The error then
+surfaces through the standard command-error path — the TUI shows it and
+restores the terminal when the user quits — and on success the verdict goes
+to the command Output writer after the streamed output.
 
 The command requires a model to be specified via -model; without it, resolving
 the default generator fails, making the dependency on an explicit model
@@ -484,16 +489,23 @@ func validatePingSelection(finalState generators.State, specs []PingFunctionSpec
 		strings.Join(selected, ", "), target.Name, target.Description)
 }
 
-// pingFailed reports a failed test and exits with status 1, so a ping run is
-// scriptable. The malformed-block note is printed when the block test saw
-// unparseable output. See TheoryOfPingCommand.
-func pingFailed(err error, parseErrors []*blocks.BlockParseError) {
-	fmt.Fprintf(os.Stderr, "ping failed: %v\n", err)
+// pingFailed reports a failed test as the command's error, never as a
+// direct process exit: under the TUI the generation runs on the session's
+// goroutine, and a process exit would skip the session's terminal
+// restoration (cursor restore, mouse reporting off, raw mode off), leaving
+// the terminal corrupted and killing the display before the failure is
+// shown. The returned error surfaces through the standard command-error
+// path: the TUI shows it and restores the terminal on quit. The
+// malformed-block note is carried when the block test saw unparseable
+// output. See TheoryOfPingCommand.
+func pingFailed(err error, parseErrors []*blocks.BlockParseError) apps.MainErr {
+	var message strings.Builder
+	fmt.Fprintf(&message, "ping failed: %v", err)
 	if len(parseErrors) > 0 {
-		fmt.Fprintf(os.Stderr, "ping: %d malformed block(s) were detected during parsing, e.g. kind %q with boundary %q\n",
+		fmt.Fprintf(&message, "\nping: %d malformed block(s) were detected during parsing, e.g. kind %q with boundary %q",
 			len(parseErrors), parseErrors[0].BlockKind, parseErrors[0].Boundary)
 	}
-	os.Exit(1)
+	return apps.MainErr(errors.New(message.String()))
 }
 
 // pingRunOptions builds the run options shared by both ping tests: one
@@ -567,7 +579,7 @@ func runBlockPing(
 	}
 
 	if err := validatePingBlocks(result, specs); err != nil {
-		pingFailed(err, result.ParseErrors)
+		return pingFailed(err, result.ParseErrors)
 	}
 
 	rendered := make([]string, len(specs))
@@ -619,7 +631,7 @@ func runSystemOnePing(
 	}
 
 	if err := validatePingSelection(result.FinalState, specs); err != nil {
-		pingFailed(err, nil)
+		return pingFailed(err, nil)
 	}
 
 	fmt.Fprintf(output, "ping ok: model selected exactly the target function %q for the request %q\n",

@@ -868,3 +868,60 @@ func TestPingCommandThoughtsFlag(t *testing.T) {
 		})
 	}
 }
+
+// TestPingFailureReturnsError guards the contract that a failed ping
+// reports through the command's error instead of exiting the process:
+// under the TUI the generation runs on the session's goroutine, so a
+// direct process exit would skip the session's terminal restoration and
+// kill the display. A regression fails this test by terminating the test
+// binary. See TheoryOfPingCommand.
+func TestPingFailureReturnsError(t *testing.T) {
+	specs := []PingBlockSpec{
+		{Kind: "abc", Attributes: map[string]string{"foo": "bar"}, Body: "body one"},
+	}
+	// The model emits no block, so the positional validation fails.
+	fakeRun := func(ctx context.Context, opts pipeline.RunOptions, result *pipeline.Result) iter.Seq2[*tree.Tree, error] {
+		return func(yield func(*tree.Tree, error) bool) {}
+	}
+	// PingCommand is an apps.App whose Main field holds the function
+	// value untyped (any); the assertion to the concrete function type
+	// restores the compile-time signature check at the call and fails
+	// loudly here when the main signature changes.
+	mainFn := PingCommand.Main.(func(
+		Output,
+		generators.GetDefaultGenerator,
+		generators.BuildGenerate,
+		pipeline.Run,
+		RandomPingBlocks,
+		RandomPingFunctions,
+		flags.ExtraSystemPrompt,
+		flags.FamilyExtraSystemPrompt,
+		generators.ModelFamily,
+		flags.Thoughts,
+	) apps.MainErr)
+
+	err := mainFn(
+		Output(io.Discard),
+		func() (generators.Generator, error) { return aiMockGenerator{}, nil },
+		func(generator generators.Generator, options *generators.GenerateOptions) generators.PhaseBuilder {
+			return func(cont generators.Phase) generators.Phase {
+				return func(ctx context.Context, state generators.State) (generators.Phase, generators.State, error) {
+					return nil, state, nil
+				}
+			}
+		},
+		fakeRun,
+		func() []PingBlockSpec { return specs },
+		nil,
+		nil,
+		nil,
+		"",
+		flags.Thoughts{},
+	)
+	if err == nil {
+		t.Fatal("expected the failed ping validation to return an error instead of exiting")
+	}
+	if !strings.Contains(err.Error(), "expected exactly 1 block") {
+		t.Fatalf("expected the validation problem in the error, got %q", err.Error())
+	}
+}

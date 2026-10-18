@@ -25,13 +25,12 @@ var PatchCommand = apps.New("patch",
 		target := ".AI"
 		root, err := os.OpenRoot(".")
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+			return err
 		}
+		defer root.Close()
 		for block, err := range applyDiffFile(root, target) {
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
+				return err
 			}
 
 			fmt.Fprintf(output, "Applied %s %s\n", block.Op, block.Target)
