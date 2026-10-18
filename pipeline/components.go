@@ -38,16 +38,24 @@ TheoryOfSessionTree and are not repeated here. The new-plan and response
 components follow the ingest component; declaring their kinds registers
 them in KnownKinds.
 
+The change component's inclusion is a task decision: the component enters the
+set only when the decision model answers the file-modification criterion yes,
+so a read-only task neither pays for the change block format nor is invited by
+it to change files the user did not ask to change. A disabled change joins the
+disabled-blocks notice below, so the model is told the format is unavailable
+instead of having its blocks silently ignored (see TheoryOfTaskDecision).
+Under -no-apply the change prompt is still included and change is deliberately
+not listed as disabled: the blocks are the deliverable of a dry run, reviewed
+by the user, so the model must keep emitting them. See
+components.TheoryOfDisabledBlocks.
+
 Shell processing is enabled by the shell flag or by a configured command
 allowlist, which is the user's own decision to let the model run the listed
 commands (see blocks.TheoryOfShellAllowlist). When neither switch enables
 it, the set carries the disabled-blocks notice for shell
 (components.DisabledBlocksComponent), so the model is explicitly told that
 shell blocks are unavailable instead of finding the shell slot silent.
-Under -no-apply the change prompt is still included and change is
-deliberately not listed as disabled: the blocks are the deliverable of a dry
-run, reviewed by the user, so the model must keep emitting them. See
-components.TheoryOfDisabledBlocks.
+See components.TheoryOfDisabledBlocks.
 
 The go-test component runs Go tests after change blocks are applied and
 feeds the output back as Parts that trigger the next generation; the
@@ -72,7 +80,7 @@ appended to the ingest prompt only when the handler is attached, keeping the
 base ingest prompt language-neutral. A nil handler keeps the section out of
 the prompt entirely; an lsp tag emitted in such a session returns an
 explicit unavailability error part rather than being silently ignored,
-matching the disabled-blocks philosophy (see
+touching the disabled-blocks philosophy (see
 components.TheoryOfDisabledBlocks).
 
 Parse-time prefetch: the go-src and ingest components declare
@@ -252,6 +260,7 @@ func (Module) CodesComponents(
 	goFamilyExtra gotools.FamilyExtraSystemPrompt,
 	modelFamily generators.ModelFamily,
 	apply flags.Apply,
+	modifyFilesTask ModifyFilesTask,
 	summaryLanguage flags.SummaryLanguage,
 	flagShell flags.Shell,
 	allowedShellCommands blocks.AllowedShellCommands,
@@ -292,11 +301,17 @@ func (Module) CodesComponents(
 		PromptSection: SessionTreeSystemPrompt,
 	})
 
-	// Change component: prompt always included (from the change block
-	// prompt, which describes only the change-kind semantics; the unified
-	// block format is the first component above). Processing is
-	// conditional on the apply flag. See TheoryOfCodesComponents.
-	if bool(apply) {
+	// Change component: the change block format and its processing. The
+	// component enters the set when the apply flag is set AND the task
+	// decision judges the session's task a file-modification task: a
+	// read-only task pays nothing for the format and is not invited by it
+	// to change files the user did not ask to change. Under -no-apply the
+	// prompt is still included — the emitted blocks are the deliverable of
+	// a dry run the user reviews — and a disabled change is announced
+	// through the disabled-blocks notice below. A failed or skipped
+	// judgment fails open and keeps the component. See
+	// TheoryOfCodesComponents and TheoryOfTaskDecision.
+	if bool(apply) && bool(modifyFilesTask) {
 		comps = append(comps, components.Component{
 			Kind:          "change",
 			PromptSection: changes.ChangeBlockPrompt,
@@ -305,7 +320,7 @@ func (Module) CodesComponents(
 				return components.ProcessResult{Err: err}
 			},
 		})
-	} else {
+	} else if !bool(apply) {
 		// Change blocks are not applied when -no-apply is set; the
 		// prompt is still included so the model knows the format.
 		comps = append(comps, components.Component{
@@ -388,16 +403,20 @@ func (Module) CodesComponents(
 	comps = append(comps, components.CommonComponents(bool(flagShell), allowedShellCommands)...)
 
 	// Disabled-blocks notice: shell without the flag and without a
-	// configured allowlist is announced explicitly instead of leaving its
-	// slot silent. A model that emits an unavailable kind from habit would
-	// have it silently ignored while implying an action that never
-	// happened. Under -no-apply the change prompt above is still included
-	// and change is deliberately not listed as disabled: the blocks are
-	// the deliverable of a dry run. See components.TheoryOfDisabledBlocks
-	// and TheoryOfCodesComponents.
+	// configured allowlist, and change for a task the decision model
+	// judged a non-file-modification one, are announced explicitly instead
+	// of leaving their slots silent. A model that emits an unavailable kind
+	// from habit would have it silently ignored while implying an action
+	// that never happened. Under -no-apply the change prompt above is still
+	// included and change is deliberately not listed as disabled: the
+	// blocks are the deliverable of a dry run. See
+	// components.TheoryOfDisabledBlocks and TheoryOfCodesComponents.
 	var disabled []string
 	if !allowedShellCommands.ShellEnabled(bool(flagShell)) {
 		disabled = append(disabled, "shell")
+	}
+	if bool(apply) && !bool(modifyFilesTask) {
+		disabled = append(disabled, "change")
 	}
 	if len(disabled) > 0 {
 		comps = append(comps, components.DisabledBlocksComponent(disabled...))

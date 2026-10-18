@@ -894,7 +894,7 @@ func appendLoopSummaries(summaries GoalLoopSummaries, loop int, stats []AttemptS
 
 // makeGoalLoopGenerator builds the per-loop generation function: each call
 // opens a fresh scope via reset, forks the loop's number, the run's task
-// judgment, the loop's feedback, the previous loops' summaries, and — when
+// decision, the loop's feedback, the previous loops' summaries, and — when
 // the runner requests a loop model — flags.ModelName into it, and resolves
 // GenerateWithResultWithStats from the forked scope, so the loop reads the
 // latest filesystem state, sees the previous loops' feedback and
@@ -910,13 +910,16 @@ func appendLoopSummaries(summaries GoalLoopSummaries, loop int, stats []AttemptS
 // goal runner stops instead of looping on empty outcomes. See
 // TheoryOfGoalNoTask, TheoryOfGoalMode, TheoryOfGoalReviewModel and
 // TheoryOfSessionTree.
-func makeGoalLoopGenerator(reset dscope.Reset, programmingTask ProgrammingTask) GoalLoopGenerator {
+func makeGoalLoopGenerator(reset dscope.Reset, decision TaskDecision) GoalLoopGenerator {
 	return func(ctx context.Context, loop int, feedback GoalFeedback, summaries GoalLoopSummaries, loopModel string, continuation SessionTreeContinuation) (Result, []AttemptStat, error) {
 		scope := reset()
-		// The task judgment of the run is carried into every loop, so the
-		// base prompt cannot flip while the run unfolds. See
-		// TheoryOfTaskDecision.
-		scope = scope.Fork(func() ProgrammingTask { return programmingTask })
+		// The whole task decision of the run is carried into every loop —
+		// not only its two derived halves — so both answers stay stable
+		// while the run unfolds, and any consumer of TaskDecision reads
+		// the same judgment without re-running the decision model.
+		// ProgrammingTask and ModifyFilesTask derive from the forked
+		// value. See TheoryOfTaskDecision.
+		scope = scope.Fork(func() TaskDecision { return decision })
 		scope = scope.Fork(func() GoalLoop { return GoalLoop(loop) })
 		if feedback != "" {
 			scope = scope.Fork(func() GoalFeedback { return feedback })
@@ -959,12 +962,12 @@ func makeGoalLoopGenerator(reset dscope.Reset, programmingTask ProgrammingTask) 
 // per-loop generator and the review pass. Each GoalRun resolution binds
 // reset to the resolving scope, so the command's forks (parts provider,
 // goal system prompt) apply to every loop. The task decision is judged once
-// per run and forked into every loop, so the base prompt stays stable across
-// the run (see TheoryOfTaskDecision). The goal tree observer is
-// resolved from the scope, so a display front-end's fork receives the
-// goal verdicts as goal structure nodes in the run's tree. The recorder
-// is resolved from the scope too: when recording is enabled, the whole
-// run is one recorded session — the recorder's sink attached to the
+// per run and forked into every loop, so the base prompt and the change
+// component stay stable across the run (see TheoryOfTaskDecision). The goal
+// tree observer is resolved from the scope, so a display front-end's fork
+// receives the goal verdicts as goal structure nodes in the run's tree. The
+// recorder is resolved from the scope too: when recording is enabled, the
+// whole run is one recorded session — the recorder's sink attached to the
 // run's tree and the session ended after the last loop — so every loop's
 // operations join one session's stream. The post-done verification loops
 // run on the review-model rotation (see TheoryOfGoalReviewModel).
@@ -983,15 +986,15 @@ func (Module) GoalRun(
 	}
 	return func(ctx context.Context, output io.Writer) GoalResult {
 		// The task judgment is made once per run: the task does not change
-		// between loops, so re-judging could flip the base prompt mid-run.
-		// The judgment is forked into every loop's scope, and the record it
-		// leaves in that scope's decision sink joins the run tree under the
-		// root. See TheoryOfTaskDecision.
+		// between loops, so re-judging could flip the introductions
+		// mid-run. The judgment is forked into every loop's scope, and the
+		// record it leaves in that scope's decision sink joins the run tree
+		// under the root. See TheoryOfTaskDecision.
 		scope := reset()
-		programmingTask := scope.Get[ProgrammingTask]()
+		decision := scope.Get[TaskDecision]()
 		return RunGoal(ctx, GoalOptions{
 			Output:       output,
-			Generate:     makeGoalLoopGenerator(reset, programmingTask),
+			Generate:     makeGoalLoopGenerator(reset, decision),
 			Review:       runReview,
 			GoalTree:     observeGoal,
 			ReviewModels: models,

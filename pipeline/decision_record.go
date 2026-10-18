@@ -27,11 +27,14 @@ type TaskDecisionRecord struct {
 	// judgment or a failed request. Empty when the request ran and
 	// answered.
 	Note string
-	// Programming is the resulting decision, and the value the session
-	// runs on: the judgment's answer when one was made, and true on every
-	// failure, because the judgment fails open and the codes base prompt
-	// stays included.
+	// Programming is the programming-task criterion's answer: the codes
+	// base prompt enters the system prompt when it is true. It is true on
+	// every failure, because the judgment fails open.
 	Programming bool
+	// ModifyFiles is the file-modification criterion's answer: the change
+	// component enters the pipeline when it is true. It is true on every
+	// failure, because the judgment fails open.
+	ModifyFiles bool
 }
 
 // TaskDecisionSink buffers one scope's task decision for the session tree:
@@ -119,23 +122,20 @@ func renderDecisionOutput(state generators.State, sinceCount int) string {
 }
 
 // writeTaskDecisionNode writes one run's task decision as a decision::task
-// node under parent: the node's content states the decision, the decision
-// model, and the codes base prompt's fate, and its children carry the
-// request's input, the model's output, and the verdict with its basis or its
-// fail-open reason. An input or output that never existed writes no child,
-// so a decision that never ran carries only its verdict. A failed write
-// leaves the tree unchanged. See TheoryOfTaskDecision.
+// node under parent: the node's content states the answers, the decision
+// model, and the fates of the codes base prompt and the change component, and
+// its children carry the request's input, the model's output, and the verdict
+// with its basis or its fail-open reason. An input or output that never
+// existed writes no child, so a decision that never ran carries only its
+// verdict. A failed write leaves the tree unchanged. See TheoryOfTaskDecision.
 func writeTaskDecisionNode(tr *tree.Tree, parent string, record *TaskDecisionRecord) *tree.Tree {
 	if tr == nil || record == nil {
 		return tr
 	}
-	decision := "no judgment"
+	answers := "no judgment"
 	if record.Note == "" {
-		if record.Programming {
-			decision = "programming task"
-		} else {
-			decision = "not a programming task"
-		}
+		answers = fmt.Sprintf("programming task: %s, modifies files: %s",
+			yesNo(record.Programming), yesNo(record.ModifyFiles))
 	}
 	model := record.Model
 	if model == "" {
@@ -145,9 +145,14 @@ func writeTaskDecisionNode(tr *tree.Tree, parent string, record *TaskDecisionRec
 	if record.Programming {
 		base = "included"
 	}
+	change := "omitted"
+	if record.ModifyFiles {
+		change = "included"
+	}
 	next, taskName, err := tr.WriteAuto(
 		parent, tree.TypeDecisionTask.Name(), tree.TypeDecisionTask, tree.AuthorProgram,
-		fmt.Sprintf("task decision: %s\nmodel: %s\ncodes base prompt: %s", decision, model, base),
+		fmt.Sprintf("task decision: %s\nmodel: %s\ncodes base prompt: %s\nchange component: %s",
+			answers, model, base, change),
 	)
 	if err != nil {
 		return tr
@@ -164,7 +169,8 @@ func writeTaskDecisionNode(tr *tree.Tree, parent string, record *TaskDecisionRec
 		var sb strings.Builder
 		sb.WriteString("system prompt:\n")
 		sb.WriteString(decisionSystemPrompt)
-		sb.WriteString("\n\ncriterion: " + decisionFuncName + " - " + decisionFuncDescription)
+		sb.WriteString("\n\ncriteria:\n- " + decisionProgrammingFuncName + ": " + decisionProgrammingFuncDescription)
+		sb.WriteString("\n- " + decisionModifyFilesFuncName + ": " + decisionModifyFilesFuncDescription)
 		sb.WriteString("\n\nuser message:\n")
 		sb.WriteString(record.Input)
 		writeChild(tree.TypeDecisionInput, sb.String())
@@ -172,12 +178,22 @@ func writeTaskDecisionNode(tr *tree.Tree, parent string, record *TaskDecisionRec
 	writeChild(tree.TypeDecisionOutput, record.Output)
 	verdict := record.Note
 	if verdict == "" {
-		if record.Programming {
-			verdict = fmt.Sprintf("the decision model selected the criterion function %q: the codes base prompt is included", decisionFuncName)
-		} else {
-			verdict = "the decision model selected no function: the codes base prompt is omitted"
-		}
+		verdict = fmt.Sprintf(
+			"the decision model answered the criteria %q (%s) and %q (%s): the codes base prompt is %s and the change component is %s",
+			decisionProgrammingFuncName, yesNo(record.Programming),
+			decisionModifyFilesFuncName, yesNo(record.ModifyFiles),
+			base, change,
+		)
 	}
 	writeChild(tree.TypeDecisionVerdict, verdict)
 	return next
+}
+
+// yesNo renders one criterion's answer for the decision node's content and
+// verdict. See TheoryOfTaskDecision.
+func yesNo(b bool) string {
+	if b {
+		return "yes"
+	}
+	return "no"
 }

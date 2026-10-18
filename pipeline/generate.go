@@ -42,11 +42,14 @@ stops.
 
 Non-change blocks are collected by the handler into an external slice for
 post-phase processing by ProcessComponents. Successfully applied change blocks are
-consumed by the handler (not collected), so ProcessComponents finds no change
-blocks to re-apply. During Flush the handler is not called for unclosed blocks —
+consumed by the handler (not collected), so ProcessComponents finds no change blocks
+to re-apply. During Flush the handler is not called for unclosed blocks —
 they are incomplete (e.g., truncated output) and applying them would produce
-errors. When the apply flag is disabled, no handler is set and all blocks are
-collected, preserving the no-apply behavior.
+errors. No handler is set when the apply flag is disabled, and none when the
+task decision judged the task a non-file-modification one — the change
+component is absent then too, so the format was never taught (see
+TheoryOfTaskDecision). In both cases every block is collected, so a session
+that does not modify files applies nothing.
 
 Applied change blocks join the session tree as described in
 TheoryOfSessionTree. The record resets with each attempt, mirroring the
@@ -539,6 +542,7 @@ func (Module) GenerateWithResultWithStats(
 	debug Debug,
 	funcDecls generators.FuncDecls,
 	apply flags.Apply,
+	modifyFilesTask ModifyFilesTask,
 	loopRun Run,
 	writeTimes *changes.FileWriteTimes,
 	hashes *changes.FileHashes,
@@ -749,8 +753,15 @@ func (Module) GenerateWithResultWithStats(
 
 		prevContentCount := generators.CountContents(state)
 
+		// The change block handler applies change blocks to the in-memory
+		// store as they stream. It is installed only when a change block
+		// can arrive: -no-apply discards the blocks, and a task the decision
+		// model judged a non-file-modification task never carries the change
+		// component, so its prompt never taught the format and its blocks
+		// are not applied. See TheoryOfStreamingApply,
+		// TheoryOfCodesComponents and TheoryOfTaskDecision.
 		var blockHandler BlockHandler
-		if bool(apply) {
+		if bool(apply) && bool(modifyFilesTask) {
 			handler := buildChangeBlockHandler(memStore)
 			blockHandler = BlockHandler(handler)
 		}

@@ -37,13 +37,16 @@ func decisionRunScope(t *testing.T, generator *decisionTestGenerator) dscope.Sco
 
 // TestTaskDecisionSinkRecordsJudgment verifies that the judgment records its
 // material in the scope's sink: the decision model, the request's input, the
-// model's output, and the verdict. A drained sink is empty, so one decision
-// is written once. See TheoryOfTaskDecision.
+// model's output with both answers, and the verdict. A drained sink is empty,
+// so one decision is written once. See TheoryOfTaskDecision.
 func TestTaskDecisionSinkRecordsJudgment(t *testing.T) {
-	generator := &decisionTestGenerator{programming: true}
+	generator := &decisionTestGenerator{programming: true, modifyFiles: true}
 	scope := decisionRunScope(t, generator)
 	if !bool(scope.Get[ProgrammingTask]()) {
 		t.Fatal("expected a programming task")
+	}
+	if !bool(scope.Get[ModifyFilesTask]()) {
+		t.Fatal("expected a file-modification task")
 	}
 	record := scope.Get[*TaskDecisionSink]().Drain()
 	if record == nil {
@@ -55,8 +58,11 @@ func TestTaskDecisionSinkRecordsJudgment(t *testing.T) {
 	if !strings.Contains(record.Input, "fix the parser bug") {
 		t.Fatalf("the record input must carry the task, got %q", record.Input)
 	}
-	if !strings.Contains(record.Output, decisionFuncName) {
-		t.Fatalf("the record output must carry the model's selection, got %q", record.Output)
+	if !strings.Contains(record.Output, decisionProgrammingFuncName) {
+		t.Fatalf("the record output must carry the programming-task selection, got %q", record.Output)
+	}
+	if !strings.Contains(record.Output, decisionModifyFilesFuncName) {
+		t.Fatalf("the record output must carry the file-modification selection, got %q", record.Output)
 	}
 	if record.Note != "" {
 		t.Fatalf("a judged decision carries no fail-open note, got %q", record.Note)
@@ -68,8 +74,8 @@ func TestTaskDecisionSinkRecordsJudgment(t *testing.T) {
 
 // TestTaskDecisionSinkRecordsFailOpen verifies that a skipped judgment
 // records its fail-open reason instead of the request's material, so the
-// session tree states why the codes base prompt stayed included. See
-// TheoryOfTaskDecision.
+// session tree states why the codes base prompt and the change component
+// stayed included. See TheoryOfTaskDecision.
 func TestTaskDecisionSinkRecordsFailOpen(t *testing.T) {
 	scope := dscope.New(
 		modes.ForTest(t),
@@ -79,6 +85,9 @@ func TestTaskDecisionSinkRecordsFailOpen(t *testing.T) {
 	)
 	if !bool(scope.Get[ProgrammingTask]()) {
 		t.Fatal("no decision model must keep the codes base prompt included")
+	}
+	if !bool(scope.Get[ModifyFilesTask]()) {
+		t.Fatal("no decision model must keep the change component included")
 	}
 	record := scope.Get[*TaskDecisionSink]().Drain()
 	if record == nil {
@@ -98,10 +107,10 @@ func TestTaskDecisionSinkRecordsFailOpen(t *testing.T) {
 // child nodes. The judgment runs during prompt assembly, before the tree
 // opens, so its material waits in the scope's sink. See TheoryOfTaskDecision.
 func TestRunRecordsTaskDecisionNode(t *testing.T) {
-	scope := decisionRunScope(t, &decisionTestGenerator{programming: true})
-	// Resolving the programming-task provider is what prompt assembly does:
+	scope := decisionRunScope(t, &decisionTestGenerator{programming: true, modifyFiles: true})
+	// Resolving the task decision provider is what prompt assembly does:
 	// it fills the scope's decision sink before the loop opens its tree.
-	scope.Get[ProgrammingTask]()
+	scope.Get[TaskDecision]()
 	result, err := runOnce(scope.Get[Run](), RunOptions{
 		InitialState: generators.NewPrompts("", nil),
 		PhaseBuilder: func(generators.Generator) generators.Phase {
@@ -119,11 +128,14 @@ func TestRunRecordsTaskDecisionNode(t *testing.T) {
 	if node.Parent != "root" {
 		t.Fatalf("task decision parent = %q, want root", node.Parent)
 	}
-	if !strings.Contains(node.Content, "task decision: programming task") {
-		t.Fatalf("task decision content must state the decision, got %q", node.Content)
+	if !strings.Contains(node.Content, "task decision: programming task: yes") {
+		t.Fatalf("task decision content must state the answers, got %q", node.Content)
 	}
 	if !strings.Contains(node.Content, "codes base prompt: included") {
 		t.Fatalf("task decision content must state the base prompt's fate, got %q", node.Content)
+	}
+	if !strings.Contains(node.Content, "change component: included") {
+		t.Fatalf("task decision content must state the change component's fate, got %q", node.Content)
 	}
 	children := map[tree.Type]bool{}
 	for _, child := range node.Children() {
@@ -152,8 +164,9 @@ func TestRunGoalRecordsTaskDecisionNode(t *testing.T) {
 		TaskDecision: &TaskDecisionRecord{
 			Model:       "decision-test",
 			Input:       "Task:\nfix the parser bug",
-			Output:      "selected: programming_task",
+			Output:      "selected: programming_task\nselected: modify_files_task",
 			Programming: true,
+			ModifyFiles: true,
 		},
 	})
 	if !result.Achieved {
@@ -166,6 +179,9 @@ func TestRunGoalRecordsTaskDecisionNode(t *testing.T) {
 	node := nodes[0]
 	if node.Parent != "root" {
 		t.Fatalf("task decision parent = %q, want root", node.Parent)
+	}
+	if !strings.Contains(node.Content, "change component: included") {
+		t.Fatalf("task decision content must state the change component's fate, got %q", node.Content)
 	}
 	if len(result.Tree.ByType(tree.TypeLoop)) != 1 {
 		t.Fatalf("expected 1 loop node, got %d", len(result.Tree.ByType(tree.TypeLoop)))

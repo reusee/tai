@@ -29,7 +29,8 @@ func TestMakeGoalLoopGeneratorNoTask(t *testing.T) {
 			}
 		},
 	)
-	generate := makeGoalLoopGenerator(scope.Reset, true)
+	decision := TaskDecision{Programming: true, ModifyFiles: true}
+	generate := makeGoalLoopGenerator(scope.Reset, decision)
 	_, _, err := generate(context.Background(), 1, "", nil, "", SessionTreeContinuation{})
 	if !errors.Is(err, ErrNoTask) {
 		t.Fatalf("expected ErrNoTask, got %v", err)

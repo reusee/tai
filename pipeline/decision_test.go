@@ -15,12 +15,13 @@ import (
 )
 
 // decisionTestGenerator stands in for the decision model: it answers the
-// decision request from a fixed verdict — appending the declared function
-// call when the task is a programming task — and records the request's user
-// text and declared functions so a test can check what the request carried.
-// See TheoryOfTaskDecision.
+// decision request from fixed verdicts — appending the declared function
+// calls when the task is a programming task and when it modifies files —
+// and records the request's user text and declared functions so a test can
+// check what the request carried. See TheoryOfTaskDecision.
 type decisionTestGenerator struct {
 	programming bool
+	modifyFiles bool
 	err         error
 	seen        []string
 	funcs       []generators.FuncDecl
@@ -56,18 +57,27 @@ func (g *decisionTestGenerator) Generate(
 	for fn := range state.Functions() {
 		g.funcs = append(g.funcs, fn.Decl)
 	}
-	if !g.programming {
+	var calls []generators.Part
+	if g.programming {
+		calls = append(calls, generators.FuncCall{
+			ID:        decisionProgrammingFuncName,
+			Name:      decisionProgrammingFuncName,
+			Arguments: map[string]any{},
+		})
+	}
+	if g.modifyFiles {
+		calls = append(calls, generators.FuncCall{
+			ID:        decisionModifyFilesFuncName,
+			Name:      decisionModifyFilesFuncName,
+			Arguments: map[string]any{},
+		})
+	}
+	if len(calls) == 0 {
 		return state, nil
 	}
 	return state.AppendContent(&generators.Content{
-		Role: generators.RoleModel,
-		Parts: []generators.Part{
-			generators.FuncCall{
-				ID:        decisionFuncName,
-				Name:      decisionFuncName,
-				Arguments: map[string]any{},
-			},
-		},
+		Role:  generators.RoleModel,
+		Parts: calls,
 	})
 }
 
@@ -158,22 +168,80 @@ func TestDecisionInputTextCarriesSessionFacts(t *testing.T) {
 	}
 }
 
-// TestDecisionRequestCarriesCriterionFunction pins the declaration seam: the
+// TestDecisionRequestCarriesCriterionFunction pins the declaration seam: each
 // criterion must travel to the decision model as a declared function, because
-// decisionSelected reads a function call under the same name. A declaration
-// that never arrives would leave the generator nothing to answer and make
-// every judgment fail open, silently keeping the codes prompt in every
-// session. See TheoryOfTaskDecision.
+// decisionFuncSelected reads a function call under the same name. A
+// declaration that never arrives would leave the generator nothing to answer
+// for that criterion and make its judgment fail open, silently keeping the
+// introduction in every session. See TheoryOfTaskDecision.
 func TestDecisionRequestCarriesCriterionFunction(t *testing.T) {
-	generator := &decisionTestGenerator{programming: true}
+	generator := &decisionTestGenerator{programming: true, modifyFiles: true}
 	decisionTestScope(t, generator, "fix the parser bug").Get[ProgrammingTask]()
-	if len(generator.funcs) != 1 {
-		t.Fatalf("the decision request must declare exactly one criterion function, got %v", generator.funcs)
+	if len(generator.funcs) != 2 {
+		t.Fatalf("the decision request must declare exactly two criterion functions, got %v", generator.funcs)
 	}
-	if generator.funcs[0].Name != decisionFuncName {
-		t.Fatalf("the criterion function must be declared as %q, got %q", decisionFuncName, generator.funcs[0].Name)
+	declared := map[string]bool{}
+	for _, fn := range generator.funcs {
+		if fn.Description == "" {
+			t.Fatalf("the criterion function %q must carry the criterion description", fn.Name)
+		}
+		declared[fn.Name] = true
 	}
-	if generator.funcs[0].Description == "" {
-		t.Fatal("the criterion function must carry the criterion description")
+	for _, name := range []string{decisionProgrammingFuncName, decisionModifyFilesFuncName} {
+		if !declared[name] {
+			t.Fatalf("the decision request must declare the criterion function %q, got %v", name, generator.funcs)
+		}
+	}
+}
+
+// TestModifyFilesTaskGatesChange pins the second criterion's gate: the change
+// component — the change block format and its processing — enters the
+// pipeline only when the decision model judges the task a file-modification
+// task, so a read-only task pays nothing for the format and is not invited by
+// it to change files the user did not ask to change. A task the model judged
+// read-only sees the disabled-blocks notice instead, so its change blocks are
+// never silently ignored. Under -no-apply the prompt stays included for the
+// dry run the user reviews. See TheoryOfTaskDecision and
+// TheoryOfCodesComponents.
+func TestModifyFilesTaskGatesChange(t *testing.T) {
+	// A read-only task: no change component, and the kind is announced as
+	// disabled.
+	scope := decisionTestScope(t, &decisionTestGenerator{programming: true}, "explain this parser")
+	if bool(scope.Get[ModifyFilesTask]()) {
+		t.Fatal("a read-only task must judge the file-modification criterion no")
+	}
+	prompt := string(scope.Get[SystemPrompt]())
+	if strings.Contains(prompt, "Change Block Kind") {
+		t.Fatal("a read-only task must not introduce the change block kind")
+	}
+	if !strings.Contains(prompt, "change blocks are not processed in this session") {
+		t.Fatal("a read-only task must announce the disabled change kind")
+	}
+
+	// A file-modification task: the change component enters the prompt.
+	scope = decisionTestScope(t, &decisionTestGenerator{programming: true, modifyFiles: true}, "fix the parser bug")
+	if !bool(scope.Get[ModifyFilesTask]()) {
+		t.Fatal("a file-modification task must judge the criterion yes")
+	}
+	prompt = string(scope.Get[SystemPrompt]())
+	if !strings.Contains(prompt, "Change Block Kind") {
+		t.Fatal("a file-modification task must introduce the change block kind")
+	}
+	if strings.Contains(prompt, "change blocks are not processed in this session") {
+		t.Fatal("an available change kind must not be announced as disabled")
+	}
+
+	// Under -no-apply the change prompt stays included whatever the
+	// criterion answered: the emitted blocks are the deliverable of the dry
+	// run the user reviews.
+	scope = decisionTestScope(t, &decisionTestGenerator{programming: true}, "explain this parser").Fork(
+		func() flags.Apply { return false },
+	)
+	prompt = string(scope.Get[SystemPrompt]())
+	if !strings.Contains(prompt, "Change Block Kind") {
+		t.Fatal("under -no-apply the change prompt stays included")
+	}
+	if strings.Contains(prompt, "change blocks are not processed in this session") {
+		t.Fatal("under -no-apply change must not be announced as disabled")
 	}
 }

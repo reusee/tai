@@ -10,8 +10,9 @@ import (
 
 // TheoryOfDecisionModelPrecedence documents how config values from multiple
 // files select the decision model: a scalar selection, never an accumulation.
-// The decision model is consumed by the codes pipeline's task decision and
-// is not consumed by the review process.
+// The decision model is consumed by the codes pipeline's task decision — both
+// the programming-task judgment and the file-modification judgment — and is
+// not consumed by the review process.
 const TheoryOfDecisionModelPrecedence = `
 DecisionModel is a scalar selection, never an accumulation: when several
 config files set the same path, the first non-empty value wins. HandleConfig
@@ -28,20 +29,24 @@ overrides every config value because flags.Parse runs after configs.Load
 (TheoryOfConfigFlagParity).
 
 The decision model is consumed by the codes pipeline's task decision: it
-judges whether the session's task is a programming task, which decides
-whether the codes base prompt enters the system prompt (see
-pipeline.TheoryOfTaskDecision). It is not consumed by the review process:
-the goal runner's post-done verification loops and the post-run review
-sessions run on the review-model rotation (see
+judges whether the session's task is a programming task — which decides
+whether the codes base prompt enters the system prompt — and whether the task
+modifies project files — which decides whether the change component enters
+the pipeline. Both criteria travel in one request, so one cheap call answers
+both (see pipeline.TheoryOfTaskDecision). It is not consumed by the review
+process: the goal runner's post-done verification loops and the post-run
+review sessions run on the review-model rotation (see
 pipeline.TheoryOfGoalReviewModel).
 `
 
-// DecisionModel is the model that judges decision tasks. The codes pipeline's
-// task decision consumes it: it judges whether the session's task is a
-// programming task, which decides whether the codes base prompt enters the
-// system prompt (see pipeline.TheoryOfTaskDecision). It is not consumed by
-// the review process: the goal runner's post-done verification loops and the
-// post-run review sessions run on the review-model rotation (see
+// DecisionModel is the model that judges the codes pipeline's task decision.
+// It answers two criteria in one request: whether the session's task is a
+// programming task — which decides whether the codes base prompt enters the
+// system prompt — and whether the task modifies project files — which decides
+// whether the change component enters the pipeline (see
+// pipeline.TheoryOfTaskDecision). It is not consumed by the review process:
+// the goal runner's post-done verification loops and the post-run review
+// sessions run on the review-model rotation (see
 // pipeline.TheoryOfGoalReviewModel). The value is selected by the
 // -decision-model flag or the decision_model config path. See
 // TheoryOfDecisionModelPrecedence.
@@ -55,7 +60,7 @@ var _ Flag = DecisionModel("")
 
 func (m DecisionModel) Keys() map[string]string {
 	return map[string]string{
-		"-decision-model": "Set the model that judges whether the session's task is a programming task",
+		"-decision-model": "Set the model that judges the session's task for the codes pipeline: whether it is a programming task and whether it modifies project files",
 	}
 }
 
