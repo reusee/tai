@@ -161,26 +161,20 @@ Goal no-task theory:
 // done block has been emitted. See TheoryOfGoalMode.
 const TheoryOfGoalReviewModel = `
 The loops after the first done block emitted together with change
-blocks run on the decision model when one is configured, and on the
-review models otherwise: the goal runner forks the selected model into
-each post-done loop's scope as flags.ModelName — the same fork
-Module.RunReview uses for its review sessions — so the model that
+blocks run on the review models: the goal runner forks the selected
+model into each post-done loop's scope as flags.ModelName — the same
+fork Module.RunReview uses for its review sessions — so the model that
 verifies and corrects the declared goal is independent of the model
-that made the changes. The decision model (flags.DecisionModel, set by
-the -decision-model flag or the decision_model config path) is the
-explicit selection for those loops: their primary work is the decision
-whether the declared goal is genuinely achieved. The review-model
-rotation drives them only while no decision model is configured, and it
-keeps its other role unchanged — the post-run review sessions always
-run on them. The first done block itself is emitted by the default
-model. The review-model selection advances one model per done block:
-the first done block selects the first review model for the loop that
-verifies it, and each later done block selects the next model; reaching
-the last model fixes the selection, so later done blocks keep it. A
-loop without a done block — corrections, errors, malformed blocks —
-does not advance the selection, so the phase is sticky however the
+that made the changes. The first done block itself is emitted by the
+default model. The review-model selection advances one model per done
+block: the first done block selects the first review model for the loop
+that verifies it, and each later done block selects the next model;
+reaching the last model fixes the selection, so later done blocks keep
+it. A loop without a done block — corrections, errors, malformed blocks
+— does not advance the selection, so the phase is sticky however the
 corrections unfold. When no review model is configured, post-done
-loops keep the default model.
+loops keep the default model. The same rotation drives the post-run
+review sessions (see TheoryOfReviewLoop).
 `
 
 // GoalSystemPrompt teaches the model the goal-directed multi-loop protocol:
@@ -363,13 +357,6 @@ type GoalOptions struct {
 	// When empty, post-done loops keep the default model. See
 	// TheoryOfGoalReviewModel.
 	ReviewModels []string
-	// DecisionModel is the model the post-done verification loops run
-	// on: the loops whose primary work is the decision whether the
-	// declared goal is genuinely achieved. It takes precedence over
-	// the ReviewModels rotation; when it is empty, the rotation drives
-	// those loops if configured, and the default model otherwise. See
-	// TheoryOfGoalReviewModel.
-	DecisionModel string
 	// Recorder records the whole run as one session: the recorder's sink
 	// is attached to the run's session tree before the first loop, so
 	// every loop's operations join one session's operation stream, and
@@ -389,12 +376,12 @@ type GoalLoop int
 // GoalLoopGenerator runs one goal loop. The loop number, the feedback,
 // and the summaries of previous loops reach the loop's scope through
 // the forks of the goal runner. A non-empty loopModel forks
-// flags.ModelName to that model — the decision model, or a review model
-// — so the loop runs on it; see TheoryOfGoalReviewModel. The
-// continuation carries the run's session tree and the loop node the
-// runner prepared; the loop writes its session nodes under the node and
-// returns the evolved tree in Result.SessionTree, so one run owns one
-// tree. See TheoryOfGoalMode and TheoryOfSessionTree.
+// flags.ModelName to that model — a review model — so the loop runs on
+// it; see TheoryOfGoalReviewModel. The continuation carries the run's
+// session tree and the loop node the runner prepared; the loop writes
+// its session nodes under the node and returns the evolved tree in
+// Result.SessionTree, so one run owns one tree. See TheoryOfGoalMode and
+// TheoryOfSessionTree.
 type GoalLoopGenerator func(
 	ctx context.Context,
 	loop int,
@@ -781,29 +768,22 @@ func RunGoal(ctx context.Context, opts GoalOptions) GoalResult {
 
 	// runOneLoop executes one generation loop and folds its outcome into
 	// the runner state. It reports whether the run should stop after the
-	// loop. A loop after the first done block runs on the decision model
-	// when one is configured, otherwise on a review model when any are
-	// configured: each done block emitted by an earlier loop advances the
-	// review-model selection by one, and the last model is fixed once
-	// reached. See TheoryOfGoalReviewModel.
+	// loop. A loop after the first done block runs on a review model when
+	// any are configured: each done block emitted by an earlier loop
+	// advances the review-model selection by one, and the last model is
+	// fixed once reached. See TheoryOfGoalReviewModel.
 	runOneLoop := func() bool {
 		loopStart := len(allStats)
-		// The post-done loops decide whether the declared goal is
-		// genuinely achieved: the decision model is the explicit
-		// selection for that task, and the review-model rotation drives
-		// those loops only while no decision model is configured. See
+		// The post-done loops verify whether the declared goal is
+		// genuinely achieved and run on the review-model rotation. See
 		// TheoryOfGoalReviewModel.
 		loopModel := ""
-		if state.doneCount > 0 {
-			if opts.DecisionModel != "" {
-				loopModel = opts.DecisionModel
-			} else if len(opts.ReviewModels) > 0 {
-				index := state.doneCount - 1
-				if index >= len(opts.ReviewModels) {
-					index = len(opts.ReviewModels) - 1
-				}
-				loopModel = opts.ReviewModels[index]
+		if state.doneCount > 0 && len(opts.ReviewModels) > 0 {
+			index := state.doneCount - 1
+			if index >= len(opts.ReviewModels) {
+				index = len(opts.ReviewModels) - 1
 			}
+			loopModel = opts.ReviewModels[index]
 		}
 		// The loop node is written before the loop runs, so every session
 		// node of the loop hangs under it. The node carries a "goal loop
@@ -900,17 +880,17 @@ func appendLoopSummaries(summaries GoalLoopSummaries, loop int, stats []AttemptS
 // GenerateWithResultWithStats from the forked scope, so the loop reads the
 // latest filesystem state, sees the previous loops' feedback and
 // summaries in its system prompt, records its occurrences as event nodes
-// under its loop node, and runs on the requested model (the decision model
-// or a review model; see TheoryOfGoalReviewModel). The continuation
-// carries the run's session tree and the loop node into the loop's scope,
-// so the loop writes its session nodes under the node and returns the
-// evolved tree; one run owns one tree. Generation streams to os.Stdout:
-// in TUI mode the terminal's stdout is the null device and the display
-// captures output through state decorators, so a per-loop writer would
-// duplicate output. When no chat input is configured, the loop returns
-// ErrNoTask before any session runs, so the goal runner stops instead of
-// looping on empty outcomes. See TheoryOfGoalNoTask, TheoryOfGoalMode,
-// TheoryOfGoalReviewModel and TheoryOfSessionTree.
+// under its loop node, and runs on the requested model (a review model; see
+// TheoryOfGoalReviewModel). The continuation carries the run's session tree
+// and the loop node into the loop's scope, so the loop writes its session
+// nodes under the node and returns the evolved tree; one run owns one tree.
+// Generation streams to os.Stdout: in TUI mode the terminal's stdout is the
+// null device and the display captures output through state decorators, so
+// a per-loop writer would duplicate output. When no chat input is
+// configured, the loop returns ErrNoTask before any session runs, so the
+// goal runner stops instead of looping on empty outcomes. See
+// TheoryOfGoalNoTask, TheoryOfGoalMode, TheoryOfGoalReviewModel and
+// TheoryOfSessionTree.
 func makeGoalLoopGenerator(reset dscope.Reset) GoalLoopGenerator {
 	return func(ctx context.Context, loop int, feedback GoalFeedback, summaries GoalLoopSummaries, loopModel string, continuation SessionTreeContinuation) (Result, []AttemptStat, error) {
 		scope := reset()
@@ -961,16 +941,13 @@ func makeGoalLoopGenerator(reset dscope.Reset) GoalLoopGenerator {
 // is resolved from the scope too: when recording is enabled, the whole
 // run is one recorded session — the recorder's sink attached to the
 // run's tree and the session ended after the last loop — so every loop's
-// operations join one session's stream. The configured decision model
-// drives the post-done verification loops when set; it takes precedence
-// over the review-model rotation, which drives them only while no
-// decision model is configured (see TheoryOfGoalReviewModel).
+// operations join one session's stream. The post-done verification loops
+// run on the review-model rotation (see TheoryOfGoalReviewModel).
 func (Module) GoalRun(
 	reset dscope.Reset,
 	runReview RunReview,
 	observeGoal GoalTreeObserver,
 	reviewModels ReviewModels,
-	decisionModel flags.DecisionModel,
 	recorder *records.Recorder,
 ) GoalRun {
 	models := make([]string, 0, len(reviewModels))
@@ -981,13 +958,12 @@ func (Module) GoalRun(
 	}
 	return func(ctx context.Context, output io.Writer) GoalResult {
 		return RunGoal(ctx, GoalOptions{
-			Output:        output,
-			Generate:      makeGoalLoopGenerator(reset),
-			Review:        runReview,
-			GoalTree:      observeGoal,
-			ReviewModels:  models,
-			DecisionModel: string(decisionModel),
-			Recorder:      recorder,
+			Output:       output,
+			Generate:     makeGoalLoopGenerator(reset),
+			Review:       runReview,
+			GoalTree:     observeGoal,
+			ReviewModels: models,
+			Recorder:     recorder,
 		})
 	}
 }

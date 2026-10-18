@@ -9,8 +9,8 @@ import (
 )
 
 // TheoryOfDecisionModelPrecedence documents how config values from multiple
-// files select the decision model. See pipeline.TheoryOfGoalReviewModel for
-// where the model runs and how it composes with the review-model rotation.
+// files select the decision model: a scalar selection reserved for future
+// decision tasks and not consumed by the review process.
 const TheoryOfDecisionModelPrecedence = `
 DecisionModel is a scalar selection, never an accumulation: when several
 config files set the same path, the first non-empty value wins. HandleConfig
@@ -27,12 +27,13 @@ overrides every config value because flags.Parse runs after configs.Load
 (TheoryOfConfigFlagParity).
 `
 
-// DecisionModel is the model used for the goal runner's decision loops: the
-// verification loops that follow a done block and decide whether the declared
-// goal is genuinely achieved. It takes precedence over the review-model
-// rotation; when empty, the rotation drives those loops if configured, and
-// the default model otherwise. See TheoryOfDecisionModelPrecedence and
-// pipeline.TheoryOfGoalReviewModel.
+// DecisionModel is a model selection reserved for decision tasks. It is not
+// consumed by the review process: the goal runner's post-done verification
+// loops and the post-run review sessions run on the review-model rotation
+// (see pipeline.TheoryOfGoalReviewModel). The value is kept as a
+// configuration point for future decision tasks, selected by the
+// -decision-model flag or the decision_model config path. See
+// TheoryOfDecisionModelPrecedence.
 type DecisionModel string
 
 func (Module) DecisionModel() (ret DecisionModel) {
@@ -43,7 +44,7 @@ var _ Flag = DecisionModel("")
 
 func (m DecisionModel) Keys() map[string]string {
 	return map[string]string{
-		"-decision-model": "Set a model for the goal verification (decision) loops",
+		"-decision-model": "Set a model for decision tasks (reserved for future use)",
 	}
 }
 

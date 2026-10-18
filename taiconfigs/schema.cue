@@ -10,8 +10,8 @@ handoff_model_name?: string
 // handoff_model is an alias for handoff_model_name.
 handoff_model?: string
   fast_model?: string
-  // decision_model_name specifies the model used for the goal verification
-  // (decision) loops.
+// decision_model_name specifies a model reserved for future decision
+  // tasks; it is currently unused.
   decision_model_name?: string
   // decision_model is an alias for decision_model_name.
   decision_model?: string
@@ -30,11 +30,8 @@ handoff_model?: string
 // handoff_model_name is an alias for handoff_model.
 handoff_model_name?: string
 
-// decision_model specifies the model used for the goal runner's decision
-// loops: the verification loops whose primary work is to decide whether a
-// declared goal is genuinely achieved. It takes precedence over the
-// review-model rotation; when empty, the rotation drives those loops if
-// configured, and the default model otherwise.
+// decision_model specifies a model reserved for future decision tasks.
+// It is currently unused.
 decision_model?: string
 // decision_model_name is an alias for decision_model.
 decision_model_name?: string
