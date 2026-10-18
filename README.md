@@ -38,7 +38,7 @@ go install github.com/reusee/tai/cmd/tai@latest
 | `tai ai` | Start an interactive AI chat session with memory |
 | `tai next` | Answer a task from the assembled context (text output; no file changes) |
 | `tai patch` | Apply a boundary-delimited diff file to the working tree |
-| `tai ping` | Test whether a model is reachable |
+| `tai ping` | Test whether a model is reachable and passes its protocol's capability test (text-protocol block emission, or System One function selection) |
 | `tai record` | List, show, and analyze recorded interaction sessions |
 
 ## Usage Examples
@@ -108,7 +108,7 @@ allowed_shell_commands: ["git status", "go test ./...", "ls -la"]
 A configured list enables shell block execution by itself — the user who lists the commands has already decided to let the model run them — and restricts execution to the listed commands, each matched as a whole. An empty list leaves the `-shell` flag in charge.
 ## Supported Providers
 
-Gemini, OpenAI, DeepSeek, Volcano Engine (Huoshan), Baidu, Tencent, Alibaba Cloud, Zhipu, Vercel, NVIDIA, Azure OpenAI, AWS Bedrock, OpenRouter, Ollama, OpenCodeGo.
+Gemini, OpenAI, DeepSeek, Volcano Engine (Huoshan), Baidu, Tencent, Alibaba Cloud, Zhipu, Vercel, NVIDIA, Azure OpenAI, AWS Bedrock, OpenRouter, Ollama, OpenCodeGo, System One (TypeSafe).
 
 ## Key Flags
 

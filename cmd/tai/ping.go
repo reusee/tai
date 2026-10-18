@@ -19,45 +19,69 @@ import (
 )
 
 const TheoryOfPingCommand = `
-The "ping" subcommand tests whether a model is reachable and responding, and
-whether it can emit the heredoc blocks the tai tooling relies on. The command
-randomly chooses three block specs — each a kind, one to three parameter
-pairs, and an exact single-line body — asks the model to emit exactly one
-block of each kind, in the listed order, carrying exactly the listed
-parameter pairs in its opening header and exactly the listed body, and
-validates the parsed output after generation positionally: block i must
-match spec i in kind, attributes, and body, and no extra block may appear.
-One random parameter value in each run is replaced with a tricky value that
-exercises the header parser's percent-decoding (embedded quotes,
-backslashes, tabs, or newlines); the prompt shows one valid encoding and
-validation compares decoded values, so any equivalent encoding passes. The
-random specs — produced by RandomPingBlocks from short lowercase letter
-strings — are unknown before each run, so a correct result demonstrates
-genuine instruction following, format ability, URI header parameter
-ability, percent-encoding ability, and body fidelity rather than pattern
-memory. The block-format instructions live in the system prompt
-(blocks.BlockFormatSystemPrompt); the user message (pingBlockPrompt) states
-only the test requirements — the kinds, their exact parameter pairs, and
-their exact bodies — without repeating the format description. The system
-prompt also carries the user-configured extra system prompts
-(extra_system_prompt and family_extra_system_prompt), so ping honors the
-same configuration as the other generation commands. The block format
-prompt requires a distinct delimiter per block: blocks sharing a delimiter
-would be mis-parsed as nested (see blocks.TheoryOfNestedBlockParsing), so
-identical delimiters cannot pass the test. Validation reads the blocks
-collected in pipeline.Result.RemainingBlocks: ping runs without components,
-so no block kind is consumed. A validation failure prints the observed
-outcome and exits with status 1, making the command scriptable; on success
-the verdict is printed to the command Output writer after the streamed
-output.
+The "ping" subcommand tests whether a model is reachable, responds, and can
+perform the capability test the tai pipeline depends on. The test follows the
+generator's protocol: the spec's Type field is the only protocol selector
+(see TheoryOfSpec), the value "systemone" in any of its spellings selects the
+selection test, and every other generator speaks the text/block protocol and
+runs the block test. See isSystemOneSpec.
+
+The block test (text protocol): the command randomly chooses three block
+specs — each a kind, one to three parameter pairs, and an exact single-line
+body — asks the model to emit exactly one block of each kind, in the listed
+order, carrying exactly the listed parameter pairs in its opening header and
+exactly the listed body, and validates the parsed output after generation
+positionally: block i must match spec i in kind, attributes, and body, and no
+extra block may appear. One random parameter value in each run is replaced
+with a tricky value that exercises the header parser's percent-decoding
+(embedded quotes, backslashes, tabs, or newlines); the prompt shows one valid
+encoding and validation compares decoded values, so any equivalent encoding
+passes. The random specs — produced by RandomPingBlocks from short lowercase
+letter strings — are unknown before each run, so a correct result
+demonstrates genuine instruction following, format ability, URI header
+parameter ability, percent-encoding ability, and body fidelity rather than
+pattern memory. The block format prompt requires a distinct delimiter per
+block: blocks sharing a delimiter would be mis-parsed as nested (see
+blocks.TheoryOfNestedBlockParsing), so identical delimiters cannot pass the
+test.
+
+The selection test (System One protocol): the protocol streams no text and
+emits no blocks — its whole output is the set of declared functions whose
+noul answers reach the selection threshold (see generators.TheoryOfSystemOne)
+— so the block test cannot apply. Ping asks its capability question instead:
+RandomPingFunctions declares three probe functions, one target and two
+decoys, and the user message asks for exactly the target's capability. The
+probes share one verb and take distinct objects, so a model that selects by
+the shared verb alone selects every probe and fails, while the target is
+unambiguous to a model that reads each description whole. The probes enter
+the state through generators.NewFuncMap, each with a marker function, so a
+selected function also executes and its result is recorded — the same round
+trip the pipeline gives a selected function. Validation requires exactly the
+target among the model's selections: no selection (a model that rejects
+everything) and any extra selection (a model that accepts everything) both
+fail. The function names, the verb, which object the request names, and the
+target's position are random per run, so a correct result demonstrates
+reading the declarations and discriminating between near-neighbors rather
+than matching a pattern.
+
+Both tests run one generation through the unified loop with no components, so
+no block kind is consumed and the parsed blocks stay in
+pipeline.Result.RemainingBlocks. The block-format instructions live in the
+block test's system prompt (blocks.BlockFormatSystemPrompt); the user message
+(pingBlockPrompt) states only the test requirements — the kinds, their exact
+parameter pairs, and their exact bodies — without repeating the format
+description. The system prompt of either test also carries the user-configured
+extra system prompts (extra_system_prompt and family_extra_system_prompt), so
+ping honors the same configuration as the other generation commands. A
+validation failure reports the observed outcome through pingFailed and exits
+with status 1, making the command scriptable; on success the verdict goes to
+the command Output writer after the streamed output.
 
 The command requires a model to be specified via -model; without it, resolving
 the default generator fails, making the dependency on an explicit model
-selection explicit. The command performs a single generation with no
-chat loop and no file context; its system prompt carries the block-format
-prompt and the user-configured extra system prompts. Reasoning thoughts
-stream to stdout by default; the -no-thoughts flag (flags.Thoughts)
-suppresses them, matching the next command's output behavior.
+selection explicit. Reasoning thoughts stream to stdout by default; the
+-no-thoughts flag (flags.Thoughts) suppresses them, matching the next
+command's output behavior.
 `
 
 // PingBlockSpec describes one required block for the ping test: the block
@@ -73,6 +97,25 @@ type PingBlockSpec struct {
 	Attributes map[string]string
 	Body       string
 }
+
+// PingFunctionSpec describes one probe function of the selection test: the
+// function's random name, the description the model reads, and whether the
+// function is the target the request message asks for. Exactly one probe of
+// a set is the target. See TheoryOfPingCommand.
+type PingFunctionSpec struct {
+	Name        string
+	Description string
+	Target      bool
+}
+
+// RandomPingFunctions returns the probe functions the selection test
+// declares, chosen at random on each run: the probes share one random verb
+// and take distinct objects, exactly one of them is the target, and the
+// request message names the target's object. The function names are random
+// lowercase letter strings the model must reproduce exactly in its answers,
+// so a correct result cannot come from pattern memory. See
+// TheoryOfPingCommand.
+type RandomPingFunctions func() []PingFunctionSpec
 
 // RandomPingBlocks returns the three block specs the ping command asks the
 // model to emit, chosen at random on each run. Each spec pairs a short
@@ -114,6 +157,34 @@ func (Module) RandomPingBlocks() RandomPingBlocks {
 		target := &specs[rand.IntN(len(specs))]
 		names := slices.Collect(maps.Keys(target.Attributes))
 		target.Attributes[names[rand.IntN(len(names))]] = pingTrickyValues[rand.IntN(len(pingTrickyValues))]
+		return specs
+	}
+}
+
+func (Module) RandomPingFunctions() RandomPingFunctions {
+	verbs := []string{"summarize", "translate", "redact", "archive"}
+	objects := []string{"report", "invoice", "contract"}
+	return func() []PingFunctionSpec {
+		verb := verbs[rand.IntN(len(verbs))]
+		order := slices.Clone(objects)
+		rand.Shuffle(len(order), func(i, j int) {
+			order[i], order[j] = order[j], order[i]
+		})
+		target := rand.IntN(len(order))
+		names := make(map[string]bool, len(order))
+		specs := make([]PingFunctionSpec, 0, len(order))
+		for i, object := range order {
+			name := randomPingWord(4, 8)
+			for names[name] {
+				name = randomPingWord(4, 8)
+			}
+			names[name] = true
+			specs = append(specs, PingFunctionSpec{
+				Name:        name,
+				Description: fmt.Sprintf("%s the %s", verb, object),
+				Target:      i == target,
+			})
+		}
 		return specs
 	}
 }
@@ -265,14 +336,307 @@ func pingAttributesEqual(got, want map[string]string) bool {
 	return true
 }
 
+// isSystemOneSpec reports whether a generator speaks the System One
+// protocol: the spec's Type field is the only protocol selector (see
+// TheoryOfSpec), so the test reads it. The spellings and the case-insensitive
+// comparison mirror the dispatch in generators.Module.GetGenerator. See
+// TheoryOfPingCommand.
+func isSystemOneSpec(spec generators.Spec) bool {
+	switch strings.ToLower(spec.Type) {
+	case "systemone", "system-one", "system_one":
+		return true
+	}
+	return false
+}
+
+// pingSelectionSystemPrompt is the system prompt of the selection test. It
+// states the one rule the model's judgments must follow: a function is
+// selected only when its description states what the user message asks for.
+// See TheoryOfPingCommand.
+const pingSelectionSystemPrompt = `This is a function-selection test. Every question carries one declared function with its name and description, and asks whether that function handles the latest user message. Judge each question on its own: a function is selected only when its description states what the user message asks for, and no function handles a message that asks for something else.`
+
+// pingSystemPrompt renders a ping system prompt: the protocol's base prompt
+// followed by the user-configured extra system prompts (extra_system_prompt
+// and family_extra_system_prompt), so ping honors the same configuration as
+// the other generation commands. Each section is trimmed and sections are
+// joined with a blank line; an empty section contributes nothing, so equal
+// configurations produce byte-identical prompts. See TheoryOfPingCommand and
+// generators.TheoryOfContentUnitSeparation.
+func pingSystemPrompt(
+	base string,
+	extra flags.ExtraSystemPrompt,
+	familyExtra flags.FamilyExtraSystemPrompt,
+	modelFamily generators.ModelFamily,
+) string {
+	var b strings.Builder
+	writeSection := func(section string) {
+		section = strings.TrimRight(section, " \t\n\r")
+		if section == "" {
+			return
+		}
+		if b.Len() > 0 {
+			b.WriteString("\n\n")
+		}
+		b.WriteString(section)
+	}
+	writeSection(base)
+	for _, prompt := range extra {
+		writeSection(prompt)
+	}
+	for _, prompt := range familyExtra[string(modelFamily)] {
+		writeSection(prompt)
+	}
+	b.WriteString("\n")
+	return b.String()
+}
+
+// pingFunctionRequest renders the selection test's request message: the
+// sentence that asks for exactly the target probe's capability. See
+// TheoryOfPingCommand.
+func pingFunctionRequest(specs []PingFunctionSpec) string {
+	for _, spec := range specs {
+		if spec.Target {
+			return fmt.Sprintf("Please %s.", spec.Description)
+		}
+	}
+	return ""
+}
+
+// pingSelectionState builds the selection test's initial state: the request
+// message as the user content, and the probe functions declared through
+// generators.NewFuncMap with a marker function each, so a selected function
+// also executes and its result is recorded — the same round trip the pipeline
+// gives a selected function (see generators.FuncMap). See TheoryOfPingCommand.
+func pingSelectionState(systemPrompt string, specs []PingFunctionSpec) generators.State {
+	state := generators.NewPrompts(systemPrompt, []*generators.Content{
+		{
+			Role:  generators.RoleUser,
+			Parts: []generators.Part{generators.Text(pingFunctionRequest(specs))},
+		},
+	})
+	funcs := make([]*generators.Function, 0, len(specs))
+	for _, spec := range specs {
+		funcs = append(funcs, &generators.Function{
+			Decl: generators.FuncDecl{
+				Name:        spec.Name,
+				Description: spec.Description,
+			},
+			Func: func(map[string]any) (map[string]any, error) {
+				return map[string]any{"probe": spec.Name}, nil
+			},
+		})
+	}
+	return generators.NewFuncMap(state, funcs...)
+}
+
+// pingProbeTarget returns the single target probe of a set. A set without
+// exactly one target is a programming fault, reported as an error so a
+// malformed set cannot pass validation vacuously. See TheoryOfPingCommand.
+func pingProbeTarget(specs []PingFunctionSpec) (PingFunctionSpec, error) {
+	var (
+		ret   PingFunctionSpec
+		count int
+	)
+	for _, spec := range specs {
+		if spec.Target {
+			ret = spec
+			count++
+		}
+	}
+	if count != 1 {
+		return PingFunctionSpec{}, fmt.Errorf("the probe set carries %d target function(s), want exactly 1", count)
+	}
+	return ret, nil
+}
+
+// validatePingSelection checks the selection test's outcome: the run's
+// selections must be exactly the target probe function. The selections are
+// the FuncCall parts the System One generator appended for the functions
+// whose noul answers reached the selection threshold (see
+// generators.TheoryOfSystemOne). No selection — the model rejected every
+// function — and any additional selection — the model accepted a decoy —
+// both fail, so a blanket answer in either direction cannot pass. See
+// TheoryOfPingCommand.
+func validatePingSelection(finalState generators.State, specs []PingFunctionSpec) error {
+	target, err := pingProbeTarget(specs)
+	if err != nil {
+		return err
+	}
+	var selected []string
+	if finalState != nil {
+		for content := range finalState.Contents() {
+			for _, part := range content.Parts {
+				if call, ok := part.(generators.FuncCall); ok {
+					selected = append(selected, call.Name)
+				}
+			}
+		}
+	}
+	slices.Sort(selected)
+	if len(selected) == 1 && selected[0] == target.Name {
+		return nil
+	}
+	if len(selected) == 0 {
+		return fmt.Errorf("the model selected no function; the target probe %q (%s) must be selected",
+			target.Name, target.Description)
+	}
+	return fmt.Errorf("the model selected %s; exactly the target probe %q (%s) must be selected",
+		strings.Join(selected, ", "), target.Name, target.Description)
+}
+
+// pingFailed reports a failed test and exits with status 1, so a ping run is
+// scriptable. The malformed-block note is printed when the block test saw
+// unparseable output. See TheoryOfPingCommand.
+func pingFailed(err error, parseErrors []*blocks.BlockParseError) {
+	fmt.Fprintf(os.Stderr, "ping failed: %v\n", err)
+	if len(parseErrors) > 0 {
+		fmt.Fprintf(os.Stderr, "ping: %d malformed block(s) were detected during parsing, e.g. kind %q with boundary %q\n",
+			len(parseErrors), parseErrors[0].BlockKind, parseErrors[0].Boundary)
+	}
+	os.Exit(1)
+}
+
+// pingRunOptions builds the run options shared by both ping tests: one
+// generation through the unified loop with no components, so no block kind is
+// consumed and the parsed blocks stay in the result. The loop handles
+// ParserState wrapping, its recording session, and the TUI's observers. See
+// TheoryOfPingCommand and pipeline.TheoryOfLoops.
+func pingRunOptions(
+	generator generators.Generator,
+	buildGenerate generators.BuildGenerate,
+	state generators.State,
+) pipeline.RunOptions {
+	return pipeline.RunOptions{
+		Generator:    generator,
+		InitialState: state,
+		Components:   nil,
+		Command:      "ping",
+		PhaseBuilder: func(g generators.Generator) generators.Phase {
+			return buildGenerate(g, nil)(nil)
+		},
+	}
+}
+
+// runPingLoop drives the unified generation loop to its end and returns the
+// filled result: the loop's terminal error arrives with its final yield and
+// ends the iterator, so the first non-nil error is the run's outcome and the
+// caller must stop — pipeline.Run documents that contract. See
+// pipeline.TheoryOfLoops.
+func runPingLoop(
+	ctx context.Context,
+	loopRun pipeline.Run,
+	opts pipeline.RunOptions,
+) (pipeline.Result, error) {
+	var result pipeline.Result
+	for _, err := range loopRun(ctx, opts, &result) {
+		if err != nil {
+			return result, err
+		}
+	}
+	return result, nil
+}
+
+// runBlockPing runs the block test of the text protocol: one generation
+// through the unified loop, then the positional validation of the parsed
+// blocks. See TheoryOfPingCommand.
+func runBlockPing(
+	ctx context.Context,
+	output Output,
+	generator generators.Generator,
+	buildGenerate generators.BuildGenerate,
+	loopRun pipeline.Run,
+	specs []PingBlockSpec,
+	systemPrompt string,
+	showThoughts bool,
+) apps.MainErr {
+	// The state variable is declared with the interface type: the state
+	// layers below are concrete types (Prompts, Output), and only the
+	// interface variable accepts each layer in turn.
+	var state generators.State
+	state = generators.NewPrompts(systemPrompt, []*generators.Content{
+		{
+			Role:  generators.RoleUser,
+			Parts: []generators.Part{generators.Text(pingBlockPrompt(specs))},
+		},
+	})
+	state = generators.NewOutput(state, os.Stdout, showThoughts)
+
+	result, err := runPingLoop(ctx, loopRun, pingRunOptions(generator, buildGenerate, state))
+	if err != nil {
+		return err
+	}
+
+	if err := validatePingBlocks(result, specs); err != nil {
+		pingFailed(err, result.ParseErrors)
+	}
+
+	rendered := make([]string, len(specs))
+	for i, spec := range specs {
+		rendered[i] = formatPingBlockSpec(spec)
+	}
+	fmt.Fprintf(output, "ping ok: model emitted %d blocks in order with exact parameters and bodies (%s)\n",
+		len(specs), strings.Join(rendered, ", "))
+
+	return nil
+}
+
+// runSystemOnePing runs the selection test of the System One protocol: one
+// generation through the unified loop, then the check that the model selected
+// exactly the target probe function. The tools-disabled pre-flight fails
+// before any request is sent: such a generator carries no questions, so the
+// generator's own error would name the wrong cause. See TheoryOfPingCommand.
+func runSystemOnePing(
+	ctx context.Context,
+	output Output,
+	generator generators.Generator,
+	buildGenerate generators.BuildGenerate,
+	loopRun pipeline.Run,
+	specs []PingFunctionSpec,
+	systemPrompt string,
+	showThoughts bool,
+) apps.MainErr {
+	if spec := generator.Spec(); spec.DisableTools != nil && *spec.DisableTools {
+		return fmt.Errorf(
+			"the generator %q disables tools (disable_tools), so a System One request carries no function questions; enable tools to run the selection test",
+			spec.Model,
+		)
+	}
+
+	target, err := pingProbeTarget(specs)
+	if err != nil {
+		return err
+	}
+
+	// The state variable carries the interface type so both state layers
+	// (FuncMap and Output) assign into it.
+	var state generators.State
+	state = pingSelectionState(systemPrompt, specs)
+	state = generators.NewOutput(state, os.Stdout, showThoughts)
+
+	result, err := runPingLoop(ctx, loopRun, pingRunOptions(generator, buildGenerate, state))
+	if err != nil {
+		return err
+	}
+
+	if err := validatePingSelection(result.FinalState, specs); err != nil {
+		pingFailed(err, nil)
+	}
+
+	fmt.Fprintf(output, "ping ok: model selected exactly the target function %q for the request %q\n",
+		target.Name, pingFunctionRequest(specs))
+
+	return nil
+}
+
 var PingCommand = apps.New("ping",
-	"Test whether a model is reachable and can emit blocks in the required format",
+	"Test whether a model is reachable and passes its protocol's capability test",
 	func(
 		output Output,
 		getDefaultGenerator generators.GetDefaultGenerator,
 		buildGenerate generators.BuildGenerate,
 		loopRun pipeline.Run,
 		randomPingBlocks RandomPingBlocks,
+		randomPingFunctions RandomPingFunctions,
 		extra flags.ExtraSystemPrompt,
 		familyExtra flags.FamilyExtraSystemPrompt,
 		modelFamily generators.ModelFamily,
@@ -285,89 +649,38 @@ var PingCommand = apps.New("ping",
 			return err
 		}
 
-		specs := randomPingBlocks()
-
-		systemPrompt := strings.TrimRight(blocks.BlockFormatSystemPrompt, " \t\n\r")
-		for _, e := range extra {
-			if e != "" {
-				systemPrompt += "\n\n" + strings.TrimRight(e, " \t\n\r")
-			}
-		}
-		for _, prompt := range familyExtra[string(modelFamily)] {
-			if prompt != "" {
-				systemPrompt += "\n\n" + strings.TrimRight(prompt, " \t\n\r")
-			}
-		}
-		systemPrompt += "\n"
-
-		var state generators.State
-		state = generators.NewPrompts(
-			systemPrompt,
-			[]*generators.Content{
-				{
-					Role: generators.RoleUser,
-					Parts: []generators.Part{
-						generators.Text(pingBlockPrompt(specs)),
-					},
-				},
-			},
-		)
-
 		showThoughts := true
 		if flagThoughts.Value != nil {
 			showThoughts = *flagThoughts.Value
 		}
-		state = generators.NewOutput(state, os.Stdout, showThoughts)
 
-		// Run the unified generation loop with no components. The loop
-		// handles ParserState wrapping, phase execution, and its own
-		// recording session (opened through the scope's recorder, so
-		// -record captures the session without the command carrying
-		// the recorder); the TUI's finish-reason
-		// observer is applied via RunOptions.StateDecorators when -tui
-		// is enabled. Parsed blocks are collected in result.RemainingBlocks
-		// because no component consumes them. The result is filled into
-		// result as the run progresses; every tree yield carries the
-		// run's full session tree — the loop's own event nodes included —
-		// and the terminal error, if any, arrives with the final yield's
-		// error component. See pipeline.TheoryOfLoops,
-		// pipeline.TheoryOfLoopEvents, records.TheoryOfInteractionRecording
-		// and TheoryOfTUI.
-		var result pipeline.Result
-		for _, e := range loopRun(ctx, pipeline.RunOptions{
-			Generator:    generator,
-			InitialState: state,
-			Components:   nil,
-			Command:      "ping",
-			PhaseBuilder: func(g generators.Generator) generators.Phase {
-				return buildGenerate(g, nil)(nil)
-			},
-		}, &result) {
-			if e != nil {
-				err = e
-			}
-		}
-		if err != nil {
-			return err
+		// The test follows the generator's protocol. The System One
+		// protocol streams no text and emits no blocks, so the block test
+		// cannot apply there and the selection test runs instead. See
+		// TheoryOfPingCommand.
+		if isSystemOneSpec(generator.Spec()) {
+			return runSystemOnePing(
+				ctx,
+				output,
+				generator,
+				buildGenerate,
+				loopRun,
+				randomPingFunctions(),
+				pingSystemPrompt(pingSelectionSystemPrompt, extra, familyExtra, modelFamily),
+				showThoughts,
+			)
 		}
 
-		if err := validatePingBlocks(result, specs); err != nil {
-			fmt.Fprintf(os.Stderr, "ping failed: %v\n", err)
-			if len(result.ParseErrors) > 0 {
-				fmt.Fprintf(os.Stderr, "ping: %d malformed block(s) were detected during parsing, e.g. kind %q with boundary %q\n",
-					len(result.ParseErrors), result.ParseErrors[0].BlockKind, result.ParseErrors[0].Boundary)
-			}
-			os.Exit(1)
-		}
-
-		rendered := make([]string, len(specs))
-		for i, spec := range specs {
-			rendered[i] = formatPingBlockSpec(spec)
-		}
-		fmt.Fprintf(output, "ping ok: model emitted %d blocks in order with exact parameters and bodies (%s)\n",
-			len(specs), strings.Join(rendered, ", "))
-
-		return nil
+		return runBlockPing(
+			ctx,
+			output,
+			generator,
+			buildGenerate,
+			loopRun,
+			randomPingBlocks(),
+			pingSystemPrompt(blocks.BlockFormatSystemPrompt, extra, familyExtra, modelFamily),
+			showThoughts,
+		)
 	},
 	modes.ForProduction(),
 )

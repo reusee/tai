@@ -243,6 +243,339 @@ func pingResultBlocks(specs []PingBlockSpec) []blocks.Block {
 	return ret
 }
 
+func TestRandomPingFunctions(t *testing.T) {
+	provider := dscope.New(
+		new(Module),
+	).Get[RandomPingFunctions]()
+	for i := 0; i < 100; i++ {
+		specs := provider()
+		if len(specs) != 3 {
+			t.Fatalf("expected 3 probe functions, got %d", len(specs))
+		}
+		names := make(map[string]bool)
+		verbs := make(map[string]bool)
+		objects := make(map[string]bool)
+		targets := 0
+		for _, spec := range specs {
+			if spec.Name == "" {
+				t.Fatal("expected a non-empty function name")
+			}
+			for _, ch := range spec.Name {
+				if ch < 'a' || ch > 'z' {
+					t.Fatalf("expected lowercase letters only in the name, got %q", spec.Name)
+				}
+			}
+			if names[spec.Name] {
+				t.Fatalf("expected distinct function names, got duplicate %q", spec.Name)
+			}
+			names[spec.Name] = true
+			verb, object, ok := strings.Cut(spec.Description, " ")
+			if !ok {
+				t.Fatalf("expected a description shaped \"<verb> the <object>\", got %q", spec.Description)
+			}
+			object, ok = strings.CutPrefix(object, "the ")
+			if !ok || object == "" {
+				t.Fatalf("expected a description shaped \"<verb> the <object>\", got %q", spec.Description)
+			}
+			verbs[verb] = true
+			objects[object] = true
+			if spec.Target {
+				targets++
+			}
+		}
+		// The probes share one verb and take distinct objects, so only a
+		// whole-description reading separates the target from the decoys.
+		// See TheoryOfPingCommand.
+		if targets != 1 {
+			t.Fatalf("expected exactly one target probe, got %d: %+v", targets, specs)
+		}
+		if len(verbs) != 1 {
+			t.Fatalf("expected one shared verb, got %v", verbs)
+		}
+		if len(objects) != len(specs) {
+			t.Fatalf("expected distinct objects, got %v", objects)
+		}
+		target, err := pingProbeTarget(specs)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if request := pingFunctionRequest(specs); !strings.Contains(request, target.Description) {
+			t.Fatalf("expected the request %q to name the target %q", request, target.Description)
+		}
+	}
+}
+
+func TestValidatePingSelection(t *testing.T) {
+	specs := []PingFunctionSpec{
+		{Name: "aaabbb", Description: "summarize the report"},
+		{Name: "cccddd", Description: "summarize the invoice", Target: true},
+		{Name: "eeefff", Description: "summarize the contract"},
+	}
+	// stateWith builds the run's final state: the request message, plus
+	// the model's selections as the function calls the System One
+	// generator appends, or no selection when no name is given.
+	stateWith := func(names ...string) generators.State {
+		state := generators.NewPrompts("", []*generators.Content{
+			{
+				Role:  generators.RoleUser,
+				Parts: []generators.Part{generators.Text(pingFunctionRequest(specs))},
+			},
+		})
+		if len(names) == 0 {
+			return state
+		}
+		parts := make([]generators.Part, 0, len(names))
+		for _, name := range names {
+			parts = append(parts, generators.FuncCall{ID: name, Name: name})
+		}
+		next, err := state.AppendContent(&generators.Content{
+			Role:  generators.RoleModel,
+			Parts: parts,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return next
+	}
+
+	if request := pingFunctionRequest(specs); request != "Please summarize the invoice." {
+		t.Fatalf("unexpected request %q", request)
+	}
+
+	t.Run("ExactTargetPasses", func(t *testing.T) {
+		if err := validatePingSelection(stateWith("cccddd"), specs); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("NoSelectionFails", func(t *testing.T) {
+		if err := validatePingSelection(stateWith(), specs); err == nil {
+			t.Fatal("expected an error when the model selects no function")
+		}
+	})
+
+	t.Run("DecoySelectionFails", func(t *testing.T) {
+		if err := validatePingSelection(stateWith("aaabbb"), specs); err == nil {
+			t.Fatal("expected an error when the model selects a decoy")
+		}
+	})
+
+	t.Run("ExtraSelectionFails", func(t *testing.T) {
+		if err := validatePingSelection(stateWith("aaabbb", "cccddd", "eeefff"), specs); err == nil {
+			t.Fatal("expected an error when the model selects every probe")
+		}
+	})
+
+	t.Run("NilStateFails", func(t *testing.T) {
+		if err := validatePingSelection(nil, specs); err == nil {
+			t.Fatal("expected an error when the run produced no final state")
+		}
+	})
+
+	t.Run("MalformedSetFails", func(t *testing.T) {
+		bad := []PingFunctionSpec{
+			{Name: "aaabbb", Description: "summarize the report"},
+			{Name: "cccddd", Description: "summarize the invoice"},
+		}
+		if err := validatePingSelection(stateWith("aaabbb"), bad); err == nil {
+			t.Fatal("expected an error when the probe set carries no target")
+		}
+	})
+}
+
+// pingMockGenerator is a Generator whose spec the test controls, so the
+// ping command's protocol branch can be driven without a provider graph.
+// The fake run stands in for the generation loop, so Generate is never
+// called.
+type pingMockGenerator struct {
+	spec generators.Spec
+}
+
+func (g pingMockGenerator) Spec() generators.Spec {
+	return g.spec
+}
+
+func (g pingMockGenerator) CountTokens(string) (int, error) {
+	return 0, nil
+}
+
+func (g pingMockGenerator) Generate(
+	ctx context.Context,
+	state generators.State,
+	options *generators.GenerateOptions,
+) (generators.State, error) {
+	return state, nil
+}
+
+func TestPingCommandSystemOneSelection(t *testing.T) {
+	// The System One protocol streams no text and emits no blocks, so the
+	// ping command runs the selection test there: the probes are declared
+	// in the initial state and the run's final state must carry exactly
+	// the target's function call. See TheoryOfPingCommand.
+	probes := []PingFunctionSpec{
+		{Name: "aaabbb", Description: "summarize the report"},
+		{Name: "cccddd", Description: "summarize the invoice", Target: true},
+		{Name: "eeefff", Description: "summarize the contract"},
+	}
+	var gotOpts pipeline.RunOptions
+	fakeRun := func(ctx context.Context, opts pipeline.RunOptions, result *pipeline.Result) iter.Seq2[*tree.Tree, error] {
+		gotOpts = opts
+		next, err := opts.InitialState.AppendContent(&generators.Content{
+			Role:  generators.RoleModel,
+			Parts: []generators.Part{generators.FuncCall{ID: "cccddd", Name: "cccddd"}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		result.FinalState = next
+		return func(yield func(*tree.Tree, error) bool) {}
+	}
+
+	// PingCommand is an apps.App whose Main field holds the function
+	// value untyped (any); the assertion to the concrete function type
+	// restores the compile-time signature check at the call and fails
+	// loudly here when the main signature changes.
+	mainFn := PingCommand.Main.(func(
+		Output,
+		generators.GetDefaultGenerator,
+		generators.BuildGenerate,
+		pipeline.Run,
+		RandomPingBlocks,
+		RandomPingFunctions,
+		flags.ExtraSystemPrompt,
+		flags.FamilyExtraSystemPrompt,
+		generators.ModelFamily,
+		flags.Thoughts,
+	) apps.MainErr)
+
+	// Capture stdout so the success verdict is asserted and does not
+	// pollute the test output.
+	oldStdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	mainFn(
+		Output(os.Stdout),
+		func() (generators.Generator, error) {
+			return pingMockGenerator{
+				spec: generators.Spec{Type: "systemone", Model: "systemone-latest"},
+			}, nil
+		},
+		func(generator generators.Generator, options *generators.GenerateOptions) generators.PhaseBuilder {
+			return func(cont generators.Phase) generators.Phase {
+				return func(ctx context.Context, state generators.State) (generators.Phase, generators.State, error) {
+					return nil, state, nil
+				}
+			}
+		},
+		fakeRun,
+		nil,
+		func() []PingFunctionSpec { return probes },
+		nil,
+		nil,
+		"",
+		flags.Thoughts{},
+	)
+	w.Close()
+	os.Stdout = oldStdout
+	output, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Close()
+
+	if gotOpts.Command != "ping" {
+		t.Fatalf("expected command ping, got %q", gotOpts.Command)
+	}
+	if gotOpts.Components != nil {
+		t.Fatalf("expected no components, got %v", gotOpts.Components)
+	}
+	if gotOpts.InitialState == nil {
+		t.Fatal("expected non-nil initial state")
+	}
+	systemPrompt := gotOpts.InitialState.SystemPrompt()
+	if !strings.Contains(systemPrompt, "function-selection test") {
+		t.Fatalf("expected the selection system prompt, got %q", systemPrompt)
+	}
+	if strings.Contains(systemPrompt, "uncommon Chinese two-character word") {
+		t.Fatalf("the selection prompt must not teach the block format, got %q", systemPrompt)
+	}
+	var declared []string
+	for fn := range gotOpts.InitialState.Functions() {
+		declared = append(declared, fn.Decl.Name)
+	}
+	if len(declared) != len(probes) {
+		t.Fatalf("expected the %d probes declared in the initial state, got %v", len(probes), declared)
+	}
+	var request strings.Builder
+	for c := range gotOpts.InitialState.Contents() {
+		for _, p := range c.Parts {
+			if text, ok := p.(generators.Text); ok {
+				request.WriteString(string(text))
+			}
+		}
+	}
+	if want := pingFunctionRequest(probes); !strings.Contains(request.String(), want) {
+		t.Fatalf("expected the request %q in the user content, got %q", want, request.String())
+	}
+	if !strings.Contains(string(output), "ping ok") {
+		t.Fatalf("expected the success verdict on stdout, got %q", string(output))
+	}
+}
+
+func TestPingCommandSystemOneRejectsDisabledTools(t *testing.T) {
+	// A systemone generator with disable_tools sends no questions, so the
+	// request cannot run at all. The pre-flight reports that cause instead
+	// of the generator's own question-missing error, and it does so before
+	// any request: the run loop must not be reached.
+	// See TheoryOfPingCommand.
+	mainFn := PingCommand.Main.(func(
+		Output,
+		generators.GetDefaultGenerator,
+		generators.BuildGenerate,
+		pipeline.Run,
+		RandomPingBlocks,
+		RandomPingFunctions,
+		flags.ExtraSystemPrompt,
+		flags.FamilyExtraSystemPrompt,
+		generators.ModelFamily,
+		flags.Thoughts,
+	) apps.MainErr)
+
+	err := mainFn(
+		Output(io.Discard),
+		func() (generators.Generator, error) {
+			return pingMockGenerator{
+				spec: generators.Spec{
+					Type:         "systemone",
+					Model:        "systemone-latest",
+					DisableTools: new(true),
+				},
+			}, nil
+		},
+		nil,
+		nil,
+		nil,
+		func() []PingFunctionSpec {
+			return []PingFunctionSpec{
+				{Name: "aaabbb", Description: "summarize the report", Target: true},
+			}
+		},
+		nil,
+		nil,
+		"",
+		flags.Thoughts{},
+	)
+	if err == nil {
+		t.Fatal("expected an error when the generator disables tools")
+	}
+	if !strings.Contains(err.Error(), "disable_tools") {
+		t.Fatalf("expected the error to name disable_tools, got %q", err.Error())
+	}
+}
+
 func TestPingCommandUsesRunLoop(t *testing.T) {
 	// Ping must run through the unified generation loop so it
 	// participates in the TUI mechanism (finish event node, generating
@@ -272,6 +605,7 @@ func TestPingCommandUsesRunLoop(t *testing.T) {
 		generators.BuildGenerate,
 		pipeline.Run,
 		RandomPingBlocks,
+		RandomPingFunctions,
 		flags.ExtraSystemPrompt,
 		flags.FamilyExtraSystemPrompt,
 		generators.ModelFamily,
@@ -298,6 +632,7 @@ func TestPingCommandUsesRunLoop(t *testing.T) {
 		},
 		fakeRun,
 		func() []PingBlockSpec { return specs },
+		nil,
 		nil,
 		nil,
 		"",
@@ -380,6 +715,7 @@ func TestPingCommandInjectsExtraSystemPrompt(t *testing.T) {
 		generators.BuildGenerate,
 		pipeline.Run,
 		RandomPingBlocks,
+		RandomPingFunctions,
 		flags.ExtraSystemPrompt,
 		flags.FamilyExtraSystemPrompt,
 		generators.ModelFamily,
@@ -404,6 +740,7 @@ func TestPingCommandInjectsExtraSystemPrompt(t *testing.T) {
 		},
 		fakeRun,
 		func() []PingBlockSpec { return specs },
+		nil,
 		flags.ExtraSystemPrompt{"generic extra prompt"},
 		flags.FamilyExtraSystemPrompt{"test-family": {"family extra prompt"}},
 		generators.ModelFamily("test-family"),
@@ -462,6 +799,7 @@ func TestPingCommandThoughtsFlag(t *testing.T) {
 		generators.BuildGenerate,
 		pipeline.Run,
 		RandomPingBlocks,
+		RandomPingFunctions,
 		flags.ExtraSystemPrompt,
 		flags.FamilyExtraSystemPrompt,
 		generators.ModelFamily,
@@ -499,6 +837,7 @@ func TestPingCommandThoughtsFlag(t *testing.T) {
 				buildGen,
 				fakeRun,
 				func() []PingBlockSpec { return specs },
+				nil,
 				nil,
 				nil,
 				"",
