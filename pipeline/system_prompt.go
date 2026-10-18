@@ -48,19 +48,28 @@ type SystemPrompt string
 
 func (Module) SystemPrompt(
 	comps CodesComponents,
+	programmingTask ProgrammingTask,
 ) (ret SystemPrompt) {
-	// The base prompt (prompts.Codes) is prepended directly. All
-	// block-format, component, and extra prompts come from
-	// comps.PromptSections(). The system prompt carries no reminder
-	// section: the late reminder is the verbatim system prompt restate
-	// (components.SystemPromptRestate), appended at the end of the user
-	// prompt. The base prompt's trailing whitespace is trimmed and
-	// the sections are joined with a blank line, so the base prompt and
-	// the first section are always separated by a blank line regardless
-	// of the base constant's edge newlines. See TheoryOfCodesComponents
-	// and generators.TheoryOfContentUnitSeparation.
-	base := strings.TrimRight(prompts.Codes, " \t\n\r")
+	// The base prompt (prompts.Codes) enters the system prompt only for a
+	// programming task: the decision model judges the task, and a session
+	// whose task is not a programming task pays nothing for coding rules it
+	// never applies. See TheoryOfTaskDecision. All block-format, component,
+	// and extra prompts come from comps.PromptSections(). The system prompt
+	// carries no reminder section: the late reminder is the verbatim system
+	// prompt restate (components.SystemPromptRestate), appended at the end of
+	// the user prompt. The base prompt's trailing whitespace is trimmed and
+	// the sections are joined with a blank line, so the base prompt and the
+	// first section are always separated by a blank line regardless of the
+	// base constant's edge newlines. See TheoryOfCodesComponents and
+	// generators.TheoryOfContentUnitSeparation.
+	var base string
+	if bool(programmingTask) {
+		base = strings.TrimRight(prompts.Codes, " \t\n\r")
+	}
 	sections := comps.PromptSections()
+	if base == "" {
+		return SystemPrompt(sections)
+	}
 	if sections == "" {
 		return SystemPrompt(base + "\n")
 	}

@@ -21,8 +21,10 @@ context instead of failing (see gotools.TheoryOfGoLoadFallback), and
 always runs goal mode (pipeline.GoalRun) — the goal-loop mechanism, its
 done-block exit, and the feedback-and-summaries transfer live in
 pipeline.TheoryOfGoalMode and are not repeated here. The system prompt
-is forked through pipeline.GoalSystemPromptText, which composes the base
-codes prompt, the goal system prompt, and the component sections. The
+is forked through pipeline.GoalSystemPromptText, which composes the codes
+base prompt — introduced only when the task decision judges the session's
+task a programming task (see pipeline.TheoryOfTaskDecision) — the goal
+system prompt, and the component sections. The
 -repl flag enables a REPL mode that taps the debugs infrastructure
 without running generation, useful for interactive debugging.
 `
@@ -51,8 +53,9 @@ var GoModuleCommand = apps.New("go_module", "",
 		comps pipeline.CodesComponents,
 		feedback pipeline.GoalFeedback,
 		summaries pipeline.GoalLoopSummaries,
+		programmingTask pipeline.ProgrammingTask,
 	) pipeline.SystemPrompt {
-		return pipeline.GoalSystemPromptText(comps, feedback, summaries)
+		return pipeline.GoalSystemPromptText(comps, feedback, summaries, programmingTask)
 	},
 )
 

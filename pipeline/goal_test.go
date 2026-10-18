@@ -776,7 +776,7 @@ func TestGoalDoneVerificationPromptContent(t *testing.T) {
 }
 
 func TestGoalSystemPromptText(t *testing.T) {
-	prompt := string(GoalSystemPromptText(CodesComponents{}, "", nil))
+	prompt := string(GoalSystemPromptText(CodesComponents{}, "", nil, true))
 	if !strings.HasPrefix(prompt, prompts.Codes) {
 		t.Fatal("goal system prompt must start with the base codes prompt")
 	}
@@ -784,7 +784,7 @@ func TestGoalSystemPromptText(t *testing.T) {
 		t.Fatal("goal system prompt must contain the goal system prompt")
 	}
 	feedback := GoalFeedback("[System note: loop feedback]")
-	prompt = string(GoalSystemPromptText(CodesComponents{}, feedback, nil))
+	prompt = string(GoalSystemPromptText(CodesComponents{}, feedback, nil, true))
 	if !strings.HasSuffix(prompt, string(feedback)) {
 		t.Fatal("feedback must be appended at the end of the system prompt")
 	}
@@ -792,7 +792,7 @@ func TestGoalSystemPromptText(t *testing.T) {
 		{Loop: 1, Text: "explored the parser"},
 		{Loop: 2, Text: "fixed the boundary bug"},
 	}
-	prompt = string(GoalSystemPromptText(CodesComponents{}, "", summaries))
+	prompt = string(GoalSystemPromptText(CodesComponents{}, "", summaries, true))
 	if !strings.Contains(prompt, "- Loop 1: explored the parser") ||
 		!strings.Contains(prompt, "- Loop 2: fixed the boundary bug") {
 		t.Fatal("summaries must render as loop-tagged bullets")
@@ -808,7 +808,7 @@ func TestGoalSystemPromptText(t *testing.T) {
 	}
 	// Summaries render before the feedback, so the append-only section
 	// precedes the per-loop feedback.
-	both := string(GoalSystemPromptText(CodesComponents{}, feedback, summaries))
+	both := string(GoalSystemPromptText(CodesComponents{}, feedback, summaries, true))
 	if !strings.Contains(both, "- Loop 2: fixed the boundary bug\n\n"+string(feedback)) {
 		t.Fatal("summaries must render before the feedback")
 	}

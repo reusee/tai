@@ -422,16 +422,25 @@ type GoalResult struct {
 // goal tree observer; with no observer they go to output. See TheoryOfGoalMode.
 type GoalRun func(ctx context.Context, output io.Writer) GoalResult
 
-// GoalSystemPromptText assembles the goal-mode system prompt: the base
-// codes prompt, the goal system prompt, and the component sections.
-// Previous-loop summaries render as an append-only section, and the
-// feedback from the previous loop is appended after them, so the stable
-// prefix remains byte-identical across loops for LLM prefix caching. The
-// go command forks this as its SystemPrompt provider; see
-// cmd/tai.TheoryOfGoCommand.
-func GoalSystemPromptText(comps CodesComponents, feedback GoalFeedback, summaries GoalLoopSummaries) SystemPrompt {
-	prompt := prompts.Codes + "\n" +
-		GoalSystemPrompt + "\n" +
+// GoalSystemPromptText assembles the goal-mode system prompt: the codes base
+// prompt — introduced only when the task decision judges the session's task a
+// programming task (see TheoryOfTaskDecision) — the goal system prompt, and
+// the component sections. Previous-loop summaries render as an append-only
+// section, and the feedback from the previous loop is appended after them, so
+// the stable prefix remains byte-identical across loops for LLM prefix
+// caching. The go command forks this as its SystemPrompt provider; see
+// cmd/tai.TheoryOfGoModuleDefault.
+func GoalSystemPromptText(
+	comps CodesComponents,
+	feedback GoalFeedback,
+	summaries GoalLoopSummaries,
+	programmingTask ProgrammingTask,
+) SystemPrompt {
+	var prompt string
+	if bool(programmingTask) {
+		prompt = prompts.Codes + "\n"
+	}
+	prompt += GoalSystemPrompt + "\n" +
 		comps.PromptSections()
 	// Plan availability: the plan-op component's presence marks the plan
 	// machinery, which CodesComponents includes unconditionally; the note
@@ -874,9 +883,9 @@ func appendLoopSummaries(summaries GoalLoopSummaries, loop int, stats []AttemptS
 }
 
 // makeGoalLoopGenerator builds the per-loop generation function: each call
-// opens a fresh scope via reset, forks the loop's number, the loop's
-// feedback, the previous loops' summaries, and — when the runner requests a
-// loop model — flags.ModelName into it, and resolves
+// opens a fresh scope via reset, forks the loop's number, the run's task
+// judgment, the loop's feedback, the previous loops' summaries, and — when
+// the runner requests a loop model — flags.ModelName into it, and resolves
 // GenerateWithResultWithStats from the forked scope, so the loop reads the
 // latest filesystem state, sees the previous loops' feedback and
 // summaries in its system prompt, records its occurrences as event nodes
@@ -891,9 +900,13 @@ func appendLoopSummaries(summaries GoalLoopSummaries, loop int, stats []AttemptS
 // goal runner stops instead of looping on empty outcomes. See
 // TheoryOfGoalNoTask, TheoryOfGoalMode, TheoryOfGoalReviewModel and
 // TheoryOfSessionTree.
-func makeGoalLoopGenerator(reset dscope.Reset) GoalLoopGenerator {
+func makeGoalLoopGenerator(reset dscope.Reset, programmingTask ProgrammingTask) GoalLoopGenerator {
 	return func(ctx context.Context, loop int, feedback GoalFeedback, summaries GoalLoopSummaries, loopModel string, continuation SessionTreeContinuation) (Result, []AttemptStat, error) {
 		scope := reset()
+		// The task judgment of the run is carried into every loop, so the
+		// base prompt cannot flip while the run unfolds. See
+		// TheoryOfTaskDecision.
+		scope = scope.Fork(func() ProgrammingTask { return programmingTask })
 		scope = scope.Fork(func() GoalLoop { return GoalLoop(loop) })
 		if feedback != "" {
 			scope = scope.Fork(func() GoalFeedback { return feedback })
@@ -935,7 +948,9 @@ func makeGoalLoopGenerator(reset dscope.Reset) GoalLoopGenerator {
 // GoalRun provider: runs the goal loop mechanism with the scope-backed
 // per-loop generator and the review pass. Each GoalRun resolution binds
 // reset to the resolving scope, so the command's forks (parts provider,
-// goal system prompt) apply to every loop. The goal tree observer is
+// goal system prompt) apply to every loop. The task decision is judged once
+// per run and forked into every loop, so the base prompt stays stable across
+// the run (see TheoryOfTaskDecision). The goal tree observer is
 // resolved from the scope, so a display front-end's fork receives the
 // goal verdicts as goal structure nodes in the run's tree. The recorder
 // is resolved from the scope too: when recording is enabled, the whole
@@ -957,9 +972,14 @@ func (Module) GoalRun(
 		}
 	}
 	return func(ctx context.Context, output io.Writer) GoalResult {
+		// The task judgment is made once per run: the task does not change
+		// between loops, so re-judging could flip the base prompt mid-run.
+		// The judgment is forked into every loop's scope. See
+		// TheoryOfTaskDecision.
+		programmingTask := reset().Get[ProgrammingTask]()
 		return RunGoal(ctx, GoalOptions{
 			Output:       output,
-			Generate:     makeGoalLoopGenerator(reset),
+			Generate:     makeGoalLoopGenerator(reset, programmingTask),
 			Review:       runReview,
 			GoalTree:     observeGoal,
 			ReviewModels: models,

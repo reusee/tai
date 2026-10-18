@@ -168,7 +168,7 @@ func TestSystemPromptNoTheoryConstantReferences(t *testing.T) {
 	comps := scope.Get[CodesComponents]()
 	for _, text := range []string{
 		string(prompt),
-		string(GoalSystemPromptText(comps, "", nil)),
+		string(GoalSystemPromptText(comps, "", nil, true)),
 	} {
 		for _, line := range strings.Split(text, "\n") {
 			trimmed := strings.TrimSpace(line)

@@ -9,8 +9,9 @@ import (
 )
 
 // TheoryOfDecisionModelPrecedence documents how config values from multiple
-// files select the decision model: a scalar selection reserved for future
-// decision tasks and not consumed by the review process.
+// files select the decision model: a scalar selection, never an accumulation.
+// The decision model is consumed by the codes pipeline's task decision and
+// is not consumed by the review process.
 const TheoryOfDecisionModelPrecedence = `
 DecisionModel is a scalar selection, never an accumulation: when several
 config files set the same path, the first non-empty value wins. HandleConfig
@@ -25,13 +26,23 @@ come after the generic paths in ConfigPathsFunc and override them
 (configs.TheoryOfConfigPathPrecedence), and the -decision-model flag
 overrides every config value because flags.Parse runs after configs.Load
 (TheoryOfConfigFlagParity).
+
+The decision model is consumed by the codes pipeline's task decision: it
+judges whether the session's task is a programming task, which decides
+whether the codes base prompt enters the system prompt (see
+pipeline.TheoryOfTaskDecision). It is not consumed by the review process:
+the goal runner's post-done verification loops and the post-run review
+sessions run on the review-model rotation (see
+pipeline.TheoryOfGoalReviewModel).
 `
 
-// DecisionModel is a model selection reserved for decision tasks. It is not
-// consumed by the review process: the goal runner's post-done verification
-// loops and the post-run review sessions run on the review-model rotation
-// (see pipeline.TheoryOfGoalReviewModel). The value is kept as a
-// configuration point for future decision tasks, selected by the
+// DecisionModel is the model that judges decision tasks. The codes pipeline's
+// task decision consumes it: it judges whether the session's task is a
+// programming task, which decides whether the codes base prompt enters the
+// system prompt (see pipeline.TheoryOfTaskDecision). It is not consumed by
+// the review process: the goal runner's post-done verification loops and the
+// post-run review sessions run on the review-model rotation (see
+// pipeline.TheoryOfGoalReviewModel). The value is selected by the
 // -decision-model flag or the decision_model config path. See
 // TheoryOfDecisionModelPrecedence.
 type DecisionModel string
@@ -44,7 +55,7 @@ var _ Flag = DecisionModel("")
 
 func (m DecisionModel) Keys() map[string]string {
 	return map[string]string{
-		"-decision-model": "Set a model for decision tasks (reserved for future use)",
+		"-decision-model": "Set the model that judges whether the session's task is a programming task",
 	}
 }
 
