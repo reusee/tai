@@ -3,6 +3,8 @@ package pipeline
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -314,5 +316,84 @@ func TestReadOnlyTaskGatesChange(t *testing.T) {
 	}
 	if strings.Contains(prompt, "change blocks are not processed in this session") {
 		t.Fatal("under -no-apply change must not be announced as disabled")
+	}
+}
+
+// TestDirEntryNamesListsTopLevelOnly pins the collection: the names of a
+// directory's top-level entries — directories and files alike, sorted — and
+// never the contents of its subdirectories, so a large tree under one entry
+// costs the decision request nothing. An unreadable directory yields nothing,
+// so the fact degrades instead of failing the judgment. See
+// TheoryOfTaskDecision.
+func TestDirEntryNamesListsTopLevelOnly(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"README.md", "a.go"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "sub", "nested.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(dirEntryNames(dir), ",")
+	if got != "README.md,a.go,sub" {
+		t.Fatalf("dirEntryNames = %q, want the sorted top-level names only", got)
+	}
+	if names := dirEntryNames(filepath.Join(dir, "missing")); len(names) != 0 {
+		t.Fatalf("an unreadable directory must yield no names, got %q", names)
+	}
+}
+
+// TestTaskEnvironmentProviderCarriesWorkingDirEntries pins the provider wiring:
+// the production session facts carry the working directory's top-level entry
+// names, so the fact reaches every decision request instead of only the test
+// forks that construct TaskEnvironment directly. The directory is selected by
+// chdir, the way the provider reads it. See TheoryOfTaskDecision.
+func TestTaskEnvironmentProviderCarriesWorkingDirEntries(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"README.md", "main.go"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "docs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+	taskEnvironment := Module{}.TaskEnvironment(nil)
+	if got := strings.Join(taskEnvironment.DirEntries, ","); got != "README.md,docs,main.go" {
+		t.Fatalf("TaskEnvironment DirEntries = %q, want the working directory's top-level entry names", got)
+	}
+}
+
+// TestDecisionInputTextCarriesWorkingDirEntries pins the fourth decision
+// input: the names of the working directory's top-level entries travel with
+// the task, so the judgment reads the session's surface before it decides.
+// Only names travel, and an empty list renders nothing, so a session whose
+// directory is unreadable keeps its request byte-identical. See
+// TheoryOfTaskDecision.
+func TestDecisionInputTextCarriesWorkingDirEntries(t *testing.T) {
+	text := decisionInputText("do something", TaskEnvironment{
+		DirEntries: []string{"README.md", "cmd", "go.mod"},
+	})
+	if !strings.Contains(text, "Working directory entries:") {
+		t.Fatalf("the decision input must label the directory entries, got %q", text)
+	}
+	for _, name := range []string{"README.md", "cmd", "go.mod"} {
+		if !strings.Contains(text, "- "+name+"\n") {
+			t.Fatalf("the decision input must carry the entry %q, got %q", name, text)
+		}
+	}
+	for _, taskEnvironment := range []TaskEnvironment{
+		{},
+		{DirEntries: []string{}},
+	} {
+		got := decisionInputText("do something", taskEnvironment)
+		if strings.Contains(got, "Working directory entries:") {
+			t.Fatalf("an empty entry list must render no section, got %q", got)
+		}
 	}
 }

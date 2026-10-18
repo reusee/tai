@@ -34,14 +34,18 @@ task decision theory:
 - Only these two introductions depend on the judgment: the component sections,
   the generation pipeline, and every other prompt part are unchanged.
 - The decision model's inputs are the user prompt, the session facts
-  (TaskEnvironment: whether the session runs inside a Go module, plus every
-  fact a later field adds), and the session's configured extra system prompts
-  (flags.ExtraSystemPrompt, the extra_system_prompt config path). The extra
-  prompts often state the task's nature — its subject and its boundaries — so
-  the judgment reads them with the task, exactly as the generation session
-  runs on them. All three travel in the decision request: the task, the facts,
-  and the extra instructions form its user message, and the judgment criteria
-  are the declared functions' descriptions.
+  (TaskEnvironment: whether the session runs inside a Go module, the names of
+  the working directory's top-level entries, plus every fact a later field
+  adds), and the session's configured extra system prompts
+  (flags.ExtraSystemPrompt, the extra_system_prompt config path). The entry
+  names are the session's surface: files and directories alike, never the
+  contents of its subdirectories, so the judgment reads what the task starts
+  from without paying for file contents. The extra prompts often state the
+  task's nature — its subject and its boundaries — so the judgment reads them
+  with the task, exactly as the generation session runs on them. All three
+  travel in the decision request: the task, the facts, and the extra
+  instructions form its user message, and the judgment criteria are the
+  declared functions' descriptions.
 - The decision model currently always speaks the System One protocol: the
   decision declares the criterion functions and reads the model's noul answer
   to "does this function handle the latest user message?". The mechanism runs
@@ -91,6 +95,14 @@ type TaskEnvironment struct {
 	// cmd/tai.TheoryOfCommandAutoDetection).
 	InGoModule bool
 
+	// DirEntries carries the names of the working directory's top-level
+	// entries — files and directories alike, sorted — and never the
+	// contents of its subdirectories: the judgment reads the session's
+	// surface, not the files under it. An unreadable directory contributes
+	// nothing, so the fact degrades instead of failing the judgment. See
+	// TheoryOfTaskDecision.
+	DirEntries []string
+
 	// ExtraSystemPrompt carries the user-configured extra instruction
 	// sections (flags.ExtraSystemPrompt, the extra_system_prompt config
 	// path). The sections often state the task's nature — its subject and
@@ -110,7 +122,26 @@ func (Module) TaskEnvironment(extra flags.ExtraSystemPrompt) TaskEnvironment {
 	}
 	_, inGoModule := pathutil.FindGoModuleRoot(dir)
 	taskEnvironment.InGoModule = inGoModule
+	taskEnvironment.DirEntries = dirEntryNames(dir)
 	return taskEnvironment
+}
+
+// dirEntryNames returns the names of a directory's top-level entries, files
+// and directories alike, in the sorted order os.ReadDir reports. It never
+// descends, so the contents of the directory's subdirectories stay out of the
+// decision request: a large tree under one entry costs the judgment nothing.
+// An unreadable directory yields nil, so the fact degrades instead of failing
+// the judgment. See TheoryOfTaskDecision.
+func dirEntryNames(dir string) []string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+	return names
 }
 
 // GetDecisionGenerator resolves the decision model of the session: the
@@ -354,6 +385,14 @@ func decisionInputText(prompt string, taskEnvironment TaskEnvironment) string {
 		sb.WriteString("- inside a Go module: yes\n")
 	} else {
 		sb.WriteString("- inside a Go module: no\n")
+	}
+	if len(taskEnvironment.DirEntries) > 0 {
+		sb.WriteString("\nWorking directory entries:\n\n")
+		for _, name := range taskEnvironment.DirEntries {
+			sb.WriteString("- ")
+			sb.WriteString(name)
+			sb.WriteString("\n")
+		}
 	}
 	var extras []string
 	for _, section := range taskEnvironment.ExtraSystemPrompt {
