@@ -116,6 +116,7 @@ Gemini, OpenAI, DeepSeek, Volcano Engine (Huoshan), Baidu, Tencent, Alibaba Clou
 |------|-------------|
 | `-model` | Set the model name |
 | `-fast-model` | Set the fast model for summarization |
+| `-decision-model` | Set the model used for the goal verification (decision) loops |
 | `-file` | Add a file to the context |
 | `-doc` | Add a package whose documentation (go doc -all -cmd) is included in the context |
 | `-all-src` | Include full source of focus packages, including tests, in the context |

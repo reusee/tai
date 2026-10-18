@@ -709,6 +709,71 @@ func TestRunGoalPostDoneLoopsKeepDefaultModelWithoutReviewModel(t *testing.T) {
 	}
 }
 
+// TestRunGoalDecisionModelSelection verifies the model selection of the
+// post-done loops: the decision model drives them when configured — their
+// primary work is the decision whether the declared goal is genuinely
+// achieved — and takes precedence over the review-model rotation, which
+// drives them only while no decision model is set. A loop before the first
+// done block keeps the default model, and a loop without a done block keeps
+// the selection sticky. See TheoryOfGoalReviewModel.
+func TestRunGoalDecisionModelSelection(t *testing.T) {
+	t.Run("DrivesPostDoneLoops", func(t *testing.T) {
+		calls := 0
+		var loopModels []string
+		result := RunGoal(context.Background(), GoalOptions{
+			Output:        &bytes.Buffer{},
+			DecisionModel: "decision-model",
+			Generate: func(ctx context.Context, _ int, _ GoalFeedback, _ GoalLoopSummaries, loopModel string, _ SessionTreeContinuation) (Result, []AttemptStat, error) {
+				calls++
+				loopModels = append(loopModels, loopModel)
+				switch calls {
+				case 1:
+					return doneWithChangesResult(), nil, nil
+				case 2:
+					// Corrections without a done block keep the phase
+					// sticky.
+					return Result{Diffs: []changes.FileDiff{{Path: "a.go"}}}, nil, nil
+				}
+				return doneResult(), nil, nil
+			},
+			Review: noopReview,
+		})
+		if !result.Achieved {
+			t.Fatal("goal must be achieved by the change-free done block")
+		}
+		want := []string{"", "decision-model", "decision-model"}
+		if !slices.Equal(loopModels, want) {
+			t.Fatalf("loop models = %v, want %v", loopModels, want)
+		}
+	})
+
+	t.Run("TakesPrecedenceOverReviewModels", func(t *testing.T) {
+		calls := 0
+		var loopModels []string
+		result := RunGoal(context.Background(), GoalOptions{
+			Output:        &bytes.Buffer{},
+			ReviewModels:  []string{"review-model"},
+			DecisionModel: "decision-model",
+			Generate: func(ctx context.Context, _ int, _ GoalFeedback, _ GoalLoopSummaries, loopModel string, _ SessionTreeContinuation) (Result, []AttemptStat, error) {
+				calls++
+				loopModels = append(loopModels, loopModel)
+				if calls == 1 {
+					return doneWithChangesResult(), nil, nil
+				}
+				return doneResult(), nil, nil
+			},
+			Review: noopReview,
+		})
+		if !result.Achieved {
+			t.Fatal("goal must be achieved by the verification loop")
+		}
+		want := []string{"", "decision-model"}
+		if !slices.Equal(loopModels, want) {
+			t.Fatalf("loop models = %v, want %v", loopModels, want)
+		}
+	})
+}
+
 func TestGoalSystemPromptContent(t *testing.T) {
 	if !strings.Contains(GoalSystemPrompt, "Goal-Directed Multi-Loop Execution") {
 		t.Fatal("GoalSystemPrompt must contain the goal-directed multi-loop header")
