@@ -40,13 +40,13 @@ func decisionRunScope(t *testing.T, generator *decisionTestGenerator) dscope.Sco
 // model's output with both answers, and the verdict. A drained sink is empty,
 // so one decision is written once. See TheoryOfTaskDecision.
 func TestTaskDecisionSinkRecordsJudgment(t *testing.T) {
-	generator := &decisionTestGenerator{programming: true, modifyFiles: true}
+	generator := &decisionTestGenerator{programming: true, readOnly: true}
 	scope := decisionRunScope(t, generator)
 	if !bool(scope.Get[ProgrammingTask]()) {
 		t.Fatal("expected a programming task")
 	}
-	if !bool(scope.Get[ModifyFilesTask]()) {
-		t.Fatal("expected a file-modification task")
+	if !bool(scope.Get[ReadOnlyTask]()) {
+		t.Fatal("expected a read-only task")
 	}
 	record := scope.Get[*TaskDecisionSink]().Drain()
 	if record == nil {
@@ -61,8 +61,8 @@ func TestTaskDecisionSinkRecordsJudgment(t *testing.T) {
 	if !strings.Contains(record.Output, decisionProgrammingFuncName) {
 		t.Fatalf("the record output must carry the programming-task selection, got %q", record.Output)
 	}
-	if !strings.Contains(record.Output, decisionModifyFilesFuncName) {
-		t.Fatalf("the record output must carry the file-modification selection, got %q", record.Output)
+	if !strings.Contains(record.Output, decisionReadOnlyFuncName) {
+		t.Fatalf("the record output must carry the read-only selection, got %q", record.Output)
 	}
 	if record.Note != "" {
 		t.Fatalf("a judged decision carries no fail-open note, got %q", record.Note)
@@ -75,7 +75,8 @@ func TestTaskDecisionSinkRecordsJudgment(t *testing.T) {
 // TestTaskDecisionSinkRecordsFailOpen verifies that a skipped judgment
 // records its fail-open reason instead of the request's material, so the
 // session tree states why the codes base prompt and the change component
-// stayed included. See TheoryOfTaskDecision.
+// stayed included. The read-only criterion answers no on failure, so the
+// change component stays included. See TheoryOfTaskDecision.
 func TestTaskDecisionSinkRecordsFailOpen(t *testing.T) {
 	scope := dscope.New(
 		modes.ForTest(t),
@@ -86,8 +87,8 @@ func TestTaskDecisionSinkRecordsFailOpen(t *testing.T) {
 	if !bool(scope.Get[ProgrammingTask]()) {
 		t.Fatal("no decision model must keep the codes base prompt included")
 	}
-	if !bool(scope.Get[ModifyFilesTask]()) {
-		t.Fatal("no decision model must keep the change component included")
+	if bool(scope.Get[ReadOnlyTask]()) {
+		t.Fatal("no decision model must answer the read-only criterion no, keeping the change component included")
 	}
 	record := scope.Get[*TaskDecisionSink]().Drain()
 	if record == nil {
@@ -107,7 +108,7 @@ func TestTaskDecisionSinkRecordsFailOpen(t *testing.T) {
 // child nodes. The judgment runs during prompt assembly, before the tree
 // opens, so its material waits in the scope's sink. See TheoryOfTaskDecision.
 func TestRunRecordsTaskDecisionNode(t *testing.T) {
-	scope := decisionRunScope(t, &decisionTestGenerator{programming: true, modifyFiles: true})
+	scope := decisionRunScope(t, &decisionTestGenerator{programming: true})
 	// Resolving the task decision provider is what prompt assembly does:
 	// it fills the scope's decision sink before the loop opens its tree.
 	scope.Get[TaskDecision]()
@@ -128,7 +129,7 @@ func TestRunRecordsTaskDecisionNode(t *testing.T) {
 	if node.Parent != "root" {
 		t.Fatalf("task decision parent = %q, want root", node.Parent)
 	}
-	if !strings.Contains(node.Content, "task decision: programming task: yes") {
+	if !strings.Contains(node.Content, "task decision: programming task: yes, read-only task: no") {
 		t.Fatalf("task decision content must state the answers, got %q", node.Content)
 	}
 	if !strings.Contains(node.Content, "codes base prompt: included") {
@@ -164,9 +165,9 @@ func TestRunGoalRecordsTaskDecisionNode(t *testing.T) {
 		TaskDecision: &TaskDecisionRecord{
 			Model:       "decision-test",
 			Input:       "Task:\nfix the parser bug",
-			Output:      "selected: programming_task\nselected: modify_files_task",
+			Output:      "selected: programming_task\nselected: read_only_task",
 			Programming: true,
-			ModifyFiles: true,
+			ReadOnly:    false,
 		},
 	})
 	if !result.Achieved {

@@ -46,10 +46,10 @@ consumed by the handler (not collected), so ProcessComponents finds no change bl
 to re-apply. During Flush the handler is not called for unclosed blocks —
 they are incomplete (e.g., truncated output) and applying them would produce
 errors. No handler is set when the apply flag is disabled, and none when the
-task decision judged the task a non-file-modification one — the change
-component is absent then too, so the format was never taught (see
-TheoryOfTaskDecision). In both cases every block is collected, so a session
-that does not modify files applies nothing.
+task decision explicitly judged the task read-only — the change component is
+absent then too, so the format was never taught (see TheoryOfTaskDecision). In
+both cases every block is collected, so a session that changes no files applies
+nothing.
 
 Applied change blocks join the session tree as described in
 TheoryOfSessionTree. The record resets with each attempt, mirroring the
@@ -542,7 +542,7 @@ func (Module) GenerateWithResultWithStats(
 	debug Debug,
 	funcDecls generators.FuncDecls,
 	apply flags.Apply,
-	modifyFilesTask ModifyFilesTask,
+	readOnlyTask ReadOnlyTask,
 	loopRun Run,
 	writeTimes *changes.FileWriteTimes,
 	hashes *changes.FileHashes,
@@ -756,12 +756,12 @@ func (Module) GenerateWithResultWithStats(
 		// The change block handler applies change blocks to the in-memory
 		// store as they stream. It is installed only when a change block
 		// can arrive: -no-apply discards the blocks, and a task the decision
-		// model judged a non-file-modification task never carries the change
+		// model explicitly judged read-only never carries the change
 		// component, so its prompt never taught the format and its blocks
 		// are not applied. See TheoryOfStreamingApply,
 		// TheoryOfCodesComponents and TheoryOfTaskDecision.
 		var blockHandler BlockHandler
-		if bool(apply) && bool(modifyFilesTask) {
+		if bool(apply) && !bool(readOnlyTask) {
 			handler := buildChangeBlockHandler(memStore)
 			blockHandler = BlockHandler(handler)
 		}

@@ -22,13 +22,15 @@ task decision theory:
 - The first criterion — programming_task — decides whether the codes base
   prompt (prompts.Codes) enters the system prompt: a session whose task is not
   a programming task pays for every coding rule it never applies. The second —
-  modify_files_task — decides whether the change component enters the pipeline:
-  a task that modifies no file pays for the change block format and is invited
-  by it to change files the user did not ask to change.
+  read_only_task — decides whether the change component stays out of the
+  pipeline: only a task the model explicitly judges read-only omits the change
+  block format, because such a task pays for a format it never uses and is
+  invited by it to change files the user did not ask to change. Every other
+  task keeps the change component — the task the model answers no, and the
+  task no model judged at all.
 - The criteria are independent. A task that only reviews or explains code is a
-  programming task without a file modification; a task that renames a
-  configuration file or edits a document modifies files without being a
-  programming task.
+  programming task that is also read-only; a task that renames a configuration
+  file or edits a document changes files without being a programming task.
 - Only these two introductions depend on the judgment: the component sections,
   the generation pipeline, and every other prompt part are unchanged.
 - The decision model's inputs are the user prompt and the session facts
@@ -45,15 +47,18 @@ task decision theory:
   does not change between loops, so re-judging could flip the introductions
   while the run unfolds. Module.GoalRun resolves it and forks it into each
   loop's scope; a non-goal command resolves it with its system prompt.
-- The judgment fails open: with no decision model configured, an empty task, an
-  unresolvable model, or a failed request, both criteria answer yes — the base
-  prompt and the change component stay included — because a faulty decision
-  must not strip the coding rules, nor the ability to modify files, from a task
-  that needs them. Every failure and every judgment are logged, so a decision
+- The judgment fails open, and the two failures are not symmetric. With no
+  decision model configured, an empty task, an unresolvable model, or a failed
+  request, the programming criterion answers yes and the read-only criterion
+  answers no: the base prompt and the change component stay included, because a
+  faulty decision must not strip the coding rules, nor the ability to modify
+  files, from a task that needs them. A false read-only answer withholds the
+  change block format — the deliverable — while a false not-read-only answer
+  costs tokens only. Every failure and every judgment are logged, so a decision
   model that never answers a declared question is visible.
 - The judgment never overrides -no-apply: the change component's prompt stays
-  included there for the dry run the user reviews, whatever the
-  file-modification answer is (see TheoryOfCodesComponents).
+  included there for the dry run the user reviews, whatever the read-only
+  answer is (see TheoryOfCodesComponents).
 - The decision request runs outside the generation state, so its token spend is
   not part of the attempt statistics; the generator's own log records it.
 - The decision joins the session tree as a run-level record: one
@@ -124,12 +129,13 @@ func (Module) GetDecisionGenerator(
 }
 
 // TaskDecision is one run's task decision: the decision model's answers to the
-// session's two criteria. Programming reports whether the task is a
-// programming task; ModifyFiles reports whether the task modifies project
-// files. Both answers come from one decision request. See TheoryOfTaskDecision.
+// session's two criteria. Programming reports whether the task is a programming
+// task; ReadOnly reports whether the task is read-only — one that inspects,
+// explains, or reviews files without modifying them. Both answers come from one
+// decision request. See TheoryOfTaskDecision.
 type TaskDecision struct {
 	Programming bool
-	ModifyFiles bool
+	ReadOnly    bool
 }
 
 // ProgrammingTask reports whether the session's task is a programming task, as
@@ -137,16 +143,20 @@ type TaskDecision struct {
 // prompt only for a programming task. See TheoryOfTaskDecision.
 type ProgrammingTask bool
 
-// ModifyFilesTask reports whether the session's task modifies project files, as
-// judged by the decision model. The codes pipeline includes the change
-// component — the change block format and its processing — only for such a
-// task, so a read-only task pays nothing for the format and is not invited by
-// it to change files the user did not ask to change. See TheoryOfTaskDecision.
-type ModifyFilesTask bool
+// ReadOnlyTask reports whether the session's task is read-only, as judged by
+// the decision model. The codes pipeline omits the change component — the
+// change block format and its processing — only for an explicit read-only
+// judgment, so a task that inspects, explains, or reviews files pays nothing
+// for a format it never uses. Every other task keeps the component, and a
+// failed or skipped judgment keeps it too, because a false read-only answer
+// would withhold the deliverable while a false not-read-only answer costs
+// tokens only. See TheoryOfTaskDecision.
+type ReadOnlyTask bool
 
 // TaskDecision provider: it judges the session's task with the decision model —
 // both criteria in one request — records the judgment's material in the scope's
-// TaskDecisionSink for the session tree, and fails open on every failure.
+// TaskDecisionSink for the session tree, and fails open on every failure, with
+// the read-only criterion answering no so the change component stays included.
 // dscope caches the provider per scope, so the judgment runs once however many
 // consumers resolve the derived values. See TheoryOfTaskDecision.
 func (Module) TaskDecision(
@@ -156,9 +166,10 @@ func (Module) TaskDecision(
 	logger logs.Logger,
 	decisionSink *TaskDecisionSink,
 ) TaskDecision {
-	// keep is the fail-open answer: the codes base prompt and the change
-	// component stay included when no judgment is made.
-	keep := TaskDecision{Programming: true, ModifyFiles: true}
+	// keep is the fail-open answer: the codes base prompt stays included and
+	// the read-only criterion answers no, so the change component stays
+	// included when no judgment is made. See TheoryOfTaskDecision.
+	keep := TaskDecision{Programming: true, ReadOnly: false}
 	prompt := strings.TrimSpace(strings.Join(chats, "\n"))
 	if prompt == "" {
 		// No task to judge: the session runs no generation against an
@@ -166,7 +177,7 @@ func (Module) TaskDecision(
 		// stay included.
 		decisionSink.Record(TaskDecisionRecord{
 			Programming: keep.Programming,
-			ModifyFiles: keep.ModifyFiles,
+			ReadOnly:    keep.ReadOnly,
 			Note:        "no task to judge: the session has no chat input, so the codes base prompt and the change component stay included",
 		})
 		return keep
@@ -175,7 +186,7 @@ func (Module) TaskDecision(
 	if err != nil {
 		decisionSink.Record(TaskDecisionRecord{
 			Programming: keep.Programming,
-			ModifyFiles: keep.ModifyFiles,
+			ReadOnly:    keep.ReadOnly,
 			Note:        "the decision model did not resolve: " + err.Error() + "; the codes base prompt and the change component stay included",
 		})
 		logger.Warn("the decision model is unavailable; the codes prompt and the change component stay included",
@@ -188,7 +199,7 @@ func (Module) TaskDecision(
 		// before.
 		decisionSink.Record(TaskDecisionRecord{
 			Programming: keep.Programming,
-			ModifyFiles: keep.ModifyFiles,
+			ReadOnly:    keep.ReadOnly,
 			Note:        "no decision model is configured; the codes base prompt and the change component stay included",
 		})
 		return keep
@@ -203,11 +214,11 @@ func (Module) TaskDecision(
 		Input:       decisionInputText(prompt, taskEnvironment),
 		Output:      output,
 		Programming: decision.Programming,
-		ModifyFiles: decision.ModifyFiles,
+		ReadOnly:    decision.ReadOnly,
 	}
 	if err != nil {
 		record.Programming = keep.Programming
-		record.ModifyFiles = keep.ModifyFiles
+		record.ReadOnly = keep.ReadOnly
 		record.Note = "the decision request failed: " + err.Error() + "; the codes base prompt and the change component stay included"
 		decisionSink.Record(record)
 		logger.Warn("the task decision failed; the codes prompt and the change component stay included",
@@ -219,7 +230,7 @@ func (Module) TaskDecision(
 	decisionSink.Record(record)
 	logger.Info("task decision",
 		"programming", decision.Programming,
-		"modify_files", decision.ModifyFiles,
+		"read_only", decision.ReadOnly,
 		"model", generator.Spec().Model,
 		"in_go_module", taskEnvironment.InGoModule,
 	)
@@ -232,10 +243,10 @@ func (Module) ProgrammingTask(decision TaskDecision) ProgrammingTask {
 	return ProgrammingTask(decision.Programming)
 }
 
-// ModifyFilesTask provider: the file-modification half of the run's task
-// decision. See TheoryOfTaskDecision.
-func (Module) ModifyFilesTask(decision TaskDecision) ModifyFilesTask {
-	return ModifyFilesTask(decision.ModifyFiles)
+// ReadOnlyTask provider: the read-only half of the run's task decision. See
+// TheoryOfTaskDecision.
+func (Module) ReadOnlyTask(decision TaskDecision) ReadOnlyTask {
+	return ReadOnlyTask(decision.ReadOnly)
 }
 
 // decisionProgrammingFuncName is the name of the function the decision request
@@ -249,16 +260,17 @@ const decisionProgrammingFuncName = "programming_task"
 // description reads as that capability. See TheoryOfTaskDecision.
 const decisionProgrammingFuncDescription = "handles a programming task: writing, modifying, reviewing, or exploring code, or running builds and tests on a codebase"
 
-// decisionModifyFilesFuncName is the name of the function the decision request
-// declares for the file-modification criterion: the decision model selects it
-// when the session's task modifies project files. See TheoryOfTaskDecision.
-const decisionModifyFilesFuncName = "modify_files_task"
+// decisionReadOnlyFuncName is the name of the function the decision request
+// declares for the read-only criterion: the decision model selects it when the
+// session's task is read-only, so the change component is omitted from the
+// pipeline. See TheoryOfTaskDecision.
+const decisionReadOnlyFuncName = "read_only_task"
 
-// decisionModifyFilesFuncDescription is the criterion the decision request
-// declares for the file-modification answer. It states the artifact the task
-// writes, so a task that only reads, explains, or reviews a file does not
-// match it. See TheoryOfTaskDecision.
-const decisionModifyFilesFuncDescription = "handles a task that modifies files: creating, editing, renaming, or deleting a project file, or applying a patch or diff to the working tree"
+// decisionReadOnlyFuncDescription is the criterion the decision request
+// declares for the read-only answer. It states the artifact the task leaves
+// unchanged, so a task that writes a file does not match it. See
+// TheoryOfTaskDecision.
+const decisionReadOnlyFuncDescription = "handles a read-only task: inspecting, explaining, or reviewing files without modifying them, and running no command that modifies the working tree"
 
 // decisionSystemPrompt frames the decision request. The task and its session
 // facts form the request's user message and the criteria are the declared
@@ -298,8 +310,8 @@ func judgeTask(
 		},
 		&generators.Function{
 			Decl: generators.FuncDecl{
-				Name:        decisionModifyFilesFuncName,
-				Description: decisionModifyFilesFuncDescription,
+				Name:        decisionReadOnlyFuncName,
+				Description: decisionReadOnlyFuncDescription,
 			},
 		},
 	)
@@ -313,7 +325,7 @@ func judgeTask(
 	}
 	return TaskDecision{
 		Programming: decisionFuncSelected(decided, decisionProgrammingFuncName),
-		ModifyFiles: decisionFuncSelected(decided, decisionModifyFilesFuncName),
+		ReadOnly:    decisionFuncSelected(decided, decisionReadOnlyFuncName),
 	}, output, nil
 }
 

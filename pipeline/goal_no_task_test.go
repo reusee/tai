@@ -29,7 +29,7 @@ func TestMakeGoalLoopGeneratorNoTask(t *testing.T) {
 			}
 		},
 	)
-	decision := TaskDecision{Programming: true, ModifyFiles: true}
+	decision := TaskDecision{Programming: true, ReadOnly: false}
 	generate := makeGoalLoopGenerator(scope.Reset, decision)
 	_, _, err := generate(context.Background(), 1, "", nil, "", SessionTreeContinuation{})
 	if !errors.Is(err, ErrNoTask) {

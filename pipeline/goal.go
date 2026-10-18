@@ -917,7 +917,7 @@ func makeGoalLoopGenerator(reset dscope.Reset, decision TaskDecision) GoalLoopGe
 		// not only its two derived halves — so both answers stay stable
 		// while the run unfolds, and any consumer of TaskDecision reads
 		// the same judgment without re-running the decision model.
-		// ProgrammingTask and ModifyFilesTask derive from the forked
+		// ProgrammingTask and ReadOnlyTask derive from the forked
 		// value. See TheoryOfTaskDecision.
 		scope = scope.Fork(func() TaskDecision { return decision })
 		scope = scope.Fork(func() GoalLoop { return GoalLoop(loop) })

@@ -16,12 +16,12 @@ import (
 
 // decisionTestGenerator stands in for the decision model: it answers the
 // decision request from fixed verdicts — appending the declared function
-// calls when the task is a programming task and when it modifies files —
+// calls when the task is a programming task and when it is read-only —
 // and records the request's user text and declared functions so a test can
 // check what the request carried. See TheoryOfTaskDecision.
 type decisionTestGenerator struct {
 	programming bool
-	modifyFiles bool
+	readOnly    bool
 	err         error
 	seen        []string
 	funcs       []generators.FuncDecl
@@ -65,10 +65,10 @@ func (g *decisionTestGenerator) Generate(
 			Arguments: map[string]any{},
 		})
 	}
-	if g.modifyFiles {
+	if g.readOnly {
 		calls = append(calls, generators.FuncCall{
-			ID:        decisionModifyFilesFuncName,
-			Name:      decisionModifyFilesFuncName,
+			ID:        decisionReadOnlyFuncName,
+			Name:      decisionReadOnlyFuncName,
 			Arguments: map[string]any{},
 		})
 	}
@@ -175,7 +175,7 @@ func TestDecisionInputTextCarriesSessionFacts(t *testing.T) {
 // for that criterion and make its judgment fail open, silently keeping the
 // introduction in every session. See TheoryOfTaskDecision.
 func TestDecisionRequestCarriesCriterionFunction(t *testing.T) {
-	generator := &decisionTestGenerator{programming: true, modifyFiles: true}
+	generator := &decisionTestGenerator{programming: true}
 	decisionTestScope(t, generator, "fix the parser bug").Get[ProgrammingTask]()
 	if len(generator.funcs) != 2 {
 		t.Fatalf("the decision request must declare exactly two criterion functions, got %v", generator.funcs)
@@ -187,28 +187,31 @@ func TestDecisionRequestCarriesCriterionFunction(t *testing.T) {
 		}
 		declared[fn.Name] = true
 	}
-	for _, name := range []string{decisionProgrammingFuncName, decisionModifyFilesFuncName} {
+	for _, name := range []string{decisionProgrammingFuncName, decisionReadOnlyFuncName} {
 		if !declared[name] {
 			t.Fatalf("the decision request must declare the criterion function %q, got %v", name, generator.funcs)
 		}
 	}
 }
 
-// TestModifyFilesTaskGatesChange pins the second criterion's gate: the change
-// component — the change block format and its processing — enters the
-// pipeline only when the decision model judges the task a file-modification
-// task, so a read-only task pays nothing for the format and is not invited by
-// it to change files the user did not ask to change. A task the model judged
-// read-only sees the disabled-blocks notice instead, so its change blocks are
-// never silently ignored. Under -no-apply the prompt stays included for the
-// dry run the user reviews. See TheoryOfTaskDecision and
-// TheoryOfCodesComponents.
-func TestModifyFilesTaskGatesChange(t *testing.T) {
-	// A read-only task: no change component, and the kind is announced as
-	// disabled.
-	scope := decisionTestScope(t, &decisionTestGenerator{programming: true}, "explain this parser")
-	if bool(scope.Get[ModifyFilesTask]()) {
-		t.Fatal("a read-only task must judge the file-modification criterion no")
+// TestReadOnlyTaskGatesChange pins the second criterion's gate: the change
+// component — the change block format and its processing — stays in the
+// pipeline unless the decision model explicitly judges the task read-only,
+// because only a task that inspects, explains, or reviews files without
+// changing them pays for a format it never uses and is invited by it to
+// change files the user did not ask to change. Every other answer, including
+// no answer at all, keeps the component: a false read-only answer would
+// withhold the deliverable, while a false not-read-only answer costs tokens
+// only. A task the model judged read-only sees the disabled-blocks notice
+// instead, so its change blocks are never silently ignored. Under -no-apply
+// the prompt stays included for the dry run the user reviews. See
+// TheoryOfTaskDecision and TheoryOfCodesComponents.
+func TestReadOnlyTaskGatesChange(t *testing.T) {
+	// An explicit read-only task: no change component, and the kind is
+	// announced as disabled.
+	scope := decisionTestScope(t, &decisionTestGenerator{programming: true, readOnly: true}, "explain this parser")
+	if !bool(scope.Get[ReadOnlyTask]()) {
+		t.Fatal("a read-only task must judge the read-only criterion yes")
 	}
 	prompt := string(scope.Get[SystemPrompt]())
 	if strings.Contains(prompt, "Change Block Kind") {
@@ -218,14 +221,16 @@ func TestModifyFilesTaskGatesChange(t *testing.T) {
 		t.Fatal("a read-only task must announce the disabled change kind")
 	}
 
-	// A file-modification task: the change component enters the prompt.
-	scope = decisionTestScope(t, &decisionTestGenerator{programming: true, modifyFiles: true}, "fix the parser bug")
-	if !bool(scope.Get[ModifyFilesTask]()) {
-		t.Fatal("a file-modification task must judge the criterion yes")
+	// Any other task — here, the model did not select the read-only
+	// criterion — keeps the change component: the gate omits the component
+	// only on an explicit read-only judgment.
+	scope = decisionTestScope(t, &decisionTestGenerator{programming: true}, "fix the parser bug")
+	if bool(scope.Get[ReadOnlyTask]()) {
+		t.Fatal("a task the model did not judge read-only must keep the change component")
 	}
 	prompt = string(scope.Get[SystemPrompt]())
 	if !strings.Contains(prompt, "Change Block Kind") {
-		t.Fatal("a file-modification task must introduce the change block kind")
+		t.Fatal("a not-read-only task must introduce the change block kind")
 	}
 	if strings.Contains(prompt, "change blocks are not processed in this session") {
 		t.Fatal("an available change kind must not be announced as disabled")
@@ -234,7 +239,7 @@ func TestModifyFilesTaskGatesChange(t *testing.T) {
 	// Under -no-apply the change prompt stays included whatever the
 	// criterion answered: the emitted blocks are the deliverable of the dry
 	// run the user reviews.
-	scope = decisionTestScope(t, &decisionTestGenerator{programming: true}, "explain this parser").Fork(
+	scope = decisionTestScope(t, &decisionTestGenerator{programming: true, readOnly: true}, "explain this parser").Fork(
 		func() flags.Apply { return false },
 	)
 	prompt = string(scope.Get[SystemPrompt]())

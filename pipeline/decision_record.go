@@ -31,10 +31,11 @@ type TaskDecisionRecord struct {
 	// base prompt enters the system prompt when it is true. It is true on
 	// every failure, because the judgment fails open.
 	Programming bool
-	// ModifyFiles is the file-modification criterion's answer: the change
-	// component enters the pipeline when it is true. It is true on every
-	// failure, because the judgment fails open.
-	ModifyFiles bool
+	// ReadOnly is the read-only criterion's answer: the change component is
+	// omitted from the pipeline only when it is true. It is false on every
+	// failure, because the judgment fails open with the change component
+	// included.
+	ReadOnly bool
 }
 
 // TaskDecisionSink buffers one scope's task decision for the session tree:
@@ -134,8 +135,8 @@ func writeTaskDecisionNode(tr *tree.Tree, parent string, record *TaskDecisionRec
 	}
 	answers := "no judgment"
 	if record.Note == "" {
-		answers = fmt.Sprintf("programming task: %s, modifies files: %s",
-			yesNo(record.Programming), yesNo(record.ModifyFiles))
+		answers = fmt.Sprintf("programming task: %s, read-only task: %s",
+			yesNo(record.Programming), yesNo(record.ReadOnly))
 	}
 	model := record.Model
 	if model == "" {
@@ -145,9 +146,9 @@ func writeTaskDecisionNode(tr *tree.Tree, parent string, record *TaskDecisionRec
 	if record.Programming {
 		base = "included"
 	}
-	change := "omitted"
-	if record.ModifyFiles {
-		change = "included"
+	change := "included"
+	if record.ReadOnly {
+		change = "omitted"
 	}
 	next, taskName, err := tr.WriteAuto(
 		parent, tree.TypeDecisionTask.Name(), tree.TypeDecisionTask, tree.AuthorProgram,
@@ -170,7 +171,7 @@ func writeTaskDecisionNode(tr *tree.Tree, parent string, record *TaskDecisionRec
 		sb.WriteString("system prompt:\n")
 		sb.WriteString(decisionSystemPrompt)
 		sb.WriteString("\n\ncriteria:\n- " + decisionProgrammingFuncName + ": " + decisionProgrammingFuncDescription)
-		sb.WriteString("\n- " + decisionModifyFilesFuncName + ": " + decisionModifyFilesFuncDescription)
+		sb.WriteString("\n- " + decisionReadOnlyFuncName + ": " + decisionReadOnlyFuncDescription)
 		sb.WriteString("\n\nuser message:\n")
 		sb.WriteString(record.Input)
 		writeChild(tree.TypeDecisionInput, sb.String())
@@ -181,7 +182,7 @@ func writeTaskDecisionNode(tr *tree.Tree, parent string, record *TaskDecisionRec
 		verdict = fmt.Sprintf(
 			"the decision model answered the criteria %q (%s) and %q (%s): the codes base prompt is %s and the change component is %s",
 			decisionProgrammingFuncName, yesNo(record.Programming),
-			decisionModifyFilesFuncName, yesNo(record.ModifyFiles),
+			decisionReadOnlyFuncName, yesNo(record.ReadOnly),
 			base, change,
 		)
 	}

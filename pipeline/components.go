@@ -38,16 +38,18 @@ TheoryOfSessionTree and are not repeated here. The new-plan and response
 components follow the ingest component; declaring their kinds registers
 them in KnownKinds.
 
-The change component's inclusion is a task decision: the component enters the
-set only when the decision model answers the file-modification criterion yes,
-so a read-only task neither pays for the change block format nor is invited by
-it to change files the user did not ask to change. A disabled change joins the
-disabled-blocks notice below, so the model is told the format is unavailable
-instead of having its blocks silently ignored (see TheoryOfTaskDecision).
-Under -no-apply the change prompt is still included and change is deliberately
-not listed as disabled: the blocks are the deliverable of a dry run, reviewed
-by the user, so the model must keep emitting them. See
-components.TheoryOfDisabledBlocks.
+The change component's inclusion is a task decision: the component stays in
+the set unless the decision model explicitly answers the read-only criterion
+yes, so only a task that inspects, explains, or reviews files without changing
+them omits the change block format. Every other task keeps the component — a
+false read-only answer would withhold the deliverable, while a false
+not-read-only answer costs tokens only — and a failed or skipped judgment
+keeps it too. An omitted change joins the disabled-blocks notice below, so the
+model is told the format is unavailable instead of having its blocks silently
+ignored (see TheoryOfTaskDecision). Under -no-apply the change prompt is still
+included and change is deliberately not listed as disabled: the blocks are the
+deliverable of a dry run, reviewed by the user, so the model must keep
+emitting them. See components.TheoryOfDisabledBlocks.
 
 Shell processing is enabled by the shell flag or by a configured command
 allowlist, which is the user's own decision to let the model run the listed
@@ -260,7 +262,7 @@ func (Module) CodesComponents(
 	goFamilyExtra gotools.FamilyExtraSystemPrompt,
 	modelFamily generators.ModelFamily,
 	apply flags.Apply,
-	modifyFilesTask ModifyFilesTask,
+	readOnlyTask ReadOnlyTask,
 	summaryLanguage flags.SummaryLanguage,
 	flagShell flags.Shell,
 	allowedShellCommands blocks.AllowedShellCommands,
@@ -302,16 +304,17 @@ func (Module) CodesComponents(
 	})
 
 	// Change component: the change block format and its processing. The
-	// component enters the set when the apply flag is set AND the task
-	// decision judges the session's task a file-modification task: a
-	// read-only task pays nothing for the format and is not invited by it
-	// to change files the user did not ask to change. Under -no-apply the
-	// prompt is still included — the emitted blocks are the deliverable of
-	// a dry run the user reviews — and a disabled change is announced
-	// through the disabled-blocks notice below. A failed or skipped
-	// judgment fails open and keeps the component. See
+	// component stays in the set unless the task decision explicitly
+	// answers the read-only criterion yes: only a task that inspects,
+	// explains, or reviews files without changing them omits the format,
+	// because such a task pays for a format it never uses and is invited
+	// by it to change files the user did not ask to change. A failed or
+	// skipped judgment fails open and keeps the component. Under -no-apply
+	// the prompt is still included — the emitted blocks are the deliverable
+	// of a dry run the user reviews — and an omitted change is announced
+	// through the disabled-blocks notice below. See
 	// TheoryOfCodesComponents and TheoryOfTaskDecision.
-	if bool(apply) && bool(modifyFilesTask) {
+	if bool(apply) && !bool(readOnlyTask) {
 		comps = append(comps, components.Component{
 			Kind:          "change",
 			PromptSection: changes.ChangeBlockPrompt,
@@ -404,8 +407,8 @@ func (Module) CodesComponents(
 
 	// Disabled-blocks notice: shell without the flag and without a
 	// configured allowlist, and change for a task the decision model
-	// judged a non-file-modification one, are announced explicitly instead
-	// of leaving their slots silent. A model that emits an unavailable kind
+	// explicitly judged read-only, are announced explicitly instead of
+	// leaving their slots silent. A model that emits an unavailable kind
 	// from habit would have it silently ignored while implying an action
 	// that never happened. Under -no-apply the change prompt above is still
 	// included and change is deliberately not listed as disabled: the
@@ -415,7 +418,7 @@ func (Module) CodesComponents(
 	if !allowedShellCommands.ShellEnabled(bool(flagShell)) {
 		disabled = append(disabled, "shell")
 	}
-	if bool(apply) && !bool(modifyFilesTask) {
+	if bool(apply) && bool(readOnlyTask) {
 		disabled = append(disabled, "change")
 	}
 	if len(disabled) > 0 {
