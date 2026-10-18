@@ -72,15 +72,18 @@ tree theory: writes and transforms on immutable path-copying trees.
   idle, run-error, context, api_error), block (block-result, summary, and
   the block kinds: a block node's type is BlockType(kind), so a shell block
   is block::shell, and a kind the program has never seen forms
-  block::<kind> dynamically), and error. Every event subtype's name equals
+  block::<kind> dynamically), decision (task — one run's task decision,
+  whose input, output, and verdict children carry the judgment's request,
+  the model's output, and the verdict with its basis), and error. Every
+  event subtype's name equals
   the event node name prefix the pipeline writes, so typed event nodes
   carry their kind in their names. A plan node is structure, not message:
   the plan tree is the flow definition of a loop. Summary is a block kind:
   it records the response's summary block, not a message.
 - Type.Emoji supplies the display glyphs of user-facing trees. The
   glyph is keyed by the type's first part — its prefix — so every type
-  of one family (structure, message, event, block, error) carries the
-  family's glyph, and a type with an unknown prefix falls back to the
+  of one family (structure, message, event, block, decision, error) carries
+  the family's glyph, and a type with an unknown prefix falls back to the
   question glyph. It is presentation metadata, never identity: writes
   and merges ignore it.
 `
@@ -165,6 +168,24 @@ const (
 	TypeSummary     Type = "block::summary"
 )
 
+const (
+	// TypeDecisionTask marks one run's task decision: the judgment that
+	// selects whether the codes base prompt enters the system prompt. Its
+	// children carry the request's input, the decision model's output, and
+	// the verdict with its basis. It is a run-level record, written once per
+	// run. See pipeline.TheoryOfTaskDecision.
+	TypeDecisionTask Type = "decision::task"
+	// TypeDecisionInput carries the decision request's input: its system
+	// prompt, its declared criterion function, and the user message it
+	// carried.
+	TypeDecisionInput Type = "decision::input"
+	// TypeDecisionOutput carries the decision model's produced output.
+	TypeDecisionOutput Type = "decision::output"
+	// TypeDecisionVerdict carries the decision and its basis, or the
+	// fail-open reason when no judgment was made.
+	TypeDecisionVerdict Type = "decision::verdict"
+)
+
 // TypeError marks a recorded error. See TheoryOfTree.
 const TypeError Type = "error::error"
 
@@ -208,8 +229,8 @@ func (t Type) Name() string {
 
 // Emoji returns the display glyph decorating the type in user-facing
 // trees. The glyph is keyed by the type's first part, so every type of
-// one family — structure, message, event, block, error — carries the
-// family's glyph, and a type with an unknown prefix falls back to the
+// one family — structure, message, event, block, decision, error — carries
+// the family's glyph, and a type with an unknown prefix falls back to the
 // question glyph. Presentation metadata, never identity: writes and
 // merges ignore it. See TheoryOfTree.
 func (t Type) Emoji() string {
@@ -222,6 +243,8 @@ func (t Type) Emoji() string {
 		return "⚡"
 	case "block":
 		return "🧱"
+	case "decision":
+		return "🧭"
 	case "error":
 		return "⚠️"
 	default:

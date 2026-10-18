@@ -31,7 +31,9 @@ immutable tree, and one run owns exactly one tree.
   tree's root for a fresh run, the loop node for a continued one —
   anchors the session's own nodes: writeInitialSystemNode writes the
   system node (program author, content = the initial state's system
-  prompt) under it.
+  prompt) under it, and a fresh run's task decision (see
+  TheoryOfTaskDecision) joins it before that node, because the
+  judgment selected the prompt the system node carries.
 - Each attempt hangs under one attempt structure node
   (tree.TypeAttempt, program author), written under the session
   parent when the attempt opens: the attempt's events, response,

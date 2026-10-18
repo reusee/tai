@@ -44,6 +44,19 @@ task decision theory:
   never answers the declared question is visible.
 - The decision request runs outside the generation state, so its token spend
   is not part of the attempt statistics; the generator's own log records it.
+- The decision joins the session tree as a run-level record: one
+  decision::task node — the decision, the decision model, and the codes base
+  prompt's fate — whose input, output, and verdict children carry the
+  request's input, the model's produced output, and the verdict with its
+  basis. The judgment runs during prompt assembly, before the session tree
+  opens, so Module.ProgrammingTask buffers the record in the scope's
+  TaskDecisionSink and the tree's owner writes it: a fresh run writes it
+  under the session root when Module.Run opens the tree, and a goal run
+  writes it once under the run tree's root before the first loop, because
+  the judgment is made once per run and forked into every loop.
+- The record is written whether or not a judgment was made: a skipped or
+  failed judgment carries the fail-open reason in its verdict, so the tree
+  states why the codes base prompt stayed included.
 `
 
 // TaskEnvironment carries the session facts the decision model receives
@@ -104,22 +117,32 @@ func (Module) GetDecisionGenerator(
 type ProgrammingTask bool
 
 // ProgrammingTask provider: it judges the session's task with the decision
-// model and fails open on every failure. See TheoryOfTaskDecision.
+// model, records the judgment's material in the scope's TaskDecisionSink for
+// the session tree, and fails open on every failure. See TheoryOfTaskDecision.
 func (Module) ProgrammingTask(
 	taskEnvironment TaskEnvironment,
 	chats flags.Chats,
 	getDecisionGenerator GetDecisionGenerator,
 	logger logs.Logger,
+	decisionSink *TaskDecisionSink,
 ) ProgrammingTask {
 	prompt := strings.TrimSpace(strings.Join(chats, "\n"))
 	if prompt == "" {
 		// No task to judge: the session runs no generation against an
 		// empty task, so the decision is skipped and the base prompt
 		// stays included.
+		decisionSink.Record(TaskDecisionRecord{
+			Programming: true,
+			Note:        "no task to judge: the session has no chat input, so the codes base prompt stays included",
+		})
 		return true
 	}
 	generator, err := getDecisionGenerator()
 	if err != nil {
+		decisionSink.Record(TaskDecisionRecord{
+			Programming: true,
+			Note:        "the decision model did not resolve: " + err.Error() + "; the codes base prompt stays included",
+		})
 		logger.Warn("the decision model is unavailable; the codes prompt stays included",
 			"error", err,
 		)
@@ -127,20 +150,34 @@ func (Module) ProgrammingTask(
 	}
 	if generator == nil {
 		// No decision model is configured: keep the base prompt as before.
+		decisionSink.Record(TaskDecisionRecord{
+			Programming: true,
+			Note:        "no decision model is configured; the codes base prompt stays included",
+		})
 		return true
 	}
 	// The judgment runs during prompt assembly, outside any generation
 	// context, so it carries its own background context.
-	isProgramming, err := judgeProgrammingTask(
+	isProgramming, output, err := judgeProgrammingTask(
 		context.Background(), generator, prompt, taskEnvironment,
 	)
+	record := TaskDecisionRecord{
+		Model:       generator.Spec().Model,
+		Input:       decisionInputText(prompt, taskEnvironment),
+		Output:      output,
+		Programming: isProgramming,
+	}
 	if err != nil {
+		record.Programming = true
+		record.Note = "the decision request failed: " + err.Error() + "; the codes base prompt stays included"
+		decisionSink.Record(record)
 		logger.Warn("the task decision failed; the codes prompt stays included",
 			"model", generator.Spec().Model,
 			"error", err,
 		)
 		return true
 	}
+	decisionSink.Record(record)
 	logger.Info("task decision",
 		"programming", isProgramming,
 		"model", generator.Spec().Model,
@@ -168,14 +205,19 @@ const decisionSystemPrompt = "Classify the session task stated in the user messa
 
 // judgeProgrammingTask asks the decision model whether the prompt is a
 // programming task: it declares the criterion as one function over a
-// one-message state and reads the answer from the selected functions. See
+// one-message state, reads the answer from the selected functions, and
+// renders the model's produced output for the session tree. See
 // TheoryOfTaskDecision.
 func judgeProgrammingTask(
 	ctx context.Context,
 	generator generators.Generator,
 	prompt string,
 	taskEnvironment TaskEnvironment,
-) (bool, error) {
+) (
+	programming bool,
+	output string,
+	err error,
+) {
 	var state generators.State
 	state = generators.NewPrompts(decisionSystemPrompt, []*generators.Content{
 		{
@@ -191,11 +233,15 @@ func judgeProgrammingTask(
 			Description: decisionFuncDescription,
 		},
 	})
+	baseCount := generators.CountContents(state)
 	decided, err := generator.Generate(ctx, state, nil)
+	// The generator returns the partial state with its error, so the
+	// rendered output carries what the model produced before the failure.
+	output = renderDecisionOutput(decided, baseCount)
 	if err != nil {
-		return false, err
+		return false, output, err
 	}
-	return decisionSelected(decided), nil
+	return decisionSelected(decided), output, nil
 }
 
 // decisionInputText renders the decision request's user message: the task to

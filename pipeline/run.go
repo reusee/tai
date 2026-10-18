@@ -1629,7 +1629,11 @@ func (Module) RunDecorators() RunDecorators {
 // attached to the run's tree before the first write and the session
 // ends with the run's terminal error. A continued run — a goal loop —
 // receives the runner's session tree and leaves session ownership to
-// the runner, which attached the sink and opened the session.
+// the runner, which attached the sink and opened the session. A fresh
+// run records the run's task decision as a decision::task node under
+// the session root: the judgment runs during prompt assembly in the
+// same scope, so the decision's material waits in the scope's
+// TaskDecisionSink until the tree opens. See TheoryOfTaskDecision.
 // See records.TheoryOfInteractionRecording and TheoryOfGoalMode.
 func (Module) Run(
 	recorder *records.Recorder,
@@ -1640,6 +1644,7 @@ func (Module) Run(
 	continuation SessionTreeContinuation,
 	decorators RunDecorators,
 	treeSink *gotools.TreeEventSink,
+	decisionSink *TaskDecisionSink,
 ) Run {
 	run := Run(func(ctx context.Context, opts RunOptions, result *Result) iter.Seq2[*tree.Tree, error] {
 		if result == nil {
@@ -1702,6 +1707,19 @@ func (Module) Run(
 						recorder.EndSession(ls.runErr)
 					}()
 				}
+				// The run's task decision joins the tree as a
+				// decision::task node under the session root: the
+				// decision selected whether the codes base prompt
+				// enters the system prompt, so it opens the session's
+				// record. The judgment runs during prompt assembly,
+				// before this tree opens, so its material waited in
+				// the scope's decision sink. A goal run's decision is
+				// written by the runner under the run tree's root
+				// instead, because the judgment is made once per run;
+				// a continued run's sink is fresh and empty, because
+				// its scope carries the judged value as a fork. See
+				// TheoryOfTaskDecision.
+				ls.sessionTree = writeTaskDecisionNode(ls.sessionTree, ls.sessionRoot, decisionSink.Drain())
 			}
 			ls.sessionTree = writeInitialSystemNode(ls.sessionTree, ls.sessionRoot, opts.InitialState)
 			// gotools' context-assembly diagnostics — the token

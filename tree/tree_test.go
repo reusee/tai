@@ -430,6 +430,10 @@ func TestStructuredTypes(t *testing.T) {
 		{TypeAPIError, "event", "api_error"},
 		{TypeBlockResult, "block", "block-result"},
 		{TypeSummary, "block", "summary"},
+		{TypeDecisionTask, "decision", "task"},
+		{TypeDecisionInput, "decision", "input"},
+		{TypeDecisionOutput, "decision", "output"},
+		{TypeDecisionVerdict, "decision", "verdict"},
 		{TypeError, "error", "error"},
 	} {
 		if got := tt.typ.Prefix(); got != tt.prefix {
@@ -476,6 +480,7 @@ func TestStructuredTypes(t *testing.T) {
 		TypeSynthesizedSummary, TypeThoughtSummary, TypeContinue, TypeIdle, TypeRunError,
 		TypeContext, TypeGenerator, TypeAPIError,
 		TypeBlockResult, TypeSummary, TypeError,
+		TypeDecisionTask, TypeDecisionInput, TypeDecisionOutput, TypeDecisionVerdict,
 		BlockType("change"), BlockType("shell"), BlockType("go-test"), BlockType("go-src"),
 		BlockType("ingest"), BlockType("new-plan"), BlockType("response"), BlockType("memory"),
 		BlockType("plan-op"), BlockType("done"), BlockType("continue"), BlockType("deleted"),

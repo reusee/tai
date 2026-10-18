@@ -329,9 +329,6 @@ func (Module) GoalTreeObserver() GoalTreeObserver {
 	return nil
 }
 
-// GoalOptions carries the runtime configuration of one goal run. Generate
-// and Review are injected: Module.GoalRun binds the scope-backed
-// implementations; tests inject fakes.
 type GoalOptions struct {
 	// Output receives verdicts and failure notes when no GoalTree
 	// observer is set. Generation and review output do not go here:
@@ -364,6 +361,12 @@ type GoalOptions struct {
 	// nothing. See TheoryOfGoalMode and
 	// records.TheoryOfInteractionRecording.
 	Recorder *records.Recorder
+	// TaskDecision carries the run's task decision, written as a
+	// decision::task node under the run tree's root before the first
+	// loop: the judgment is made once per run and selects the system
+	// prompt every loop runs on. Nil writes no node. See
+	// TheoryOfTaskDecision.
+	TaskDecision *TaskDecisionRecord
 }
 
 // GoalLoop is the 1-based number of the goal loop that a generation
@@ -751,6 +754,13 @@ func RunGoal(ctx context.Context, opts GoalOptions) GoalResult {
 		opts.Recorder.StartSession("goal")
 	}
 
+	// The run's task decision joins the run tree's root: the judgment is
+	// made once per run and selects the system prompt every loop runs on,
+	// so it is a run-level record, not a per-loop one. It is written after
+	// the recorder's sink is attached, so the operation joins the run's
+	// session stream. See TheoryOfTaskDecision.
+	runTree = writeTaskDecisionNode(runTree, "root", opts.TaskDecision)
+
 	// The reporter routes every progress message: recorded as a goal
 	// event node plus the observer callback when one is set (a display
 	// front-end's Tree tab), or written to the output writer (failure
@@ -974,9 +984,11 @@ func (Module) GoalRun(
 	return func(ctx context.Context, output io.Writer) GoalResult {
 		// The task judgment is made once per run: the task does not change
 		// between loops, so re-judging could flip the base prompt mid-run.
-		// The judgment is forked into every loop's scope. See
-		// TheoryOfTaskDecision.
-		programmingTask := reset().Get[ProgrammingTask]()
+		// The judgment is forked into every loop's scope, and the record it
+		// leaves in that scope's decision sink joins the run tree under the
+		// root. See TheoryOfTaskDecision.
+		scope := reset()
+		programmingTask := scope.Get[ProgrammingTask]()
 		return RunGoal(ctx, GoalOptions{
 			Output:       output,
 			Generate:     makeGoalLoopGenerator(reset, programmingTask),
@@ -984,6 +996,7 @@ func (Module) GoalRun(
 			GoalTree:     observeGoal,
 			ReviewModels: models,
 			Recorder:     recorder,
+			TaskDecision: scope.Get[*TaskDecisionSink]().Drain(),
 		})
 	}
 }
