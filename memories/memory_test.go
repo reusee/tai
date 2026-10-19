@@ -28,34 +28,34 @@ func TestParseMemoryUpdate(t *testing.T) {
 	}{
 		{
 			name: "first block is memory",
-			text: "<<龘靐 memory\n<memory>\n  <memory-item>user likes Go</memory-item>\n</memory>\n龘靐\n",
+			text: "《龘靐 memory\n<memory>\n  <memory-item>user likes Go</memory-item>\n</memory>\n龘靐\n",
 			adds: []string{"user likes Go"},
 		},
 		{
 			name: "no memory block",
-			text: "<<龘靐 continue\ncontinue content\n龘靐\n",
+			text: "《龘靐 continue\ncontinue content\n龘靐\n",
 		},
 		{
 			name: "skips non-memory blocks",
-			text: "<<龘靐 continue\ncontinue content\n龘靐\n" +
-				"<<齉爩 memory\n<memory>\n  <memory-item>user likes Go</memory-item>\n</memory>\n齉爩\n",
+			text: "《龘靐 continue\ncontinue content\n龘靐\n" +
+				"《齉爩 memory\n<memory>\n  <memory-item>user likes Go</memory-item>\n</memory>\n齉爩\n",
 			adds: []string{"user likes Go"},
 		},
 		{
 			name: "skips unclosed blocks",
-			text: "<<龘靐 finish\nSome summary.\n<<齉爩 memory\n<memory>\n  <memory-item>user likes Go</memory-item>\n</memory>\n齉爩\n",
+			text: "《龘靐 finish\nSome summary.\n《齉爩 memory\n<memory>\n  <memory-item>user likes Go</memory-item>\n</memory>\n齉爩\n",
 			adds: []string{"user likes Go"},
 		},
 		{
 			name: "multiple non-memory blocks",
-			text: "<<龘靐 summary\nsummary text\n龘靐\n" +
-				"<<齉爩 continue\ncontinue content\n齉爩\n" +
-				"<<麤黿 memory\n<memory>\n  <memory-item>item1</memory-item>\n  <memory-item>item2</memory-item>\n</memory>\n麤黿\n",
+			text: "《龘靐 summary\nsummary text\n龘靐\n" +
+				"《齉爩 continue\ncontinue content\n齉爩\n" +
+				"《麤黿 memory\n<memory>\n  <memory-item>item1</memory-item>\n  <memory-item>item2</memory-item>\n</memory>\n麤黿\n",
 			adds: []string{"item1", "item2"},
 		},
 		{
 			name:    "adds and deletes",
-			text:    "<<龘靐 memory\n<memory>\n  <memory-item>user likes Go</memory-item>\n  <memory-delete>user knows Python</memory-delete>\n</memory>\n龘靐\n",
+			text:    "《龘靐 memory\n<memory>\n  <memory-item>user likes Go</memory-item>\n  <memory-delete>user knows Python</memory-delete>\n</memory>\n龘靐\n",
 			adds:    []string{"user likes Go"},
 			deletes: []string{"user knows Python"},
 		},
@@ -210,7 +210,7 @@ func TestUpdateMemoryFromBlockCombinesBlockAndPseudoCall(t *testing.T) {
 		return nil
 	}
 
-	text := "<<龘靐 memory\n<memory>\n  <memory-item>from block</memory-item>\n</memory>\n龘靐\n" +
+	text := "《龘靐 memory\n<memory>\n  <memory-item>from block</memory-item>\n</memory>\n龘靐\n" +
 		"update_user_profile(items=['from pseudo-call'])"
 
 	updateFn := dscope.New(
@@ -250,7 +250,7 @@ func TestUpdateMemoryFromBlockDeduplicates(t *testing.T) {
 		return nil
 	}
 
-	text := "<<龘靐 memory\n<memory>\n  <memory-item>duplicate</memory-item>\n</memory>\n龘靐\n" +
+	text := "《龘靐 memory\n<memory>\n  <memory-item>duplicate</memory-item>\n</memory>\n龘靐\n" +
 		"update_user_profile(items=['duplicate'])"
 
 	updateFn := dscope.New(
@@ -347,7 +347,7 @@ func TestUpdateMemoryFromBlockDeletesItems(t *testing.T) {
 		return nil
 	}
 
-	text := "<<龘靐 memory\n<memory>\n  <memory-item>user likes Go</memory-item>\n  <memory-delete>stale item</memory-delete>\n</memory>\n龘靐\n"
+	text := "《龘靐 memory\n<memory>\n  <memory-item>user likes Go</memory-item>\n  <memory-delete>stale item</memory-delete>\n</memory>\n龘靐\n"
 
 	updateFn := dscope.New(
 		modes.ForTest(t),
@@ -386,7 +386,7 @@ func TestUpdateMemoryFromBlockDeleteWinsOverAdd(t *testing.T) {
 		return nil
 	}
 
-	text := "<<龘靐 memory\n<memory>\n  <memory-item>item</memory-item>\n  <memory-delete>item</memory-delete>\n</memory>\n龘靐\n"
+	text := "《龘靐 memory\n<memory>\n  <memory-item>item</memory-item>\n  <memory-delete>item</memory-delete>\n</memory>\n龘靐\n"
 
 	updateFn := dscope.New(
 		modes.ForTest(t),

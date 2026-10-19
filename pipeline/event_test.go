@@ -9,17 +9,6 @@ import (
 	"github.com/reusee/tai/tree"
 )
 
-// TestRunRecordsEventNodes verifies the loop's tree contract: every
-// notable occurrence of a run is recorded as an event node in the
-// session tree, and every yield carries the full tree. The run's first
-// attempt misses the summary block (truncation retry with a handoff)
-// and its second attempt completes with a summary and a usage part; the
-// test asserts the ordered event nodes under the session root, the
-// attempt structure nodes carrying the session-wide numbers, and that
-// the handoff node carries the handoff summary as its multi-line body.
-// No completed event node is written: a generation completes with a
-// summary block, and the summary nodes under its response carry the
-// completion. See TheoryOfLoopEvents.
 func TestRunRecordsEventNodes(t *testing.T) {
 	withRun(t, func(run Run) {
 		usage := generators.Usage{}
@@ -36,7 +25,7 @@ func TestRunRecordsEventNodes(t *testing.T) {
 				if callCount == 1 {
 					return appendPhase("incomplete output without summary")
 				}
-				return appendPhaseWithUsage("<<龘靐 summary\nDone.\n龘靐\n", usage)
+				return appendPhaseWithUsage("《龘靐 summary\nDone.\n龘靐\n", usage)
 			},
 			RetryOnMissingCompletion: true,
 			MaxRetries:               3,
@@ -162,7 +151,7 @@ func TestRunGeneratorNodeContent(t *testing.T) {
 						Role: generators.RoleLog,
 						Parts: []generators.Part{
 							generators.FinishReason("stop"),
-							generators.Text("<<齉爩 summary\n- done\n齉爩\n"),
+							generators.Text("《齉爩 summary\n- done\n齉爩\n"),
 						},
 					})
 					if err != nil {
@@ -287,7 +276,7 @@ func (eventSummaryGenerator) Generate(ctx context.Context, state generators.Stat
 	return state.AppendContent(&generators.Content{
 		Role: generators.RoleModel,
 		Parts: []generators.Part{
-			generators.Text("<<齉爩 summary\n- condensed\n齉爩\n"),
+			generators.Text("《齉爩 summary\n- condensed\n齉爩\n"),
 		},
 	})
 }
@@ -308,7 +297,7 @@ func TestRunFinishNodeContent(t *testing.T) {
 						Role: generators.RoleLog,
 						Parts: []generators.Part{
 							generators.FinishReason("stop"),
-							generators.Text("<<齉爩 summary\n- done\n齉爩\n"),
+							generators.Text("《齉爩 summary\n- done\n齉爩\n"),
 						},
 					})
 					if err != nil {

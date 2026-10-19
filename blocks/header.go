@@ -21,12 +21,10 @@ Kind names support letters, digits, hyphens, underscores, and periods;
 the colon ends the name.
 `
 
-// TheoryOfLenientTrailingTagMarkers documents the lenient acceptance of an
-// opening marker whose header line ends with a closing tag marker.
 const TheoryOfLenientTrailingTagMarkers = `
 Models sometimes close an opening marker the way they close an XML tag: the
-header line ends with ">" or "/>", as in <<DELIMITER change:?op=MODIFY> or
-<<DELIMITER change:?/>. The strict parse fails on both shapes: the marker is
+header line ends with ">" or "/>", as in 《DELIMITER change:?op=MODIFY> or
+《DELIMITER change:?/>. The strict parse fails on both shapes: the marker is
 trailing content, and a ">" glued to the last value is swallowed into the
 value, so the block is dropped or carries a corrupted attribute.
 

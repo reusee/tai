@@ -103,29 +103,30 @@ guarantee corrupts the block.
 
 const TheoryOfNestedBlockParsing = `
 The parser supports nested blocks: when a block body contains another block opening
-marker (<<DELIMITER kind:?k=v), the inner block's closing marker does not prematurely
+marker (《DELIMITER kind:?k=v), the inner block's closing marker does not prematurely
 close the outer block. The closing-marker scanner maintains a delimiter stack
-initialized with the outer block's delimiter. A line that starts with "<<" and
+initialized with the outer block's delimiter. A line that starts with "《" and
 contains a valid URI header after the delimiter is treated as a nested opening
 only when its delimiter matches the outer block's delimiter; matching delimiters are
 pushed onto the stack. A line that is a closing marker of the delimiter at the top of
-the stack — the delimiter alone on its own line, or the lenient delimiter+">>" form
+the stack — the delimiter alone on its own line, or the lenient delimiter+"》" form
 (see TheoryOfLenientClosingMarkers) — pops the stack; when the stack becomes empty,
 the outer block is closed.
 
 The header validation after the delimiter prevents false positives from content that
-starts with "<<" but is not a block opening.
+starts with "《" but is not a block opening.
 `
 
 const TheoryOfBlockFormat = `
-The parser uses a heredoc-style block format. The delimiter precedes the header:
-<<DELIMITER kind:?param1=value1&param2=value2 ... DELIMITER, where the header
-is RFC 3986 URI syntax: the scheme is the block kind, the optional path
-follows the colon, and the query holds key=value pairs. A bare kind without
-the colon is also accepted (see TheoryOfBareKinds). The delimiter is extracted
-as the text between << and the first whitespace or ( character on the opening
-line. The closing marker is the delimiter alone on its own line; the closing
-semantics and their lenient exception live in TheoryOfBoundaryUniqueness and
+The parser uses a heredoc-style block format. The opening marker 《 precedes the
+delimiter and the header: 《DELIMITER kind:?param1=value1&param2=value2 ...
+DELIMITER, where the header is RFC 3986 URI syntax: the scheme is the block
+kind, the optional path follows the colon, and the query holds key=value
+pairs. A bare kind without the colon is also accepted (see
+TheoryOfBareKinds). The delimiter is extracted as the text between 《 and the
+first whitespace or open parenthesis on the opening line. The closing marker
+is the delimiter alone on its own line; the closing semantics and their lenient
+exception live in TheoryOfBoundaryUniqueness and
 TheoryOfLenientClosingMarkers.
 
 An opening marker whose line extends to the end of the content (no trailing newline)
@@ -145,7 +146,7 @@ parser accepts this shape leniently for the common Chinese and English
 punctuation marks: the marks that end a sentence or a clause, the marks
 that close a quotation or a bracket, the ellipsis, and the em dash, in
 their ASCII, fullwidth, and CJK forms. lenientPunctuationMarks holds the
-exact set. When << directly follows such a mark and the rest of the line
+exact set. When 《 directly follows such a mark and the rest of the line
 parses as a complete opening (a valid two-character Han delimiter plus a
 valid or bare kind header, with nothing after it on the line), the marker
 is treated as an opening candidate.
@@ -164,18 +165,18 @@ nonconforming output, not an advertised format.
 `
 
 // TheoryOfLenientClosingMarkers documents the lenient acceptance of a
-// closing line carrying a trailing ">>" after the delimiter. See the
+// closing line carrying a trailing "》" after the delimiter. See the
 // constant body for the rule and its rationale.
 const TheoryOfLenientClosingMarkers = `
-Models occasionally emit a closing line with a trailing ">>" glued to the
-delimiter — DELIMITER>> — mirroring the "<<" prefix of the opening marker.
+Models occasionally emit a closing line with a trailing "》" glued to the
+delimiter — DELIMITER》 — mirroring the "《" prefix of the opening marker.
 The parser accepts this shape silently: after trimming the line, a closing
-marker is the delimiter alone, or the delimiter followed by ">>",
+marker is the delimiter alone, or the delimiter followed by "》",
 optionally separated by whitespace. The lenient form pops the delimiter
 stack like the exact form, so it closes nested blocks too, and the
-streaming guarantee is preserved: a partial trailing form — a single ">" —
-does not match, so a block streamed up to that byte stays unclosed until
-the line completes.
+streaming guarantee is preserved: a trailing fragment that does not carry
+the complete rune does not match, so a block streamed up to that byte
+stays unclosed until the line completes.
 
 Like the lenient opening markers and the attribute-only header, this is a
 recovery path for nonconforming output, not an advertised format: no
@@ -187,18 +188,18 @@ collision hints.
 
 const TheoryOfBareKinds = `
 Models may emit block opening markers with a bare kind when no parameters are needed:
-<<DELIMITER kind instead of <<DELIMITER kind:. Both no-parameter forms are accepted
+《DELIMITER kind instead of 《DELIMITER kind:. Both no-parameter forms are accepted
 on equal footing.
 `
 
 const TheoryOfOpFunctionNameHeaders = `
 Models sometimes emit change blocks with an operation name as the header's
-scheme: <<DELIMITER MODIFY:?target=...&file-path=... instead of
-<<DELIMITER change:?op=MODIFY&.... After the header parses, tryParseBlock
+scheme: 《DELIMITER MODIFY:?target=...&file-path=... instead of
+《DELIMITER change:?op=MODIFY&.... After the header parses, tryParseBlock
 rewrites such a block: when the scheme is one of the change operation
 names (changeOpKinds), the kind becomes "change", and a missing or empty
 op attribute is derived from the scheme; an explicit non-empty op
-attribute takes precedence. The bare form (<<DELIMITER MODIFY) is
+attribute takes precedence. The bare form (《DELIMITER MODIFY) is
 normalized the same way: an operation name is never a valid kind of
 another block, so the rewrite is unambiguous.
 
@@ -210,7 +211,7 @@ op-name form, and the change-kind form remains the only taught form.
 
 const TheoryOfKindlessBlocks = `
 Models sometimes emit blocks whose opening marker omits the XML opening tag:
-<<DELIMITER ... DELIMITER with no kind or attributes. The parser accepts these blocks
+《DELIMITER ... DELIMITER with no kind or attributes. The parser accepts these blocks
 with an empty Kind (see tryParseBlock). Because an empty Kind matches no component
 and cannot be used for lookup, such blocks can only be located by iterating all
 blocks in order — ParseBlocks provides this capability. Consumers that need a
@@ -253,7 +254,7 @@ Use heredoc-delimited blocks to include structured content in responses.
 This format avoids escaping issues and is easy to parse.
 
 **Block Format:**
-<<DELIMITER kind:?param1=value1&param2=value2
+《DELIMITER kind:?param1=value1&param2=value2
 <kind-specific content>
 DELIMITER
 
@@ -266,14 +267,14 @@ DELIMITER
 - If no blocks are needed, simply omit them.
 
 **Line-Start Requirement (CRITICAL):**
-- The opening marker (<<DELIMITER kind:?param=value) MUST appear at the beginning of a line — immediately after a newline character or at the very start of the response.
-- **Self-check (run it every time)**: Before emitting <<, look at the character you are writing it after. It MUST be a newline — or nothing, when the marker is the first output of the response. When anything else precedes it — a word, a punctuation mark, a space, a list bullet, a code fence — emit a newline first, then the marker.
+- The opening marker (《DELIMITER kind:?param=value) MUST appear at the beginning of a line — immediately after a newline character or at the very start of the response.
+- **Self-check (run it every time)**: Before emitting 《, look at the character you are writing it after. It MUST be a newline — or nothing, when the marker is the first output of the response. When anything else precedes it — a word, a punctuation mark, a space, a list bullet, a code fence — emit a newline first, then the marker.
 - The closing marker (DELIMITER) MUST appear on its own line — the delimiter alone, with nothing else on that line.
 - NEVER place the opening marker at the end of a line of text. If prose immediately precedes a block, end the prose with a newline first, then start the marker on its own new line.
-- Any ` + "`<<`" + ` that is not at the start of a line is treated as regular content and will NOT be recognized as a block marker; the block will be silently ignored and its content will be lost.
+- Any ` + "`《`" + ` that is not at the start of a line is treated as regular content and will NOT be recognized as a block marker; the block will be silently ignored and its content will be lost.
 - Do this (marker starts on its own line after the prose):
   Some explanation text.
-  <<龃龉 example:?param=value
+  《龃龉 example:?param=value
   <block body>
   龃龉
 
@@ -284,7 +285,7 @@ DELIMITER
 - **Body-disjointness (HARD REQUIREMENT)**: The delimiter MUST NOT appear anywhere in the block body (the code or text between the markers). Because the parser closes the block at the first line matching the delimiter, a body line that matches the delimiter prematurely closes the block and truncates all remaining content. Two uncommon Chinese characters are very unlikely to appear in code or prose, but MUST verify the chosen pair is absent from the body before emitting the block. This is not a suggestion: a delimiter that appears in the body corrupts the block.
 
 **Delimiter Matching (CRITICAL):**
-- The opening marker and the closing line form a MATCHED PAIR: a block opened with <<龃龉 example:?param=value MUST be closed with the EXACT same delimiter string 龃龉, never 彳亍 or any other delimiter.
+- The opening marker and the closing line form a MATCHED PAIR: a block opened with 《龃龉 example:?param=value MUST be closed with the EXACT same delimiter string 龃龉, never 彳亍 or any other delimiter.
 - A closing line that does not match the opening delimiter is treated as body content, not a closing marker. The parser continues scanning for the matching delimiter; if no matching closing line is found, the block is unclosed — the opening marker's block never completes and its content is discarded.
 - Always close a block with the same delimiter used to open it. Before writing each closing line, verify it matches the opening delimiter of the same block. The most common cause of mismatched delimiters is copying a delimiter from another block or from an example instead of reusing the opening delimiter.
 
@@ -312,7 +313,7 @@ type Block struct {
 func ParseFirstBlock(content []byte) (block Block, start int, end int, ok bool, err error) {
 	searchFrom := 0
 	for {
-		idx := bytes.Index(content[searchFrom:], []byte("<<"))
+		idx := bytes.Index(content[searchFrom:], []byte(blockOpeningMarker))
 		if idx == -1 {
 			return
 		}
@@ -326,23 +327,24 @@ func ParseFirstBlock(content []byte) (block Block, start int, end int, ok bool, 
 		lenient := false
 		if idx > 0 && content[idx-1] != '\n' {
 			if !precededByPunctuation(content, idx) {
-				searchFrom = idx + 2
+				searchFrom = idx + len(blockOpeningMarker)
 				continue
 			}
 			lenient = true
 		}
 		blockStart := idx
 
-		// Extract the opening line after <<. When the line extends to
-		// the end of the content (no trailing newline), the block is
-		// necessarily unclosed: the closing marker must be alone on its
-		// own line, which cannot exist after EOF. The line is still
-		// parsed as an opening marker so the truncation is reported as
-		// an unclosed-block error instead of silently dropping the
-		// block as prose. The lenient punctuation-glued form is the
-		// exception: its unclosed result is skipped silently. See
-		// TheoryOfBlockFormat and TheoryOfLenientOpeningMarkers.
-		lineStart := idx + 2
+		// Extract the opening line after the marker. When the line
+		// extends to the end of the content (no trailing newline), the
+		// block is necessarily unclosed: the closing marker must be
+		// alone on its own line, which cannot exist after EOF. The line
+		// is still parsed as an opening marker so the truncation is
+		// reported as an unclosed-block error instead of silently
+		// dropping the block as prose. The lenient punctuation-glued
+		// form is the exception: its unclosed result is skipped
+		// silently. See TheoryOfBlockFormat and
+		// TheoryOfLenientOpeningMarkers.
+		lineStart := idx + len(blockOpeningMarker)
 		lineEnd := bytes.IndexByte(content[lineStart:], '\n')
 		if lineEnd == -1 {
 			lineEnd = len(content)
@@ -352,7 +354,7 @@ func ParseFirstBlock(content []byte) (block Block, start int, end int, ok bool, 
 		openingLine := string(content[lineStart:lineEnd])
 
 		// Parse the block in the heredoc-delimited format:
-		// <<DELIMITER <kind ...> ... DELIMITER
+		// 《DELIMITER <kind ...> ... DELIMITER
 		// See TheoryOfBlockFormat.
 		if r, matched := tryParseBlock(content, openingLine, lineEnd, blockStart); matched {
 			if lenient && !r.ok {
@@ -361,13 +363,13 @@ func ParseFirstBlock(content []byte) (block Block, start int, end int, ok bool, 
 				// parse error. Skip it and keep scanning so later
 				// block markers are still found. See
 				// TheoryOfLenientOpeningMarkers.
-				searchFrom = idx + 2
+				searchFrom = idx + len(blockOpeningMarker)
 				continue
 			}
 			return r.block, r.start, r.end, r.ok, r.err
 		}
 
-		searchFrom = idx + 1
+		searchFrom = idx + len(blockOpeningMarker)
 	}
 }
 
@@ -507,7 +509,7 @@ var lenientPunctuationMarks = []string{
 	"）", "］", "｝", "＞", "》", "〉", "】", "」", "』", "”", "’",
 }
 
-// precededByPunctuation reports whether the << marker at byte offset idx in
+// precededByPunctuation reports whether the 《 marker at byte offset idx in
 // content is immediately preceded by a common Chinese or English punctuation
 // mark (see lenientPunctuationMarks): the lenient opening form glued to the
 // end of a prose sentence. See TheoryOfLenientOpeningMarkers.
@@ -526,10 +528,10 @@ func precededByPunctuation(content []byte, idx int) bool {
 // a real opening line, so an inner marker is admitted exactly when an outer
 // one is.
 func nestedOpeningDelimiter(line string) (delimiter string, ok bool) {
-	if !strings.HasPrefix(line, "<<") {
+	if !strings.HasPrefix(line, blockOpeningMarker) {
 		return "", false
 	}
-	afterMarker := line[2:]
+	afterMarker := line[len(blockOpeningMarker):]
 	delimiter = extractDelimiter(afterMarker)
 	if delimiter == "" {
 		return "", false
@@ -547,11 +549,11 @@ func nestedOpeningDelimiter(line string) (delimiter string, ok bool) {
 
 // isClosingMarkerLine reports whether a trimmed line closes a block of the
 // given delimiter: the delimiter alone, or — as a lenient exception — the
-// delimiter followed by ">>", optionally separated by whitespace. The
-// trailing form mirrors the "<<" prefix of the opening marker: a model
-// appending ">>" to the delimiter intends the block to close there. A
-// partial trailing form (a single ">") does not match, so streaming keeps
-// the block unclosed until the line completes. See
+// delimiter followed by "》", optionally separated by whitespace. The
+// trailing form mirrors the "《" opening marker: a model appending "》" to
+// the delimiter intends the block to close there. A trailing fragment that
+// does not carry the complete rune does not match, so streaming keeps the
+// block unclosed until the line completes. See
 // TheoryOfLenientClosingMarkers.
 func isClosingMarkerLine(trimmed []byte, delimiter string) bool {
 	if string(trimmed) == delimiter {
@@ -561,20 +563,21 @@ func isClosingMarkerLine(trimmed []byte, delimiter string) bool {
 	if !ok {
 		return false
 	}
-	return string(bytes.TrimSpace(rest)) == ">>"
+	return string(bytes.TrimSpace(rest)) == lenientClosingSuffix
 }
 
 // findClosingMarker searches for the closing marker of the delimiter within
 // the content starting from bodyStart: a line whose trimmed content is the
 // delimiter alone, or — as a lenient exception — the delimiter followed by
-// ">>". See TheoryOfLenientClosingMarkers. It uses a stack-based approach
-// to handle nested blocks: lines starting with "<<" that contain a valid
-// XML opening tag push their delimiter onto the stack, and a closing marker
+// "》". See TheoryOfLenientClosingMarkers. It uses a stack-based approach
+// to handle nested blocks: lines starting with "《" that contain a valid
+// opening header push their delimiter onto the stack, and a closing marker
 // pops the stack only if it matches the top. The outer block closes when
 // the stack becomes empty. See TheoryOfNestedBlockParsing.
 func findClosingMarker(content []byte, bodyStart int, delimiter string) (bodyEnd, blockEnd int, found bool) {
 	stack := []string{delimiter}
 	searchFrom := bodyStart
+	markerBytes := []byte(blockOpeningMarker)
 	for {
 		lineEnd := bytes.IndexByte(content[searchFrom:], '\n')
 		atEOF := lineEnd == -1
@@ -585,11 +588,12 @@ func findClosingMarker(content []byte, bodyStart int, delimiter string) (bodyEnd
 			lineBytes = content[searchFrom : searchFrom+lineEnd]
 		}
 
-		// Only lines starting with "<<" can be nested block openings.
-		// This byte-level check avoids string conversion for the vast
-		// majority of body lines (code, prose, etc.) that do not start
-		// with "<<". See TheoryOfNestedBlockParsing.
-		if len(lineBytes) >= 2 && lineBytes[0] == '<' && lineBytes[1] == '<' {
+		// Only lines starting with the opening marker can be nested
+		// block openings. This byte-level check avoids string
+		// conversion for the vast majority of body lines (code, prose,
+		// etc.) that do not start with the marker. See
+		// TheoryOfNestedBlockParsing.
+		if bytes.HasPrefix(lineBytes, markerBytes) {
 			line := string(lineBytes)
 			if nestedDelim, nested := nestedOpeningDelimiter(line); nested && nestedDelim == stack[0] {
 				stack = append(stack, nestedDelim)
@@ -603,7 +607,7 @@ func findClosingMarker(content []byte, bodyStart int, delimiter string) (bodyEnd
 
 		// Check for closing marker: the delimiter alone on its own
 		// line (with optional whitespace), or the lenient
-		// delimiter+">>" form. See TheoryOfNestedBlockParsing and
+		// delimiter+"》" form. See TheoryOfNestedBlockParsing and
 		// TheoryOfLenientClosingMarkers.
 		trimmed := bytes.TrimSpace(lineBytes)
 		if len(stack) > 0 && isClosingMarkerLine(trimmed, stack[len(stack)-1]) {
@@ -664,6 +668,16 @@ func findDelimiterCollisionHints(content []byte, bodyStart int, delimiter string
 	}
 	return hints
 }
+
+// blockOpeningMarker starts a block opening line: the left book title mark
+// precedes the delimiter and the header. lenientClosingSuffix trails a
+// closing delimiter in the lenient closing form, mirroring
+// blockOpeningMarker. See TheoryOfBlockFormat and
+// TheoryOfLenientClosingMarkers.
+const (
+	blockOpeningMarker   = "《"
+	lenientClosingSuffix = "》"
+)
 
 // extractDelimiter extracts the delimiter from an opening marker line: the
 // text from the start of the trimmed line up to the first whitespace or

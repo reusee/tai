@@ -20,7 +20,7 @@ func TestParserStateFlushHandlerErrorPreservesPartialState(t *testing.T) {
 		return expectedErr
 	})
 
-	text := "<<龘靐 change:?op=MODIFY&target\n<<齉爩 summary\nDone.\n齉爩\n"
+	text := "《龘靐 change:?op=MODIFY&target\n《齉爩 summary\nDone.\n齉爩\n"
 	newState, err := ps.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(text)},

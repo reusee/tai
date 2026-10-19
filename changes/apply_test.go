@@ -828,7 +828,7 @@ func TestApplyUnclosedBlockError(t *testing.T) {
 	}
 	defer root.Close()
 
-	content := "<<龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ff.go\nfunc Foo() {}\n"
+	content := "《龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ff.go\nfunc Foo() {}\n"
 	diffPath := filepath.Join(dir, "diff.txt")
 	if err := os.WriteFile(diffPath, []byte(content), 0644); err != nil {
 		t.Fatal(err)
@@ -905,8 +905,8 @@ func TestApplyPreservesNonChangeBlocks(t *testing.T) {
 		}
 	}
 
-	changeBlock := "<<龘靐 change:?op=MODIFY&target=Old&file-path=test.go\nfunc New() {}\n龘靐\n"
-	summaryBlock := "<<齉爩 summary\n- Renamed Old to New.\n齉爩\n"
+	changeBlock := "《龘靐 change:?op=MODIFY&target=Old&file-path=test.go\nfunc New() {}\n龘靐\n"
+	summaryBlock := "《齉爩 summary\n- Renamed Old to New.\n齉爩\n"
 
 	t.Run("ChangeThenSummary", func(t *testing.T) {
 		run(t, changeBlock+"\n"+summaryBlock)
@@ -1417,7 +1417,7 @@ func TestApplyChangeBlockInsertKeepsLinesSeparated(t *testing.T) {
 		}
 
 		diffPath := filepath.Join(dir, "diff.txt")
-		content := "<<龘靐 change:?op=INSERT_BEFORE&find=%23%23%20Section&file-path=readme.md\n## New Section\n龘靐\n"
+		content := "《龘靐 change:?op=INSERT_BEFORE&find=%23%23%20Section&file-path=readme.md\n## New Section\n龘靐\n"
 		if err := os.WriteFile(diffPath, []byte(content), 0644); err != nil {
 			t.Fatal(err)
 		}
@@ -1451,7 +1451,7 @@ func TestApplyChangeBlockInsertKeepsLinesSeparated(t *testing.T) {
 		}
 
 		diffPath := filepath.Join(dir, "diff.txt")
-		content := "<<龘靐 change:?op=INSERT_AFTER&find=%5Bdependencies%5D&file-path=Cargo.toml\nserde = { version = \"1.0\", features = [\"derive\"] }\n龘靐\n"
+		content := "《龘靐 change:?op=INSERT_AFTER&find=%5Bdependencies%5D&file-path=Cargo.toml\nserde = { version = \"1.0\", features = [\"derive\"] }\n龘靐\n"
 		if err := os.WriteFile(diffPath, []byte(content), 0644); err != nil {
 			t.Fatal(err)
 		}

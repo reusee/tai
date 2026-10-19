@@ -50,9 +50,9 @@ output that the generation loop's error-retry gate needs to detect the content
 increase, so the error is fed back to the model for retry instead of stopping the
 loop. Any remaining unparseable fragments are discarded so content appended after
 Flush (e.g., from a subsequent generation cycle) is never combined with pre-Flush
-content within the same block. Delimiters are parsed as the text between << and the
-first whitespace or < character; this ensures the delimiter is extracted correctly
-regardless of what follows it on the opening line.
+content within the same block. Delimiters are parsed as the text between 《 and the
+first whitespace or open parenthesis; this ensures the delimiter is extracted
+correctly regardless of what follows it on the opening line.
 `
 
 const TheoryOfParseErrorCollection = `

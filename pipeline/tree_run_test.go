@@ -64,7 +64,7 @@ func TestRunAttemptNodesUnderAttemptNode(t *testing.T) {
 			}),
 			Components: nil,
 			PhaseBuilder: func(g generators.Generator) generators.Phase {
-				return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
+				return appendPhase("《龘靐 summary\nDone.\n龘靐\n")
 			},
 		})
 		if err != nil {
@@ -113,9 +113,9 @@ func TestRunFeedbackUserNodeJoinsNextAttempt(t *testing.T) {
 		phaseBuilder := func(g generators.Generator) generators.Phase {
 			callCount++
 			if callCount == 1 {
-				return appendPhase("<<龘靐 shell\necho hello\n龘靐\n<<贞观 summary\nRound 1 done.\n贞观\n")
+				return appendPhase("《龘靐 shell\necho hello\n龘靐\n《贞观 summary\nRound 1 done.\n贞观\n")
 			}
-			return appendPhase("<<贞观 summary\nDone.\n贞观\n")
+			return appendPhase("《贞观 summary\nDone.\n贞观\n")
 		}
 		comps := components.ComponentSet{
 			{
@@ -180,7 +180,7 @@ func TestRunRetryFeedbackUserNodeJoinsRetryAttempt(t *testing.T) {
 				// and the fake Handoff supplies the retry prompt.
 				return appendPhase("partial output")
 			}
-			return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
+			return appendPhase("《龘靐 summary\nDone.\n龘靐\n")
 		}
 		result, err := runOnce(run, RunOptions{
 			Generator:                nil,
@@ -245,7 +245,7 @@ func TestRunChatPhaseUserNodeJoinsAttempt(t *testing.T) {
 			generateCount++
 			newState, err := state.AppendContent(&generators.Content{
 				Role:  generators.RoleAssistant,
-				Parts: []generators.Part{generators.Text("<<贞观 summary\nDone.\n贞观\n")},
+				Parts: []generators.Part{generators.Text("《贞观 summary\nDone.\n贞观\n")},
 			})
 			if err != nil {
 				return nil, state, err
@@ -528,9 +528,9 @@ func TestRunErrorNodesRecorded(t *testing.T) {
 			phaseBuilder := func(g generators.Generator) generators.Phase {
 				callCount++
 				if callCount == 1 {
-					return appendPhaseWithFlush("<<貞觀 summary\nRound 1.\n貞觀\n<<龘靐 shell\necho hi\n")
+					return appendPhaseWithFlush("《貞觀 summary\nRound 1.\n貞觀\n《龘靐 shell\necho hi\n")
 				}
-				return appendPhaseWithFlush("<<貞觀 summary\nDone.\n貞觀\n")
+				return appendPhaseWithFlush("《貞觀 summary\nDone.\n貞觀\n")
 			}
 			result, err := runOnce(run, RunOptions{
 				Generator:    nil,
@@ -564,9 +564,9 @@ func TestRunErrorNodesRecorded(t *testing.T) {
 			phaseBuilder := func(g generators.Generator) generators.Phase {
 				callCount++
 				if callCount == 1 {
-					return appendPhaseWithFlush("<<永樂 mystery\nbody\n永樂\n<<崇禎 summary\nDone.\n崇禎\n")
+					return appendPhaseWithFlush("《永樂 mystery\nbody\n永樂\n《崇禎 summary\nDone.\n崇禎\n")
 				}
-				return appendPhaseWithFlush("<<崇禎 summary\nDone.\n崇禎\n")
+				return appendPhaseWithFlush("《崇禎 summary\nDone.\n崇禎\n")
 			}
 			comps := components.ComponentSet{
 				{Kind: "summary", PromptSection: "summary prompt"},
@@ -637,7 +637,7 @@ func TestRunFailedAttemptsRecordProducedContent(t *testing.T) {
 	}
 	// completePhase appends a summary block, completing the attempt.
 	completePhase := func() generators.Phase {
-		return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
+		return appendPhase("《龘靐 summary\nDone.\n龘靐\n")
 	}
 	// assertFailedAttemptContent asserts the first attempt carries the
 	// failed attempt's thoughts and body as its own nodes.
@@ -842,7 +842,7 @@ func TestResultCarriesSessionTree(t *testing.T) {
 			InitialState: generators.NewPrompts("", nil),
 			Components:   nil,
 			PhaseBuilder: func(g generators.Generator) generators.Phase {
-				return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
+				return appendPhase("《龘靐 summary\nDone.\n龘靐\n")
 			},
 		})
 		if err != nil {
@@ -993,9 +993,9 @@ func TestRunFeedbackCarriesTreeOutline(t *testing.T) {
 		phaseBuilder := func(g generators.Generator) generators.Phase {
 			callCount++
 			if callCount == 1 {
-				return appendPhase("<<龘靐 shell\necho hello\n龘靐\n<<贞观 summary\nRound 1 done.\n贞观\n")
+				return appendPhase("《龘靐 shell\necho hello\n龘靐\n《贞观 summary\nRound 1 done.\n贞观\n")
 			}
-			return appendPhase("<<贞观 summary\nDone.\n贞观\n")
+			return appendPhase("《贞观 summary\nDone.\n贞观\n")
 		}
 		comps := components.ComponentSet{
 			{
@@ -1064,7 +1064,7 @@ func TestRunInertProcessAttachesBlockResult(t *testing.T) {
 			if callCount > 1 {
 				t.Fatal("an inert component processing must not trigger a new generation")
 			}
-			return appendPhase("<<萬曆 memory\n<memory>\n  <memory-item>likes go</memory-item>\n</memory>\n萬曆\n<<天祐 summary\nDone.\n天祐\n")
+			return appendPhase("《萬曆 memory\n<memory>\n  <memory-item>likes go</memory-item>\n</memory>\n萬曆\n《天祐 summary\nDone.\n天祐\n")
 		}
 		comps := components.ComponentSet{
 			{

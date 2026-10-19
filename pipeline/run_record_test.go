@@ -64,7 +64,7 @@ func TestRunRecordsFreshSession(t *testing.T) {
 			}),
 			Command: "test-command",
 			PhaseBuilder: func(g generators.Generator) generators.Phase {
-				return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
+				return appendPhase("《龘靐 summary\nDone.\n龘靐\n")
 			},
 		})
 		if err != nil {
@@ -114,7 +114,7 @@ func TestRunContinuedSessionLeavesRecordingToRunner(t *testing.T) {
 			Generator:    nil,
 			InitialState: generators.NewPrompts("", nil),
 			PhaseBuilder: func(g generators.Generator) generators.Phase {
-				return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
+				return appendPhase("《龘靐 summary\nDone.\n龘靐\n")
 			},
 		})
 		if err != nil {

@@ -207,7 +207,7 @@ func writeEventBlock(b *strings.Builder, op tree.Op) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(b, "<<%s event:?%s\n", delimiter, eventMetadataQuery(op))
+	fmt.Fprintf(b, "《%s event:?%s\n", delimiter, eventMetadataQuery(op))
 	b.WriteString(op.Content)
 	if op.Content != "" && !strings.HasSuffix(op.Content, "\n") {
 		b.WriteString("\n")

@@ -48,11 +48,11 @@ func (m *mockSummarizerGenerator) Generate(ctx context.Context, state generators
 	var blockOutput string
 	switch {
 	case m.prefixBlock:
-		blockOutput = "<<龘靐 continue\ncontinue\n龘靐\n<<齉爩 summary\n" + m.summary + "\n齉爩"
+		blockOutput = "《龘靐 continue\ncontinue\n龘靐\n《齉爩 summary\n" + m.summary + "\n齉爩"
 	case m.noHeader:
-		blockOutput = "<<龘靐\n" + m.summary + "\n龘靐"
+		blockOutput = "《龘靐\n" + m.summary + "\n龘靐"
 	default:
-		blockOutput = "<<龘靐 summary\n" + m.summary + "\n龘靐"
+		blockOutput = "《龘靐 summary\n" + m.summary + "\n龘靐"
 	}
 	return state.AppendContent(&generators.Content{
 		Role: generators.RoleModel,
@@ -528,8 +528,8 @@ func TestSummarizeSystemPromptUsesUncommonChineseDelimiter(t *testing.T) {
 	if !strings.Contains(SummarizeSystemPrompt, "uncommon Chinese two-character word") {
 		t.Fatal("SummarizeSystemPrompt must mandate the uncommon-Chinese-two-character-word delimiter policy")
 	}
-	if strings.Contains(SummarizeSystemPrompt, "<<ENDSUM") {
-		t.Fatal("SummarizeSystemPrompt must not display the legacy ENDSUM example delimiter")
+	if strings.Contains(SummarizeSystemPrompt, "《ENDSUM") {
+		t.Fatal("SummarizeSystemPrompt must not display the literal ENDSUM template marker")
 	}
 }
 

@@ -10,7 +10,7 @@ import (
 )
 
 func TestParseFirstBlockRejectsNonHanDelimiter(t *testing.T) {
-	content := []byte("<<DELIM1 change:?op=MODIFY&target=Foo&file-path=%2Ftest.go\nfunc Foo() {}\nDELIM1\n")
+	content := []byte("《DELIM1 change:?op=MODIFY&target=Foo&file-path=%2Ftest.go\nfunc Foo() {}\nDELIM1\n")
 	_, _, _, ok, err := ParseFirstBlock(content)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -19,7 +19,7 @@ func TestParseFirstBlockRejectsNonHanDelimiter(t *testing.T) {
 		t.Fatal("expected no block for non-Han delimiter")
 	}
 
-	content2 := []byte("<<DELIM1 change:?op=MODIFY&target=Foo&file-path=%2Ftest.go\nfunc Foo() {}\nDELIM1\n<<龘靐 change:?op=MODIFY&target=Bar&file-path=%2Ftest.go\nfunc Bar() {}\n龘靐\n")
+	content2 := []byte("《DELIM1 change:?op=MODIFY&target=Foo&file-path=%2Ftest.go\nfunc Foo() {}\nDELIM1\n《龘靐 change:?op=MODIFY&target=Bar&file-path=%2Ftest.go\nfunc Bar() {}\n龘靐\n")
 	block, _, _, ok, err := ParseFirstBlock(content2)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -33,7 +33,7 @@ func TestParseFirstBlockRejectsNonHanDelimiter(t *testing.T) {
 }
 
 func TestParseFirstBlockRejectsThreeCharDelimiter(t *testing.T) {
-	content := []byte("<<徕珑龘 change:?op=MODIFY&target=Foo&file-path=%2Ftest.go\nfunc Foo() {}\n徕珑龘\n")
+	content := []byte("《徕珑龘 change:?op=MODIFY&target=Foo&file-path=%2Ftest.go\nfunc Foo() {}\n徕珑龘\n")
 	_, _, _, ok, err := ParseFirstBlock(content)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -42,7 +42,7 @@ func TestParseFirstBlockRejectsThreeCharDelimiter(t *testing.T) {
 		t.Fatal("expected no block for three-character Han delimiter")
 	}
 
-	content2 := []byte("<<徕珑龘 change:?op=MODIFY&target=Foo&file-path=%2Ftest.go\nfunc Foo() {}\n徕珑龘\n<<龘靐 change:?op=MODIFY&target=Bar&file-path=%2Ftest.go\nfunc Bar() {}\n龘靐\n")
+	content2 := []byte("《徕珑龘 change:?op=MODIFY&target=Foo&file-path=%2Ftest.go\nfunc Foo() {}\n徕珑龘\n《龘靐 change:?op=MODIFY&target=Bar&file-path=%2Ftest.go\nfunc Bar() {}\n龘靐\n")
 	block, _, _, ok, err := ParseFirstBlock(content2)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -56,7 +56,7 @@ func TestParseFirstBlockRejectsThreeCharDelimiter(t *testing.T) {
 }
 
 func TestBoundaryBlockLineStart(t *testing.T) {
-	content1 := []byte("some text <<龘靐 change:?op=MODIFY&target=x&file-path=%2Fx.go\nbody\n龘靐\n")
+	content1 := []byte("some text 《龘靐 change:?op=MODIFY&target=x&file-path=%2Fx.go\nbody\n龘靐\n")
 	_, _, _, ok, err := ParseFirstBlock(content1)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -65,7 +65,7 @@ func TestBoundaryBlockLineStart(t *testing.T) {
 		t.Fatal("expected no block for mid-line start marker")
 	}
 
-	content2 := []byte("<<龘靐 change:?op=MODIFY&target=x&file-path=%2Fx.go\nbody text龘靐\n")
+	content2 := []byte("《龘靐 change:?op=MODIFY&target=x&file-path=%2Fx.go\nbody text龘靐\n")
 	_, _, _, ok, err = ParseFirstBlock(content2)
 	if err == nil {
 		t.Fatal("expected error for unclosed block with embedded delimiter")
@@ -74,7 +74,7 @@ func TestBoundaryBlockLineStart(t *testing.T) {
 		t.Fatal("expected no block for embedded delimiter")
 	}
 
-	content3 := []byte("<<龘靐 change:?op=MODIFY&target=x&file-path=%2Fx.go\nbody\n龘靐\n")
+	content3 := []byte("《龘靐 change:?op=MODIFY&target=x&file-path=%2Fx.go\nbody\n龘靐\n")
 	_, _, _, ok, err = ParseFirstBlock(content3)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -85,7 +85,7 @@ func TestBoundaryBlockLineStart(t *testing.T) {
 }
 
 func TestParseFirstBlockSkipMalformed(t *testing.T) {
-	content := []byte("some text <<龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ff.go\ninvalid body\n龘靐\n\n<<齉爩 change:?op=MODIFY&target=Bar&file-path=%2Fb.go\nfunc Bar() {}\n齉爩\n")
+	content := []byte("some text 《龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ff.go\ninvalid body\n龘靐\n\n《齉爩 change:?op=MODIFY&target=Bar&file-path=%2Fb.go\nfunc Bar() {}\n齉爩\n")
 	block, start, end, ok, err := ParseFirstBlock(content)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -111,7 +111,7 @@ func TestParseFirstBlockSkipMalformed(t *testing.T) {
 }
 
 func TestParseFirstBlockUnclosed(t *testing.T) {
-	content := []byte("<<龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ff.go\nfunc Foo() {}\n")
+	content := []byte("《龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ff.go\nfunc Foo() {}\n")
 	_, _, _, ok, err := ParseFirstBlock(content)
 	if err == nil {
 		t.Fatal("expected error for unclosed block with no end marker")
@@ -127,7 +127,7 @@ func TestParseFirstBlockUnclosed(t *testing.T) {
 		t.Fatalf("expected unclosed block kind=change boundary=龘靐, got kind=%q boundary=%q", e.BlockKind, e.Boundary)
 	}
 
-	content2 := []byte("<<龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ff.go\nbody\n齉爩\n")
+	content2 := []byte("《龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ff.go\nbody\n齉爩\n")
 	_, _, _, ok, err = ParseFirstBlock(content2)
 	if err == nil {
 		t.Fatal("expected error for unclosed block with non-matching end marker")
@@ -145,7 +145,7 @@ func TestParseFirstBlockUnclosed(t *testing.T) {
 }
 
 func TestParseFirstBlockUnclosedReturnsPositions(t *testing.T) {
-	content := []byte("prose\n<<龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ff.go\nfunc Foo() {}\n")
+	content := []byte("prose\n《龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ff.go\nfunc Foo() {}\n")
 	_, start, end, ok, err := ParseFirstBlock(content)
 	if err == nil {
 		t.Fatal("expected error for unclosed block")
@@ -169,7 +169,7 @@ func TestParseFirstBlockUnclosedReturnsPositions(t *testing.T) {
 }
 
 func TestParseFirstBlockUnclosedIncludesContent(t *testing.T) {
-	content := []byte("<<龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ff.go\nfunc Foo() {\n\treturn\n}\n")
+	content := []byte("《龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ff.go\nfunc Foo() {\n\treturn\n}\n")
 	_, _, _, ok, err := ParseFirstBlock(content)
 	if err == nil {
 		t.Fatal("expected error for unclosed block")
@@ -184,7 +184,7 @@ func TestParseFirstBlockUnclosedIncludesContent(t *testing.T) {
 	if e.Content == "" {
 		t.Fatal("expected non-empty Content in BlockParseError")
 	}
-	if !strings.Contains(e.Content, "<<龘靐") {
+	if !strings.Contains(e.Content, "《龘靐") {
 		t.Fatalf("Content should include the opening marker: %q", e.Content)
 	}
 	if !strings.Contains(e.Content, "func Foo()") {
@@ -199,7 +199,7 @@ func TestParseFirstBlockUnclosedIncludesContent(t *testing.T) {
 }
 
 func TestBlockParseErrorLineNumber(t *testing.T) {
-	content := []byte("prose line\n<<龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ff.go\nfunc Foo() {}\n")
+	content := []byte("prose line\n《龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ff.go\nfunc Foo() {}\n")
 	_, _, _, _, err := ParseFirstBlock(content)
 	if err == nil {
 		t.Fatal("expected error for unclosed block")
@@ -217,7 +217,7 @@ func TestBlockParseErrorLineNumber(t *testing.T) {
 }
 
 func TestParseFirstBlockUnclosedOpeningLineAtEOF(t *testing.T) {
-	content := []byte("<<龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ftest.go")
+	content := []byte("《龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ftest.go")
 	_, _, _, ok, err := ParseFirstBlock(content)
 	if err == nil {
 		t.Fatal("expected error for truncated opening line at EOF")
@@ -233,7 +233,7 @@ func TestParseFirstBlockUnclosedOpeningLineAtEOF(t *testing.T) {
 		t.Fatalf("expected unclosed block kind=change boundary=龘靐, got kind=%q boundary=%q", e.BlockKind, e.Boundary)
 	}
 
-	content2 := []byte("<<龘靐")
+	content2 := []byte("《龘靐")
 	_, _, _, ok, err = ParseFirstBlock(content2)
 	if err == nil {
 		t.Fatal("expected error for truncated kindless opening at EOF")
@@ -242,7 +242,7 @@ func TestParseFirstBlockUnclosedOpeningLineAtEOF(t *testing.T) {
 		t.Fatal("expected ok to be false for truncated kindless opening at EOF")
 	}
 
-	content3 := []byte("<<some text")
+	content3 := []byte("《some text")
 	_, _, _, ok, err = ParseFirstBlock(content3)
 	if err != nil {
 		t.Fatalf("unexpected error for non-block text at EOF: %v", err)
@@ -256,7 +256,7 @@ func TestParseFirstBlockMalformedOpeningTag(t *testing.T) {
 	// A query pair without '=' is a genuinely malformed header: the
 	// tokenizer rejects it and the block is reported with the
 	// invalid-or-incomplete reason. See TheoryOfHeaderTokenizing.
-	content := []byte("<<龘靐 change:?op=MODIFY&target\nfunc Foo() {}\n")
+	content := []byte("《龘靐 change:?op=MODIFY&target\nfunc Foo() {}\n")
 	_, _, _, ok, err := ParseFirstBlock(content)
 	if err == nil {
 		t.Fatal("expected error for malformed opening header")
@@ -289,7 +289,7 @@ func TestParseFirstBlockMalformedOpeningTag(t *testing.T) {
 }
 
 func TestBlockParseErrorCollisionHints(t *testing.T) {
-	content := []byte("<<龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ftest.go\nfunc Foo() {}\n龘靐 extra\n")
+	content := []byte("《龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ftest.go\nfunc Foo() {}\n龘靐 extra\n")
 	_, _, _, ok, err := ParseFirstBlock(content)
 	if err == nil {
 		t.Fatal("expected error for unclosed block with malformed closing line")
@@ -311,7 +311,7 @@ func TestBlockParseErrorCollisionHints(t *testing.T) {
 		t.Fatalf("error should include the hint section: %s", err.Error())
 	}
 
-	content2 := []byte("<<龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ftest.go\nfunc Foo() {}\nend 龘靐\n")
+	content2 := []byte("《龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ftest.go\nfunc Foo() {}\nend 龘靐\n")
 	_, _, _, ok, err = ParseFirstBlock(content2)
 	if err == nil {
 		t.Fatal("expected error for unclosed block with malformed closing line")
@@ -324,7 +324,7 @@ func TestBlockParseErrorCollisionHints(t *testing.T) {
 		t.Fatalf("expected 1 hint, got %d: %v", len(e.Hints), e.Hints)
 	}
 
-	content3 := []byte("<<龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ftest.go\nfunc Foo() {}\n")
+	content3 := []byte("《龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ftest.go\nfunc Foo() {}\n")
 	_, _, _, ok, err = ParseFirstBlock(content3)
 	if err == nil {
 		t.Fatal("expected error for unclosed block")
@@ -381,7 +381,7 @@ func TestTruncateParseErrorContent(t *testing.T) {
 func TestBlockParseErrorTruncatesLargeContent(t *testing.T) {
 	middleMarker := "MIDDLE_CONTENT_MARKER"
 	largeBody := strings.Repeat("x", 5000) + middleMarker + strings.Repeat("y", 5000)
-	content := []byte("<<龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ff.go\n" + largeBody)
+	content := []byte("《龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ff.go\n" + largeBody)
 	_, _, _, ok, err := ParseFirstBlock(content)
 	if err == nil {
 		t.Fatal("expected error for unclosed block")
@@ -395,7 +395,7 @@ func TestBlockParseErrorTruncatesLargeContent(t *testing.T) {
 	if !strings.Contains(err.Error(), "bytes omitted") {
 		t.Fatalf("error message should indicate truncation: %s", err.Error())
 	}
-	if !strings.Contains(err.Error(), "<<龘靐") {
+	if !strings.Contains(err.Error(), "《龘靐") {
 		t.Fatalf("error message should preserve the opening marker: %s", err.Error())
 	}
 	if !strings.Contains(err.Error(), strings.Repeat("y", 10)) {
@@ -404,7 +404,7 @@ func TestBlockParseErrorTruncatesLargeContent(t *testing.T) {
 }
 
 func TestParseFirstBlockNonMatchingEndIsBodyContent(t *testing.T) {
-	content := []byte("<<龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ftest.go\nbody line 1\n齉爩\nbody line 2\n龘靐\n")
+	content := []byte("《龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ftest.go\nbody line 1\n齉爩\nbody line 2\n龘靐\n")
 	block, _, _, ok, err := ParseFirstBlock(content)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -487,7 +487,7 @@ func TestParserStateNeverReturnsNilOnUpstreamError(t *testing.T) {
 }
 
 func TestParseFirstBlockTrailingContent(t *testing.T) {
-	content := []byte("<<龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ftest.go\nfunc Foo() {}\n龘靐\n")
+	content := []byte("《龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ftest.go\nfunc Foo() {}\n龘靐\n")
 	block, _, _, ok, err := ParseFirstBlock(content)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -510,7 +510,7 @@ func TestParseFirstBlockTrailingContent(t *testing.T) {
 // opening line: the model closes the opening marker with ">" as if it were
 // an XML tag. See TheoryOfLenientTrailingTagMarkers.
 func TestParseFirstBlockTrailingTagMarker(t *testing.T) {
-	content := []byte("<<踯躅 change:?>\nfunc Foo() {}\n踯躅\n")
+	content := []byte("《踯躅 change:?>\nfunc Foo() {}\n踯躅\n")
 	block, _, _, ok, err := ParseFirstBlock(content)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -533,7 +533,7 @@ func TestParseFirstBlockLenientAfterFullStop(t *testing.T) {
 	// A marker glued directly after a Chinese full stop parses as a
 	// block when the closing delimiter follows. See
 	// TheoryOfLenientOpeningMarkers.
-	content := []byte("Here is prose。<<龃龉 change:?op=MODIFY\nbody\n龃龉\n")
+	content := []byte("Here is prose。《龃龉 change:?op=MODIFY\nbody\n龃龉\n")
 	block, start, end, ok, err := ParseFirstBlock(content)
 	if err != nil {
 		t.Fatal(err)
@@ -550,8 +550,8 @@ func TestParseFirstBlockLenientAfterFullStop(t *testing.T) {
 	if block.Body != "body" {
 		t.Fatalf("body = %q", block.Body)
 	}
-	if string(content[start:start+2]) != "<<" {
-		t.Fatalf("start = %d, expected the << position", start)
+	if string(content[start:start+len(blockOpeningMarker)]) != blockOpeningMarker {
+		t.Fatalf("start = %d, expected the marker position", start)
 	}
 	if end != len(content) {
 		t.Fatalf("end = %d, want %d", end, len(content))
@@ -559,7 +559,7 @@ func TestParseFirstBlockLenientAfterFullStop(t *testing.T) {
 
 	// Without a closing delimiter the lenient opening is not a block and
 	// not an error.
-	block, _, _, ok, err = ParseFirstBlock([]byte("prose。<<龃龉 change:?op=MODIFY\nno closing line\n"))
+	block, _, _, ok, err = ParseFirstBlock([]byte("prose。《龃龉 change:?op=MODIFY\nno closing line\n"))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -568,7 +568,7 @@ func TestParseFirstBlockLenientAfterFullStop(t *testing.T) {
 	}
 
 	// A malformed header after the full stop is skipped silently too.
-	block, _, _, ok, err = ParseFirstBlock([]byte("prose。<<龃龉 change:?op\n"))
+	block, _, _, ok, err = ParseFirstBlock([]byte("prose。《龃龉 change:?op\n"))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -578,7 +578,7 @@ func TestParseFirstBlockLenientAfterFullStop(t *testing.T) {
 
 	// A marker preceded by other text (not a full stop) is still regular
 	// content.
-	block, _, _, ok, err = ParseFirstBlock([]byte("prose. <<龃龉 change:?op=MODIFY\nbody\n龃龉\n"))
+	block, _, _, ok, err = ParseFirstBlock([]byte("prose. 《龃龉 change:?op=MODIFY\nbody\n龃龉\n"))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -587,7 +587,7 @@ func TestParseFirstBlockLenientAfterFullStop(t *testing.T) {
 	}
 
 	// A lenient opening that never closes does not hide a later block.
-	block, _, _, ok, err = ParseFirstBlock([]byte("prose。<<龃龉 change:?op=MODIFY\nno close\n<<彳亍 summary\nok\n彳亍\n"))
+	block, _, _, ok, err = ParseFirstBlock([]byte("prose。《龃龉 change:?op=MODIFY\nno close\n《彳亍 summary\nok\n彳亍\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -604,7 +604,7 @@ func TestParseFirstBlockLenientAfterPunctuation(t *testing.T) {
 	// punctuation mark parses as a block when the closing delimiter
 	// follows. See TheoryOfLenientOpeningMarkers.
 	for _, mark := range lenientPunctuationMarks {
-		content := []byte("prose" + mark + "<<龃龉 change:?op=MODIFY\nbody\n龃龉\n")
+		content := []byte("prose" + mark + "《龃龉 change:?op=MODIFY\nbody\n龃龉\n")
 		block, start, end, ok, err := ParseFirstBlock(content)
 		if err != nil {
 			t.Fatalf("mark %q: %v", mark, err)
@@ -615,8 +615,8 @@ func TestParseFirstBlockLenientAfterPunctuation(t *testing.T) {
 		if block.Kind != "change" || block.Attributes["op"] != "MODIFY" || block.Body != "body" {
 			t.Fatalf("mark %q: block = %+v", mark, block)
 		}
-		if string(content[start:start+2]) != "<<" {
-			t.Fatalf("mark %q: start = %d, expected the << position", mark, start)
+		if string(content[start:start+len(blockOpeningMarker)]) != blockOpeningMarker {
+			t.Fatalf("mark %q: start = %d, expected the marker position", mark, start)
 		}
 		if end != len(content) {
 			t.Fatalf("mark %q: end = %d, want %d", mark, end, len(content))
@@ -626,7 +626,7 @@ func TestParseFirstBlockLenientAfterPunctuation(t *testing.T) {
 	// A marker preceded by a space, a letter, or a digit stays regular
 	// content: only punctuation admits the lenient form.
 	for _, prefix := range []string{"prose ", "prose", "42"} {
-		block, _, _, ok, err := ParseFirstBlock([]byte(prefix + "<<龃龉 change:?op=MODIFY\nbody\n龃龉\n"))
+		block, _, _, ok, err := ParseFirstBlock([]byte(prefix + "《龃龉 change:?op=MODIFY\nbody\n龃龉\n"))
 		if err != nil {
 			t.Fatalf("prefix %q: unexpected error: %v", prefix, err)
 		}
@@ -637,7 +637,7 @@ func TestParseFirstBlockLenientAfterPunctuation(t *testing.T) {
 
 	// A lenient opening after a non-full-stop mark that never closes is
 	// not a block and not an error, and does not hide a later block.
-	block, _, _, ok, err := ParseFirstBlock([]byte("prose.<<龃龉 change:?op=MODIFY\nno close\n<<彳亍 summary\nok\n彳亍\n"))
+	block, _, _, ok, err := ParseFirstBlock([]byte("prose.《龃龉 change:?op=MODIFY\nno close\n《彳亍 summary\nok\n彳亍\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -646,7 +646,7 @@ func TestParseFirstBlockLenientAfterPunctuation(t *testing.T) {
 	}
 
 	// A malformed header after the punctuation mark is skipped silently.
-	block, _, _, ok, err = ParseFirstBlock([]byte("prose，<<龃龉 change:?op\n"))
+	block, _, _, ok, err = ParseFirstBlock([]byte("prose，《龃龉 change:?op\n"))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -656,13 +656,13 @@ func TestParseFirstBlockLenientAfterPunctuation(t *testing.T) {
 }
 
 func TestParseFirstBlockLeadingWhitespaceAfterMarker(t *testing.T) {
-	content := []byte("<< 龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ftest.go\nfunc Foo() {}\n龘靐\n")
+	content := []byte("《 龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ftest.go\nfunc Foo() {}\n龘靐\n")
 	block, _, _, ok, err := ParseFirstBlock(content)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !ok {
-		t.Fatal("expected block to be found with leading whitespace after <<")
+		t.Fatal("expected block to be found with leading whitespace after the marker")
 	}
 	if block.Kind != "change" {
 		t.Fatalf("expected kind change, got %s", block.Kind)
@@ -674,7 +674,7 @@ func TestParseFirstBlockLeadingWhitespaceAfterMarker(t *testing.T) {
 		t.Fatalf("body should contain the code: %q", block.Body)
 	}
 
-	content2 := []byte("<<   齉爩 summary\n- done\n齉爩\n")
+	content2 := []byte("《   齉爩 summary\n- done\n齉爩\n")
 	block2, _, _, ok2, err2 := ParseFirstBlock(content2)
 	if err2 != nil {
 		t.Fatalf("unexpected error: %v", err2)
@@ -692,7 +692,7 @@ func TestParseFirstBlockLeadingWhitespaceAfterMarker(t *testing.T) {
 		t.Fatalf("expected body '- done', got %q", block2.Body)
 	}
 
-	content3 := []byte("<< 麤黿\nbody text\n麤黿\n")
+	content3 := []byte("《 麤黿\nbody text\n麤黿\n")
 	block3, _, _, ok3, err3 := ParseFirstBlock(content3)
 	if err3 != nil {
 		t.Fatalf("unexpected error: %v", err3)
@@ -712,7 +712,7 @@ func TestParseFirstBlockLeadingWhitespaceAfterMarker(t *testing.T) {
 }
 
 func TestParseFirstBlockClosingLineWithTrailingContent(t *testing.T) {
-	content := []byte("<<龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ftest.go\nfunc Foo() {}\n龘靐 extra\n")
+	content := []byte("《龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ftest.go\nfunc Foo() {}\n龘靐 extra\n")
 	_, _, _, ok, err := ParseFirstBlock(content)
 	if err == nil {
 		t.Fatal("expected error for unclosed block with trailing content on closing line")
@@ -723,13 +723,13 @@ func TestParseFirstBlockClosingLineWithTrailingContent(t *testing.T) {
 }
 
 func TestParseFirstBlockLenientClosingMarker(t *testing.T) {
-	open := "<<龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ftest.go\nfunc Foo() {}\n"
+	open := "《龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ftest.go\nfunc Foo() {}\n"
 
-	// The lenient closing form — the delimiter followed by ">>",
-	// optionally separated by whitespace and surrounded by line
-	// whitespace, with or without a trailing newline — closes the block
-	// like the delimiter-alone line. See TheoryOfLenientClosingMarkers.
-	for _, closing := range []string{"龘靐>>\n", "龘靐 >>\n", "  龘靐>>  \n", "龘靐>>"} {
+	// The lenient closing form — the delimiter followed by the closing
+	// book title mark, optionally separated by whitespace and surrounded
+	// by line whitespace, with or without a trailing newline — closes the
+	// block like the delimiter-alone line. See TheoryOfLenientClosingMarkers.
+	for _, closing := range []string{"龘靐》\n", "龘靐 》\n", "  龘靐》  \n", "龘靐》"} {
 		content := []byte(open + closing)
 		block, _, _, ok, err := ParseFirstBlock(content)
 		if err != nil {
@@ -743,30 +743,31 @@ func TestParseFirstBlockLenientClosingMarker(t *testing.T) {
 		}
 	}
 
-	// A single trailing ">" does not close the block: an incomplete
-	// lenient form keeps the block unclosed until the line completes,
-	// preserving the streaming guarantee. See TheoryOfLenientClosingMarkers.
-	_, _, _, ok, err := ParseFirstBlock([]byte(open + "龘靐>"))
+	// A single trailing byte of the closing mark does not close the
+	// block: an incomplete lenient form keeps the block unclosed until
+	// the line completes, preserving the streaming guarantee. See
+	// TheoryOfLenientClosingMarkers.
+	_, _, _, ok, err := ParseFirstBlock([]byte(open + "龘靐\xe3"))
 	if err == nil {
-		t.Fatal("expected an unclosed-block error for a single trailing '>'")
+		t.Fatal("expected an unclosed-block error for a partial closing mark")
 	}
 	if ok {
-		t.Fatal("expected ok to be false for a single trailing '>'")
+		t.Fatal("expected ok to be false for a partial closing mark")
 	}
 
-	// The lenient form tolerates only the bare ">>": any further
+	// The lenient form tolerates only the bare closing mark: any further
 	// trailing text still leaves the block unclosed.
-	_, _, _, ok, err = ParseFirstBlock([]byte(open + "龘靐>> extra\n"))
+	_, _, _, ok, err = ParseFirstBlock([]byte(open + "龘靐》 extra\n"))
 	if err == nil {
-		t.Fatal("expected an unclosed-block error for trailing text after '>>'")
+		t.Fatal("expected an unclosed-block error for trailing text after the closing mark")
 	}
 	if ok {
-		t.Fatal("expected ok to be false for trailing text after '>>'")
+		t.Fatal("expected ok to be false for trailing text after the closing mark")
 	}
 }
 
 func TestParseFirstBlockEndMarkerNoTrailingNewline(t *testing.T) {
-	content := []byte("<<龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ftest.go\nfunc Foo() {}\n龘靐")
+	content := []byte("《龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ftest.go\nfunc Foo() {}\n龘靐")
 	block, _, end, ok, err := ParseFirstBlock(content)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -792,7 +793,7 @@ func TestParseFirstBlockEndMarkerNoTrailingNewline(t *testing.T) {
 }
 
 func TestParseFirstBlockWithoutXMLHeader(t *testing.T) {
-	content := []byte("<<龘靐\nsummary body\n龘靐\n")
+	content := []byte("《龘靐\nsummary body\n龘靐\n")
 	block, _, _, ok, err := ParseFirstBlock(content)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -813,7 +814,7 @@ func TestParseFirstBlockWithoutXMLHeader(t *testing.T) {
 
 func TestParseFirstBlockBareKind(t *testing.T) {
 	t.Run("Change", func(t *testing.T) {
-		content := []byte("<<龘靐 change\nfunc Foo() {}\n龘靐\n")
+		content := []byte("《龘靐 change\nfunc Foo() {}\n龘靐\n")
 		block, _, _, ok, err := ParseFirstBlock(content)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -833,7 +834,7 @@ func TestParseFirstBlockBareKind(t *testing.T) {
 	})
 
 	t.Run("Summary", func(t *testing.T) {
-		content := []byte("<<齉爩 summary\n- done\n齉爩\n")
+		content := []byte("《齉爩 summary\n- done\n齉爩\n")
 		block, _, _, ok, err := ParseFirstBlock(content)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -850,7 +851,7 @@ func TestParseFirstBlockBareKind(t *testing.T) {
 	})
 
 	t.Run("HyphenatedKind", func(t *testing.T) {
-		content := []byte("<<爨虋 go-test\n-run\nTestFoo\n爨虋\n")
+		content := []byte("《爨虋 go-test\n-run\nTestFoo\n爨虋\n")
 		block, _, _, ok, err := ParseFirstBlock(content)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -867,7 +868,7 @@ func TestParseFirstBlockBareKind(t *testing.T) {
 	})
 
 	t.Run("ParseBlocks", func(t *testing.T) {
-		content := []byte("<<龘靐 summary\nfirst\n龘靐\n<<齉爩 change\nfunc Bar() {}\n齉爩\n")
+		content := []byte("《龘靐 summary\nfirst\n龘靐\n《齉爩 change\nfunc Bar() {}\n齉爩\n")
 		blocks, err := ParseBlocks(content)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -886,7 +887,7 @@ func TestParseFirstBlockBareKind(t *testing.T) {
 
 func TestParseFirstBlockOpFunctionName(t *testing.T) {
 	t.Run("SchemeForm", func(t *testing.T) {
-		content := []byte("<<天鳳 MODIFY:?op=MODIFY&target=Foo&file-path=%2Ftest.go\nfunc Foo() {}\n天鳳\n")
+		content := []byte("《天鳳 MODIFY:?op=MODIFY&target=Foo&file-path=%2Ftest.go\nfunc Foo() {}\n天鳳\n")
 		block, _, _, ok, err := ParseFirstBlock(content)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -909,7 +910,7 @@ func TestParseFirstBlockOpFunctionName(t *testing.T) {
 	})
 
 	t.Run("OpDerivedFromScheme", func(t *testing.T) {
-		content := []byte("<<天鳳 MODIFY:?target=Foo&file-path=%2Ftest.go\nfunc Foo() {}\n天鳳\n")
+		content := []byte("《天鳳 MODIFY:?target=Foo&file-path=%2Ftest.go\nfunc Foo() {}\n天鳳\n")
 		block, _, _, ok, err := ParseFirstBlock(content)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -926,7 +927,7 @@ func TestParseFirstBlockOpFunctionName(t *testing.T) {
 	})
 
 	t.Run("ExplicitOpTakesPrecedence", func(t *testing.T) {
-		content := []byte("<<天鳳 MODIFY:?op=WRITE&file-path=%2Ftest.txt\ncontent\n天鳳\n")
+		content := []byte("《天鳳 MODIFY:?op=WRITE&file-path=%2Ftest.txt\ncontent\n天鳳\n")
 		block, _, _, ok, err := ParseFirstBlock(content)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -940,7 +941,7 @@ func TestParseFirstBlockOpFunctionName(t *testing.T) {
 	})
 
 	t.Run("BareScheme", func(t *testing.T) {
-		content := []byte("<<天鳳 MODIFY\nfunc Foo() {}\n天鳳\n")
+		content := []byte("《天鳳 MODIFY\nfunc Foo() {}\n天鳳\n")
 		block, _, _, ok, err := ParseFirstBlock(content)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -957,7 +958,7 @@ func TestParseFirstBlockOpFunctionName(t *testing.T) {
 	})
 
 	t.Run("OtherKindsUntouched", func(t *testing.T) {
-		content := []byte("<<天鳳 ingest:?pattern=%2A.go\n<pattern=\"*.go\" />\n天鳳\n")
+		content := []byte("《天鳳 ingest:?pattern=%2A.go\n<pattern=\"*.go\" />\n天鳳\n")
 		block, _, _, ok, err := ParseFirstBlock(content)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -974,7 +975,7 @@ func TestParseFirstBlockOpFunctionName(t *testing.T) {
 	})
 
 	t.Run("ParseBlocks", func(t *testing.T) {
-		content := []byte("<<天鳳 MODIFY:?op=MODIFY&target=Foo&file-path=%2Ftest.go\nfunc Foo() {}\n天鳳\n<<齉爩 summary\ndone\n齉爩\n")
+		content := []byte("《天鳳 MODIFY:?op=MODIFY&target=Foo&file-path=%2Ftest.go\nfunc Foo() {}\n天鳳\n《齉爩 summary\ndone\n齉爩\n")
 		blocks, err := ParseBlocks(content)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -992,7 +993,7 @@ func TestParseFirstBlockOpFunctionName(t *testing.T) {
 }
 
 func TestParseFirstBlockMultipleBlocksWithNoTrailingNewline(t *testing.T) {
-	content := []byte("<<龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ftest.go\nfunc Foo() {}\n龘靐\n<<齉爩 change:?op=MODIFY&target=Bar&file-path=%2Ftest.go\nfunc Bar() {}\n齉爩")
+	content := []byte("《龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ftest.go\nfunc Foo() {}\n龘靐\n《齉爩 change:?op=MODIFY&target=Bar&file-path=%2Ftest.go\nfunc Bar() {}\n齉爩")
 
 	block, _, end, ok, err := ParseFirstBlock(content)
 	if err != nil {
@@ -1031,7 +1032,7 @@ func TestParseFirstBlockMultipleBlocksWithNoTrailingNewline(t *testing.T) {
 }
 
 func TestParseBlocks(t *testing.T) {
-	content := []byte("<<龘靐 summary\nfirst\n龘靐\n<<齉爩\nsecond\n齉爩\n")
+	content := []byte("《龘靐 summary\nfirst\n龘靐\n《齉爩\nsecond\n齉爩\n")
 	blocks, err := ParseBlocks(content)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1048,7 +1049,7 @@ func TestParseBlocks(t *testing.T) {
 }
 
 func TestParseFirstBlockNonMatchingEndNoTrailingNewline(t *testing.T) {
-	content := []byte("<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nbody\n齉爩")
+	content := []byte("《龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nbody\n齉爩")
 	_, _, _, ok, err := ParseFirstBlock(content)
 	if err == nil {
 		t.Fatal("expected error for unclosed block with non-matching end marker at EOF")
@@ -1066,7 +1067,7 @@ func TestParseFirstBlockNonMatchingEndNoTrailingNewline(t *testing.T) {
 }
 
 func TestParseBlocksSkipsUnclosed(t *testing.T) {
-	content := []byte("<<龘靐 summary\nunclosed\n<<齉爩\nclosed body\n齉爩\n")
+	content := []byte("《龘靐 summary\nunclosed\n《齉爩\nclosed body\n齉爩\n")
 	blocks, err := ParseBlocks(content)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1080,7 +1081,7 @@ func TestParseBlocksSkipsUnclosed(t *testing.T) {
 }
 
 func TestParseFirstBlockNestedSameDelimiter(t *testing.T) {
-	content := []byte("<<龘靐 change:?op=MODIFY&target=Outer&file-path=%2Fouter.go\n<<龘靐 change:?op=MODIFY&target=Inner&file-path=%2Finner.go\nfunc Inner() {}\n龘靐\nfunc Outer() {}\n龘靐\n")
+	content := []byte("《龘靐 change:?op=MODIFY&target=Outer&file-path=%2Fouter.go\n《龘靐 change:?op=MODIFY&target=Inner&file-path=%2Finner.go\nfunc Inner() {}\n龘靐\nfunc Outer() {}\n龘靐\n")
 	block, _, _, ok, err := ParseFirstBlock(content)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1097,13 +1098,13 @@ func TestParseFirstBlockNestedSameDelimiter(t *testing.T) {
 	if !strings.Contains(block.Body, "func Outer() {}") {
 		t.Fatalf("body should contain outer block body: %q", block.Body)
 	}
-	if !strings.Contains(block.Body, "<<龘靐") {
+	if !strings.Contains(block.Body, "《龘靐") {
 		t.Fatalf("body should contain inner block opening marker: %q", block.Body)
 	}
 }
 
 func TestParseFirstBlockNestedSameDelimiterBareKind(t *testing.T) {
-	content := []byte("<<龘靐 change:?op=MODIFY&target=Outer&file-path=%2Fouter.go\n<<龘靐 summary\n- inner\n龘靐\nfunc Outer() {}\n龘靐\n")
+	content := []byte("《龘靐 change:?op=MODIFY&target=Outer&file-path=%2Fouter.go\n《龘靐 summary\n- inner\n龘靐\nfunc Outer() {}\n龘靐\n")
 	block, _, _, ok, err := ParseFirstBlock(content)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1117,7 +1118,7 @@ func TestParseFirstBlockNestedSameDelimiterBareKind(t *testing.T) {
 	if !strings.Contains(block.Body, "- inner") {
 		t.Fatalf("body should contain the inner block body: %q", block.Body)
 	}
-	if !strings.Contains(block.Body, "<<龘靐 summary") {
+	if !strings.Contains(block.Body, "《龘靐 summary") {
 		t.Fatalf("body should contain the inner opening marker: %q", block.Body)
 	}
 	if !strings.Contains(block.Body, "func Outer() {}") {
@@ -1126,7 +1127,7 @@ func TestParseFirstBlockNestedSameDelimiterBareKind(t *testing.T) {
 }
 
 func TestParseFirstBlockNestedDifferentDelimiter(t *testing.T) {
-	content := []byte("<<龘靐 change:?op=MODIFY&target=Outer&file-path=%2Fouter.go\n<<齉爩 change:?op=MODIFY&target=Inner&file-path=%2Finner.go\nfunc Inner() {}\n齉爩\nfunc Outer() {}\n龘靐\n")
+	content := []byte("《龘靐 change:?op=MODIFY&target=Outer&file-path=%2Fouter.go\n《齉爩 change:?op=MODIFY&target=Inner&file-path=%2Finner.go\nfunc Inner() {}\n齉爩\nfunc Outer() {}\n龘靐\n")
 	block, _, _, ok, err := ParseFirstBlock(content)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1149,7 +1150,7 @@ func TestParseFirstBlockNestedDifferentDelimiter(t *testing.T) {
 }
 
 func TestParseFirstBlockNestedDifferentDelimiterOpeningWithoutClosing(t *testing.T) {
-	content := []byte("<<龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ftest.go\n<<齉爩 tag\nfunc Foo() {}\n龘靐\n")
+	content := []byte("《龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ftest.go\n《齉爩 tag\nfunc Foo() {}\n龘靐\n")
 	block, _, _, ok, err := ParseFirstBlock(content)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1160,7 +1161,7 @@ func TestParseFirstBlockNestedDifferentDelimiterOpeningWithoutClosing(t *testing
 	if block.Boundary != "龘靐" {
 		t.Fatalf("expected boundary 龘靐, got %s", block.Boundary)
 	}
-	if !strings.Contains(block.Body, "<<齉爩 tag") {
+	if !strings.Contains(block.Body, "《齉爩 tag") {
 		t.Fatalf("body should contain the different-delimiter opening as content: %q", block.Body)
 	}
 	if !strings.Contains(block.Body, "func Foo() {}") {
@@ -1169,7 +1170,7 @@ func TestParseFirstBlockNestedDifferentDelimiterOpeningWithoutClosing(t *testing
 }
 
 func TestParseFirstBlockNestedMultipleLevels(t *testing.T) {
-	content := []byte("<<龘靐 change:?op=MODIFY&target=Outer&file-path=%2Fouter.go\n<<齉爩 change:?op=MODIFY&target=Middle&file-path=%2Fmiddle.go\n<<麤黿 change:?op=MODIFY&target=Inner&file-path=%2Finner.go\nfunc Inner() {}\n麤黿\nfunc Middle() {}\n齉爩\nfunc Outer() {}\n龘靐\n")
+	content := []byte("《龘靐 change:?op=MODIFY&target=Outer&file-path=%2Fouter.go\n《齉爩 change:?op=MODIFY&target=Middle&file-path=%2Fmiddle.go\n《麤黿 change:?op=MODIFY&target=Inner&file-path=%2Finner.go\nfunc Inner() {}\n麤黿\nfunc Middle() {}\n齉爩\nfunc Outer() {}\n龘靐\n")
 	block, _, _, ok, err := ParseFirstBlock(content)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1192,7 +1193,7 @@ func TestParseFirstBlockNestedMultipleLevels(t *testing.T) {
 }
 
 func TestParseFirstBlockNestedNotTriggeredByNonBlockContent(t *testing.T) {
-	content := []byte("<<龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ftest.go\n<<some text without header\nfunc Foo() {}\n龘靐\n")
+	content := []byte("《龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ftest.go\n《some text without header\nfunc Foo() {}\n龘靐\n")
 	block, _, _, ok, err := ParseFirstBlock(content)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1200,7 +1201,7 @@ func TestParseFirstBlockNestedNotTriggeredByNonBlockContent(t *testing.T) {
 	if !ok {
 		t.Fatal("expected block to be found")
 	}
-	if !strings.Contains(block.Body, "<<some text without header") {
+	if !strings.Contains(block.Body, "《some text without header") {
 		t.Fatalf("body should contain the non-block line: %q", block.Body)
 	}
 	if !strings.Contains(block.Body, "func Foo() {}") {
@@ -1209,7 +1210,7 @@ func TestParseFirstBlockNestedNotTriggeredByNonBlockContent(t *testing.T) {
 }
 
 func TestParseFirstBlockNestedNotTriggeredByInvalidXML(t *testing.T) {
-	content := []byte("<<龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ftest.go\n<<some text with ( chars) and stuff\n龘靐\n")
+	content := []byte("《龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ftest.go\n《some text with ( chars) and stuff\n龘靐\n")
 	block, _, _, ok, err := ParseFirstBlock(content)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1217,13 +1218,13 @@ func TestParseFirstBlockNestedNotTriggeredByInvalidXML(t *testing.T) {
 	if !ok {
 		t.Fatal("expected block to be found")
 	}
-	if !strings.Contains(block.Body, "<<some text with ( chars) and stuff") {
+	if !strings.Contains(block.Body, "《some text with ( chars) and stuff") {
 		t.Fatalf("body should contain the non-block line: %q", block.Body)
 	}
 }
 
 func TestParseFirstBlockNestedNotTriggeredByTrailingContent(t *testing.T) {
-	content := []byte("<<龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ftest.go\n<<爨虋 bar(attr=\"value\") some text\nfunc Foo() {}\n龘靐\n")
+	content := []byte("《龘靐 change:?op=MODIFY&target=Foo&file-path=%2Ftest.go\n《爨虋 bar(attr=\"value\") some text\nfunc Foo() {}\n龘靐\n")
 	block, _, _, ok, err := ParseFirstBlock(content)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1237,13 +1238,13 @@ func TestParseFirstBlockNestedNotTriggeredByTrailingContent(t *testing.T) {
 	if !strings.Contains(block.Body, "func Foo() {}") {
 		t.Fatalf("body should contain the code: %q", block.Body)
 	}
-	if !strings.Contains(block.Body, "<<爨虋") {
+	if !strings.Contains(block.Body, "《爨虋") {
 		t.Fatalf("body should contain the non-block line: %q", block.Body)
 	}
 }
 
 func TestParseFirstBlockNestedUnclosedInnerBlock(t *testing.T) {
-	content := []byte("<<龘靐 change:?op=MODIFY&target=Outer&file-path=%2Fouter.go\n<<龘靐 change:?op=MODIFY&target=Inner&file-path=%2Finner.go\nfunc Inner() {}\n")
+	content := []byte("《龘靐 change:?op=MODIFY&target=Outer&file-path=%2Fouter.go\n《龘靐 change:?op=MODIFY&target=Inner&file-path=%2Finner.go\nfunc Inner() {}\n")
 	_, _, _, ok, err := ParseFirstBlock(content)
 	if err == nil {
 		t.Fatal("expected error for unclosed inner block")
@@ -1255,7 +1256,7 @@ func TestParseFirstBlockNestedUnclosedInnerBlock(t *testing.T) {
 
 func TestKindPromptsNoLiteralDelimiterTemplate(t *testing.T) {
 	// Kind-specific prompts must not display the literal template marker
-	// "<<DELIMITER". The model imitates kind templates verbatim, and a
+	// "《DELIMITER". The model imitates kind templates verbatim, and a
 	// literal placeholder produces blocks with a non-unique delimiter.
 	// Kind prompts must instead show complete examples with concrete
 	// delimiters, so the model has a correct header/footer imitation
@@ -1269,8 +1270,8 @@ func TestKindPromptsNoLiteralDelimiterTemplate(t *testing.T) {
 		"IngestBlockSystemPrompt":   IngestBlockSystemPrompt,
 	}
 	for name, prompt := range prompts {
-		if strings.Contains(prompt, "<<DELIMITER") {
-			t.Fatalf("%s displays the literal template marker '<<DELIMITER', which the model imitates verbatim; use a complete example with a concrete delimiter instead", name)
+		if strings.Contains(prompt, "《DELIMITER") {
+			t.Fatalf("%s displays the literal template marker '《DELIMITER', which the model imitates verbatim; use a complete example with a concrete delimiter instead", name)
 		}
 	}
 }
@@ -1296,9 +1297,9 @@ func TestPromptsUseUncommonChineseDelimiterPolicy(t *testing.T) {
 			t.Fatalf("%s must not restate the delimiter policy; the unified BlockFormatSystemPrompt covers it", name)
 		}
 		for _, legacy := range []string{
-			"<<DELIM1", "<<BLOCK1", "<<ENDBLOCK", "<<TESTEND",
-			"<<SHELLEND", "<<ENDSUM", "<<CTXEND", "<<CHG1", "<<MEMEND",
-			"<<徕珑龘 ", "<<龘靐齉 ", "<<黿鼍爩 ", "<<齉爩龖 ",
+			"《DELIM1", "《BLOCK1", "《ENDBLOCK", "《TESTEND",
+			"《SHELLEND", "《ENDSUM", "《CTXEND", "《CHG1", "《MEMEND",
+			"《徕珑龘 ", "《龘靐齉 ", "《黿鼍爩 ", "《齉爩龖 ",
 		} {
 			if strings.Contains(prompt, legacy) {
 				t.Fatalf("%s must not display legacy example delimiter %s", name, legacy)
@@ -1345,7 +1346,7 @@ func TestBlockFormatPromptsNoNegativeExamples(t *testing.T) {
 	if strings.Contains(BlockFormatSystemPrompt, "NOT this") {
 		t.Fatal("BlockFormatSystemPrompt must not display a negative example")
 	}
-	if strings.Contains(BlockFormatSystemPrompt, "Writing \"<<DELIMITER\"") {
+	if strings.Contains(BlockFormatSystemPrompt, "Writing \"《DELIMITER\"") {
 		t.Fatal("BlockFormatSystemPrompt must not display the forbidden literal pattern")
 	}
 }

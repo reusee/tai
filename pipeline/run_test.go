@@ -164,10 +164,10 @@ func TestRunParseErrorCorrection(t *testing.T) {
 			if callCount == 1 {
 				// Emit an unclosed block (no closing delimiter) — a
 				// parse error that must be fed back for self-correction.
-				return appendPhaseWithFlush("<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nfunc Foo() {}\n")
+				return appendPhaseWithFlush("《龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nfunc Foo() {}\n")
 			}
 			// Second round: corrected output with a summary block.
-			return appendPhaseWithFlush("<<龘靐 summary\nDone.\n龘靐\n")
+			return appendPhaseWithFlush("《龘靐 summary\nDone.\n龘靐\n")
 		}
 
 		result, err := runOnce(run, RunOptions{
@@ -211,7 +211,7 @@ func TestRunParseErrorCorrectionBound(t *testing.T) {
 			// Persistently emit an unclosed block — a parse error every
 			// generation. The correction loop must stop after
 			// maxParseErrorCorrections.
-			return appendPhaseWithFlush("<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nfunc Foo() {}\n")
+			return appendPhaseWithFlush("《龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nfunc Foo() {}\n")
 		}
 
 		_, err := runOnce(run, RunOptions{
@@ -241,9 +241,9 @@ func TestRunParseErrorCorrectionWithComponents(t *testing.T) {
 				// block. The shell block is processed by the component;
 				// the parse error feedback is prepended to the shell
 				// output.
-				return appendPhaseWithFlush("<<齉爩 shell\necho hi\n齉爩\n<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nfunc Foo() {}\n")
+				return appendPhaseWithFlush("《齉爩 shell\necho hi\n齉爩\n《龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nfunc Foo() {}\n")
 			}
-			return appendPhaseWithFlush("<<龘靐 summary\nDone.\n龘靐\n")
+			return appendPhaseWithFlush("《龘靐 summary\nDone.\n龘靐\n")
 		}
 
 		comps := components.ComponentSet{
@@ -301,9 +301,9 @@ func TestRunParseErrorFeedbackInstructsContinuingTask(t *testing.T) {
 		phaseBuilder := func(g generators.Generator) generators.Phase {
 			callCount++
 			if callCount == 1 {
-				return appendPhaseWithFlush("<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nfunc Foo() {}\n")
+				return appendPhaseWithFlush("《龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nfunc Foo() {}\n")
 			}
-			return appendPhaseWithFlush("<<龘靐 summary\nDone.\n龘靐\n")
+			return appendPhaseWithFlush("《龘靐 summary\nDone.\n龘靐\n")
 		}
 
 		result, err := runOnce(run, RunOptions{
@@ -362,8 +362,8 @@ func TestRunParseErrorCorrectionCumulativeBound(t *testing.T) {
 		// generation) plus an unclosed change block (parse error).
 		phaseBuilder := func(g generators.Generator) generators.Phase {
 			return appendPhaseWithFlush(
-				"<<齉爩 shell\necho hi\n齉爩\n" +
-					"<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nfunc Foo() {}\n")
+				"《齉爩 shell\necho hi\n齉爩\n" +
+					"《龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nfunc Foo() {}\n")
 		}
 
 		result, err := runOnce(run, RunOptions{
@@ -452,7 +452,7 @@ func TestRunMultiGenerationTriggered(t *testing.T) {
 		phaseBuilder := func(g generators.Generator) generators.Phase {
 			callCount++
 			if callCount == 1 {
-				return appendPhase("<<龘靐 shell\necho hello\n龘靐\n")
+				return appendPhase("《龘靐 shell\necho hello\n龘靐\n")
 			}
 			return appendPhase("done")
 		}
@@ -523,7 +523,7 @@ func TestRunAttemptNumbersContinueAcrossGenerations(t *testing.T) {
 			},
 		}
 		phaseBuilder := func(g generators.Generator) generators.Phase {
-			return appendPhase("<<龘靐 shell\necho hello\n龘靐\n")
+			return appendPhase("《龘靐 shell\necho hello\n龘靐\n")
 		}
 		var lastTree *tree.Tree
 		var result Result
@@ -583,7 +583,7 @@ func TestRunBlockHandlerConsumed(t *testing.T) {
 			Components:   comps,
 			BlockHandler: blockHandler,
 			PhaseBuilder: func(g generators.Generator) generators.Phase {
-				return appendPhase("<<龘靐 shell\necho hi\n龘靐\n")
+				return appendPhase("《龘靐 shell\necho hi\n龘靐\n")
 			},
 			HTTPClient: nets.HTTPClient{},
 		})
@@ -607,9 +607,9 @@ func TestRunAppliedChangeBlocksResetOnRetry(t *testing.T) {
 			if callCount == 1 {
 				// Consumed change block without a summary block: the
 				// attempt is truncated and retried.
-				return appendPhase("<<龘靐 change:?op=MODIFY&target=Foo&file-path=%2Fx%2Fa.go\nfunc Foo() {}\n龘靐\n")
+				return appendPhase("《龘靐 change:?op=MODIFY&target=Foo&file-path=%2Fx%2Fa.go\nfunc Foo() {}\n龘靐\n")
 			}
-			return appendPhase("<<贞观 summary\nDone.\n贞观\n")
+			return appendPhase("《贞观 summary\nDone.\n贞观\n")
 		}
 		result, err := runOnce(run, RunOptions{
 			Generator:    nil,
@@ -657,11 +657,11 @@ func TestRunAppliedChangeBlocksInOutline(t *testing.T) {
 		phaseBuilder := func(g generators.Generator) generators.Phase {
 			callCount++
 			if callCount == 1 {
-				return appendPhase("<<龘靐 change:?op=MODIFY&target=Foo&file-path=%2Fx%2Fa.go\nfunc Foo() {}\n龘靐\n" +
-					"<<龘靐 shell\necho hi\n龘靐\n" +
-					"<<贞观 summary\nChanges applied.\n贞观\n")
+				return appendPhase("《龘靐 change:?op=MODIFY&target=Foo&file-path=%2Fx%2Fa.go\nfunc Foo() {}\n龘靐\n" +
+					"《龘靐 shell\necho hi\n龘靐\n" +
+					"《贞观 summary\nChanges applied.\n贞观\n")
 			}
-			return appendPhase("<<贞观 summary\nVerified.\n贞观\n")
+			return appendPhase("《贞观 summary\nVerified.\n贞观\n")
 		}
 		comps := components.ComponentSet{
 			{
@@ -764,7 +764,7 @@ func TestRunRetryOnMissingCompletion(t *testing.T) {
 				return appendPhase("incomplete output without summary")
 			}
 			// Second call includes a summary block.
-			return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
+			return appendPhase("《龘靐 summary\nDone.\n龘靐\n")
 		}
 
 		_, err := runOnce(run, RunOptions{
@@ -802,13 +802,13 @@ func TestRunRetryOnTriggeringBlockWithoutSummary(t *testing.T) {
 			switch callCount {
 			case 1:
 				// A go-src block with no summary block.
-				return appendPhase("<<建安 go-src\nfoo.Bar\n建安\n")
+				return appendPhase("《建安 go-src\nfoo.Bar\n建安\n")
 			case 2:
 				// The retry re-emits the go-src block together with
 				// the mandatory summary block.
-				return appendPhase("<<建安 go-src\nfoo.Bar\n建安\n<<贞观 summary\nDone.\n贞观\n")
+				return appendPhase("《建安 go-src\nfoo.Bar\n建安\n《贞观 summary\nDone.\n贞观\n")
 			default:
-				return appendPhase("<<贞观 summary\nDone.\n贞观\n")
+				return appendPhase("《贞观 summary\nDone.\n贞观\n")
 			}
 		}
 
@@ -931,10 +931,10 @@ func TestRunRetryOnAbnormalFinishReason(t *testing.T) {
 				// Summary block present but finish reason is "length"
 				// (max-token truncation). This should trigger retry
 				// despite the summary block.
-				return appendPhaseWithFinish("<<龘靐 summary\nDone.\n龘靐\n", "length")
+				return appendPhaseWithFinish("《龘靐 summary\nDone.\n龘靐\n", "length")
 			}
 			// Second call: normal finish reason with summary.
-			return appendPhaseWithFinish("<<龘靐 summary\nDone.\n龘靐\n", "stop")
+			return appendPhaseWithFinish("《龘靐 summary\nDone.\n龘靐\n", "stop")
 		}
 
 		_, err := runOnce(run, RunOptions{
@@ -962,7 +962,7 @@ func TestRunNoRetryOnNormalFinishReason(t *testing.T) {
 		callCount := 0
 		phaseBuilder := func(g generators.Generator) generators.Phase {
 			callCount++
-			return appendPhaseWithFinish("<<龘靐 summary\nDone.\n龘靐\n", "stop")
+			return appendPhaseWithFinish("《龘靐 summary\nDone.\n龘靐\n", "stop")
 		}
 
 		_, err := runOnce(run, RunOptions{
@@ -1050,7 +1050,7 @@ func TestRunRetryFeedback(t *testing.T) {
 				if callCount == 1 {
 					return appendPhase("incomplete output without summary")
 				}
-				return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
+				return appendPhase("《龘靐 summary\nDone.\n龘靐\n")
 			}
 			result, err := runOnce(run, RunOptions{
 				Generator: nil,
@@ -1078,7 +1078,7 @@ func TestRunRetryFeedback(t *testing.T) {
 				if callCount == 1 {
 					return appendThenErrorPhase("partial output", errors.New("some error"))
 				}
-				return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
+				return appendPhase("《龘靐 summary\nDone.\n龘靐\n")
 			}
 			result, err := runOnce(run, RunOptions{
 				Generator: nil,
@@ -1109,7 +1109,7 @@ func TestRunRetryFeedback(t *testing.T) {
 						&changes.ApplyError{Err: errors.New("apply change block MODIFY Foo: parse error")},
 					)
 				}
-				return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
+				return appendPhase("《龘靐 summary\nDone.\n龘靐\n")
 			}
 			result, err := runOnce(run, RunOptions{
 				Generator: nil,
@@ -1156,9 +1156,9 @@ func TestRunOnAttemptStartCalled(t *testing.T) {
 			PhaseBuilder: func(g generators.Generator) generators.Phase {
 				generation++
 				if generation == 1 {
-					return appendPhase("<<龘靐 shell\necho hi\n龘靐\n")
+					return appendPhase("《龘靐 shell\necho hi\n龘靐\n")
 				}
-				return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
+				return appendPhase("《龘靐 summary\nDone.\n龘靐\n")
 			},
 			HTTPClient: nets.HTTPClient{},
 		})
@@ -1188,7 +1188,7 @@ func TestRunOnAttemptSuccessCalled(t *testing.T) {
 			Components:       nil,
 			OnAttemptSuccess: onAttemptSuccess,
 			PhaseBuilder: func(g generators.Generator) generators.Phase {
-				return appendPhase("<<龘靐 summary\nRound 1 done.\n龘靐\n")
+				return appendPhase("《龘靐 summary\nRound 1 done.\n龘靐\n")
 			},
 		})
 		if err != nil {
@@ -1584,7 +1584,7 @@ func TestRunMaxGenerations(t *testing.T) {
 			MaxGenerations: 3,
 			PhaseBuilder: func(g generators.Generator) generators.Phase {
 				callCount++
-				return appendPhase("<<龘靐 shell\necho hi\n龘靐\n")
+				return appendPhase("《龘靐 shell\necho hi\n龘靐\n")
 			},
 			HTTPClient: nets.HTTPClient{},
 		})
@@ -1634,7 +1634,7 @@ func TestRunRetryOnErrorWithContent(t *testing.T) {
 			if callCount == 1 {
 				return appendThenErrorPhase("partial model output", errors.New("something went wrong"))
 			}
-			return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
+			return appendPhase("《龘靐 summary\nDone.\n龘靐\n")
 		}
 
 		result, err := runOnce(run, RunOptions{
@@ -1691,7 +1691,7 @@ func TestRunRetryOnApplyErrorGuidance(t *testing.T) {
 					&changes.ApplyError{Err: errors.New("apply change block MODIFY Foo: target not found")},
 				)
 			}
-			return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
+			return appendPhase("《龘靐 summary\nDone.\n龘靐\n")
 		}
 
 		result, err := runOnce(run, RunOptions{
@@ -1774,7 +1774,7 @@ func TestRunDiskChangeFlushEndsRun(t *testing.T) {
 		callCount := 0
 		phaseBuilder := func(g generators.Generator) generators.Phase {
 			callCount++
-			return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
+			return appendPhase("《龘靐 summary\nDone.\n龘靐\n")
 		}
 
 		_, err := runOnce(run, RunOptions{
@@ -1836,7 +1836,7 @@ func TestRunOnAttemptTruncatedCalled(t *testing.T) {
 			if callCount == 1 {
 				return appendPhase("incomplete output without summary")
 			}
-			return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
+			return appendPhase("《龘靐 summary\nDone.\n龘靐\n")
 		}
 
 		_, err := runOnce(run, RunOptions{
@@ -1874,7 +1874,7 @@ func TestRunRetryPromptIsIncludedDirectly(t *testing.T) {
 			if callCount == 1 {
 				return appendPhase("incomplete output without summary")
 			}
-			return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
+			return appendPhase("《龘靐 summary\nDone.\n龘靐\n")
 		}
 
 		result, err := runOnce(run, RunOptions{
@@ -2050,7 +2050,7 @@ func TestRunOnIdleNotCalledWhenComponentTriggers(t *testing.T) {
 
 		phaseBuilder := func(g generators.Generator) generators.Phase {
 			genCount++
-			return appendPhase("<<龘靐 shell\necho hi\n龘靐\n")
+			return appendPhase("《龘靐 shell\necho hi\n龘靐\n")
 		}
 
 		comps := components.ComponentSet{
@@ -2163,9 +2163,9 @@ func TestRunRemainingBlocksAccumulateAcrossRounds(t *testing.T) {
 		phaseBuilder := func(g generators.Generator) generators.Phase {
 			callCount++
 			if callCount == 1 {
-				return appendPhase("<<龘靐 done\ngoal achieved\n龘靐\n<<齉爩 other\ntrigger\n齉爩\n")
+				return appendPhase("《龘靐 done\ngoal achieved\n龘靐\n《齉爩 other\ntrigger\n齉爩\n")
 			}
-			return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
+			return appendPhase("《龘靐 summary\nDone.\n龘靐\n")
 		}
 
 		comps := components.ComponentSet{
@@ -2226,9 +2226,9 @@ func TestRunPrefetchesComputeAtParseTime(t *testing.T) {
 				// The prefetched block is emitted together with the
 				// mandatory summary block, so the attempt completes
 				// and the component processing runs.
-				return appendPhase("<<龘靐 fetch-kind\nhello\n龘靐\n<<贞观 summary\nRound 1 done.\n贞观\n")
+				return appendPhase("《龘靐 fetch-kind\nhello\n龘靐\n《贞观 summary\nRound 1 done.\n贞观\n")
 			}
-			return appendPhase("<<贞观 summary\nDone.\n贞观\n")
+			return appendPhase("《贞观 summary\nDone.\n贞观\n")
 		}
 		comps := components.ComponentSet{
 			{
@@ -2398,9 +2398,9 @@ func TestRunStateModificationTriggersRound(t *testing.T) {
 				// a round on its own, so a triggering block without a
 				// summary would be retried rather than processed.
 				// See TheoryOfSummaryCompletionRetry.
-				return appendPhase("<<建安 state-modifier\nrequest\n建安\n<<贞观 summary\nRound 1 done.\n贞观\n")
+				return appendPhase("《建安 state-modifier\nrequest\n建安\n《贞观 summary\nRound 1 done.\n贞观\n")
 			}
-			return appendPhase("<<贞观 summary\nDone.\n贞观\n")
+			return appendPhase("《贞观 summary\nDone.\n贞观\n")
 		}
 
 		comps := components.ComponentSet{
@@ -2466,7 +2466,7 @@ func TestRunContinueReasonDescribesTrigger(t *testing.T) {
 			phaseBuilder := func(g generators.Generator) generators.Phase {
 				callCount++
 				if callCount == 1 {
-					return appendPhase("<<龘靐 shell\necho hello\n龘靐\n")
+					return appendPhase("《龘靐 shell\necho hello\n龘靐\n")
 				}
 				return appendPhase("done")
 			}
@@ -2509,9 +2509,9 @@ func TestRunContinueReasonDescribesTrigger(t *testing.T) {
 			phaseBuilder := func(g generators.Generator) generators.Phase {
 				callCount++
 				if callCount == 1 {
-					return appendPhase("<<建安 state-modifier\nrequest\n建安\n<<贞观 summary\nRound 1 done.\n贞观\n")
+					return appendPhase("《建安 state-modifier\nrequest\n建安\n《贞观 summary\nRound 1 done.\n贞观\n")
 				}
-				return appendPhase("<<贞观 summary\nDone.\n贞观\n")
+				return appendPhase("《贞观 summary\nDone.\n贞观\n")
 			}
 			comps := components.ComponentSet{
 				{

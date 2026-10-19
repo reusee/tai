@@ -37,9 +37,9 @@ func TestRunIngestResultNodeCarriesContent(t *testing.T) {
 		phaseBuilder := func(g generators.Generator) generators.Phase {
 			callCount++
 			if callCount == 1 {
-				return appendPhase("<<萬曆 ingest\n<file path=\"a.txt\" />\n萬曆\n<<天祐 summary\nDone.\n天祐\n")
+				return appendPhase("《萬曆 ingest\n<file path=\"a.txt\" />\n萬曆\n《天祐 summary\nDone.\n天祐\n")
 			}
-			return appendPhase("<<天祐 summary\nSecond round done.\n天祐\n")
+			return appendPhase("《天祐 summary\nSecond round done.\n天祐\n")
 		}
 		result, err := runOnce(run, RunOptions{
 			Generator:    nil,

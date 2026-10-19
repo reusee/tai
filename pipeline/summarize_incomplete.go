@@ -503,7 +503,7 @@ func appendHandoffUsage(
 // same completion-signal shape as a model-emitted summary block.
 func FormatSummaryBlock(summary string) string {
 	delimiter := freshDelimiter()
-	return "<<" + delimiter + " summary\n" + summary + "\n" + delimiter
+	return "《" + delimiter + " summary\n" + summary + "\n" + delimiter
 }
 
 // freshDelimiter returns a fresh pair of uncommon Chinese characters for

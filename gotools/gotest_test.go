@@ -12,7 +12,7 @@ import (
 func TestGoBlockPromptsFormatGuards(t *testing.T) {
 	// The Go-specific kind prompts migrated from the blocks package keep
 	// the two format guards the blocks package enforces for its own kind
-	// prompts: no literal '<<DELIMITER' template marker (the model imitates
+	// prompts: no literal '《DELIMITER' template marker (the model imitates
 	// templates verbatim), and no restatement of the delimiter policy (the
 	// unified blocks.BlockFormatSystemPrompt covers it). See
 	// blocks.TheoryOfBlockFormatGeneral.
@@ -21,8 +21,8 @@ func TestGoBlockPromptsFormatGuards(t *testing.T) {
 		"GoSrcBlockSystemPrompt":  GoSrcBlockSystemPrompt,
 	}
 	for name, prompt := range prompts {
-		if strings.Contains(prompt, "<<DELIMITER") {
-			t.Fatalf("%s displays the literal template marker '<<DELIMITER', which the model imitates verbatim", name)
+		if strings.Contains(prompt, "《DELIMITER") {
+			t.Fatalf("%s displays the literal template marker '《DELIMITER', which the model imitates verbatim", name)
 		}
 		if strings.Contains(prompt, "uncommon Chinese two-character word") {
 			t.Fatalf("%s must not restate the delimiter policy; the unified BlockFormatSystemPrompt covers it", name)

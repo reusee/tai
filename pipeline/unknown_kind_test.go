@@ -20,9 +20,9 @@ func TestRunUnknownBlockKindFeedback(t *testing.T) {
 		phaseBuilder := func(g generators.Generator) generators.Phase {
 			callCount++
 			if callCount == 1 {
-				return appendPhase("<<永樂 mystery\nsome content\n永樂\n<<崇禎 summary\nRound 1 done.\n崇禎\n")
+				return appendPhase("《永樂 mystery\nsome content\n永樂\n《崇禎 summary\nRound 1 done.\n崇禎\n")
 			}
-			return appendPhase("<<崇禎 summary\nDone.\n崇禎\n")
+			return appendPhase("《崇禎 summary\nDone.\n崇禎\n")
 		}
 		comps := components.ComponentSet{
 			{Kind: "summary", PromptSection: "summary prompt"},
@@ -79,7 +79,7 @@ func TestRunUnknownBlockKindKnownPasses(t *testing.T) {
 			callCount := 0
 			phaseBuilder := func(g generators.Generator) generators.Phase {
 				callCount++
-				return appendPhase("<<永樂 change\nbody\n永樂\n<<崇禎 summary\nDone.\n崇禎\n")
+				return appendPhase("《永樂 change\nbody\n永樂\n《崇禎 summary\nDone.\n崇禎\n")
 			}
 			comps := components.ComponentSet{
 				{Kind: "change", PromptSection: "change prompt"},
@@ -113,7 +113,7 @@ func TestRunUnknownBlockKindKnownPasses(t *testing.T) {
 			callCount := 0
 			phaseBuilder := func(g generators.Generator) generators.Phase {
 				callCount++
-				return appendPhase("<<永樂 mystery\nbody\n永樂\n<<崇禎 summary\nDone.\n崇禎\n")
+				return appendPhase("《永樂 mystery\nbody\n永樂\n《崇禎 summary\nDone.\n崇禎\n")
 			}
 			comps := components.ComponentSet{
 				{Kind: "summary", PromptSection: "summary prompt"},
@@ -143,7 +143,7 @@ func TestRunUnknownBlockKindBudgetExhausted(t *testing.T) {
 		callCount := 0
 		phaseBuilder := func(g generators.Generator) generators.Phase {
 			callCount++
-			return appendPhase("<<永樂 mystery\nbody\n永樂\n<<崇禎 summary\nRound done.\n崇禎\n")
+			return appendPhase("《永樂 mystery\nbody\n永樂\n《崇禎 summary\nRound done.\n崇禎\n")
 		}
 		comps := components.ComponentSet{
 			{Kind: "summary", PromptSection: "summary prompt"},

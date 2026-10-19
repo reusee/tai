@@ -607,7 +607,7 @@ func TestCreateHandoffRetriesOnGenerationFailure(t *testing.T) {
 		},
 		responses: []string{
 			"", // unused (first call errors)
-			"<<黿鼍 handoff\nhandoff prompt text\n黿鼍",
+			"《黿鼍 handoff\nhandoff prompt text\n黿鼍",
 		},
 	}
 	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
@@ -642,7 +642,7 @@ func TestCreateHandoffRetriesWithoutLimit(t *testing.T) {
 		},
 		responses: []string{
 			"", "", "", "",
-			"<<黿鼍 handoff\nhandoff prompt text\n黿鼍",
+			"《黿鼍 handoff\nhandoff prompt text\n黿鼍",
 		},
 	}
 	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
@@ -708,7 +708,7 @@ func TestCreateHandoffWithBoundAbandonsAfterConsecutiveFailures(t *testing.T) {
 			errors.New("failure 2"),
 		},
 		responses: []string{
-			"", "", "<<黿鼍 handoff\nrecovered handoff text\n黿鼍",
+			"", "", "《黿鼍 handoff\nrecovered handoff text\n黿鼍",
 		},
 	}
 	handoff, err := createHandoffWithBound(context.Background(), logger, []generators.Generator{recoveringGen}, longInput, nil, nil, maxHandoffConsecutiveFailures)
@@ -753,7 +753,7 @@ func TestCreateHandoffGoalLoopBoundsRetries(t *testing.T) {
 			errors.New("failure 3"),
 			errors.New("failure 4"),
 		},
-		responses: []string{"", "", "", "", "<<黿鼍 handoff\nunbounded handoff text\n黿鼍"},
+		responses: []string{"", "", "", "", "《黿鼍 handoff\nunbounded handoff text\n黿鼍"},
 	}
 	create = Module{}.CreateHandoff(logger, func() ([]generators.Generator, error) {
 		return []generators.Generator{plainGen}, nil
@@ -822,7 +822,7 @@ func TestCreateHandoffLogsErrors(t *testing.T) {
 func TestCreateHandoffProvider(t *testing.T) {
 	gen := &summarizeRetryMockGenerator{
 		responses: []string{
-			"<<黿鼍 handoff\nhandoff prompt text\n黿鼍",
+			"《黿鼍 handoff\nhandoff prompt text\n黿鼍",
 		},
 	}
 	createHandoff := dscope.New(
@@ -854,7 +854,7 @@ func TestCreateHandoffPreservesRawMaterial(t *testing.T) {
 	// raw output and its reasoning survive only through the delivered
 	// Handoff value: the loop writes them into the handoff event node.
 	// See TheoryOfHandoff.
-	raw := "<<黿鼍 handoff\nThe condensed body.\n黿鼍"
+	raw := "《黿鼍 handoff\nThe condensed body.\n黿鼍"
 	gen := &summarizeRetryMockGenerator{
 		thoughts:  []string{"first reasoning"},
 		responses: []string{raw},
@@ -917,7 +917,7 @@ func TestCreateHandoffParsesHandoffBlockBody(t *testing.T) {
 	// TheoryOfHandoff.
 	gen := &summarizeRetryMockGenerator{
 		responses: []string{
-			"I'll summarize now.\n<<黿鼍 handoff\nThis is the handoff content.\nWith multiple lines.\n黿鼍\nThat's all.",
+			"I'll summarize now.\n《黿鼍 handoff\nThis is the handoff content.\nWith multiple lines.\n黿鼍\nThat's all.",
 		},
 	}
 	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
@@ -983,7 +983,7 @@ func TestCreateHandoffAccumulatesUsageAcrossAttempts(t *testing.T) {
 	gen := &handoffUsageMockGenerator{
 		responses: []string{
 			"I cannot produce a valid block.",
-			"<<黿鼍 handoff\nThe condensed handoff content.\n黿鼍",
+			"《黿鼍 handoff\nThe condensed handoff content.\n黿鼍",
 		},
 		usage: generators.Usage{
 			Prompt:     struct{ TokenCount, TokenCountCached int }{TokenCount: 11, TokenCountCached: 2},
@@ -1061,7 +1061,7 @@ func TestCreateHandoffStreamsToDecorator(t *testing.T) {
 	gen := &summarizeRetryMockGenerator{
 		thoughts: []string{"handoff thinking"},
 		responses: []string{
-			"<<黿鼍 handoff\nhandoff prompt text\n黿鼍",
+			"《黿鼍 handoff\nhandoff prompt text\n黿鼍",
 		},
 	}
 	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
@@ -1104,7 +1104,7 @@ func TestCreateHandoffStreamsToDecorator(t *testing.T) {
 
 func TestCreateHandoffReportsLifecycle(t *testing.T) {
 	gen := &summarizeRetryMockGenerator{
-		responses: []string{"<<黿鼍 handoff\nhandoff prompt text\n黿鼍"},
+		responses: []string{"《黿鼍 handoff\nhandoff prompt text\n黿鼍"},
 	}
 	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
 	obs := &fakeHandoffObserver{}

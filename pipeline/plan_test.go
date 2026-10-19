@@ -511,18 +511,18 @@ func TestRunPlanDrivenRounds(t *testing.T) {
 			callCount++
 			switch callCount {
 			case 1:
-				return appendPhase("<<貞觀 plan-op:?op=add&name=e1\nDo the first thing.\n貞觀\n" +
-					"<<乾亨 plan-op:?op=add&name=e2\nDo the second thing.\n乾亨\n" +
-					"<<明夷 summary\n- planned the work\n明夷\n")
+				return appendPhase("《貞觀 plan-op:?op=add&name=e1\nDo the first thing.\n貞觀\n" +
+					"《乾亨 plan-op:?op=add&name=e2\nDo the second thing.\n乾亨\n" +
+					"《明夷 summary\n- planned the work\n明夷\n")
 			case 2:
-				return appendPhase("<<大有 plan-op:?op=done&name=e1\nFirst entry done.\n大有\n" +
-					"<<泰臨 summary\n- first entry done\n泰臨\n")
+				return appendPhase("《大有 plan-op:?op=done&name=e1\nFirst entry done.\n大有\n" +
+					"《泰臨 summary\n- first entry done\n泰臨\n")
 			case 3:
-				return appendPhase("<<既濟 plan-op:?op=done&name=e2\nSecond entry done.\n既濟\n" +
-					"<<未濟 plan-op:?op=done&name=root-plan\nAll entries complete.\n未濟\n" +
-					"<<復卦 summary\n- all entries done\n復卦\n")
+				return appendPhase("《既濟 plan-op:?op=done&name=e2\nSecond entry done.\n既濟\n" +
+					"《未濟 plan-op:?op=done&name=root-plan\nAll entries complete.\n未濟\n" +
+					"《復卦 summary\n- all entries done\n復卦\n")
 			default:
-				return appendPhase("<<復卦 summary\n- acknowledged completion\n復卦\n")
+				return appendPhase("《復卦 summary\n- acknowledged completion\n復卦\n")
 			}
 		}
 

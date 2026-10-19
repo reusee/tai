@@ -743,7 +743,7 @@ func TestGoalSystemPromptContent(t *testing.T) {
 	if strings.Contains(GoalSystemPrompt, ".GOAL_COMPLETE") {
 		t.Fatal("GoalSystemPrompt must not reference a marker file")
 	}
-	if strings.Contains(GoalSystemPrompt, "<<DELIMITER") {
+	if strings.Contains(GoalSystemPrompt, "《DELIMITER") {
 		t.Fatal("GoalSystemPrompt must not display the literal template marker")
 	}
 	if strings.Contains(GoalSystemPrompt, "Re-read files to verify") {

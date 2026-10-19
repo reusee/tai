@@ -117,14 +117,14 @@ func TestMemoryPromptsUseUncommonChineseDelimiter(t *testing.T) {
 	// The delimiter policy lives only in blocks.BlockFormatSystemPrompt,
 	// which AIComponents embeds as a prompt-only component. The memory
 	// prompts describe only the memory kind and must not restate the
-	// policy or display the legacy MEMEND example delimiter. See
+	// policy or display a literal template marker. See
 	// TheoryOfBlockFormatGeneral in blocks/block.go.
 	prompt := memoryBlockSystemPrompt("")
 	if strings.Contains(prompt, "非常用汉字") {
 		t.Fatal("memoryBlockSystemPrompt must not restate the delimiter policy; the unified BlockFormatSystemPrompt covers it")
 	}
-	if strings.Contains(prompt, "<<MEMEND") {
-		t.Fatal("memoryBlockSystemPrompt must not display the legacy MEMEND example delimiter")
+	if strings.Contains(prompt, "《MEMEND") {
+		t.Fatal("memoryBlockSystemPrompt must not display the literal MEMEND template marker")
 	}
 	comps := dscope.New(
 		new(Module),

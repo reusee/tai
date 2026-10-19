@@ -751,7 +751,7 @@ func TestApplyChangeBlocksWrapperDelegatesToStore(t *testing.T) {
 
 	state := generators.NewPrompts("", nil)
 	parserState := blocks.NewParserState(state)
-	text := "<<龘靐 change(op=\"MODIFY\", target=\"Old\", file-path=\"test.go\")\nfunc New() {}\n龘靐\n"
+	text := "《龘靐 change(op=\"MODIFY\", target=\"Old\", file-path=\"test.go\")\nfunc New() {}\n龘靐\n"
 	newState, err := parserState.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(text)},
