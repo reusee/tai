@@ -1604,7 +1604,7 @@ func (t *TUI) treeTitleStatus() string {
 // treeTitleStatusOf walks n's ancestors for its loop and attempt: a
 // loop node's number comes from its loop-N name, an attempt node's
 // from its "attempt N" content. Available parts join with " / "; none
-// renders "". See TheoryOfTreeTitleStatus.
+// renders "". See TheoryOfTabTitleStatus.
 func treeTitleStatusOf(tr *tree.Tree, n *tree.Node) string {
 	loop, attempt := 0, 0
 	cur := n

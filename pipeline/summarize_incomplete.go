@@ -413,7 +413,7 @@ func runHandoffAttempt(
 // thoughts (showThoughts=false), so the recorded response needs them
 // appended separately; when a response fails to parse, the thoughts are
 // often the only signal of what the model actually produced.
-// See TheoryOfIncompleteOutputSummarization.
+// See TheoryOfHandoff.
 func extractModelThoughts(state generators.State) []string {
 	if state == nil {
 		return nil

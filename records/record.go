@@ -82,15 +82,11 @@ full: nothing is omitted or truncated.
 `
 
 const TheoryOfEventRecording = `
-Generator-level events are tree nodes. Generator implementations hold
-the dscope-injected generators.EventRecorder and write api_error
-events into the scope's generators.EventSink; the generation loop
-drains the sink after every round and records each buffered event as
-a session-tree event node, so API-level failures join the same
-operation stream as the rest of the session
-(generators.TheoryOfEventRecorder). The recorder therefore needs no
-separate event path: it records the tree, and every event is a tree
-node.
+Generator-level events are tree nodes. The recording mechanism itself — the
+generator-held EventRecorder, the per-scope EventSink, and the loop's drain
+after every round — lives in generators.TheoryOfEventRecorder. The recorder
+therefore needs no separate event path: it records the tree, and every
+event is a tree node.
 `
 
 // DBPath is the path of the session tree sqlite database file. The

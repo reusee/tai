@@ -324,13 +324,8 @@ func shouldIncludeFile(f *File, level VisibilityLevel) bool {
 // documentation text with a guaranteed trailing newline. Every
 // documentation path (visibility-level rendering, focus-package pinning,
 // and go-src package references) delegates here, keeping one go doc
-// invocation shared across the codebase. go doc runs with -mod=readonly:
-// the load environment injects -mod=mod (see TheoryOfModModEnv) so go
-// list can update go.mod when it is out of sync, but go doc would then
-// re-add checksums that go mod tidy removed, causing go.sum to churn.
-// Stripping -mod=mod leaves the go command's default -mod=readonly,
-// which fails instead of writing when a checksum is missing. See
-// TheoryOfGoDocReadonly.
+// invocation shared across the codebase. The read-only module environment
+// lives in TheoryOfGoDocReadonly.
 func goDocOutput(pkgPath, dir string, envs []string, focus bool) (string, error) {
 	args := []string{"doc", "-all", "-cmd"}
 	if focus {

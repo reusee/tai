@@ -8,23 +8,13 @@ import (
 	"github.com/reusee/tai/configs"
 )
 
-// TheoryOfHandoffModelPrecedence documents how config values from multiple
-// files select the handoff model. See pipeline.TheoryOfHandoffModel for the
-// fallback chain and generator selection.
 const TheoryOfHandoffModelPrecedence = `
-HandoffModel is a scalar selection, never an accumulation: when several
-config files set the same path, the first non-empty value wins. HandleConfig
-receives values in loader root order, and the tai loader lists roots from
-most local to most global (working directory, module root, user config dir,
-/etc), so first-wins lets a project-level config pin the handoff model
-unaffected by global settings; a more global root applies only when no more
-local file sets the path, and an explicitly empty string counts as unset.
-The value is a single string — lists are rejected, matching the tai schema.
-Precedence layers compose: app-specific paths (e.g. cmd_ai.handoff_model)
-come after the generic paths in ConfigPathsFunc and override them
-(configs.TheoryOfConfigPathPrecedence), and the -handoff-model flag
-overrides every config value because flags.Parse runs after configs.Load
-(TheoryOfConfigFlagParity).
+HandoffModel is a scalar selection under the shared config precedence rule:
+the first non-empty value wins, more local roots apply first, the precedence
+layers compose, and the flag overrides every config value. The rule itself
+lives in TheoryOfDecisionModelPrecedence. This type's generic config paths are
+handoff_model_name and handoff_model, its app-specific path is
+<app>.handoff_model, and its flag is -handoff-model.
 `
 
 // HandoffModel is the model used for handoff. When empty, the fast model

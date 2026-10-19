@@ -21,11 +21,9 @@ context-exceeded classification theory:
   message — the OpenAI request dump is a struct field, never part of
   the text, and error wrapping preserves the text — so a phrase match
   is the provider's own report, not echoed model output.
-- A context-exceeded error is not retryable: the same messages exceed
-  the window again, and a retried generation appends handoff feedback
-  that grows the input further. The pipeline ends the loop and hands
-  the interrupted output to the next loop, whose fresh scope rebuilds
-  a smaller context.
+- The error is not retryable: a retried generation exceeds the window again
+  and appends feedback that grows the input further. The loop-level
+  handling lives in pipeline.TheoryOfContextExceededHandoff.
 `
 
 // contextExceededPhrases lists the message fragments by which model

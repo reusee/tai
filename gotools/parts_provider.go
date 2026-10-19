@@ -40,9 +40,7 @@ volatile suffix.
 `
 
 // pendingExtraPart holds an extra file part to be added after project files.
-// Deferring extra file addition ensures project files form the stable prefix
-// for LLM prefix caching, while extra files (which vary by request pattern)
-// form the volatile suffix.
+// See TheoryOfExtraFileContext.
 type pendingExtraPart struct {
 	part   generators.Part
 	tokens int

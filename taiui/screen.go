@@ -55,11 +55,8 @@ taiui terminal screen retention theory:
 - The retained frame copy is updated only for the dirty rows: rows not
   in the dirty set are already identical to the retained frame, so a
   partial repaint copies cells proportional to the damage instead of
-  the whole screen.
-- The per-row style comparison checks pointer identity before the
-  equality method: a render pass shares style values, so most style
-  changes are detected by pointer comparison, and the equality method
-  is called only for distinct style values.
+  the whole screen. The per-cell comparison cost lives in
+  TheoryOfCellComparison.
 `
 
 // TerminalScreen renders Frames to a terminal via ANSI escape sequences.

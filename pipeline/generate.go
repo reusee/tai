@@ -473,14 +473,12 @@ next attempt (see TheoryOfHandoff).
 `
 
 const TheoryOfSummaryRetryOnError = `
-Generation errors that occur after the model has already produced partial output
-(thoughts or body text) are retried with a handoff summary of that output.
-Handoff condenses the partial output into a compact user message that
-preserves context while freeing budget, and changes the input so the retry produces
-a different response. All generation-phase errors — including missing completion
-and change-block apply errors — are routed through the same OnPhaseError retry path
-with handoff, ensuring consistent retry behavior regardless of the error type.
-See TheoryOfHandoff.
+Generation errors after partial output retry with a handoff summary of that
+output, and every generation-phase error — missing completion, change-block
+apply failure, or any other phase error — takes the same retry path, so retry
+behavior is consistent regardless of the error type. The retry paths live in
+TheoryOfLoops; the handoff condensation lives in TheoryOfHandoff. Neither is
+repeated here.
 `
 
 // GenerateWithResult wraps GenerateWithResultWithStats, discarding the

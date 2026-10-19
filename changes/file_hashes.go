@@ -18,11 +18,9 @@ external modifications between context assembly and the apply trigger the
 error. When a baseline exists, the hash check replaces the mtime
 write-conflict check, which stays in force for stores built without a
 baseline. The baseline is a dscope-provided value, so each goal loop starts
-with a fresh baseline matching the filesystem state that loop loaded; the
-generation loop ends the run on DiskChangedError instead of retrying the
-attempt, because only a fresh loop that reloads the filesystem can repair
-the snapshot divergence. See pipeline.TheoryOfDiskChangeHandoff and
-TheoryOfWriteConflictDetection.
+with a fresh baseline matching the filesystem state that loop loaded. The
+error's loop-level handling lives in pipeline.TheoryOfDiskChangeHandoff;
+the mtime heuristic lives in TheoryOfWriteConflictDetection.
 `
 
 // DiskChangedError reports that a file on disk no longer matches the

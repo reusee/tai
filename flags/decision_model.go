@@ -42,16 +42,8 @@ pipeline.TheoryOfGoalReviewModel).
 `
 
 // DecisionModel is the model that judges the codes pipeline's task decision.
-// It answers two criteria in one request: whether the session's task is a
-// programming task — which decides whether the codes base prompt enters the
-// system prompt — and whether the task is read-only — which decides whether the
-// change component is omitted from the pipeline; only an explicit read-only
-// judgment omits it (see pipeline.TheoryOfTaskDecision). It is not consumed by
-// the review process: the goal runner's post-done verification loops and the
-// post-run review sessions run on the review-model rotation (see
-// pipeline.TheoryOfGoalReviewModel). The value is selected by the
-// -decision-model flag or the decision_model config path. See
-// TheoryOfDecisionModelPrecedence.
+// The value is selected by the -decision-model flag or the decision_model
+// config path. See TheoryOfDecisionModelPrecedence.
 type DecisionModel string
 
 func (Module) DecisionModel() (ret DecisionModel) {
