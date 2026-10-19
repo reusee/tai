@@ -210,7 +210,7 @@ op-name form, and the change-kind form remains the only taught form.
 `
 
 const TheoryOfKindlessBlocks = `
-Models sometimes emit blocks whose opening marker omits the XML opening tag:
+Models sometimes emit blocks whose opening marker omits the header:
 《DELIMITER ... DELIMITER with no kind or attributes. The parser accepts these blocks
 with an empty Kind (see tryParseBlock). Because an empty Kind matches no component
 and cannot be used for lookup, such blocks can only be located by iterating all

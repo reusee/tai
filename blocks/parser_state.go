@@ -56,7 +56,7 @@ correctly regardless of what follows it on the opening line.
 `
 
 const TheoryOfParseErrorCollection = `
-Parse errors — blocks whose opening tag is malformed or whose closing delimiter is
+Parse errors — blocks whose header is malformed or whose closing delimiter is
 missing or malformed — are collected during streaming rather than treated as fatal
 generation errors. A block that cannot be parsed is malformed or truncated model
 output, not a system failure: the model may correct it given the right feedback.
@@ -64,7 +64,7 @@ Collecting the error with the block kind, boundary, line number, partial content
 and collision hints and feeding it back as user content in the next round gives the
 model a concrete target for self-correction, while successfully parsed blocks
 continue to be processed normally. A line with a valid two-character Han delimiter
-followed by an invalid or incomplete XML opening tag is a malformed block, not
+followed by an invalid or incomplete header is a malformed block, not
 prose: the delimiter marks the line as an intended block opening, so the model must
 be told what went wrong rather than having its intended block silently dropped.
 Complete blocks that follow a malformed block in the same buffer are not reachable

@@ -16,8 +16,9 @@ taiui title toolbar theory:
   title row's own rule visible past the buttons. A button occupies
   exactly its label's display width, and adjacent buttons carry no
   separator cells, so the labels tile the toolbar span.
-- A row too narrow for every button drops the buttons that do not fit,
-  rightmost first, keeping the reserved margin.
+- A row too narrow for every button drops the buttons that do not fit.
+  Layout runs right to left from the reserved margin, so the buttons
+  nearest the margin survive and the leftmost ones fall away.
 - Pointer hover is affordance only: the button under the pointer
   renders reversed, and hovering runs no action.
 `

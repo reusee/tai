@@ -44,7 +44,9 @@ taiui tabs theory:
   unfocused tabs: a zero, negative, or missing entry leaves the tab
   uncapped, and the focused tab always ignores its cap. The extent a
   capped tab gives up is redistributed among the uncapped expanded tabs
-  by weight, so the boxes still tile the screen exactly.
+  by weight. When every expanded tab is capped, no tab remains to
+  receive it: the freed extent stays unused and the boxes underfill
+  the screen.
 - TopInset reserves rows at the top of the screen: Boxes lays every
   tab below the inset, so a control bar drawn over the reserved row
   needs no coordinate remapping anywhere; zero keeps the full-height
