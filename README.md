@@ -164,10 +164,10 @@ Gemini, OpenAI, DeepSeek, Volcano Engine (Huoshan), Baidu, Tencent, Alibaba Clou
 
 ### Block Format
 
-The model emits structured output as heredoc-delimited blocks. Each block has a kind (a function name), parameters, and a body:
+The model emits structured output as heredoc-delimited blocks. Each block has a kind (the URI scheme), optional parameters (the query after `?`), and a body; parameter values percent-encode every character outside `A-Z a-z 0-9 - . _ ~`:
 
 ```
-《貞觀 change(op="MODIFY", target="Foo", file-path="/path/to/file.go")
+《貞觀 change:?op=MODIFY&target=Foo&file-path=main.go
 func Foo() {
     // modified code
 }
