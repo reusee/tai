@@ -123,6 +123,7 @@ Gemini, OpenAI, DeepSeek, Volcano Engine (Huoshan), Baidu, Tencent, Alibaba Clou
 | `-shell` | Enable shell block execution |
 | `-stdin` | Add standard input content to the chat messages |
 | `clean` | Add the code cleanup prompt to the chat messages |
+| `fix` | Add the bug-finding and fixing prompt to the chat messages |
 | `-apply` / `-no-apply` | Control whether change blocks are applied |
 | `-no-memory` | Disable user profile memory persistence |
 | `-record` | Record interaction sessions for self-improvement analysis |

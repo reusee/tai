@@ -15,6 +15,7 @@ func TestParsePromptFlags(t *testing.T) {
 		{"align", "align", alignPrompt},
 		{"clean", "clean", cleanPrompt},
 		{"distill", "distill", distillPrompt},
+		{"fix", "fix", fixPrompt},
 	} {
 		t.Run(tt.name+"/solo", func(t *testing.T) {
 			scope := dscope.New(Module{})

@@ -10,7 +10,7 @@ import (
 )
 
 const TheoryOfChatPromptFlags = `
-Theory of the fixed-prompt chat flags (stdin, clean, align, distill):
+Theory of the fixed-prompt chat flags (stdin, clean, align, distill, fix):
 each is an additional key on the Chats flag type, registered as a bare word
 like "chat"; Parse matches arguments verbatim, so the invocation carries no
 leading dash. Each Handle invocation reads the current Chats value from the
@@ -59,6 +59,18 @@ model first produces the overall skeleton and writes it to the file, then
 refines it step by step. See TheoryOfChatPromptFlags.
 `
 
+const TheoryOfFixFlag = `
+The fix flag appends a fixed bug-finding and bug-fixing prompt to the chat
+messages (Chats). The prompt keeps the bug scope open: the model explores the
+project, reads its design intent, and decides what counts as a bug, because
+the project's defects are not enumerable in advance and any checklist would
+bound the search to the classes of bug its author already knew. Every fix is
+reproducible: the model adds a test that fails before the fix and passes
+after, so a fixed defect cannot regress unnoticed. Unlike align, the flag
+changes the working tree: the deliverable is the fix, not a report. See
+TheoryOfChatPromptFlags.
+`
+
 // cleanPrompt is the fixed task directive the clean flag appends to the
 // chat messages. See TheoryOfCleanFlag.
 const cleanPrompt = "Delete redundant code and mechanisms. Merge and simplify duplicate tests. Delete theory text content that duplicates other theory texts."
@@ -70,6 +82,10 @@ const alignPrompt = "Check whether the system theory (theory constants and speci
 // distillPrompt is the fixed task directive the distill flag appends to the
 // chat messages. See TheoryOfDistillFlag.
 const distillPrompt = "Distill the project's theory, from the whole down to its parts, in great detail, so that a model can rebuild the entire project from the theory text alone. Capture ideas, models, decisions, logical interfaces, and constraints; do not describe files or directory structures. Write the result to _theory.go. Work in steps: first produce the overall skeleton and write it to the file, then refine it step by step."
+
+// fixPrompt is the fixed task directive the fix flag appends to the chat
+// messages. See TheoryOfFixFlag.
+const fixPrompt = "Find and fix bugs in the project. The scope of bugs is open: explore the codebase, read the design intent, and decide what counts as a bug. For each bug, add a test that reproduces it, then fix the bug and make the test pass. The goal is to reduce bugs as much as possible."
 
 type Chats []string
 
@@ -86,6 +102,7 @@ func (c Chats) Keys() map[string]string {
 		"clean":   "Add the code cleanup prompt to the chat messages",
 		"align":   "Add the theory-implementation alignment check prompt to the chat messages",
 		"distill": "Add the theory distillation prompt to the chat messages",
+		"fix":     "Add the bug-finding and fixing prompt to the chat messages",
 	}
 }
 
@@ -112,6 +129,9 @@ func (c Chats) Handle(key string, args []string) (newDef any, remainArgs []strin
 		return &ret, args, nil
 	case "distill":
 		ret := append(slices.Clone(c), distillPrompt)
+		return &ret, args, nil
+	case "fix":
+		ret := append(slices.Clone(c), fixPrompt)
 		return &ret, args, nil
 	}
 	panic("key not handle: " + key)
