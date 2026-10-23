@@ -66,6 +66,115 @@ over the FUSE view before the pivot, so processes reach them directly.
 See TheoryOfPassthrough.
 `
 
+// TheoryOfInitNegotiation explains why the INIT handshake is the first and
+// cheapest performance lever: it sets the per-request ceiling every later file
+// operation runs under, before a single byte moves.
+//
+// BIG_WRITES dominates the write path. Without it the kernel caps one WRITE at a
+// single page, so a toolchain writing a multi-megabyte file sends hundreds of
+// requests, and the store materializes the whole content on every one of them:
+// the same bytes are copied and stored again per page, which makes the write
+// path quadratic in the request count. MAX_PAGES raises the announced window to
+// the 1 MiB the kernel caps max_write at, so the same write costs one request
+// and one sqlite store.
+//
+// READDIRPLUS carries a fuse_entry_out per directory entry, so the kernel needs
+// no LOOKUP after a listing: a directory walk — the toolchain's dominant
+// pattern — becomes one request instead of one plus one per entry.
+//
+// The remaining bits cost one round trip each: ATOMIC_O_TRUNC folds the
+// truncating open's SETATTR into the OPEN the caller already issues, ASYNC_READ
+// keeps several reads in flight, and PARALLEL_DIROPS lifts the kernel's
+// serialization of independent directory operations. Writeback caching is
+// deliberately absent: it would defer writes past the open that checks the
+// write policy.
+//
+// Every bit is echoed only when the kernel offers it, so an older kernel keeps
+// the conservative window this server announced before the negotiation existed.
+const TheoryOfInitNegotiation = `
+The FUSE INIT handshake is the first and cheapest performance lever: it sets the
+per-request ceiling every later file operation runs under, before a single byte
+moves.
+
+BIG_WRITES dominates the write path. Without it the kernel caps one WRITE at a
+single page, so a toolchain writing a multi-megabyte file sends hundreds of
+requests, and the store materializes the whole content on every one of them: the
+same bytes are copied and stored again per page, which makes the write path
+quadratic in the request count. MAX_PAGES raises the announced window to the
+1 MiB the kernel caps max_write at, so the same write costs one request and one
+sqlite store.
+
+READDIRPLUS carries a fuse_entry_out per directory entry, so the kernel needs no
+LOOKUP after a listing: a directory walk — the toolchain's dominant pattern —
+becomes one request instead of one plus one per entry.
+
+The remaining bits cost one round trip each: ATOMIC_O_TRUNC folds the truncating
+open's SETATTR into the OPEN the caller already issues, ASYNC_READ keeps several
+reads in flight, and PARALLEL_DIROPS lifts the kernel's serialization of
+independent directory operations. Writeback caching is deliberately absent: it
+would defer writes past the open that checks the write policy.
+
+Every bit is echoed only when the kernel offers it, so an older kernel keeps the
+conservative window this server announced before the negotiation existed.
+`
+
+const TheoryOfAttrCaching = `
+The kernel's attribute and entry timeouts are the cheapest performance lever a
+FUSE filesystem has. For the length of the timeout the kernel answers STAT and
+LOOKUP from its own cache, so a toolchain that stats the same dependency a
+thousand times sends one request instead of a thousand, and the win multiplies
+every later optimization because those requests never reach the store at all.
+
+The store's own semantics make a long timeout safe. Every mutation the session
+performs goes through this mount, and the kernel drops the cached attributes of
+a path whose content, size, or times a request changes; the session therefore
+never reads stale metadata that it wrote itself. A host change the sandbox
+cannot see is, by design, the snapshot the session works from: the base reader
+fixes a file's view at open, and a host edit surfaces as a conflict at apply
+time rather than as a change the session must observe mid-read. A short timeout
+would buy freshness the session does not want and pay one round trip per stat
+to get it.
+
+The entry timeout and the attribute timeout move together. An entry that stays
+valid keeps its node id, so a repeated path resolution costs neither a LOOKUP
+nor a new node id, and the server's node table stops growing with the number of
+times a toolchain walked the tree.
+
+A rendered attribute also reads the process identity. The uid and gid cannot
+change during the process's life, so resolving them once at first use keeps two
+syscalls out of every attribute a lookup, a getattr, or a listing entry renders
+— and a READDIRPLUS reply renders one attribute per directory entry, which
+turns a hundred-entry listing into two hundred syscalls paid for a constant.
+`
+
+const TheoryOfOpenCaching = `
+The kernel caches file pages and directory entries per open, and an open reply
+can ask it to keep them across opens. Both flags matter here because the base
+layer is a snapshot the session works from: the content of a dependency does
+not change under the session, so a page the kernel keeps is still the page the
+store would serve, and a directory's entries are invalidated by any request
+that creates, removes, renames, or writes through the mount, so the session's
+own mutations never hide behind the cache.
+
+Keeping the page cache turns a repeated read of an unchanged dependency into a
+kernel memory copy: the request never reaches the store, and the read path
+stops paying one request per page. Keeping a directory's entries does the same
+for a repeated walk, folding into the entry timeout's savings rather than
+duplicating them.
+
+A write-mode open does not ask for the page cache. Its content is the
+session's to change, and a page kept from before the write would shadow the
+bytes the write just stored.
+`
+
+// fuseCacheTimeoutSec is the kernel's attribute and entry cache lifetime in
+// seconds: long enough that a repeated stat or lookup is answered without a
+// request, and bounded so a session's own writes are observed promptly. The
+// kernel invalidates the entries of any path a request changes, so the bound
+// governs host changes and the session's own metadata never goes stale behind
+// it. See TheoryOfAttrCaching.
+const fuseCacheTimeoutSec = 60
+
 const TheoryOfPassthrough = `
 Passthrough directories are mounted over the sandbox view, not served
 through the store: the Go toolchain caches (GOCACHE, GOMODCACHE, GOPATH/pkg)
@@ -103,19 +212,11 @@ const (
 	// fuseRootID is the node id the kernel assigns to the filesystem root.
 	fuseRootID = 1
 
-	// fuseMaxWrite bounds the read loop's buffer and one kernel write.
 	fuseMaxWrite = 1 << 17
 
 	// fuseProtocolMinor is the kernel protocol minor we speak: field
 	// definitions through Linux 7.31.
 	fuseProtocolMinor = 31
-
-	// fuseAttrTimeoutSec keeps kernel attribute caches short: the store
-	// can change under the kernel's feet, and a stale attribute is best
-	// corrected quickly.
-	fuseAttrTimeoutSec = 1
-
-	fuseMaxTruncate = 64 << 20
 )
 
 // Linux FUSE opcodes, matching include/uapi/linux/fuse.h.
@@ -158,6 +259,54 @@ const (
 // successful instead of ENOSYS keeps the toolchain's durability path
 // working. See TheoryOfCompletePOSIX.
 const fuseOpFsyncdir = 32
+
+// FUSE INIT capability bits, from include/uapi/linux/fuse.h. The server echoes
+// only the bits the kernel offers. See TheoryOfInitNegotiation.
+const (
+	fuseInitAsyncRead       = 1 << 0  // several reads in flight
+	fuseInitAtomicOTrunc    = 1 << 3  // OPEN honours O_TRUNC
+	fuseInitBigWrites       = 1 << 5  // WRITE above one page
+	fuseInitDoReaddirplus   = 1 << 13 // READDIRPLUS implemented
+	fuseInitReaddirplusAuto = 1 << 14 // kernel picks per directory
+	fuseInitParallelDirops  = 1 << 18 // parallel directory operations
+	fuseInitMaxPages        = 1 << 22 // max_pages is valid
+
+	// fuseInitWanted is the capability set the server asks for: the request
+	// ceilings FUSE_MAX_PAGES and BIG_WRITES buy, the LOOKUP savings of
+	// READDIRPLUS, and the one-round-trip bits.
+	fuseInitWanted = fuseInitAsyncRead |
+		fuseInitAtomicOTrunc |
+		fuseInitBigWrites |
+		fuseInitDoReaddirplus |
+		fuseInitReaddirplusAuto |
+		fuseInitParallelDirops |
+		fuseInitMaxPages
+
+	// fusePageSize is the unit FUSE_MAX_PAGES counts its page budget in.
+	fusePageSize = 4096
+
+	// fuseMaxWriteMax is the largest payload the server announces when the
+	// kernel negotiates FUSE_MAX_PAGES: 1 MiB, the ceiling the kernel itself
+	// caps max_write at.
+	fuseMaxWriteMax = 1 << 20
+
+	// fuseMaxPages is the page count covering fuseMaxWriteMax.
+	fuseMaxPages = fuseMaxWriteMax / fusePageSize
+
+	// fuseInHeaderSize and fuseOutHeaderSize are the fixed wire sizes of the
+	// request and response headers, read directly so the hot path pays no
+	// reflection cost.
+	fuseInHeaderSize  = 40
+	fuseOutHeaderSize = 16
+
+	// fuseOpReaddirplus is FUSE_READDIRPLUS: READDIR carrying a fuse_entry_out
+	// ahead of every dirent, so a listing needs no LOOKUP per entry.
+	fuseOpReaddirplus = 44
+
+	// fuseDirentSize is the fixed part of one fuse_dirent; the name follows,
+	// padded to an 8-byte boundary.
+	fuseDirentSize = 24
+)
 
 // FATTR_* bits of fuse_setattr_in.valid.
 const (
@@ -239,13 +388,13 @@ type fuseInitIn struct {
 
 // fuseInitOut mirrors struct fuse_init_out through protocol 7.31: major,
 // minor, max_readahead, flags, max_background, congestion_threshold,
-// max_write, time_gran, then the unused tail. The field order is the wire
-// order the kernel parses by its own struct offsets, so a field placed
-// anywhere else shifts every value after it — max_write and max_background
-// would arrive as zero and time_gran as garbage. Later protocols' fields
-// fall inside the unused tail and stay zero, which the kernel tolerates:
-// a short INIT reply is zero-filled and a later field is read only when its
-// flag is set. See TheoryOfFuseMount.
+// max_write, time_gran, then the 7.28 max_pages field and the 7.36
+// map_alignment and flags2 fields. The field order is the wire order the
+// kernel parses by its own struct offsets, so a field placed anywhere else
+// shifts every value after it — max_write and max_background would arrive as
+// zero and time_gran as garbage. A field whose negotiating flag is absent stays
+// zero, which the kernel ignores. See TheoryOfFuseMount and
+// TheoryOfInitNegotiation.
 type fuseInitOut struct {
 	Major               uint32
 	Minor               uint32
@@ -255,7 +404,10 @@ type fuseInitOut struct {
 	CongestionThreshold uint16
 	MaxWrite            uint32
 	TimeGran            uint32
-	Unused              [9]uint32
+	MaxPages            uint32
+	MapAlignment        uint16
+	Flags2              uint16
+	Unused              [7]uint32
 }
 
 // fuseOpenIn mirrors struct fuse_open_in.
@@ -415,18 +567,27 @@ type fuseDirent struct {
 	Type    uint32
 }
 
-// fuseHandle is one open file or directory. A file's content is
-// materialized on the first write only: a handle opened for reading never
-// copies the file into memory. A read handle caches the base-layer file it
-// opened, so streaming one base file costs one open and one type check per
-// handle instead of one of each per window. See TheoryOfCompletePOSIX and
-// TheoryOfReadPath.
+// fuseHandle is one open file or directory. A file's content lives only in the
+// store: a write splices its delta there, so the handle holds no copy of the
+// file and a large open file costs no memory. A read handle caches the
+// base-layer file it opened, so streaming one base file costs one open and one
+// type check per handle instead of one of each per window.
+// See TheoryOfWriteSplice and TheoryOfReadPath.
 type fuseHandle struct {
 	path    string
 	isDir   bool
-	loaded  bool
-	buf     []byte
 	entries []DirEntry
+
+	// mode is the file's permission bits, captured at open or create, so the
+	// write path needs no metadata lookup of its own: the open that handed
+	// the handle back already read the attribute. See TheoryOfWriteSplice.
+	mode os.FileMode
+
+	// readBuf is the handle's read window buffer, reused across reads: the
+	// server answers one request at a time and the reply reaches the kernel
+	// before the next request is read, so a streamed file costs one buffer per
+	// handle instead of one allocation per window. See TheoryOfReadPath.
+	readBuf []byte
 
 	// base is the handle's cached base-layer reader: opened lazily on the
 	// first read the upper layer does not answer, closed on release or
@@ -455,6 +616,11 @@ type fuseServer struct {
 	nextID  uint64
 	nextFh  uint64
 
+	// outBuf is the response scratch the server reuses for every reply. The
+	// server answers one request at a time, so one buffer serves all responses
+	// and a reply costs no allocation.
+	outBuf []byte
+
 	done chan struct{}
 }
 
@@ -473,8 +639,10 @@ func newFuseServer(store *Store, devFd int) *fuseServer {
 
 func (s *fuseServer) run() {
 	defer close(s.done)
-	hdrSize := binary.Size(fuseInHeader{})
-	buf := make([]byte, fuseMaxWrite+binary.Size(fuseWriteIn{})+hdrSize)
+	// The buffer holds the largest request the kernel may send after the
+	// negotiation: the request header, one write header, and a full
+	// fuseMaxWriteMax payload. See TheoryOfInitNegotiation.
+	buf := make([]byte, fuseInHeaderSize+binary.Size(fuseWriteIn{})+fuseMaxWriteMax)
 	for {
 		n, err := unix.Read(s.devFd, buf)
 		if err != nil {
@@ -483,7 +651,7 @@ func (s *fuseServer) run() {
 			}
 			return
 		}
-		if n <= 0 || n < hdrSize {
+		if n <= 0 || n < fuseInHeaderSize {
 			return
 		}
 		s.dispatch(buf[:n])
@@ -491,11 +659,13 @@ func (s *fuseServer) run() {
 }
 
 func (s *fuseServer) dispatch(buf []byte) {
-	var h fuseInHeader
-	if err := binary.Read(bytes.NewReader(buf[:binary.Size(h)]), binary.LittleEndian, &h); err != nil {
-		return
+	h := fuseInHeader{
+		Len:    binary.LittleEndian.Uint32(buf[0:4]),
+		Opcode: binary.LittleEndian.Uint32(buf[4:8]),
+		Unique: binary.LittleEndian.Uint64(buf[8:16]),
+		Nodeid: binary.LittleEndian.Uint64(buf[16:24]),
 	}
-	body := buf[binary.Size(h):]
+	body := buf[fuseInHeaderSize:]
 	var respBody []byte
 	var err error
 	switch h.Opcode {
@@ -530,6 +700,8 @@ func (s *fuseServer) dispatch(buf []byte) {
 		respBody, err = s.handleOpendir(h.Nodeid)
 	case fuseOpReaddir:
 		respBody, err = s.handleReaddir(body)
+	case fuseOpReaddirplus:
+		respBody, err = s.handleReaddirPlus(body)
 	case fuseOpReleasedir:
 		respBody, err = s.handleRelease(body)
 	case fuseOpCreate:
@@ -574,19 +746,30 @@ func (s *fuseServer) dispatch(buf []byte) {
 	s.respond(h.Unique, err, respBody)
 }
 
+// respond writes one reply. The header and the payload leave as one writev:
+// a read reply can carry a whole negotiated request window, and copying that
+// payload behind the header would move the bytes a second time per read. The
+// kernel consumes one write per reply, and writev is one write. The header
+// buffer is the server's reused scratch, so a reply costs no allocation.
+// See TheoryOfFuseMount.
 func (s *fuseServer) respond(unique uint64, err error, body []byte) {
 	errno := int32(0)
 	if err != nil {
 		errno = fuseErrno(err)
 		body = nil
 	}
-	outLen := uint32(binary.Size(fuseOutHeader{}) + len(body))
-	out := make([]byte, outLen)
-	binary.LittleEndian.PutUint32(out[0:4], outLen)
+	if cap(s.outBuf) < fuseOutHeaderSize {
+		s.outBuf = make([]byte, fuseOutHeaderSize)
+	}
+	out := s.outBuf[:fuseOutHeaderSize]
+	binary.LittleEndian.PutUint32(out[0:4], uint32(fuseOutHeaderSize+len(body)))
 	binary.LittleEndian.PutUint32(out[4:8], uint32(errno))
 	binary.LittleEndian.PutUint64(out[8:16], unique)
-	copy(out[binary.Size(fuseOutHeader{}):], body)
-	_, _ = unix.Write(s.devFd, out)
+	if len(body) == 0 {
+		_, _ = unix.Write(s.devFd, out)
+		return
+	}
+	_, _ = unix.Writev(s.devFd, [][]byte{out, body})
 }
 
 // fuseErrno maps an error to the negative errno the kernel expects in a
@@ -645,9 +828,29 @@ func (s *fuseServer) nodeOf(p string, mustExist bool) (uint64, error) {
 	return id, nil
 }
 
+// fuseUid and fuseGid resolve the mounting process's identity once: an
+// attribute render is the most frequent step of a lookup, a getattr, and a
+// listing entry, and the identity cannot change during the process's life, so
+// two syscalls per rendered attribute buy nothing. A READDIRPLUS reply renders
+// one attribute per directory entry, which makes those two syscalls the
+// dominant cost of a listing. See TheoryOfAttrCaching.
+var (
+	fuseUid = sync.OnceValue(os.Getuid)
+	fuseGid = sync.OnceValue(os.Getgid)
+)
+
+// FUSE open-reply flags, from include/uapi/linux/fuse.h: an open reply asks the
+// kernel to keep a file's pages or a directory's entries across opens.
+// See TheoryOfOpenCaching.
+const (
+	fuseOpenKeepCache = 1 << 0
+	fuseOpenCacheDir  = 1 << 3
+)
+
 // attrOfFuse renders one store attribute on the wire. A named pipe reports
-// S_IFIFO so the kernel routes pipe opens to the pipe layer, never back to
-// the filesystem. See TheoryOfCompletePOSIX.
+// S_IFIFO so the kernel routes pipe opens to the pipe layer, never back to the
+// filesystem. The process identity arrives from the once-resolved values, so a
+// render costs no syscall. See TheoryOfCompletePOSIX and TheoryOfAttrCaching.
 func attrOfFuse(ino uint64, a Attr) fuseAttr {
 	var mode uint32
 	switch a.Kind {
@@ -674,7 +877,7 @@ func attrOfFuse(ino uint64, a Attr) fuseAttr {
 		Mtime: uint64(sec), Mtimensec: nsec,
 		Ctime: uint64(sec), Ctimensec: nsec,
 		Mode: mode, Nlink: nlink,
-		Uid: uint32(os.Getuid()), Gid: uint32(os.Getgid()),
+		Uid: uint32(fuseUid()), Gid: uint32(fuseGid()),
 		Blksize: 4096,
 	}
 }
@@ -683,12 +886,17 @@ func (s *fuseServer) entryOut(id uint64, a Attr) fuseEntryOut {
 	return fuseEntryOut{
 		Nodeid:     id,
 		Generation: 1,
-		EntryValid: fuseAttrTimeoutSec,
-		AttrValid:  fuseAttrTimeoutSec,
+		EntryValid: fuseCacheTimeoutSec,
+		AttrValid:  fuseCacheTimeoutSec,
 		Attr:       attrOfFuse(id, a),
 	}
 }
 
+// handleInit answers the kernel's INIT with the capability set the server
+// supports and the request ceiling those capabilities buy: BIG_WRITES lifts the
+// one-page write limit, and MAX_PAGES raises the announced window to
+// fuseMaxWriteMax. Only bits the kernel offers are echoed, so an older kernel
+// keeps the conservative window. See TheoryOfInitNegotiation.
 func (s *fuseServer) handleInit(body []byte) ([]byte, error) {
 	var in fuseInitIn
 	decodeStruct(&in, body)
@@ -696,15 +904,22 @@ func (s *fuseServer) handleInit(body []byte) ([]byte, error) {
 	if minor > fuseProtocolMinor {
 		minor = fuseProtocolMinor
 	}
-	return encodeStruct(&fuseInitOut{
+	flags := in.Flags & fuseInitWanted
+	out := fuseInitOut{
 		Major:               in.Major,
 		Minor:               minor,
 		MaxReadahead:        in.MaxReadahead,
+		Flags:               flags,
 		MaxBackground:       12,
 		CongestionThreshold: 9,
 		MaxWrite:            fuseMaxWrite,
 		TimeGran:            1,
-	}), nil
+	}
+	if flags&fuseInitMaxPages != 0 {
+		out.MaxWrite = fuseMaxWriteMax
+		out.MaxPages = fuseMaxPages
+	}
+	return encodeStruct(&out), nil
 }
 
 func (s *fuseServer) handleLookup(parent uint64, body []byte) ([]byte, error) {
@@ -738,7 +953,7 @@ func (s *fuseServer) handleGetattr(nodeid uint64) ([]byte, error) {
 		return nil, err
 	}
 	return encodeStruct(&fuseAttrOut{
-		AttrValid: fuseAttrTimeoutSec,
+		AttrValid: fuseCacheTimeoutSec,
 		Attr:      attrOfFuse(nodeid, a),
 	}), nil
 }
@@ -755,7 +970,10 @@ func (s *fuseServer) handleSetattr(nodeid uint64, body []byte) ([]byte, error) {
 		return nil, err
 	}
 	if in.Valid&fattrSize != 0 {
-		if in.Size > fuseMaxTruncate {
+		// The mount and the store must agree on the bound: a truncate the
+		// mount accepts is a size the store can hold, so both read the one
+		// constant the store enforces. See TheoryOfCompletePOSIX.
+		if in.Size > maxFileSize {
 			return nil, syscall.EFBIG
 		}
 		// Read only the prefix the new size retains, then pad with
@@ -795,34 +1013,30 @@ func (s *fuseServer) handleSetattr(nodeid uint64, body []byte) ([]byte, error) {
 		return nil, err
 	}
 	return encodeStruct(&fuseAttrOut{
-		AttrValid: fuseAttrTimeoutSec,
+		AttrValid: fuseCacheTimeoutSec,
 		Attr:      attrOfFuse(nodeid, a),
 	}), nil
 }
 
-// invalidateHandles drops the buffered content and the cached base reader of
-// every open handle of p, so a write that follows a truncate reloads the
-// store's new content instead of resurrecting the old bytes.
-// See TheoryOfCompletePOSIX and TheoryOfReadPath.
+// invalidateHandles drops the cached base reader of every open handle of p, so
+// a read that follows a truncation serves the store's new content instead of a
+// descriptor that fixes the old view. The store is the only copy of the
+// content, so no other state needs dropping. See TheoryOfReadPath.
 func (s *fuseServer) invalidateHandles(p string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, h := range s.handles {
 		if h.path == p {
-			h.buf = nil
-			h.loaded = false
 			h.closeBase()
 		}
 	}
 }
 
-// invalidateOtherHandles drops the buffered content and the cached base
-// reader of every open handle of p except the writing one. Two handles over
-// one path both materialize their own buffer; without the drop, a write
-// through handle A would leave handle B's stale buffer in place, and B's
-// next write would overwrite A's bytes. The writing handle keeps its buffer:
-// the content it just wrote is the current store content, so a reload would
-// cost a read for nothing. See TheoryOfCompletePOSIX and TheoryOfReadPath.
+// invalidateOtherHandles drops the cached base reader of every open handle of p
+// except the writing one, so their next read serves the store's now-current
+// content. Handles hold no buffer, so a write through one handle cannot be
+// overwritten by another handle's stale bytes; only the base view must go.
+// See TheoryOfWriteSplice and TheoryOfReadPath.
 func (s *fuseServer) invalidateOtherHandles(p string, self uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -830,17 +1044,10 @@ func (s *fuseServer) invalidateOtherHandles(p string, self uint64) {
 		if fh == self || h.path != p {
 			continue
 		}
-		h.buf = nil
-		h.loaded = false
 		h.closeBase()
 	}
 }
 
-// handleOpen serves OPEN for a regular file. A write-mode open is checked
-// against the write policy here, so the caller sees EACCES from open, not
-// from the first write. O_TRUNC without O_CREAT is honoured: it arrives as
-// OPEN rather than CREATE, and POSIX gives it the same truncating effect.
-// See TheoryOfWritePolicy and TheoryOfCompletePOSIX.
 func (s *fuseServer) handleOpen(nodeid uint64, body []byte) ([]byte, error) {
 	var in fuseOpenIn
 	decodeStruct(&in, body)
@@ -861,7 +1068,6 @@ func (s *fuseServer) handleOpen(nodeid uint64, body []byte) ([]byte, error) {
 	if a.Kind == KindDir {
 		return nil, syscall.EISDIR
 	}
-	truncated := false
 	if writeMode &&
 		in.Flags&uint32(unix.O_TRUNC) != 0 &&
 		a.Kind == KindRegular {
@@ -873,20 +1079,26 @@ func (s *fuseServer) handleOpen(nodeid uint64, body []byte) ([]byte, error) {
 			return nil, err
 		}
 		s.invalidateHandles(p)
-		truncated = true
 	}
-	h := &fuseHandle{path: p}
-	if truncated {
-		// The store now holds an empty file, so a following write can
-		// extend the empty buffer directly.
-		h.loaded = true
-	}
+	// The open already read the attribute, so the handle carries the mode and
+	// the write path needs no lookup of its own. The store keeps the content,
+	// so a truncating open leaves nothing for the handle to remember.
+	// See TheoryOfWriteSplice.
+	h := &fuseHandle{path: p, mode: a.Mode}
 	s.mu.Lock()
 	fh := s.nextFh
 	s.nextFh++
 	s.handles[fh] = h
 	s.mu.Unlock()
-	return encodeStruct(&fuseOpenOut{Fh: fh}), nil
+	// A read-only open lets the kernel keep the file's pages across opens, so
+	// a repeated read of an unchanged dependency never reaches the store. A
+	// write-mode open must not: its content is the session's to change.
+	// See TheoryOfOpenCaching.
+	out := fuseOpenOut{Fh: fh}
+	if !writeMode {
+		out.OpenFlags = fuseOpenKeepCache
+	}
+	return encodeStruct(&out), nil
 }
 
 func (s *fuseServer) handleRead(body []byte) ([]byte, error) {
@@ -937,7 +1149,8 @@ func (s *fuseServer) baseHandleFile(h *fuseHandle) (*os.File, error) {
 // readFrom serves one window of a read handle. The upper layer answers
 // first: a window the session wrote, or a whiteout it recorded, is the
 // current content and no cached reader may shadow it. A base-layer regular
-// file answers from the handle's cached reader. See TheoryOfReadPath.
+// file answers from the handle's cached reader into the handle's reused
+// window buffer. See TheoryOfReadPath.
 func (s *fuseServer) readFrom(h *fuseHandle, off int64, size int) ([]byte, error) {
 	if off < 0 || size < 0 {
 		return nil, syscall.EINVAL
@@ -960,7 +1173,13 @@ func (s *fuseServer) readFrom(h *fuseHandle, off int64, size int) ([]byte, error
 	if err != nil {
 		return nil, err
 	}
-	buf := make([]byte, size)
+	// The window reuses the handle's buffer, so a streamed file costs one
+	// allocation per handle rather than one per window.
+	// See TheoryOfReadPath.
+	if cap(h.readBuf) < size {
+		h.readBuf = make([]byte, size)
+	}
+	buf := h.readBuf[:size]
 	n := 0
 	for {
 		n, err = unix.Pread(int(f.Fd()), buf, off)
@@ -990,10 +1209,9 @@ func (s *fuseServer) handleWrite(body []byte) ([]byte, error) {
 	}
 	// A malicious or buggy kernel could send an offset that overflows
 	// the int conversion; refuse before allocating. The window is
-	// bounded by fuseMaxTruncate for the same reason the truncate path
-	// is.
-	if in.Offset > uint64(fuseMaxTruncate) ||
-		in.Offset+uint64(in.Size) > uint64(fuseMaxTruncate) {
+	// bounded by maxFileSize for the same reason the truncate path is.
+	if in.Offset > uint64(maxFileSize) ||
+		in.Offset+uint64(in.Size) > uint64(maxFileSize) {
 		return nil, syscall.EFBIG
 	}
 	data := body[hdrSize : hdrSize+int(in.Size)]
@@ -1003,48 +1221,25 @@ func (s *fuseServer) handleWrite(body []byte) ([]byte, error) {
 	if h == nil {
 		return nil, syscall.EBADF
 	}
-	if err := s.ensureHandleLoaded(h); err != nil {
-		return nil, err
+	// The mode comes from the open that handed the handle back, so the write
+	// path pays no metadata lookup. The delta goes straight into the stored
+	// blob, so the store copies the payload rather than the file and the
+	// handle holds no copy at all. See TheoryOfWriteSplice.
+	perm := h.mode
+	if perm == 0 {
+		perm = 0o644
 	}
-	end := int(in.Offset) + len(data)
-	if end > len(h.buf) {
-		next := make([]byte, end)
-		copy(next, h.buf)
-		h.buf = next
-	}
-	copy(h.buf[in.Offset:], data)
-	perm := os.FileMode(0o644)
-	if a, err := s.store.Stat(h.path); err == nil && a.Mode != 0 {
-		perm = a.Mode
-	}
-	if err := s.store.WriteFile(h.path, h.buf, perm); err != nil {
+	if err := s.store.SpliceFile(h.path, int64(in.Offset), data, perm); err != nil {
 		return nil, err
 	}
 	// The store now holds this write, so the handle's cached base reader can
 	// never serve another window.
 	h.closeBase()
 	// A write through one handle is now the current store content; other
-	// handles over the same path must drop their stale buffers so their
-	// next write reloads instead of overwriting this one.
-	// See invalidateOtherHandles.
+	// handles over the same path must drop their cached base view so their
+	// next read serves it. See invalidateOtherHandles.
 	s.invalidateOtherHandles(h.path, in.Fh)
 	return encodeStruct(&fuseWriteOut{Size: in.Size}), nil
-}
-
-// ensureHandleLoaded materializes a write handle's buffer from the store on
-// first use, so a handle opened for reading never copies a file into
-// memory. See TheoryOfCompletePOSIX.
-func (s *fuseServer) ensureHandleLoaded(h *fuseHandle) error {
-	if h.loaded {
-		return nil
-	}
-	content, err := s.store.ReadFile(h.path)
-	if err != nil {
-		return err
-	}
-	h.buf = content
-	h.loaded = true
-	return nil
 }
 
 func (s *fuseServer) handleRelease(body []byte) ([]byte, error) {
@@ -1082,7 +1277,10 @@ func (s *fuseServer) handleOpendir(nodeid uint64) ([]byte, error) {
 	s.nextFh++
 	s.handles[fh] = &fuseHandle{path: p, isDir: true, entries: all}
 	s.mu.Unlock()
-	return encodeStruct(&fuseOpenOut{Fh: fh}), nil
+	// The kernel keeps the listing across opens, so a repeated walk costs no
+	// request; any mutation through the mount invalidates it.
+	// See TheoryOfOpenCaching.
+	return encodeStruct(&fuseOpenOut{Fh: fh, OpenFlags: fuseOpenCacheDir}), nil
 }
 
 // handleReaddir encodes dirents from the offset the kernel supplies.
@@ -1121,6 +1319,54 @@ func (s *fuseServer) handleReaddir(body []byte) ([]byte, error) {
 	return out, nil
 }
 
+// handleReaddirPlus serves READDIRPLUS: one fuse_direntplus per entry, each
+// carrying the fuse_entry_out the kernel would otherwise request with a
+// separate LOOKUP. A directory walk therefore costs one request instead of one
+// plus one per entry, which is the toolchain's dominant directory pattern. The
+// entries and their attributes are already in the handle, so the extra work is
+// one node-id lookup per entry. See TheoryOfInitNegotiation.
+func (s *fuseServer) handleReaddirPlus(body []byte) ([]byte, error) {
+	var in fuseReadIn
+	decodeStruct(&in, body)
+	s.mu.Lock()
+	h := s.handles[in.Fh]
+	s.mu.Unlock()
+	if h == nil || !h.isDir {
+		return nil, syscall.ENOTDIR
+	}
+	start := int(in.Offset)
+	if start < 0 || start > len(h.entries) {
+		return []byte{}, nil
+	}
+	entryOutSize := binary.Size(fuseEntryOut{})
+	maxSize := int(in.Size)
+	out := make([]byte, 0, maxSize)
+	for i := start; i < len(h.entries); i++ {
+		e := h.entries[i]
+		entrySize := entryOutSize + fuseDirentSize + len(e.Name)
+		padded := (entrySize + 7) &^ 7
+		if len(out)+padded > maxSize {
+			break
+		}
+		// path.Join cleans "." and ".." onto the handle's own path and its
+		// parent, so the entry names need no special case.
+		id, err := s.nodeOf(path.Join(h.path, e.Name), false)
+		if err != nil {
+			continue
+		}
+		entry := s.entryOut(id, e.Attr)
+		buf := make([]byte, padded)
+		copy(buf, encodeStruct(&entry))
+		binary.LittleEndian.PutUint64(buf[entryOutSize:], uint64(i+2))
+		binary.LittleEndian.PutUint64(buf[entryOutSize+8:], uint64(i+1))
+		binary.LittleEndian.PutUint32(buf[entryOutSize+16:], uint32(len(e.Name)))
+		binary.LittleEndian.PutUint32(buf[entryOutSize+20:], direntType(e.Attr.Kind))
+		copy(buf[entryOutSize+fuseDirentSize:], e.Name)
+		out = append(out, buf...)
+	}
+	return out, nil
+}
+
 func direntType(k Kind) uint32 {
 	switch k {
 	case KindDir:
@@ -1134,12 +1380,6 @@ func direntType(k Kind) uint32 {
 	}
 }
 
-// handleCreate creates or opens a path for a create-with-open request. The
-// kernel may name an existing path, so O_EXCL and O_TRUNC are honoured like
-// open(2): without O_TRUNC an existing file keeps its content. An existing
-// directory reports EISDIR — a create-with-open hands back a writable handle,
-// and a directory has no writable content — matching open(2) with O_WRONLY
-// on a directory. See TheoryOfCompletePOSIX.
 func (s *fuseServer) handleCreate(parent uint64, body []byte) ([]byte, error) {
 	parentPath, err := s.pathOf(parent)
 	if err != nil {
@@ -1156,7 +1396,6 @@ func (s *fuseServer) handleCreate(parent uint64, body []byte) ([]byte, error) {
 	if perm == 0 {
 		perm = 0o644
 	}
-	refreshed := false
 	cur, statErr := s.store.Stat(p)
 	switch {
 	case statErr == nil:
@@ -1170,7 +1409,6 @@ func (s *fuseServer) handleCreate(parent uint64, body []byte) ([]byte, error) {
 			if err := s.store.WriteFile(p, nil, perm); err != nil {
 				return nil, err
 			}
-			refreshed = true
 		} else if err := s.store.CanWrite(p); err != nil {
 			return nil, err
 		}
@@ -1178,7 +1416,6 @@ func (s *fuseServer) handleCreate(parent uint64, body []byte) ([]byte, error) {
 		if err := s.store.WriteFile(p, nil, perm); err != nil {
 			return nil, err
 		}
-		refreshed = true
 	default:
 		return nil, statErr
 	}
@@ -1190,12 +1427,11 @@ func (s *fuseServer) handleCreate(parent uint64, body []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	h := &fuseHandle{path: p}
-	if refreshed {
-		// The store now holds an empty file for this handle, so a
-		// following write can extend the empty buffer directly.
-		h.loaded = true
-	}
+	// The stat above already read the attribute, so the handle carries the
+	// mode and the write path needs no lookup of its own. The store keeps the
+	// content, so nothing about the create state belongs to the handle.
+	// See TheoryOfWriteSplice.
+	h := &fuseHandle{path: p, mode: a.Mode}
 	s.mu.Lock()
 	fh := s.nextFh
 	s.nextFh++
@@ -1464,8 +1700,47 @@ func decodeStruct(dst any, body []byte) {
 	_ = binary.Read(bytes.NewReader(buf[:size]), binary.LittleEndian, dst)
 }
 
-// encodeStruct encodes one response body.
+// fuseEntryOutSize and fuseAttrOutSize are the wire sizes of the two reply
+// bodies every metadata request carries, measured once from the struct
+// definitions so the direct encoder and the reflection fallback can never
+// disagree. See TheoryOfFuseMount.
+var (
+	fuseEntryOutSize = binary.Size(fuseEntryOut{})
+	fuseAttrOutSize  = binary.Size(fuseAttrOut{})
+)
+
+// encodeStruct encodes one response body. The two hot reply types — the entry
+// and attribute bodies every lookup and getattr carries — encode through
+// direct field writes, because a reply is built once per request and the
+// reflection encoder costs more than the rest of a stat reply. Every other
+// type keeps the reflection encoder. The kernel parses a reply by its own
+// struct offsets, so the direct path must preserve the exact wire order.
+// See TheoryOfFuseMount.
 func encodeStruct(src any) []byte {
+	switch v := src.(type) {
+	case *fuseEntryOut:
+		if v == nil {
+			return nil
+		}
+		buf := make([]byte, fuseEntryOutSize)
+		binary.LittleEndian.PutUint64(buf[0:], v.Nodeid)
+		binary.LittleEndian.PutUint64(buf[8:], v.Generation)
+		binary.LittleEndian.PutUint64(buf[16:], v.EntryValid)
+		binary.LittleEndian.PutUint64(buf[24:], v.AttrValid)
+		binary.LittleEndian.PutUint32(buf[32:], v.EntryValidNsec)
+		binary.LittleEndian.PutUint32(buf[36:], v.AttrValidNsec)
+		putFuseAttr(buf[40:], v.Attr)
+		return buf
+	case *fuseAttrOut:
+		if v == nil {
+			return nil
+		}
+		buf := make([]byte, fuseAttrOutSize)
+		binary.LittleEndian.PutUint64(buf[0:], v.AttrValid)
+		binary.LittleEndian.PutUint32(buf[8:], v.AttrValidNsec)
+		putFuseAttr(buf[16:], v.Attr)
+		return buf
+	}
 	size := binary.Size(src)
 	if size <= 0 {
 		return nil
@@ -1473,6 +1748,29 @@ func encodeStruct(src any) []byte {
 	buf := make([]byte, size)
 	_ = binary.Write(bytes.NewBuffer(buf[:0]), binary.LittleEndian, src)
 	return buf
+}
+
+// putFuseAttr writes one fuse_attr in the kernel's wire order: three 64-bit
+// times, then the nanosecond, mode, and ownership fields. The offsets follow
+// struct fuse_attr, the order the kernel reads by its own field offsets.
+// See TheoryOfFuseMount.
+func putFuseAttr(dst []byte, a fuseAttr) {
+	binary.LittleEndian.PutUint64(dst[0:], a.Ino)
+	binary.LittleEndian.PutUint64(dst[8:], a.Size)
+	binary.LittleEndian.PutUint64(dst[16:], a.Blocks)
+	binary.LittleEndian.PutUint64(dst[24:], a.Atime)
+	binary.LittleEndian.PutUint64(dst[32:], a.Mtime)
+	binary.LittleEndian.PutUint64(dst[40:], a.Ctime)
+	binary.LittleEndian.PutUint32(dst[48:], a.Atimensec)
+	binary.LittleEndian.PutUint32(dst[52:], a.Mtimensec)
+	binary.LittleEndian.PutUint32(dst[56:], a.Ctimensec)
+	binary.LittleEndian.PutUint32(dst[60:], a.Mode)
+	binary.LittleEndian.PutUint32(dst[64:], a.Nlink)
+	binary.LittleEndian.PutUint32(dst[68:], a.Uid)
+	binary.LittleEndian.PutUint32(dst[72:], a.Gid)
+	binary.LittleEndian.PutUint32(dst[76:], a.Rdev)
+	binary.LittleEndian.PutUint32(dst[80:], a.Blksize)
+	binary.LittleEndian.PutUint32(dst[84:], a.Flags)
 }
 
 var _ = fmt.Sprintf

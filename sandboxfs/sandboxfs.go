@@ -97,6 +97,52 @@ cached descriptor fixes a base file's view at open, the same snapshot the
 review step compares the host against when it reports a conflict.
 `
 
+const TheoryOfUpperAbsentCache = `
+The read path is the hot path, and most of its paths never enter the upper
+layer: a dependency the session only reads is answered by the base. An
+uncached negative lookup pays a sqlite round trip for every one of them, and
+that round trip dominates a read request which otherwise costs one base read.
+
+The cache therefore records the paths a lookup found absent, and clears a
+path's entry whenever the store writes the path. put is the only writer of
+the table — a row appears or changes only through it — so a cleared entry is
+refreshed on the next lookup, and a cached absence states exactly what the
+table said when it was recorded. The apply step only removes rows, which can
+make an absence more true, never less.
+
+The cache is bounded by the paths a session touches, and the audit trail
+already spends one record per such path, so it adds no memory the session did
+not already spend. One mutex guards it, the same lock the read audit takes.
+`
+
+const TheoryOfWriteSplice = `
+The write path grows with the payload, never with the file. A kernel WRITE
+carries at most one negotiated request window of bytes, but the store's blob
+holds the whole file, so storing a handle's full buffer on every write copies
+the file once per window: a ten-megabyte file written in one-megabyte windows
+copies fifty-five megabytes, and the cost is quadratic in the window count.
+sqlite splices instead: one UPDATE concatenates the retained prefix, the zero
+gap a write past the stored end inserts, the new bytes, and the retained
+suffix, so the bytes a window moves through Go memory are proportional to
+its own payload. The UPDATE still rewrites the stored blob, so a file's
+store traffic grows with its window count, and the 1 MiB window the INIT
+negotiation buys is what turns that count down.
+
+The store is the only copy. A handle holds no buffer, so a large open file
+costs no memory and a write needs no reload before its delta: the first write
+of a fresh path materialises the row — capturing the base state and the base
+content the delta starts from — and every write, first or later, lands its own
+payload. Two handles over one path therefore cannot diverge: there is no stale
+buffer to overwrite another handle's bytes, and the kernel's next read asks the
+store for the content the last write left there.
+
+The guarded UPDATE carries the kind and whiteout checks, so one statement
+answers whether the delta may land. A path the upper layer holds no live
+regular row for matches nothing, the caller materialises it, and the splice
+runs once more; the hot path therefore costs one statement and never the row
+lookup that would load the blob this write exists to avoid copying.
+`
+
 const TheoryOfApplyConflict = `
 Write-write conflicts are detected at apply time, against the snapshot the
 session computed its changes from. The stored base hash is that snapshot: a
@@ -146,21 +192,14 @@ than from its first write.
 The read path streams: a read serves the requested window from sqlite's
 substr over the stored blob, or from the base file's own ReadAt, so a large
 dependency costs one sized response rather than a whole-file allocation.
-The write path materializes: the first write of a handle loads the file,
-applies the delta, and writes the whole content back, because sqlite has no
-in-place splice. A zero-byte write transfers nothing and does not extend
-the file, matching Linux. Truncation reads only the retained prefix and
-pads with zeros; a grow past 64 MB is refused with EFBIG rather than
-allocating a file the sandbox cannot hold, and the same bound refuses a
-write whose offset would overflow. See TheoryOfFuseMount.
-
-Two handles over one path both materialize their own buffer, so a write
-through one invalidates the other's buffer: the next write through the
-other handle reloads the store's now-current content before applying its
-delta, and preserves both writes. Truncation invalidates every handle over
-the path, because the caller's next read must report the new size; the
-writing handle keeps its buffer after its own write, because the content it
-just wrote is the store content a reload would return.
+The write path splices: one UPDATE concatenates the retained prefix, the
+delta, and the retained suffix, so a window costs bytes proportional to its
+payload and no handle holds a copy of the file (see TheoryOfWriteSplice).
+A zero-byte write transfers nothing and does not extend the file, matching
+Linux. Truncation reads only the retained prefix and pads with zeros; a
+grow past the size bound is refused with EFBIG rather than allocating a
+file the sandbox cannot hold, and the same bound refuses a write whose
+offset would overflow. See TheoryOfFuseMount.
 
 Durability: FSYNC and FSYNCDIR succeed without doing anything, because the
 store's writes are sqlite transactions that persist as they complete. A
@@ -233,6 +272,32 @@ CREATE TABLE IF NOT EXISTS ops (
 CREATE INDEX IF NOT EXISTS idx_ops_path ON ops(path);
 `
 
+// spliceSQL writes one kernel write's delta into the stored blob without
+// materialising the file: the retained prefix, the zero gap a write past the
+// stored end inserts, the new bytes, and the retained suffix are one UPDATE.
+// Every fragment is coalesced to a blob, because a fragment of an empty blob is
+// not itself a blob and a NULL operand swallows the whole concatenation — the
+// write would then store nothing at all, which is exactly the shape a create or
+// a truncating open leaves behind. CAST keeps the column a blob, so binary
+// content never round-trips through text. sqlite counts blob positions in bytes
+// from 1, so the suffix starts at off+len(data)+1.
+//
+// The WHERE clause carries the kind guard and the whiteout guard, so one
+// statement answers whether the delta may land. A path the upper layer holds no
+// live regular row for matches nothing, the caller materialises it, and the
+// splice runs again; the hot path therefore costs one UPDATE, and never the row
+// lookup that would load the blob this write exists to avoid copying.
+// See TheoryOfWriteSplice.
+const spliceSQL = `UPDATE files SET
+ content = CAST(
+   coalesce(substr(coalesce(content, x''), 1, ?), x'')
+   || zeroblob(max(0, ? - length(coalesce(content, x''))))
+   || ?
+   || coalesce(substr(coalesce(content, x''), ?), x'')
+   AS BLOB),
+ mtime = ?
+ WHERE path = ? AND kind = ? AND deleted = 0`
+
 // Kind is the file type of a sandbox path.
 type Kind int
 
@@ -284,8 +349,28 @@ type Store struct {
 	dbPath   string
 	policy   func(string) error
 
+	// baseFd is the read-through base's directory descriptor: the base stat
+	// and read fast paths answer through it with one syscall, and a negative
+	// value means the platform offers no such path, so the store keeps walking
+	// os.Root. See TheoryOfBaseFdAccess.
+	baseFd int
+
 	mu   sync.Mutex
 	read map[string]bool
+	// absent caches the paths the upper layer is known not to hold, so the
+	// hot read and stat paths answer a path the session never wrote without
+	// a sqlite round trip. Any write of the path clears its entry. See
+	// TheoryOfUpperAbsentCache.
+	absent map[string]bool
+}
+
+// upperAbsent reports whether the upper layer is known not to hold p. A
+// missing entry says nothing: the caller must ask the database.
+// See TheoryOfUpperAbsentCache.
+func (s *Store) upperAbsent(p string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.absent[p]
 }
 
 // Open opens the sandbox store at dbPath over the read-through base
@@ -308,8 +393,10 @@ func (s *Store) Base() string {
 	return s.base
 }
 
-// Close releases the database and the base handle.
+// Close releases the database and the base handles.
 func (s *Store) Close() error {
+	closeBaseDirFd(s.baseFd)
+	s.baseFd = -1
 	err := s.baseRoot.Close()
 	if dbErr := s.db.Close(); err == nil {
 		err = dbErr
@@ -339,10 +426,25 @@ func OpenWithPolicy(dbPath, base string, policy func(string) error) (*Store, err
 	if err != nil {
 		return nil, err
 	}
+	// One read-only descriptor of the base answers the stat and read fast
+	// paths. See TheoryOfBaseFdAccess.
+	baseFd := openBaseDirFd(absBase)
 	dsn := "file:" + url.PathEscape(absDB) +
-		"?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)"
+		"?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)" +
+		// synchronous(NORMAL) keeps every commit durable across an
+		// application crash and drops the per-commit fsync a machine crash
+		// would need. The sandbox is a session record, reviewed while the
+		// session runs: losing the last commits of a machine crash costs
+		// nothing a review can use, while an fsync per write and per audit
+		// row costs the write path a disk round trip each time.
+		"&_pragma=synchronous(NORMAL)" +
+		// cache_size(-32000) lifts sqlite's page cache to 32 MiB, so the
+		// store's own pages and the audit trail's stay resident instead of
+		// being re-read from the database per request.
+		"&_pragma=cache_size(-32000)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
+		closeBaseDirFd(baseFd)
 		baseRoot.Close()
 		return nil, err
 	}
@@ -357,11 +459,13 @@ func OpenWithPolicy(dbPath, base string, policy func(string) error) (*Store, err
 	db.SetConnMaxLifetime(0)
 	if err := db.Ping(); err != nil {
 		db.Close()
+		closeBaseDirFd(baseFd)
 		baseRoot.Close()
 		return nil, err
 	}
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
+		closeBaseDirFd(baseFd)
 		baseRoot.Close()
 		return nil, err
 	}
@@ -371,6 +475,7 @@ func OpenWithPolicy(dbPath, base string, policy func(string) error) (*Store, err
 		baseRoot: baseRoot,
 		dbPath:   absDB,
 		policy:   policy,
+		baseFd:   baseFd,
 	}, nil
 }
 
@@ -438,6 +543,15 @@ func contentHash(b []byte) string {
 // See TheoryOfCompletePOSIX.
 const fifoOriginalHash = "fifo"
 
+// maxFileSize bounds one stored file, so a malformed or malicious request never
+// makes the store allocate or splice a size the session cannot hold. A grow past
+// this bound is refused with EFBIG. The FUSE layer's truncate bound mirrors it,
+// and the two must agree: a truncate the mount accepts must be a size the store
+// can store. The bound lives here, not beside the wire constants, because the
+// store enforces it on its own — a store used without a mount still refuses the
+// same grow. See TheoryOfCompletePOSIX.
+const maxFileSize = 64 << 20
+
 type fileRow struct {
 	path           string
 	kind           Kind
@@ -476,10 +590,14 @@ func scanFileRow(rs rowScanner) (fileRow, error) {
 }
 
 func (s *Store) row(p string) (fileRow, bool, error) {
+	if s.upperAbsent(p) {
+		return fileRow{}, false, nil
+	}
 	r, err := scanFileRow(s.db.QueryRow(
 		`SELECT path, kind, mode, mtime, deleted, content, target, original_exists, original_hash
 		 FROM files WHERE path = ?`, p))
 	if errors.Is(err, sql.ErrNoRows) {
+		s.rememberAbsent(p)
 		return fileRow{}, false, nil
 	}
 	if err != nil {
@@ -488,18 +606,48 @@ func (s *Store) row(p string) (fileRow, bool, error) {
 	return r, true, nil
 }
 
-// readUpperRange reads one content window from the upper layer in one
-// query: the row's kind, deletion state, and windowed blob come back
-// together, so a read costs one round trip instead of a lookup plus a
-// window. found reports whether the upper layer holds the path, and a
-// whiteout reports ErrNotExist. See TheoryOfReadPath.
+// metaRow reads one path's row without its content blob: the overwrite path
+// already holds the bytes it is about to store, so only the net-change baseline
+// and the kind guard need the row's other fields. A read that loaded the blob
+// would copy a file the write is about to discard. See TheoryOfWriteSplice.
+func (s *Store) metaRow(p string) (fileRow, bool, error) {
+	if s.upperAbsent(p) {
+		return fileRow{}, false, nil
+	}
+	var r fileRow
+	var kind, deleted, originalExists int
+	var mode, mtime int64
+	err := s.db.QueryRow(
+		`SELECT path, kind, mode, mtime, deleted, target, original_exists, original_hash
+		 FROM files WHERE path = ?`, p,
+	).Scan(&r.path, &kind, &mode, &mtime, &deleted,
+		&r.target, &originalExists, &r.originalHash)
+	if errors.Is(err, sql.ErrNoRows) {
+		s.rememberAbsent(p)
+		return fileRow{}, false, nil
+	}
+	if err != nil {
+		return fileRow{}, false, err
+	}
+	r.kind = Kind(kind)
+	r.mode = os.FileMode(mode)
+	r.mtime = time.Unix(0, mtime)
+	r.deleted = deleted != 0
+	r.originalExists = originalExists != 0
+	return r, true, nil
+}
+
 func (s *Store) readUpperRange(p string, off int64, size int) (chunk []byte, kind Kind, found bool, err error) {
+	if s.upperAbsent(p) {
+		return nil, 0, false, nil
+	}
 	var k, deleted int
 	err = s.db.QueryRow(
 		`SELECT kind, deleted, substr(content, ?, ?) FROM files WHERE path = ?`,
 		off+1, size, p,
 	).Scan(&k, &deleted, &chunk)
 	if errors.Is(err, sql.ErrNoRows) {
+		s.rememberAbsent(p)
 		return nil, 0, false, nil
 	}
 	if err != nil {
@@ -511,13 +659,10 @@ func (s *Store) readUpperRange(p string, off int64, size int) (chunk []byte, kin
 	return chunk, Kind(k), true, nil
 }
 
-// statRow reads one path's metadata from the upper layer without loading
-// its content blob: a metadata lookup needs the kind, mode, mtime, and
-// size only, so the size comes from sqlite's length() and a large file
-// costs one small row instead of a heap copy. found reports whether the
-// upper layer holds the path; a whiteout reports ErrNotExist.
-// See TheoryOfReadPath.
 func (s *Store) statRow(p string) (a Attr, found bool, err error) {
+	if s.upperAbsent(p) {
+		return Attr{}, false, nil
+	}
 	var kind, deleted int
 	var mode, mtime int64
 	var size, targetSize sql.NullInt64
@@ -526,6 +671,7 @@ func (s *Store) statRow(p string) (a Attr, found bool, err error) {
 		 FROM files WHERE path = ?`, p,
 	).Scan(&kind, &mode, &mtime, &deleted, &size, &targetSize)
 	if errors.Is(err, sql.ErrNoRows) {
+		s.rememberAbsent(p)
 		return Attr{}, false, nil
 	}
 	if err != nil {
@@ -568,6 +714,11 @@ func (s *Store) allRows() ([]fileRow, error) {
 }
 
 func (s *Store) put(r fileRow) error {
+	// The write clears any cached absence, so the next lookup reads the row
+	// this call stores. See TheoryOfUpperAbsentCache.
+	s.mu.Lock()
+	delete(s.absent, r.path)
+	s.mu.Unlock()
 	var deleted int
 	if r.deleted {
 		deleted = 1
@@ -592,6 +743,104 @@ func (s *Store) put(r fileRow) error {
 		r.content, r.target, originalExists, r.originalHash,
 	)
 	return err
+}
+
+// SpliceFile writes data at byte offset off of p without reading or rewriting
+// the surrounding content, so a write costs bytes proportional to its own
+// payload instead of the whole file. A write past the stored end pads the gap
+// with zeros, matching the buffer the FUSE layer maintains. A path the upper
+// layer holds no live regular row for is materialised first, carrying the base
+// content the write starts from; a path the session deleted starts from nothing.
+// See TheoryOfWriteSplice.
+func (s *Store) SpliceFile(p string, off int64, data []byte, perm os.FileMode) error {
+	p = Canonical(p)
+	if p == "/" {
+		return syscall.EISDIR
+	}
+	if off < 0 {
+		return syscall.EINVAL
+	}
+	if off > maxFileSize || off+int64(len(data)) > maxFileSize {
+		return syscall.EFBIG
+	}
+	spliced, err := s.db.Exec(spliceSQL,
+		off, off, data, off+int64(len(data))+1,
+		time.Now().UnixNano(), p, int(KindRegular),
+	)
+	if err != nil {
+		return err
+	}
+	n, err := spliced.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		// No live regular row answered the delta: the path is fresh, a
+		// whiteout, or not a regular file. Materialising it either produces
+		// the row the splice needs or the error the type deserves, and the
+		// splice then runs once more. See TheoryOfWriteSplice.
+		if err := s.materializeForSplice(p, perm); err != nil {
+			return err
+		}
+		if _, err := s.db.Exec(spliceSQL,
+			off, off, data, off+int64(len(data))+1,
+			time.Now().UnixNano(), p, int(KindRegular),
+		); err != nil {
+			return err
+		}
+	}
+	s.audit("write", p, fmt.Sprintf("%d bytes at %d", len(data), off))
+	return nil
+}
+
+// materializeForSplice prepares a path the upper layer holds no live regular
+// row for: it captures the base state, carries the base content the delta
+// starts from, and stores both, so the splice that follows has a row to land on.
+// A path the session deleted starts from nothing, because the whiteout already
+// recorded the deletion and resurrecting the deleted bytes would undo it. The
+// call is the cold path, taken once per file, so it may read what the hot path
+// refuses to. See TheoryOfWriteSplice.
+func (s *Store) materializeForSplice(p string, perm os.FileMode) error {
+	if err := s.checkParent(p); err != nil {
+		return err
+	}
+	r, ok, err := s.metaRow(p)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		r, err = s.captureOriginal(p)
+		if err != nil {
+			return err
+		}
+	}
+	switch r.kind {
+	case KindDir:
+		return syscall.EISDIR
+	case KindFIFO, KindSymlink:
+		return syscall.EINVAL
+	}
+	if !r.deleted {
+		content, readErr := s.baseRoot.ReadFile(relPath(p))
+		switch {
+		case readErr == nil:
+			r.content = content
+		case errors.Is(readErr, os.ErrNotExist):
+			r.content = nil
+		default:
+			return readErr
+		}
+	}
+	if perm == 0 {
+		perm = 0o644
+	}
+	r.path = p
+	r.kind = KindRegular
+	r.mode = perm
+	r.deleted = false
+	r.target = ""
+	r.mtime = time.Now()
+	return s.put(r)
 }
 
 // audit appends one audit-trail row. Audit writes are best-effort: they
@@ -628,6 +877,18 @@ func (s *Store) auditRead(p string) {
 	s.read[p] = true
 	s.mu.Unlock()
 	s.audit("read", p, "")
+}
+
+// rememberAbsent records that the upper layer does not hold p, so the next
+// lookup of the path costs no sqlite round trip. put clears the entry.
+// See TheoryOfUpperAbsentCache.
+func (s *Store) rememberAbsent(p string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.absent == nil {
+		s.absent = make(map[string]bool)
+	}
+	s.absent[p] = true
 }
 
 // Ops returns the audit trail in application order.
