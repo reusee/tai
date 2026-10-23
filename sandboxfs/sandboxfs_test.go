@@ -23,6 +23,122 @@ func newTestStore(t *testing.T) (*Store, string) {
 	return s, base
 }
 
+func TestFuseReadCachesBaseReaderAcrossWindows(t *testing.T) {
+	store, base := newTestStore(t)
+	if err := os.WriteFile(filepath.Join(base, "f.txt"), []byte("0123456789"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := newFuseServer(store, -1)
+	h := &fuseHandle{path: "/f.txt"}
+	// The handle must be registered: invalidateHandles walks the server's
+	// open-handle table, and an unregistered handle is never reached.
+	s.handles[1] = h
+	first, err := s.readFrom(h, 0, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(first) != "0123" {
+		t.Fatalf("first window = %q", first)
+	}
+	if h.base == nil {
+		t.Fatal("base reader not cached")
+	}
+	second, err := s.readFrom(h, 4, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(second) != "4567" {
+		t.Fatalf("second window = %q", second)
+	}
+	// A session write must win over the cached base reader.
+	if err := store.WriteFile("/f.txt", []byte("ABCDEFGHIJ"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	third, err := s.readFrom(h, 0, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(third) != "ABCD" {
+		t.Fatalf("window after write = %q", third)
+	}
+	s.invalidateHandles("/f.txt")
+	if h.base != nil {
+		t.Fatal("cached base reader survived invalidation")
+	}
+	// Non-regular base paths are refused without being opened.
+	if err := os.Symlink("target", filepath.Join(base, "link")); err != nil {
+		t.Fatal(err)
+	}
+	linkHandle := &fuseHandle{path: "/link"}
+	if _, err := s.readFrom(linkHandle, 0, 4); err == nil {
+		t.Fatal("link read was served")
+	}
+	if linkHandle.base != nil {
+		t.Fatal("link was opened")
+	}
+	if err := os.Mkdir(filepath.Join(base, "dir"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.readFrom(&fuseHandle{path: "/dir"}, 0, 4); err == nil {
+		t.Fatal("directory read was served")
+	}
+}
+
+func TestReadRangeReadsUpperLayerWindow(t *testing.T) {
+	store, _ := newTestStore(t)
+	if err := store.WriteFile("/f.txt", []byte("0123456789"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.ReadRange("/f.txt", 2, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "2345" {
+		t.Fatalf("window = %q", got)
+	}
+	got, err = store.ReadRange("/f.txt", 20, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("window past end = %q", got)
+	}
+	if err := store.Remove("/f.txt"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ReadRange("/f.txt", 0, 4); err != ErrNotExist {
+		t.Fatalf("read of a whiteout = %v", err)
+	}
+}
+
+func TestStatReportsSizeWithoutLoadingContent(t *testing.T) {
+	store, _ := newTestStore(t)
+	content := make([]byte, 4096)
+	for i := range content {
+		content[i] = 'x'
+	}
+	if err := store.WriteFile("/big.txt", content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a, err := store.Stat("/big.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Size != int64(len(content)) {
+		t.Fatalf("size = %d, want %d", a.Size, len(content))
+	}
+	if err := store.Symlink("target-name", "/link"); err != nil {
+		t.Fatal(err)
+	}
+	la, err := store.Stat("/link")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if la.Kind != KindSymlink || la.Size != int64(len("target-name")) {
+		t.Fatalf("link attr = %+v", la)
+	}
+}
+
 func writeHost(t *testing.T, base, name, content string) {
 	t.Helper()
 	p := filepath.Join(base, filepath.FromSlash(name))

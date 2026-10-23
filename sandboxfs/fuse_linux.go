@@ -417,13 +417,31 @@ type fuseDirent struct {
 
 // fuseHandle is one open file or directory. A file's content is
 // materialized on the first write only: a handle opened for reading never
-// copies the file into memory. See TheoryOfCompletePOSIX.
+// copies the file into memory. A read handle caches the base-layer file it
+// opened, so streaming one base file costs one open and one type check per
+// handle instead of one of each per window. See TheoryOfCompletePOSIX and
+// TheoryOfReadPath.
 type fuseHandle struct {
 	path    string
 	isDir   bool
 	loaded  bool
 	buf     []byte
 	entries []DirEntry
+
+	// base is the handle's cached base-layer reader: opened lazily on the
+	// first read the upper layer does not answer, closed on release or
+	// invalidation. See TheoryOfReadPath.
+	base *os.File
+}
+
+// closeBase releases the handle's cached base-layer reader, if any. The
+// server is single-threaded, so no read is in flight while it runs.
+// See TheoryOfReadPath.
+func (h *fuseHandle) closeBase() {
+	if h.base != nil {
+		_ = h.base.Close()
+		h.base = nil
+	}
 }
 
 type fuseServer struct {
@@ -782,9 +800,10 @@ func (s *fuseServer) handleSetattr(nodeid uint64, body []byte) ([]byte, error) {
 	}), nil
 }
 
-// invalidateHandles drops the buffered content of every open handle of p, so
-// a write that follows a truncate reloads the store's new content instead of
-// resurrecting the old bytes. See TheoryOfCompletePOSIX.
+// invalidateHandles drops the buffered content and the cached base reader of
+// every open handle of p, so a write that follows a truncate reloads the
+// store's new content instead of resurrecting the old bytes.
+// See TheoryOfCompletePOSIX and TheoryOfReadPath.
 func (s *fuseServer) invalidateHandles(p string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -792,17 +811,18 @@ func (s *fuseServer) invalidateHandles(p string) {
 		if h.path == p {
 			h.buf = nil
 			h.loaded = false
+			h.closeBase()
 		}
 	}
 }
 
-// invalidateOtherHandles drops the buffered content of every open handle of
-// p except the writing one. Two handles over one path both materialize their
-// own buffer; without the drop, a write through handle A would leave handle
-// B's stale buffer in place, and B's next write would overwrite A's bytes.
-// The writing handle keeps its buffer: the content it just wrote is the
-// current store content, so a reload would cost a read for nothing.
-// See TheoryOfCompletePOSIX.
+// invalidateOtherHandles drops the buffered content and the cached base
+// reader of every open handle of p except the writing one. Two handles over
+// one path both materialize their own buffer; without the drop, a write
+// through handle A would leave handle B's stale buffer in place, and B's
+// next write would overwrite A's bytes. The writing handle keeps its buffer:
+// the content it just wrote is the current store content, so a reload would
+// cost a read for nothing. See TheoryOfCompletePOSIX and TheoryOfReadPath.
 func (s *fuseServer) invalidateOtherHandles(p string, self uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -812,6 +832,7 @@ func (s *fuseServer) invalidateOtherHandles(p string, self uint64) {
 		}
 		h.buf = nil
 		h.loaded = false
+		h.closeBase()
 	}
 }
 
@@ -883,7 +904,75 @@ func (s *fuseServer) handleRead(body []byte) ([]byte, error) {
 	if in.Size == 0 {
 		return []byte{}, nil
 	}
-	return s.store.ReadRange(h.path, int64(in.Offset), int(in.Size))
+	return s.readFrom(h, int64(in.Offset), int(in.Size))
+}
+
+// baseHandleFile returns the handle's cached base-layer reader, opening it
+// on first use. The host path is stat'ed once here: a directory, link, or
+// pipe has no readable content, and a pipe is never opened, so a pipe read
+// never blocks. The caller has already established that the upper layer
+// holds no window for the path. See TheoryOfReadPath.
+func (s *fuseServer) baseHandleFile(h *fuseHandle) (*os.File, error) {
+	if h.base != nil {
+		return h.base, nil
+	}
+	a, err := s.store.Stat(h.path)
+	if err != nil {
+		return nil, err
+	}
+	switch a.Kind {
+	case KindDir:
+		return nil, syscall.EISDIR
+	case KindSymlink, KindFIFO:
+		return nil, syscall.EINVAL
+	}
+	f, err := s.store.baseRoot.Open(relPath(h.path))
+	if err != nil {
+		return nil, err
+	}
+	h.base = f
+	return f, nil
+}
+
+// readFrom serves one window of a read handle. The upper layer answers
+// first: a window the session wrote, or a whiteout it recorded, is the
+// current content and no cached reader may shadow it. A base-layer regular
+// file answers from the handle's cached reader. See TheoryOfReadPath.
+func (s *fuseServer) readFrom(h *fuseHandle, off int64, size int) ([]byte, error) {
+	if off < 0 || size < 0 {
+		return nil, syscall.EINVAL
+	}
+	chunk, kind, found, err := s.store.readUpperRange(h.path, off, size)
+	if err != nil {
+		return nil, err
+	}
+	if found {
+		switch kind {
+		case KindDir:
+			return nil, syscall.EISDIR
+		case KindSymlink, KindFIFO:
+			return nil, syscall.EINVAL
+		}
+		s.store.auditRead(h.path)
+		return chunk, nil
+	}
+	f, err := s.baseHandleFile(h)
+	if err != nil {
+		return nil, err
+	}
+	buf := make([]byte, size)
+	n := 0
+	for {
+		n, err = unix.Pread(int(f.Fd()), buf, off)
+		if !errors.Is(err, unix.EINTR) {
+			break
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	s.store.auditRead(h.path)
+	return buf[:n], nil
 }
 
 func (s *fuseServer) handleWrite(body []byte) ([]byte, error) {
@@ -931,6 +1020,9 @@ func (s *fuseServer) handleWrite(body []byte) ([]byte, error) {
 	if err := s.store.WriteFile(h.path, h.buf, perm); err != nil {
 		return nil, err
 	}
+	// The store now holds this write, so the handle's cached base reader can
+	// never serve another window.
+	h.closeBase()
 	// A write through one handle is now the current store content; other
 	// handles over the same path must drop their stale buffers so their
 	// next write reloads instead of overwriting this one.
@@ -959,8 +1051,12 @@ func (s *fuseServer) handleRelease(body []byte) ([]byte, error) {
 	var in fuseReleaseIn
 	decodeStruct(&in, body)
 	s.mu.Lock()
+	h := s.handles[in.Fh]
 	delete(s.handles, in.Fh)
 	s.mu.Unlock()
+	if h != nil {
+		h.closeBase()
+	}
 	return nil, nil
 }
 

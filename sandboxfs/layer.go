@@ -16,17 +16,16 @@ import (
 // Stat returns the attributes of one sandbox path. It never follows a
 // symbolic link: a link reports itself, and the kernel resolves it by
 // reading the target and looking up that path, as a filesystem must.
+// The upper layer's row is read for metadata only, so a stat on a large
+// file never copies its content. See TheoryOfReadPath.
 func (s *Store) Stat(p string) (Attr, error) {
 	p = Canonical(p)
-	r, ok, err := s.row(p)
+	a, found, err := s.statRow(p)
 	if err != nil {
 		return Attr{}, err
 	}
-	if ok {
-		if r.deleted {
-			return Attr{}, ErrNotExist
-		}
-		return r.attr(), nil
+	if found {
+		return a, nil
 	}
 	info, err := s.baseRoot.Lstat(relPath(p))
 	if err != nil {
@@ -104,46 +103,24 @@ func (s *Store) ReadFile(p string) ([]byte, error) {
 // ReadRange returns the content window [off, off+size) of one path without
 // materialising the whole file: the upper layer's blob is windowed with
 // sqlite's substr, and a base file is read with ReadAt. A window past the
-// end yields an empty slice, never an error. See TheoryOfCompletePOSIX.
+// end yields an empty slice, never an error. The upper layer's kind, deletion
+// state, and window come back in one query. See TheoryOfCompletePOSIX and
+// TheoryOfReadPath.
 func (s *Store) ReadRange(p string, off int64, size int) ([]byte, error) {
 	p = Canonical(p)
 	if off < 0 || size < 0 {
 		return nil, syscall.EINVAL
 	}
-	var kind int
-	var deleted int
-	var length sql.NullInt64
-	err := s.db.QueryRow(
-		`SELECT kind, deleted, length(content) FROM files WHERE path = ?`, p,
-	).Scan(&kind, &deleted, &length)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+	chunk, kind, found, err := s.readUpperRange(p, off, size)
+	if err != nil {
 		return nil, err
 	}
-	if err == nil {
-		if deleted != 0 {
-			return nil, ErrNotExist
-		}
-		switch Kind(kind) {
+	if found {
+		switch kind {
 		case KindDir:
 			return nil, syscall.EISDIR
 		case KindSymlink, KindFIFO:
 			return nil, syscall.EINVAL
-		}
-		n := length.Int64
-		if off >= n {
-			s.auditRead(p)
-			return nil, nil
-		}
-		end := off + int64(size)
-		if end < off || end > n {
-			end = n
-		}
-		var chunk []byte
-		if err := s.db.QueryRow(
-			`SELECT substr(content, ?, ?) FROM files WHERE path = ?`,
-			off+1, end-off, p,
-		).Scan(&chunk); err != nil {
-			return nil, err
 		}
 		s.auditRead(p)
 		return chunk, nil

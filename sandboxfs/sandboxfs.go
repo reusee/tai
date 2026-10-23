@@ -68,6 +68,35 @@ audit, intercept, or defer a write, while this upper layer offers all
 three.
 `
 
+const TheoryOfReadPath = `
+The read path is the hot path of a coding task: tooling stats, lists, and
+reads thousands of paths while a session writes a few dozen. Every
+optimization here leaves the write path untouched.
+
+A metadata lookup never loads content. Stat needs the kind, mode, mtime,
+and size; the row's content blob is the expensive part. The size therefore
+comes from sqlite's length() instead of a scanned blob, so a getattr or
+lookup on a large file costs one small row, not a heap copy of the file.
+A read's window, kind, and deletion state come back in one statement:
+substr windows the blob, so one kernel-sized read is one round trip
+instead of a lookup plus a window.
+
+A read handle opens the base file once. The kernel streams a file in
+windows; reopening and re-checking the host file per window spends a stat
+and an open on data the mount already made readable. The handle keeps the
+descriptor it opened, and the host type is checked once, before the open,
+so a pipe is never opened and its read never blocks.
+
+The cache never shadows the session. Every read asks the upper layer
+first, so a written path serves its new content and a whiteout reports the
+deletion without any invalidation. A truncation — the truncating open or
+setattr's size change — drops every reader cached for the path, and a
+write drops its own handle's reader and every other handle's, because the
+content that was just written is the store content from then on. The
+cached descriptor fixes a base file's view at open, the same snapshot the
+review step compares the host against when it reports a conflict.
+`
+
 const TheoryOfApplyConflict = `
 Write-write conflicts are detected at apply time, against the snapshot the
 session computed its changes from. The stored base hash is that snapshot: a
@@ -421,21 +450,6 @@ type fileRow struct {
 	originalHash   string
 }
 
-func (r fileRow) attr() Attr {
-	a := Attr{
-		Kind:    r.kind,
-		Mode:    r.mode,
-		ModTime: r.mtime,
-	}
-	switch r.kind {
-	case KindRegular:
-		a.Size = int64(len(r.content))
-	case KindSymlink:
-		a.Size = int64(len(r.target))
-	}
-	return a
-}
-
 type rowScanner interface {
 	Scan(dest ...any) error
 }
@@ -472,6 +486,66 @@ func (s *Store) row(p string) (fileRow, bool, error) {
 		return fileRow{}, false, err
 	}
 	return r, true, nil
+}
+
+// readUpperRange reads one content window from the upper layer in one
+// query: the row's kind, deletion state, and windowed blob come back
+// together, so a read costs one round trip instead of a lookup plus a
+// window. found reports whether the upper layer holds the path, and a
+// whiteout reports ErrNotExist. See TheoryOfReadPath.
+func (s *Store) readUpperRange(p string, off int64, size int) (chunk []byte, kind Kind, found bool, err error) {
+	var k, deleted int
+	err = s.db.QueryRow(
+		`SELECT kind, deleted, substr(content, ?, ?) FROM files WHERE path = ?`,
+		off+1, size, p,
+	).Scan(&k, &deleted, &chunk)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, 0, false, nil
+	}
+	if err != nil {
+		return nil, 0, false, err
+	}
+	if deleted != 0 {
+		return nil, 0, true, ErrNotExist
+	}
+	return chunk, Kind(k), true, nil
+}
+
+// statRow reads one path's metadata from the upper layer without loading
+// its content blob: a metadata lookup needs the kind, mode, mtime, and
+// size only, so the size comes from sqlite's length() and a large file
+// costs one small row instead of a heap copy. found reports whether the
+// upper layer holds the path; a whiteout reports ErrNotExist.
+// See TheoryOfReadPath.
+func (s *Store) statRow(p string) (a Attr, found bool, err error) {
+	var kind, deleted int
+	var mode, mtime int64
+	var size, targetSize sql.NullInt64
+	err = s.db.QueryRow(
+		`SELECT kind, mode, mtime, deleted, length(content), length(target)
+		 FROM files WHERE path = ?`, p,
+	).Scan(&kind, &mode, &mtime, &deleted, &size, &targetSize)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Attr{}, false, nil
+	}
+	if err != nil {
+		return Attr{}, false, err
+	}
+	if deleted != 0 {
+		return Attr{}, true, ErrNotExist
+	}
+	a = Attr{
+		Kind:    Kind(kind),
+		Mode:    os.FileMode(mode),
+		ModTime: time.Unix(0, mtime),
+	}
+	switch a.Kind {
+	case KindRegular:
+		a.Size = size.Int64
+	case KindSymlink:
+		a.Size = targetSize.Int64
+	}
+	return a, true, nil
 }
 
 func (s *Store) allRows() ([]fileRow, error) {
