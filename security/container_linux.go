@@ -43,6 +43,13 @@ show only namespace-local processes, /sys is made read-only, and sensitive
 flag prevents privilege escalation through exec, complementing the user
 namespace's capability restrictions.
 
+The sandbox filesystem supersedes the writable bind mounts as the write path:
+once mounted and pivoted, the process root is the FUSE view, writes are
+recorded in the session's sqlite file instead of reaching the host, and the
+mount policy survives as the store's write policy. The writable set stays the
+same, so this layer changes where a write lands, not whether it is allowed.
+See TheoryOfSandboxRoot in sandbox_root_linux.go.
+
 Landlock complements the mount hardening by re-enforcing the same
 write-containment policy at the LSM layer — an independent kernel
 enforcement plane that, once applied, the process cannot revoke. The layer
@@ -177,6 +184,17 @@ func MaybeRunInContainer() {
 	// Already in container; harden the filesystem before continuing.
 	if err := setupContainerFilesystem(); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: container filesystem setup incomplete: %v\n", err)
+	}
+
+	// Mount the task's sandbox filesystem and pivot the process root to
+	// it, so every read falls through to the host and every write lands
+	// in the sqlite upper layer. Best-effort like the mount hardening:
+	// a failure leaves the mount policy as the only layer.
+	// See TheoryOfSandboxRoot.
+	if cwd, err := os.Getwd(); err == nil {
+		if err := setupSandboxRoot(cwd); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: sandbox filesystem unavailable (%v), continuing with the mount policy\n", err)
+		}
 	}
 
 	// Re-enforce the writable-set policy at the LSM layer as defense in

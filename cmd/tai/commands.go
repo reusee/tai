@@ -28,17 +28,17 @@ func (Module) Command(
 	return AnyTextCommand
 }
 
-// commands registers the selectable subcommand apps. main forks the
-// registry into the scope as one definition; Apps carries the
-// command-line flag interface shape, so flags.Parse lists every app's
-// name and dispatches the selection by overriding the scope's App
-// definition. See apps.TheoryOfApps.
+// commands registers the selectable subcommand apps. main forks the registry
+// into the scope as one definition; Apps carries the command-line flag
+// interface shape, so flags.Parse lists every app's name and dispatches the
+// selection by overriding the scope's App definition. See apps.TheoryOfApps.
 var commands = apps.Apps{
 	NextCommand,
 	AICommand,
 	PatchCommand,
 	PingCommand,
 	RecordCommand,
+	SandboxCommand,
 }
 
 var _ flags.Flag = commands
