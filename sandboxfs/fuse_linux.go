@@ -237,24 +237,25 @@ type fuseInitIn struct {
 	Pad          uint32
 }
 
-// fuseInitOut mirrors struct fuse_init_out through protocol 7.31.
+// fuseInitOut mirrors struct fuse_init_out through protocol 7.31: major,
+// minor, max_readahead, flags, max_background, congestion_threshold,
+// max_write, time_gran, then the unused tail. The field order is the wire
+// order the kernel parses by its own struct offsets, so a field placed
+// anywhere else shifts every value after it — max_write and max_background
+// would arrive as zero and time_gran as garbage. Later protocols' fields
+// fall inside the unused tail and stay zero, which the kernel tolerates:
+// a short INIT reply is zero-filled and a later field is read only when its
+// flag is set. See TheoryOfFuseMount.
 type fuseInitOut struct {
 	Major               uint32
 	Minor               uint32
 	MaxReadahead        uint32
 	Flags               uint32
-	Flags2              uint32
-	Pad                 uint32
 	MaxBackground       uint16
 	CongestionThreshold uint16
 	MaxWrite            uint32
 	TimeGran            uint32
-	MaxPages            uint16
-	MapAlignment        uint16
-	Pad2                uint32
-	Pad3                uint32
-	Pad4                uint32
-	Pad5                uint32
+	Unused              [9]uint32
 }
 
 // fuseOpenIn mirrors struct fuse_open_in.
@@ -389,18 +390,6 @@ type fuseRename2In struct {
 // fuseForgetIn mirrors struct fuse_forget_in.
 type fuseForgetIn struct {
 	Nlookup uint64
-}
-
-// fuseAccessIn mirrors struct fuse_access_in.
-type fuseAccessIn struct {
-	Mask uint32
-	Pad  uint32
-}
-
-// fuseAccessOut mirrors struct fuse_access_out.
-type fuseAccessOut struct {
-	Mask uint32
-	Pad  uint32
 }
 
 // fuseStatfsOut mirrors struct fuse_statfs_out.
@@ -549,9 +538,12 @@ func (s *fuseServer) dispatch(buf []byte) {
 			Bsize: 4096, Namelen: 255, Frsize: 4096,
 		}), nil
 	case fuseOpAccess:
-		var in fuseAccessIn
-		decodeStruct(&in, body)
-		respBody, err = encodeStruct(&fuseAccessOut{Mask: in.Mask}), nil
+		// FUSE_ACCESS declares no output argument: the kernel's request
+		// carries none, so the reply body must be empty. A body here fails
+		// the kernel's reply-length check, aborts the connection with
+		// ENODEV, and every later filesystem call — the chdir into the
+		// mount root first — returns EIO. See TheoryOfFuseMount.
+		respBody, err = nil, nil
 	case fuseOpForget, fuseOpBatchForget, fuseOpInterrupt:
 		// No reply is expected for FORGET, BATCH_FORGET, or INTERRUPT.
 		return
@@ -693,6 +685,7 @@ func (s *fuseServer) handleInit(body []byte) ([]byte, error) {
 		MaxBackground:       12,
 		CongestionThreshold: 9,
 		MaxWrite:            fuseMaxWrite,
+		TimeGran:            1,
 	}), nil
 }
 
