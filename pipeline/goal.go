@@ -63,11 +63,11 @@ missing, so the goal is not achieved.
 A done block is gated on the loop's own plan completion: each loop
 owns its plan — a plan root under its loop node — and while the
 declaring loop's plan carries pending entries, a done declaration is
-ignored: the run continues, the declaration advances no verification
-state and no review-model selection, and goalDonePendingPlanPrompt is
-carried into the next loop, which assesses the remaining work against
-the goal and completes it first. A plan is per-loop scaffolding and
-never carries across loops; cross-loop transfer is GoalFeedback and
+ignored: the run continues, the declaration opens no verification
+state and no review phase, and goalDonePendingPlanPrompt is carried
+into the next loop, which assesses the remaining work against the goal
+and completes it first. A plan is per-loop scaffolding and never
+carries across loops; cross-loop transfer is GoalFeedback and
 GoalLoopSummaries. Only a done block from a loop whose own plan
 carries no pending work can end the run.
 
@@ -160,21 +160,27 @@ Goal no-task theory:
 // TheoryOfGoalReviewModel documents the model used by the goal loops after a
 // done block has been emitted. See TheoryOfGoalMode.
 const TheoryOfGoalReviewModel = `
-The loops after the first done block emitted together with change
-blocks run on the review models: the goal runner forks the selected
-model into each post-done loop's scope as flags.ModelName — the same
-fork Module.RunReview uses for its review sessions — so the model that
-verifies and corrects the declared goal is independent of the model
-that made the changes. The first done block itself is emitted by the
-default model. The review-model selection advances one model per done
-block: the first done block selects the first review model for the loop
-that verifies it, and each later done block selects the next model;
-reaching the last model fixes the selection, so later done blocks keep
-it. A loop without a done block — corrections, errors, malformed blocks
-— does not advance the selection, so the phase is sticky however the
-corrections unfold. When no review model is configured, post-done
-loops keep the default model. The same rotation drives the post-run
-review sessions (see TheoryOfReviewLoop).
+The loops after the first done block emitted together with change blocks
+run on the review models: the first such loop runs on the first review
+model, every later loop of the review phase runs on the next model in the
+configured order, and the selection wraps around to the first model after
+the last. The goal runner forks the selected model into each review-phase
+loop's scope as flags.ModelName — the same fork Module.RunReview uses for
+its review sessions — so the model that verifies and corrects the declared
+goal is independent of the model that made the changes. The first done
+block itself is emitted by the default model. The order is significant:
+consecutive review loops run on different models when more than one model
+is configured, so a model never reviews the corrections it made in the
+previous loop, and the first review model is generally different from the
+main model, so the first verification is already independent. The rotation
+advances once per review-phase loop, whatever the loop's outcome: a loop
+whose done declaration is overturned — by its own plan still carrying
+pending entries, by an error, or by malformed blocks — keeps the run in
+the review phase and lets the next loop take the next model, so the
+independence holds however the corrections unfold. When no review model is
+configured, post-done loops keep the default model. The post-run review
+sessions consume the same ordered list, one session per model (see
+TheoryOfReviewLoop).
 `
 
 // GoalSystemPrompt teaches the model the goal-directed multi-loop protocol:
@@ -348,10 +354,12 @@ type GoalOptions struct {
 	Generate GoalLoopGenerator
 	// Review reviews the accumulated session diffs after the run.
 	Review RunReview
-	// ReviewModels lists the models the post-done loops run on, in
-	// order. Each done block emitted by a loop selects the next model
-	// for the loop that follows; the last model is fixed once reached.
-	// When empty, post-done loops keep the default model. See
+	// ReviewModels lists the models the review phase runs on, in order.
+	// The first loop after a done declaration runs on the first model,
+	// each later review-phase loop takes the next model, and the
+	// selection wraps around to the first after the last, so
+	// consecutive verification loops run on different models. When
+	// empty, post-done loops keep the default model. See
 	// TheoryOfGoalReviewModel.
 	ReviewModels []string
 	// Recorder records the whole run as one session: the recorder's sink
@@ -463,19 +471,27 @@ func GoalSystemPromptText(
 
 // goalLoopState carries the mutable state of a goal run across loops: the
 // feedback for the next loop's system prompt, the attempt summaries of
-// previous loops, the pending done-block declaration, the sticky count of
-// done blocks emitted so far (post-done loops run on the review model the
-// count selects), repeated-error tracking, and the terminal flags. See
-// TheoryOfGoalMode and TheoryOfGoalReviewModel.
+// previous loops, the pending done-block declaration, whether the review
+// phase has begun (doneCount), the review-phase loop count that selects the
+// review models in rotation (reviewLoops), repeated-error tracking, and the
+// terminal flags. See TheoryOfGoalMode and TheoryOfGoalReviewModel.
 type goalLoopState struct {
 	feedback                GoalFeedback
 	summaries               GoalLoopSummaries
 	pendingDoneVerification bool
-	doneCount               int
-	lastErrMsg              string
-	consecutiveErrors       int
-	achieved                bool
-	stopRequested           bool
+	// doneCount counts the done blocks a loop emitted together with
+	// applied changes: a non-zero count opens the review phase, so every
+	// later loop runs on a review model. See TheoryOfGoalReviewModel.
+	doneCount int
+	// reviewLoops counts the review-phase loops already started. Each
+	// review loop takes the next review model, so consecutive loops run
+	// on different models and the selection wraps around after the last
+	// model. See TheoryOfGoalReviewModel.
+	reviewLoops       int
+	lastErrMsg        string
+	consecutiveErrors int
+	achieved          bool
+	stopRequested     bool
 }
 
 // goalLoopNodeName names the session-tree node of one goal loop. The
@@ -616,11 +632,10 @@ func (s *goalLoopState) applyLoopSuccess(loopsRun int, result Result, reporter g
 	// plan carries no pending entries: each loop owns its plan under
 	// its loop node, the done protocol requires that plan to be
 	// complete first, and a declaration emitted while the loop's plan
-	// work is pending is ignored — it advances no verification state
-	// and no review-model selection — while the next loop assesses the
-	// remaining work and completes it first. A previous loop's
-	// unfinished plan never blocks a later loop's done block. See
-	// TheoryOfGoalMode.
+	// work is pending is ignored — it advances no verification state —
+	// while the next loop assesses the remaining work and completes it
+	// first. A previous loop's unfinished plan never blocks a later
+	// loop's done block. See TheoryOfGoalMode.
 	if foundDone && planHasPendingWork(result.SessionTree, planRootNameOf(goalLoopNodeName(loopsRun))) {
 		reporter.failure(fmt.Sprintf(
 			"Goal loop %d emitted a done block while its own plan still carries pending entries; the done block was ignored.\n",
@@ -657,12 +672,12 @@ func (s *goalLoopState) applyLoopSuccess(loopsRun int, result Result, reporter g
 	// A loop that applied change blocks never ends the run, even when
 	// it also emits a done block: the changes must be verified by the
 	// next loop, which re-reads the current filesystem state. The done
-	// block emitted here is a declaration the next loop challenges; the
-	// declaration switches the following loop to a review model, and
-	// each done block emitted here advances the review-model selection
-	// by one — the count is sticky, so the loops that carry later
-	// corrections stay on the review models too. See TheoryOfGoalMode
-	// and TheoryOfGoalReviewModel.
+	// block emitted here is a declaration the next loop challenges; it
+	// opens the review phase, and every loop of that phase runs on the
+	// next review model in the configured order, wrapping around to the
+	// first model after the last, so successive verification loops run
+	// on different models. See TheoryOfGoalMode and
+	// TheoryOfGoalReviewModel.
 	if foundDone {
 		s.pendingDoneVerification = true
 		s.doneCount++
@@ -731,6 +746,19 @@ func (r goalReporter) record(text string) {
 // runner stops the run on it instead of looping. See TheoryOfGoalNoTask.
 var ErrNoTask = errors.New("no task provided; describe the task with chat")
 
+// reviewModelAt returns the review model a review-phase loop runs on: the
+// models are taken in the configured order and the selection wraps around to
+// the first model after the last, so consecutive verification loops run on
+// different models. round is the 1-based number of the review-phase loop; a
+// non-positive round or an empty list selects no model, so the loop keeps
+// the default model. See TheoryOfGoalReviewModel.
+func reviewModelAt(models []string, round int) string {
+	if round <= 0 || len(models) == 0 {
+		return ""
+	}
+	return models[(round-1)%len(models)]
+}
+
 func RunGoal(ctx context.Context, opts GoalOptions) GoalResult {
 	if opts.Output == nil {
 		opts.Output = os.Stdout
@@ -787,22 +815,19 @@ func RunGoal(ctx context.Context, opts GoalOptions) GoalResult {
 
 	// runOneLoop executes one generation loop and folds its outcome into
 	// the runner state. It reports whether the run should stop after the
-	// loop. A loop after the first done block runs on a review model when
-	// any are configured: each done block emitted by an earlier loop
-	// advances the review-model selection by one, and the last model is
-	// fixed once reached. See TheoryOfGoalReviewModel.
+	// loop. Every loop of the review phase runs on the next review model
+	// in the configured order, so consecutive verification loops run on
+	// different models. See TheoryOfGoalReviewModel.
 	runOneLoop := func() bool {
 		loopStart := len(allStats)
 		// The post-done loops verify whether the declared goal is
-		// genuinely achieved and run on the review-model rotation. See
-		// TheoryOfGoalReviewModel.
+		// genuinely achieved; each of them takes the next review model,
+		// so the model verifying a loop's corrections differs from the
+		// model that made them. See TheoryOfGoalReviewModel.
 		loopModel := ""
 		if state.doneCount > 0 && len(opts.ReviewModels) > 0 {
-			index := state.doneCount - 1
-			if index >= len(opts.ReviewModels) {
-				index = len(opts.ReviewModels) - 1
-			}
-			loopModel = opts.ReviewModels[index]
+			state.reviewLoops++
+			loopModel = reviewModelAt(opts.ReviewModels, state.reviewLoops)
 		}
 		// The loop node is written before the loop runs, so every session
 		// node of the loop hangs under it. The node carries a "goal loop

@@ -39,6 +39,51 @@ func noopReview(ctx context.Context, output io.Writer, diffs []changes.FileDiff)
 	return nil
 }
 
+// TestRunGoalRotatesReviewModelsPerReviewLoop verifies the review-model
+// rotation across the review phase: the first loop after a done declaration
+// runs on the first review model, every later review-phase loop takes the
+// next model whether or not it declares done, and the selection wraps
+// around to the first model after the last. See TheoryOfGoalReviewModel.
+func TestRunGoalRotatesReviewModelsPerReviewLoop(t *testing.T) {
+	calls := 0
+	var reviewModels []string
+	result := RunGoal(context.Background(), GoalOptions{
+		Output:       &bytes.Buffer{},
+		ReviewModels: []string{"review-a", "review-b"},
+		Generate: func(ctx context.Context, _ int, _ GoalFeedback, _ GoalLoopSummaries, reviewModel string, _ SessionTreeContinuation) (Result, []AttemptStat, error) {
+			calls++
+			reviewModels = append(reviewModels, reviewModel)
+			switch calls {
+			case 1:
+				// The default model declares done with changes; the
+				// next loop opens the review phase.
+				return doneWithChangesResult(), nil, nil
+			case 2:
+				// Corrections without a done block: the review phase
+				// continues, and the next loop takes the next model
+				// instead of reviewing the corrections it just made.
+				return Result{Diffs: []changes.FileDiff{{Path: "a.go"}}}, nil, nil
+			case 3, 4:
+				// More declarations with changes keep the rotation
+				// going.
+				return doneWithChangesResult(), nil, nil
+			}
+			return doneResult(), nil, nil
+		},
+		Review: noopReview,
+	})
+	if !result.Achieved {
+		t.Fatal("goal must be achieved by the final change-free done loop")
+	}
+	if calls != 5 {
+		t.Fatalf("ran %d loops, want 5", calls)
+	}
+	want := []string{"", "review-a", "review-b", "review-a", "review-b"}
+	if !slices.Equal(reviewModels, want) {
+		t.Fatalf("review models = %v, want %v", reviewModels, want)
+	}
+}
+
 func TestRunGoalConfirmsDoneAfterVerificationLoop(t *testing.T) {
 	output := &bytes.Buffer{}
 	calls := 0
@@ -625,53 +670,6 @@ func TestRunGoalReviewModelStickyAfterOverturnedDeclaration(t *testing.T) {
 		if model != "review-model" {
 			t.Fatalf("loop %d review model = %q, want \"review-model\" (the switch is sticky)", i+2, model)
 		}
-	}
-}
-
-// TestRunGoalRotatesReviewModelsOnEachDoneBlock verifies the
-// review-model rotation across the post-done loops: each done block
-// emitted by a loop advances the selection by one, the last configured
-// model is fixed once reached, and a loop without a done block does
-// not advance it. See TheoryOfGoalReviewModel.
-func TestRunGoalRotatesReviewModelsOnEachDoneBlock(t *testing.T) {
-	calls := 0
-	var reviewModels []string
-	result := RunGoal(context.Background(), GoalOptions{
-		Output:       &bytes.Buffer{},
-		ReviewModels: []string{"review-a", "review-b"},
-		Generate: func(ctx context.Context, _ int, _ GoalFeedback, _ GoalLoopSummaries, reviewModel string, _ SessionTreeContinuation) (Result, []AttemptStat, error) {
-			calls++
-			reviewModels = append(reviewModels, reviewModel)
-			switch calls {
-			case 1:
-				// First declaration: the next loop runs on review-a.
-				return doneWithChangesResult(), nil, nil
-			case 2:
-				// Corrections without a done block: the selection
-				// does not advance, so the next loop stays on
-				// review-a.
-				return Result{Diffs: []changes.FileDiff{{Path: "a.go"}}}, nil, nil
-			case 3:
-				// Second declaration: the next loop runs on review-b.
-				return doneWithChangesResult(), nil, nil
-			case 4:
-				// Third declaration: the last model is fixed, so the
-				// next loop stays on review-b.
-				return doneWithChangesResult(), nil, nil
-			}
-			return doneResult(), nil, nil
-		},
-		Review: noopReview,
-	})
-	if !result.Achieved {
-		t.Fatal("goal must be achieved by the final change-free done loop")
-	}
-	if calls != 5 {
-		t.Fatalf("ran %d loops, want 5", calls)
-	}
-	want := []string{"", "review-a", "review-a", "review-b", "review-b"}
-	if !slices.Equal(reviewModels, want) {
-		t.Fatalf("review models = %v, want %v", reviewModels, want)
 	}
 }
 
