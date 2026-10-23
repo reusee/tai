@@ -2457,6 +2457,12 @@ func TestListWindow(t *testing.T) {
 	if got := ListWindow(3, 10, 1); got != 0 {
 		t.Fatalf("ListWindow for content fitting the box = %d, want 0", got)
 	}
+	// Content exactly as tall as the box fits it too: pinning the window
+	// at the content start keeps every item on screen, where a centering
+	// offset would drop the first rows and blank the rest of the box.
+	if got := ListWindow(10, 10, 9); got != 0 {
+		t.Fatalf("ListWindow for content exactly filling the box = %d, want 0", got)
+	}
 	if got := ListWindow(0, 10, 0); got != 0 {
 		t.Fatalf("ListWindow for empty content = %d, want 0", got)
 	}

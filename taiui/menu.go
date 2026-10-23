@@ -95,15 +95,18 @@ func NewMenuBar(entries []MenuEntry) MenuBar {
 }
 
 // Layout lays the menu titles across the top row: each title occupies
-// its own text width and a gap separates the titles. It is pure: the
-// renderer draws from it and the hit tests map presses through it, so
-// the two cannot disagree. Titles past the width are dropped. See
-// TheoryOfMenu.
+// its own display width and a gap separates the titles. Titles are
+// measured in display columns, the same metric the renderer draws with,
+// so a wide (CJK) title takes its rendered columns and not its byte
+// count. It is pure: the renderer draws from it and the hit tests map
+// presses through it, so the two cannot disagree. Titles past the width
+// are dropped. See TheoryOfMenu.
 func (m *MenuBar) Layout(width int) []MenuBarSlot {
+	options := DisplayWidthOptions()
 	var out []MenuBarSlot
 	x := 0
 	for i, entry := range m.Entries {
-		end := x + len(entry.Title)
+		end := x + options.String(entry.Title)
 		if end > width {
 			break
 		}
@@ -152,8 +155,9 @@ func (m *MenuBar) Element(width, hoverTitle int) Element {
 // DropdownBox returns the box of the open menu's dropdown: the item
 // rows directly under the menu's title slot, one cell of side padding
 // and no vertical padding, shifted left and clamped so it stays on the
-// screen. The renderer and the item hit test share it, so they cannot
-// disagree. See TheoryOfMenu.
+// screen. The item labels are measured in display columns, matching the
+// title layout and the renderer. The renderer and the item hit test
+// share it, so they cannot disagree. See TheoryOfMenu.
 func (m *MenuBar) DropdownBox(width, height int) (Box, bool) {
 	if m.Open < 0 || m.Open >= len(m.Entries) {
 		return Box{}, false
@@ -170,9 +174,10 @@ func (m *MenuBar) DropdownBox(width, height int) (Box, bool) {
 		return Box{}, false
 	}
 	entry := m.Entries[m.Open]
+	options := DisplayWidthOptions()
 	itemWidth := 0
 	for _, item := range entry.Items {
-		itemWidth = max(itemWidth, len(item.Label))
+		itemWidth = max(itemWidth, options.String(item.Label))
 	}
 	w := itemWidth + MenuDropdownPadding*2
 	left := min(slot.X0, max(width-w, 0))

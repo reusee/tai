@@ -260,6 +260,31 @@ func TestCollapsedPanelUnseenDot(t *testing.T) {
 	})
 }
 
+// TestCollapsedPanelVerticalUnseenDotRow pins the vertical fallback
+// mark's row: the mark sits right below the centered label, and the
+// label's extent is its rendered row count, not its byte length. A wide
+// label has fewer rows than bytes, so a byte-based row would drop the
+// mark past the label's end. See TheoryOfTabPanel.
+func TestCollapsedPanelVerticalUnseenDotRow(t *testing.T) {
+	style := testPanelStyle()
+	// A two-column strip keeps the vertical form and renders each wide
+	// label rune, one row per rune.
+	element := CollapsedPanel(Box{Top: 0, Left: 0, Bottom: 12, Right: 2}, "输出", false, true, style)
+	screen := newFakeScreen(2, 12)
+	Render(element, screen)
+	if len(screen.frames) == 0 {
+		t.Fatal("expected a rendered frame")
+	}
+	frame := screen.frames[len(screen.frames)-1]
+	// The two label rows center at rows 5 and 6; the mark sits right
+	// below them, at row 7.
+	cell := frame.Cells[7*frame.Width]
+	wantR, wantG, wantB := style.UnseenDotColor.RGB()
+	if r, g, b := cell.Style.Bg().RGB(); r != wantR || g != wantG || b != wantB {
+		t.Fatalf("expected the unseen dot background right below the label at (0,7), got %#x %#x %#x", r, g, b)
+	}
+}
+
 func TestTabsCycleFocusSkipsCollapsedTabs(t *testing.T) {
 	tabs := NewTabs(3)
 	tabs.Expanded = []bool{true, false, true}

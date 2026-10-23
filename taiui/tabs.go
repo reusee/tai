@@ -651,7 +651,11 @@ func CollapsedPanel(box Box, label string, focus, unseen bool, style PanelStyle)
 		}
 		// The fallback dot sits right below the centered label,
 		// clamped to the strip's last row when the label reaches it.
-		dotRow := min(box.Top+(box.Height()+len(label))/2, box.Bottom-1)
+		// The label's extent is its rendered row count — one row per
+		// rune — not its byte length: a wide label is fewer rows than
+		// bytes, so a byte-based row would drop the mark past the
+		// label's end. See TheoryOfTabPanel.
+		dotRow := min(box.Top+(box.Height()+len(lines))/2, box.Bottom-1)
 		return Overlay(panel, Rect(
 			Box{Top: dotRow, Left: box.Left, Bottom: dotRow + 1, Right: box.Left + 1},
 			Fill(true),

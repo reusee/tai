@@ -52,9 +52,11 @@ func List(items []string, selected int, specs ...any) _List {
 
 // ListWindow returns the index of the first item a List renders in a box
 // of the given height: the view centers on the selected item and clamps
-// to the content extent. It is pure, and the renderer derives its window
-// from it, so a caller's pointer hit test maps a display row onto an
-// item through the same window the renderer draws with. See TheoryOfList.
+// to the content extent. Content that fits the box leaves no room to
+// scroll, so the window is 0 and every item shows. It is pure, and the
+// renderer derives its window from it, so a caller's pointer hit test maps
+// a display row onto an item through the same window the renderer draws
+// with. See TheoryOfList.
 func ListWindow(contentHeight, boxHeight int, selected int) int {
 	if contentHeight <= 0 || boxHeight <= 0 {
 		return 0
@@ -69,7 +71,11 @@ func ListWindow(contentHeight, boxHeight int, selected int) int {
 	if fromY < 0 {
 		fromY = 0
 	}
-	if maxFromY := contentHeight - boxHeight; maxFromY > 0 && fromY > maxFromY {
+	// Clamp to the content extent. The maximum is never negative here:
+	// content that fits the box pins the window at the content start,
+	// while the centering offset above would otherwise hide the first
+	// items of a list exactly as tall as its box.
+	if maxFromY := max(contentHeight-boxHeight, 0); fromY > maxFromY {
 		fromY = maxFromY
 	}
 	return fromY

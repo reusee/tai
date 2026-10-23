@@ -91,6 +91,51 @@ func TestMenuBarLayout(t *testing.T) {
 	}
 }
 
+// TestMenuBarDisplayWidth pins the layout metric: titles and item labels
+// are measured in display columns, not bytes, so a wide (CJK) title
+// occupies its rendered columns and the next title starts right after
+// the gap, and the dropdown is no wider than the widest rendered label
+// plus its side padding. See TheoryOfMenu and TheoryOfDisplayWidth.
+func TestMenuBarDisplayWidth(t *testing.T) {
+	entries := []MenuEntry{
+		{Title: "文件", Items: []MenuItem{
+			{Label: "打开", Action: "open"},
+		}},
+		{Title: "View", Items: []MenuItem{
+			{Label: "Zoom", Action: "zoom"},
+		}},
+	}
+	bar := NewMenuBar(entries)
+	slots := bar.Layout(80)
+	if len(slots) != 2 {
+		t.Fatalf("expected 2 slots, got %d", len(slots))
+	}
+	// "文件" renders in 4 columns; its byte count is 6.
+	if got := slots[0].X1 - slots[0].X0; got != 4 {
+		t.Fatalf("the first slot spans %d columns, want 4", got)
+	}
+	if got := slots[1].X0; got != 4+MenuBarGap {
+		t.Fatalf("the second slot starts at %d, want %d", got, 4+MenuBarGap)
+	}
+	// The columns past the rendered title belong to no title.
+	if index, ok := bar.Hit(1, 80, 4, 0); ok {
+		t.Fatalf("a press past the rendered title must hit no title, got %d", index)
+	}
+	bar.Press(1, 80, 24, 0, 0)
+	box, ok := bar.DropdownBox(80, 24)
+	if !ok {
+		t.Fatal("the File dropdown must have a box")
+	}
+	// "打开" renders in 4 columns; the box adds one padding cell per side.
+	if got := box.Width(); got != 4+MenuDropdownPadding*2 {
+		t.Fatalf("the dropdown width is %d, want %d", got, 4+MenuDropdownPadding*2)
+	}
+	// The last rendered column is inside the item text, so it selects it.
+	if got := bar.ItemAt(80, 24, box.Left+MenuDropdownPadding+3, box.Top); got != 0 {
+		t.Fatalf("the pointer on the last item column must resolve to row 0, got %d", got)
+	}
+}
+
 // TestMenuBarPress pins the press state machine: a title press opens,
 // switches, or closes the dropdown and arms or disarms; an item press
 // runs its action and closes and disarms; a top-level entry press runs
