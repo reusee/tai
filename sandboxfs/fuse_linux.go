@@ -638,7 +638,7 @@ type fuseServer struct {
 }
 
 func newFuseServer(store *Store, devFd int) *fuseServer {
-	return &fuseServer{
+	s := &fuseServer{
 		store:   store,
 		devFd:   devFd,
 		nodes:   map[uint64]string{fuseRootID: "/"},
@@ -649,6 +649,12 @@ func newFuseServer(store *Store, devFd int) *fuseServer {
 		timings: newOpTimings(),
 		done:    make(chan struct{}),
 	}
+	// The flight window's report names the path behind a slow request, so the
+	// aggregate resolves a node id through the server's node table. Rendering
+	// happens outside the aggregate's lock and the resolver takes the node
+	// table's lock, so the two never nest. See TheoryOfFlightRecorder.
+	s.timings.resolve = s.pathName
+	return s
 }
 
 func (s *fuseServer) run() {
@@ -669,10 +675,12 @@ func (s *fuseServer) run() {
 			return
 		}
 		// One start stamp and one record per request attribute the server's
-		// own cost — dispatch plus the reply write — to the request's opcode.
-		// See TheoryOfOperationTiming.
+		// own cost — dispatch plus the reply write — to the request's opcode,
+		// and the request joins the flight ring the moment it finishes.
+		// See TheoryOfOperationTiming and TheoryOfFlightRecorder.
 		opcode := binary.LittleEndian.Uint32(buf[4:8])
-		mark := s.timings.markRequest()
+		nodeid := binary.LittleEndian.Uint64(buf[16:24])
+		mark := s.timings.markRequest(nodeid)
 		s.dispatch(buf[:n])
 		s.timings.recordRequest(opcode, mark)
 	}
@@ -825,6 +833,19 @@ func (s *fuseServer) pathOf(nodeid uint64) (string, error) {
 		return "", syscall.ENOENT
 	}
 	return p, nil
+}
+
+// pathName resolves a node id to its path for the flight window's report. A
+// forgotten or never-allocated id renders as "?", so a report never fails on
+// a node the server no longer names. The lookup reads the node table under
+// its lock, and rendering happens outside the timing aggregate's lock, so the
+// two locks never nest. See TheoryOfFlightRecorder.
+func (s *fuseServer) pathName(nodeid uint64) string {
+	p, err := s.pathOf(nodeid)
+	if err != nil {
+		return "?"
+	}
+	return p
 }
 
 // nodeOf returns the node id of p, allocating one on first use. When
@@ -1461,7 +1482,10 @@ func (s *fuseServer) handleCreate(parent uint64, body []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	id, err := s.nodeOf(p, true)
+	// The create above established the row and the stat above read its
+	// attribute, so the node id needs no existence check of its own: a third
+	// stat would pay a store round trip the handler already made.
+	id, err := s.nodeOf(p, false)
 	if err != nil {
 		return nil, err
 	}

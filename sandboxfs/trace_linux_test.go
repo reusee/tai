@@ -26,11 +26,22 @@ Trace workload theory:
 - The workload replays a toolchain's access pattern: a directory walk
   (lookup, getattr, opendir, readdirplus, releasedir), windowed reads of an
   unchanged base file, and create, write, and truncate on the upper layer.
+- One closing phase writes into a large base file the session has not touched
+  yet: the store materializes the base content, hashing it and copying it into
+  chunks, which costs milliseconds by itself. That write is the shape a
+  toolchain editing a large file produces, and it is the request the flight
+  recorder is built to catch, so the workload exercises the recorder end to
+  end without depending on a scheduling accident. The write payload stays
+  small because the slow cost is the materialization, not the payload — and
+  because a SEQPACKET message is capped by its socket buffer, so a large
+  single write could never travel through this harness.
 - The operation-timing table and the execution trace answer different
   questions. The table attributes each request's total cost to its opcode and
   names the expensive operation; the trace splits one operation's cost into
   the runtime work inside it — reflection, allocation, garbage collection,
   sqlite calls, syscalls — so a fix targets the cost that dominates there.
+  The flight window answers a third question: what the workload asked for in
+  the moments before the slowest request.
 - The workload repeats every phase for several rounds because a first round
   pays one-time costs (handle opens, absence-cache misses, sqlite warm-up)
   that a steady-state request never pays again. Steady-state cost is what a
@@ -50,11 +61,22 @@ const (
 	traceWindowSize       = 32 << 10
 	traceWriteChunk       = 32 << 10
 	traceReplyBufferSize  = fuseInHeaderSize + fuseOutHeaderSize + fuseMaxWriteMax
+
+	// traceLargeFileSize is the size of the base file whose first write the
+	// workload measures: large enough that materializing it costs clearly
+	// more than the flight recorder's floor. See TheoryOfTraceWorkload.
+	traceLargeFileSize = 4 << 20
+
+	// traceLargeWriteSize is the payload of that write: a small window,
+	// because the slow cost is the materialization of the base content the
+	// write starts from, not the payload. The request therefore fits the
+	// SEQPACKET message that carries it. See TheoryOfTraceWorkload.
+	traceLargeWriteSize = 4 << 10
 )
 
 // TestTraceFuseWorkload drives the server through its request loop under
-// runtime/trace and logs the per-opcode timing table. See
-// TheoryOfTraceWorkload.
+// runtime/trace and logs the per-opcode timing table and the flight window.
+// See TheoryOfTraceWorkload and TheoryOfFlightRecorder.
 func TestTraceFuseWorkload(t *testing.T) {
 	if testing.Short() {
 		t.Skip("trace workload skipped in short mode")
@@ -70,6 +92,13 @@ func TestTraceFuseWorkload(t *testing.T) {
 		if err := os.WriteFile(p, content, 0o644); err != nil {
 			t.Fatal(err)
 		}
+	}
+	// The large base file's first write is the workload's slow request: the
+	// store materializes and hashes its content, so the flight recorder takes
+	// its window there. See TheoryOfTraceWorkload.
+	large := bytes.Repeat([]byte("L"), traceLargeFileSize)
+	if err := os.WriteFile(filepath.Join(base, "large.bin"), large, 0o644); err != nil {
+		t.Fatal(err)
 	}
 	store, err := Open(filepath.Join(t.TempDir(), "trace.db"), base)
 	if err != nil {
@@ -213,6 +242,7 @@ func runTraceWorkload(t *testing.T, c *traceClient) {
 		readWindows(t, c, ids, round)
 		writeFiles(t, c, round)
 	}
+	writeLargeBaseFile(t, c)
 }
 
 func walkTree(t *testing.T, c *traceClient, treeID uint64, names [][]byte, ids []uint64) {
@@ -275,4 +305,27 @@ func writeFiles(t *testing.T, c *traceClient, round int) {
 		}))
 		c.must(fuseOpRelease, node, encodeStruct(&fuseReleaseIn{Fh: fh}))
 	}
+}
+
+// writeLargeBaseFile writes into a large base file the session has not touched
+// yet: the store materializes the base content into chunks on the first
+// write, hashing it and copying it, which is the shape a toolchain editing a
+// large file produces and is genuinely slow. The flight recorder captures the
+// window at that request, so the workload exercises the recorder end to end.
+// The write payload stays small so the request fits the SEQPACKET message the
+// harness carries it over. See TheoryOfTraceWorkload and
+// TheoryOfFlightRecorder.
+func writeLargeBaseFile(t *testing.T, c *traceClient) {
+	t.Helper()
+	node := entryNodeid(c.must(fuseOpLookup, uint64(fuseRootID), []byte("large.bin\x00")))
+	fh := openHandle(c.must(fuseOpOpen, node, encodeStruct(&fuseOpenIn{
+		Flags: uint32(unix.O_WRONLY),
+	})), false)
+	payload := bytes.Repeat([]byte("L"), traceLargeWriteSize)
+	c.must(fuseOpWrite, node, append(encodeStruct(&fuseWriteIn{
+		Fh:     fh,
+		Offset: 0,
+		Size:   uint32(len(payload)),
+	}), payload...))
+	c.must(fuseOpRelease, node, encodeStruct(&fuseReleaseIn{Fh: fh}))
 }

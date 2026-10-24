@@ -52,7 +52,7 @@ func TestOpTimingsRecordAndSnapshot(t *testing.T) {
 // hooks unconditionally. See TheoryOfOperationTiming.
 func TestOpTimingsNilReceiverIsInert(t *testing.T) {
 	var timings *OpTimings
-	if mark := timings.markRequest(); !mark.start.IsZero() {
+	if mark := timings.markRequest(0); !mark.start.IsZero() {
 		t.Fatal("nil aggregate stamped a request")
 	}
 	timings.recordRequest(fuseOpRead, requestMark{start: time.Now()})

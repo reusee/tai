@@ -342,8 +342,8 @@ type Op struct {
 	Detail string
 }
 
-// Store is the sqlite-backed upper layer over a read-through base. All
-// methods are safe for concurrent use.
+// Store is the sqlite-backed upper layer over a read-through base. All methods
+// are safe for concurrent use.
 type Store struct {
 	db       *sql.DB
 	base     string
@@ -369,6 +369,12 @@ type Store struct {
 	// writes the batch when it fills; Ops and Close flush the tail. See
 	// TheoryOfAuditBatching.
 	pending []Op
+
+	// stmts is the statement set the request path executes. It is a value, not
+	// a pointer, so a Store built without preparation holds nil statements and
+	// every helper falls back to its SQL text instead of dereferencing nothing.
+	// See TheoryOfPreparedStatements.
+	stmts preparedStatements
 }
 
 // upperAbsent reports whether the upper layer is known not to hold p. A
@@ -478,14 +484,24 @@ func OpenWithPolicy(dbPath, base string, policy func(string) error) (*Store, err
 		baseRoot.Close()
 		return nil, err
 	}
-	return &Store{
+	store := &Store{
 		db:       db,
 		base:     absBase,
 		baseRoot: baseRoot,
 		dbPath:   absDB,
 		policy:   policy,
 		baseFd:   baseFd,
-	}, nil
+	}
+	// The statement set is prepared before the store serves a request, so no
+	// request pays a parse or waits for a preparation.
+	// See TheoryOfPreparedStatements.
+	if err := store.prepareStatements(); err != nil {
+		db.Close()
+		closeBaseDirFd(baseFd)
+		baseRoot.Close()
+		return nil, err
+	}
+	return store, nil
 }
 
 // isOwnDBPath reports whether p names the store's own database or one of its
@@ -604,13 +620,13 @@ func scanFileRow(rs rowScanner) (fileRow, error) {
 	return r, nil
 }
 
+// row reads one path's full row from the prepared row statement, so a
+// mutation's lookup pays no SQL parse. See TheoryOfPreparedStatements.
 func (s *Store) row(p string) (fileRow, bool, error) {
 	if s.upperAbsent(p) {
 		return fileRow{}, false, nil
 	}
-	r, err := scanFileRow(s.db.QueryRow(
-		`SELECT path, kind, mode, mtime, deleted, size, target, original_exists, original_hash
-		 FROM files WHERE path = ?`, p))
+	r, err := scanFileRow(queryRowStmt(s.db, s.stmts.selectRow, querySelectRow, p))
 	if errors.Is(err, sql.ErrNoRows) {
 		s.rememberAbsent(p)
 		return fileRow{}, false, nil
@@ -623,8 +639,9 @@ func (s *Store) row(p string) (fileRow, bool, error) {
 
 // metaRow reads one path's row: metadata only, because the content lives in the
 // chunk table and a write already holds the bytes it is about to store, so a
-// read that loaded content would copy a file the write is about to discard.
-// See TheoryOfChunkedContent.
+// read that loaded content would copy a file the write is about to discard. It
+// shares the prepared row statement with row, because the column list is the
+// same. See TheoryOfChunkedContent and TheoryOfPreparedStatements.
 func (s *Store) metaRow(p string) (fileRow, bool, error) {
 	if s.upperAbsent(p) {
 		return fileRow{}, false, nil
@@ -632,10 +649,7 @@ func (s *Store) metaRow(p string) (fileRow, bool, error) {
 	var r fileRow
 	var kind, deleted, originalExists int
 	var mode, mtime int64
-	err := s.db.QueryRow(
-		`SELECT path, kind, mode, mtime, deleted, size, target, original_exists, original_hash
-		 FROM files WHERE path = ?`, p,
-	).Scan(&r.path, &kind, &mode, &mtime, &deleted, &r.size,
+	err := queryRowStmt(s.db, s.stmts.selectRow, querySelectRow, p).Scan(&r.path, &kind, &mode, &mtime, &deleted, &r.size,
 		&r.target, &originalExists, &r.originalHash)
 	if errors.Is(err, sql.ErrNoRows) {
 		s.rememberAbsent(p)
@@ -655,16 +669,15 @@ func (s *Store) metaRow(p string) (fileRow, bool, error) {
 // readUpperRange reads one window of a path the upper layer holds. The row's
 // metadata — kind, deletion state, and stored size — and the chunk window come
 // back in one indexed query, and the window clamps to the stored size, so the
-// size column is the authority on length. See TheoryOfReadPath.
+// size column is the authority on length. See TheoryOfReadPath and
+// TheoryOfPreparedStatements.
 func (s *Store) readUpperRange(p string, off int64, size int) (chunk []byte, kind Kind, found bool, err error) {
 	if s.upperAbsent(p) {
 		return nil, 0, false, nil
 	}
 	var k, deleted int
 	var stored int64
-	err = s.db.QueryRow(
-		`SELECT kind, deleted, size FROM files WHERE path = ?`, p,
-	).Scan(&k, &deleted, &stored)
+	err = queryRowStmt(s.db, s.stmts.selectUpper, querySelectUpper, p).Scan(&k, &deleted, &stored)
 	if errors.Is(err, sql.ErrNoRows) {
 		s.rememberAbsent(p)
 		return nil, 0, false, nil
@@ -689,6 +702,8 @@ func (s *Store) readUpperRange(p string, off int64, size int) (chunk []byte, kin
 	return chunk, Kind(k), true, nil
 }
 
+// statRow reads one path's metadata for a stat, from the prepared stat
+// statement, so a stat pays no SQL parse. See TheoryOfPreparedStatements.
 func (s *Store) statRow(p string) (a Attr, found bool, err error) {
 	if s.upperAbsent(p) {
 		return Attr{}, false, nil
@@ -696,10 +711,7 @@ func (s *Store) statRow(p string) (a Attr, found bool, err error) {
 	var kind, deleted int
 	var mode, mtime, size int64
 	var targetSize sql.NullInt64
-	err = s.db.QueryRow(
-		`SELECT kind, mode, mtime, deleted, size, length(target)
-		 FROM files WHERE path = ?`, p,
-	).Scan(&kind, &mode, &mtime, &deleted, &size, &targetSize)
+	err = queryRowStmt(s.db, s.stmts.selectStat, querySelectStat, p).Scan(&kind, &mode, &mtime, &deleted, &size, &targetSize)
 	if errors.Is(err, sql.ErrNoRows) {
 		s.rememberAbsent(p)
 		return Attr{}, false, nil

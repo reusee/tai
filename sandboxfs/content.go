@@ -78,9 +78,10 @@ func (s *Store) putContent(r fileRow, content []byte) error {
 	return tx.Commit()
 }
 
-// putMetaTx writes one row's metadata and drops the path's chunks unless the
-// row is a live regular file, whose content a prior putContent or splice
-// stored. Chunks therefore exist only for live regular rows.
+// putMetaTx writes one row's metadata through the prepared upsert and drops the
+// path's chunks unless the row is a live regular file, whose content a prior
+// putContent or splice stored. Chunks therefore exist only for live regular
+// rows. See TheoryOfChunkedContent and TheoryOfPreparedStatements.
 func (s *Store) putMetaTx(tx *sql.Tx, r fileRow) error {
 	s.mu.Lock()
 	delete(s.absent, r.path)
@@ -92,37 +93,25 @@ func (s *Store) putMetaTx(tx *sql.Tx, r fileRow) error {
 	if r.originalExists {
 		originalExists = 1
 	}
-	if _, err := tx.Exec(
-		`INSERT INTO files (path, kind, mode, mtime, deleted, size, target, original_exists, original_hash)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-		 ON CONFLICT(path) DO UPDATE SET
-		   kind = excluded.kind,
-		   mode = excluded.mode,
-		   mtime = excluded.mtime,
-		   deleted = excluded.deleted,
-		   size = excluded.size,
-		   target = excluded.target,
-		   original_exists = excluded.original_exists,
-		   original_hash = excluded.original_hash`,
+	if _, err := runStmt(tx, s.stmts.putMeta, queryPutMeta,
 		r.path, int(r.kind), int64(r.mode), r.mtime.UnixNano(), deleted, r.size,
 		r.target, originalExists, r.originalHash,
 	); err != nil {
 		return err
 	}
 	if r.deleted || r.kind != KindRegular {
-		if _, err := tx.Exec(`DELETE FROM chunks WHERE path = ?`, r.path); err != nil {
+		if _, err := runStmt(tx, s.stmts.dropChunks, queryDropChunks, r.path); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// readChunk returns one chunk, or nil when the chunk is absent.
+// readChunk returns one chunk, or nil when the chunk is absent, from the
+// prepared chunk select. See TheoryOfPreparedStatements.
 func (s *Store) readChunk(ex dbExecer, p string, idx int64) ([]byte, error) {
 	var data []byte
-	err := ex.QueryRow(
-		`SELECT data FROM chunks WHERE path = ? AND idx = ?`, p, idx,
-	).Scan(&data)
+	err := queryRowStmt(ex, s.stmts.selectChunk, querySelectChunk, p, idx).Scan(&data)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -130,19 +119,17 @@ func (s *Store) readChunk(ex dbExecer, p string, idx int64) ([]byte, error) {
 }
 
 // putChunks writes a run of chunks in one statement: the rows are the values of
-// one INSERT, so a window costs one statement whatever its chunk count. The
-// single-chunk form keeps one stable statement text, so the driver can reuse
-// its prepared form across writes. See TheoryOfChunkedContent.
+// one INSERT, so a window costs one statement whatever its chunk count. A
+// single-chunk run takes the prepared upsert, so the hot shape pays no parse;
+// the multi-chunk form keeps its dynamic text, because the row count varies and
+// its statement would have to be rebuilt per shape.
+// See TheoryOfChunkedContent and TheoryOfPreparedStatements.
 func (s *Store) putChunks(ex dbExecer, p string, first int64, chunks [][]byte) error {
 	if len(chunks) == 0 {
 		return nil
 	}
 	if len(chunks) == 1 {
-		_, err := ex.Exec(
-			`INSERT INTO chunks (path, idx, data) VALUES (?, ?, ?)
-			 ON CONFLICT(path, idx) DO UPDATE SET data = excluded.data`,
-			p, first, chunks[0],
-		)
+		_, err := runStmt(ex, s.stmts.putChunk, queryPutChunk, p, first, chunks[0])
 		return err
 	}
 	var b strings.Builder
@@ -163,10 +150,11 @@ func (s *Store) putChunks(ex dbExecer, p string, first int64, chunks [][]byte) e
 // replaceChunks replaces every chunk of p with content: one statement drops the
 // old run and one writes the new run, so a whole-file write costs its own bytes
 // and a fixed statement count, not one statement per chunk. An empty content
-// leaves no chunk at all, so an empty file stores nothing. See
-// TheoryOfChunkedContent.
+// leaves no chunk at all, so an empty file stores nothing. Both statements run
+// the prepared forms through the caller's transaction.
+// See TheoryOfChunkedContent and TheoryOfPreparedStatements.
 func (s *Store) replaceChunks(ex dbExecer, p string, content []byte) error {
-	if _, err := ex.Exec(`DELETE FROM chunks WHERE path = ?`, p); err != nil {
+	if _, err := runStmt(ex, s.stmts.dropChunks, queryDropChunks, p); err != nil {
 		return err
 	}
 	if len(content) == 0 {
@@ -181,15 +169,15 @@ func (s *Store) replaceChunks(ex dbExecer, p string, content []byte) error {
 
 // readChunks reads the window [off, off+size) of p's stored content in one
 // indexed query over the chunks covering it, padding absent chunks with zeros.
-// The caller clamps the window to the stored size.
+// The caller clamps the window to the stored size. The query runs its prepared
+// form, so a windowed read pays no SQL parse. See TheoryOfPreparedStatements.
 func (s *Store) readChunks(ex dbExecer, p string, off int64, size int) ([]byte, error) {
 	if size <= 0 {
 		return nil, nil
 	}
 	end := off + int64(size)
 	out := make([]byte, size)
-	rows, err := ex.Query(
-		`SELECT idx, data FROM chunks WHERE path = ? AND idx >= ? AND idx <= ? ORDER BY idx`,
+	rows, err := queryStmt(ex, s.stmts.selectChunks, querySelectChunks,
 		p, off/contentChunkSize, (end-1)/contentChunkSize,
 	)
 	if err != nil {
@@ -222,9 +210,10 @@ func (s *Store) readContent(p string, size int64) ([]byte, error) {
 // One statement both guards the row and extends its size, so the delta's
 // admissibility costs no separate lookup, and one more statement carries every
 // covered chunk, so a window costs the same statements whatever its chunk
-// count. A path without a live regular row refuses the splice with
+// count. Both statements run their prepared forms, so a window pays no SQL
+// parse. A path without a live regular row refuses the splice with
 // errNoLiveRegularRow, so the caller materialises the row and retries.
-// See TheoryOfChunkedContent.
+// See TheoryOfChunkedContent and TheoryOfPreparedStatements.
 func (s *Store) spliceChunks(p string, off int64, data []byte) error {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -234,9 +223,7 @@ func (s *Store) spliceChunks(p string, off int64, data []byte) error {
 	// The guard and the size update are one statement: a matched row is a live
 	// regular row, and the new end is the window's end when the window extends
 	// the stored content. See TheoryOfChunkedContent.
-	res, err := tx.Exec(
-		`UPDATE files SET size = max(size, ?), mtime = ?
-		 WHERE path = ? AND kind = ? AND deleted = 0`,
+	res, err := runStmt(tx, s.stmts.guardWrite, queryGuardWrite,
 		off+int64(len(data)), time.Now().UnixNano(), p, int(KindRegular),
 	)
 	if err != nil {
@@ -262,8 +249,8 @@ func (s *Store) spliceChunks(p string, off int64, data []byte) error {
 // chunk, no second copy of the payload — and a chunk the payload only partly
 // covers keeps its bytes outside the payload, read once for that purpose. A
 // write past the stored end inserts no zeros, because an absent chunk reads as
-// zeros, and every covered chunk leaves in one statement. See
-// TheoryOfChunkedContent.
+// zeros, and every covered chunk leaves in one statement.
+// See TheoryOfChunkedContent and TheoryOfPreparedStatements.
 func (s *Store) spliceChunkRange(ex dbExecer, p string, off int64, data []byte) error {
 	end := off + int64(len(data))
 	first := off / contentChunkSize
@@ -296,17 +283,16 @@ func (s *Store) spliceChunkRange(ex dbExecer, p string, off int64, data []byte) 
 
 // truncateChunks shapes the stored chunks to a new length: the chunks beyond
 // the length drop, and the chunk the length ends inside keeps its prefix.
-// Growing writes nothing, because an absent chunk reads as zeros.
+// Growing writes nothing, because an absent chunk reads as zeros. Both
+// statements run their prepared forms. See TheoryOfChunkedContent and
+// TheoryOfPreparedStatements.
 func (s *Store) truncateChunks(ex dbExecer, p string, size int64) error {
 	keep := (size + contentChunkSize - 1) / contentChunkSize
-	if _, err := ex.Exec(`DELETE FROM chunks WHERE path = ? AND idx >= ?`, p, keep); err != nil {
+	if _, err := runStmt(ex, s.stmts.dropFrom, queryDropFrom, p, keep); err != nil {
 		return err
 	}
 	if rem := size % contentChunkSize; rem != 0 {
-		if _, err := ex.Exec(
-			`UPDATE chunks SET data = substr(data, 1, ?) WHERE path = ? AND idx = ?`,
-			rem, p, keep-1,
-		); err != nil {
+		if _, err := runStmt(ex, s.stmts.trimChunk, queryTrimChunk, rem, p, keep-1); err != nil {
 			return err
 		}
 	}
@@ -384,7 +370,8 @@ func (s *Store) materializeContent(p string, copySize int64, perm os.FileMode) (
 // drops the chunks beyond the length and keeps the boundary chunk's prefix,
 // and a grow raises the length alone, because an absent chunk reads as zeros.
 // Neither path copies content through the caller, so a truncate of a large
-// file costs a size update and at most one chunk trim.
+// file costs a size update and at most one chunk trim, both prepared.
+// See TheoryOfPreparedStatements.
 func (s *Store) TruncateFile(p string, size int64, perm os.FileMode) error {
 	p = Canonical(p)
 	if p == "/" {
@@ -420,8 +407,7 @@ func (s *Store) TruncateFile(p string, size int64, perm os.FileMode) error {
 	if err := s.truncateChunks(tx, p, size); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(
-		`UPDATE files SET size = ?, mtime = ? WHERE path = ?`,
+	if _, err := runStmt(tx, s.stmts.setSize, querySetSize,
 		size, time.Now().UnixNano(), p,
 	); err != nil {
 		return err
