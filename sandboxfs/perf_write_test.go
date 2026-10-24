@@ -44,7 +44,7 @@ func newWriteBenchServer(b *testing.B) (*fuseServer, *fuseHandle) {
 }
 
 // BenchmarkHandleWrite measures one 64 KiB kernel write over an open handle:
-// the delta lands in the stored blob, so the bytes stored grow with the
+// the delta lands in the chunk it covers, so the bytes stored grow with the
 // payload rather than with the file, and the handle holds no copy.
 // See TheoryOfWriteSplice.
 func BenchmarkHandleWrite(b *testing.B) {

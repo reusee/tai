@@ -44,13 +44,12 @@ sqlite file.
 
 Write-back happens on WRITE, not on flush: the store is a sqlite file, so
 an open file's content lives in the store and a kernel WRITE persists the
-new content immediately. Reads stream and writes materialize — a read
-windows the stored blob or the base file, a write buffers the file from
-first use and writes the whole content back. The trade-offs are one sqlite
-transaction per WRITE and one in-memory copy per file opened for writing,
-and the design's performance caveat covers both. Correctness first: a
-killed process leaves a consistent store, and the review step sees every
-byte the session wrote. See TheoryOfCompletePOSIX.
+new content immediately. Each request costs only its own window and one
+sqlite transaction, and no handle holds a copy of the file; the read and
+write paths own the mechanism (see TheoryOfReadPath and
+TheoryOfWriteSplice). Correctness first: a killed process leaves a
+consistent store, and the review step sees every byte the session wrote.
+See TheoryOfCompletePOSIX.
 
 A request buffer is sized for the largest request the kernel may send: the
 announced MaxWrite payload after the header and the write body. Sizing the
@@ -1240,7 +1239,7 @@ func (s *fuseServer) handleWrite(body []byte) ([]byte, error) {
 	}
 	// The mode comes from the open that handed the handle back, so the write
 	// path pays no metadata lookup. The delta goes straight into the stored
-	// blob, so the store copies the payload rather than the file and the
+	// chunks, so the store copies the payload rather than the file and the
 	// handle holds no copy at all. See TheoryOfWriteSplice.
 	perm := h.mode
 	if perm == 0 {

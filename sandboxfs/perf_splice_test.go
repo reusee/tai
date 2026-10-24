@@ -107,8 +107,9 @@ func TestSpliceFileOverwritesAndAppends(t *testing.T) {
 }
 
 // TestSpliceFilePadsGapWithZeros checks a write past the stored end: the gap
-// is zeros, exactly as the handle's buffer pads it, so the stored blob and the
-// buffer stay byte-identical. See TheoryOfWriteSplice.
+// reads as zeros, because no chunk covers it and a read assembles zeros for
+// absent chunks, so the write stores only its own payload and no padding.
+// See TheoryOfWriteSplice.
 func TestSpliceFilePadsGapWithZeros(t *testing.T) {
 	store := newSpliceTestStore(t)
 	if err := store.WriteFile("/a.txt", []byte("ab"), 0o644); err != nil {
@@ -137,10 +138,9 @@ func TestSpliceFileCapturesBaseContent(t *testing.T) {
 }
 
 // TestSpliceFileIntoEmptyStoredContent checks the delta that lands on a stored
-// empty file — the shape a create or a truncating open leaves behind. The prefix
-// and suffix of an empty blob must contribute nothing, not swallow the
-// concatenation: an empty fragment is not a blob, and a NULL operand would store
-// nothing at all. See TheoryOfWriteSplice.
+// empty file — the shape a create or a truncating open leaves behind. An empty
+// file stores no chunk, so the write covers whole chunks from its own payload
+// and no boundary chunk needs reading. See TheoryOfWriteSplice.
 func TestSpliceFileIntoEmptyStoredContent(t *testing.T) {
 	store := newSpliceTestStore(t)
 	if err := store.WriteFile("/a.txt", nil, 0o644); err != nil {
