@@ -117,3 +117,41 @@ func TestReaddirPlusCarriesEntryOut(t *testing.T) {
 		t.Fatalf("entries = %v", names)
 	}
 }
+
+// TestReaddirPlusSizesScratchFromEntries checks the reply scratch of one
+// listing: it holds the entries that fit rather than the announced request
+// window, and a repeated listing of the same handle reuses it — same bytes,
+// no growth. The kernel announces the negotiated 1 MiB window even for a
+// small directory, so sizing the scratch from the request reserves far more
+// than the listing uses, and reusing it requires every record to be written
+// whole. See TheoryOfInitNegotiation.
+func TestReaddirPlusSizesScratchFromEntries(t *testing.T) {
+	s := newInitTestServer(t)
+	entries := make([]DirEntry, 0, 8)
+	for i := 0; i < 4; i++ {
+		entries = append(entries, DirEntry{
+			Name: "f" + string(rune('a'+i)),
+			Attr: Attr{Kind: KindRegular, Mode: 0o644, Size: 3},
+		})
+	}
+	h := &fuseHandle{path: "/d", isDir: true, entries: entries}
+	s.handles[3] = h
+	req := encodeStruct(&fuseReadIn{Fh: 3, Size: fuseMaxWriteMax})
+	first, err := s.handleReaddirPlus(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cap(h.listBuf); got > 4<<10 {
+		t.Fatalf("scratch holds %d bytes for a %d-byte reply; it must size from the entries, not the announced window", got, len(first))
+	}
+	again, err := s.handleReaddirPlus(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(again) != string(first) {
+		t.Fatalf("repeated listing changed the reply: %q, want %q", again, first)
+	}
+	if got := cap(h.listBuf); got > 4<<10 {
+		t.Fatalf("scratch grew to %d bytes on a repeated listing", got)
+	}
+}

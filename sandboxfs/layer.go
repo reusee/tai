@@ -17,7 +17,9 @@ import (
 // symbolic link: a link reports itself, and the kernel resolves it by
 // reading the target and looking up that path, as a filesystem must.
 // The upper layer's row is read for metadata only, so a stat on a large
-// file never copies its content. See TheoryOfReadPath.
+// file never copies its content. The base descriptor answers the base
+// lookup with one fstatat; a store without the descriptor falls back to
+// the os.Root walk unchanged. See TheoryOfReadPath and TheoryOfBaseFdAccess.
 func (s *Store) Stat(p string) (Attr, error) {
 	p = Canonical(p)
 	a, found, err := s.statRow(p)
@@ -27,7 +29,14 @@ func (s *Store) Stat(p string) (Attr, error) {
 	if found {
 		return a, nil
 	}
-	info, err := s.baseRoot.Lstat(relPath(p))
+	rel := relPath(p)
+	if ba, ok, statErr := baseStatAt(s.baseFd, rel); ok {
+		if statErr != nil {
+			return Attr{}, statErr
+		}
+		return ba, nil
+	}
+	info, err := s.baseRoot.Lstat(rel)
 	if err != nil {
 		return Attr{}, err
 	}
@@ -104,8 +113,10 @@ func (s *Store) ReadFile(p string) ([]byte, error) {
 // materialising the whole file: the upper layer's blob is windowed with
 // sqlite's substr, and a base file is read with ReadAt. A window past the
 // end yields an empty slice, never an error. The upper layer's kind, deletion
-// state, and window come back in one query. See TheoryOfCompletePOSIX and
-// TheoryOfReadPath.
+// state, and window come back in one query. The base descriptor serves the
+// window with one fstatat, one openat, and one pread; a store without the
+// descriptor falls back to the os.Root walk unchanged. See
+// TheoryOfCompletePOSIX, TheoryOfReadPath and TheoryOfBaseFdAccess.
 func (s *Store) ReadRange(p string, off int64, size int) ([]byte, error) {
 	p = Canonical(p)
 	if off < 0 || size < 0 {
@@ -126,6 +137,13 @@ func (s *Store) ReadRange(p string, off int64, size int) ([]byte, error) {
 		return chunk, nil
 	}
 	rel := relPath(p)
+	if b, ok, readErr := baseReadAt(s.baseFd, rel, off, size); ok {
+		if readErr != nil {
+			return nil, readErr
+		}
+		s.auditRead(p)
+		return b, nil
+	}
 	info, err := s.baseRoot.Lstat(rel)
 	if err != nil {
 		return nil, err

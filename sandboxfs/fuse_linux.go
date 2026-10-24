@@ -567,11 +567,11 @@ type fuseDirent struct {
 	Type    uint32
 }
 
-// fuseHandle is one open file or directory. A file's content lives only in the
-// store: a write splices its delta there, so the handle holds no copy of the
-// file and a large open file costs no memory. A read handle caches the
-// base-layer file it opened, so streaming one base file costs one open and one
-// type check per handle instead of one of each per window.
+// fuseHandle is one open file or directory. A file's content lives only
+// in the store: a write splices its delta there, so the handle holds no
+// copy of the file and a large open file costs no memory. A read handle
+// caches the base-layer file it opened, so streaming one base file costs
+// one open and one type check per handle instead of one of each per window.
 // See TheoryOfWriteSplice and TheoryOfReadPath.
 type fuseHandle struct {
 	path    string
@@ -588,6 +588,13 @@ type fuseHandle struct {
 	// before the next request is read, so a streamed file costs one buffer per
 	// handle instead of one allocation per window. See TheoryOfReadPath.
 	readBuf []byte
+
+	// listBuf is the directory listing's reply scratch, reused across
+	// READDIRPLUS calls for the same reason readBuf is reused: the reply
+	// reaches the kernel before the next request is read, so a repeated
+	// listing of one directory allocates nothing after its first call.
+	// See TheoryOfInitNegotiation.
+	listBuf []byte
 
 	// base is the handle's cached base-layer reader: opened lazily on the
 	// first read the upper layer does not answer, closed on release or
@@ -1336,9 +1343,13 @@ func (s *fuseServer) handleReaddir(body []byte) ([]byte, error) {
 // handleReaddirPlus serves READDIRPLUS: one fuse_direntplus per entry, each
 // carrying the fuse_entry_out the kernel would otherwise request with a
 // separate LOOKUP. A directory walk therefore costs one request instead of one
-// plus one per entry, which is the toolchain's dominant directory pattern. The
-// entries and their attributes are already in the handle, so the extra work is
-// one node-id lookup per entry. See TheoryOfInitNegotiation.
+// plus one per entry, which is the toolchain's dominant directory pattern.
+// The entries and their attributes are already in the handle, so the extra
+// work is one node-id lookup per entry. The reply is built in place in the
+// handle's scratch buffer, sized from the entries that can fit rather than
+// from the request's announced window, and each entry is encoded straight into
+// it, so a repeated listing of one directory allocates nothing after its first
+// call. See TheoryOfInitNegotiation.
 func (s *fuseServer) handleReaddirPlus(body []byte) ([]byte, error) {
 	var in fuseReadIn
 	decodeStruct(&in, body)
@@ -1352,13 +1363,25 @@ func (s *fuseServer) handleReaddirPlus(body []byte) ([]byte, error) {
 	if start < 0 || start > len(h.entries) {
 		return []byte{}, nil
 	}
-	entryOutSize := binary.Size(fuseEntryOut{})
 	maxSize := int(in.Size)
-	out := make([]byte, 0, maxSize)
+	// The announced window is the negotiated 1 MiB even for a small
+	// directory, so sizing the scratch from it would reserve far more than
+	// the reply uses. Sum the entries that can fit instead.
+	need := 0
+	for i := start; i < len(h.entries); i++ {
+		need += (fuseEntryOutSize + fuseDirentSize + len(h.entries[i].Name) + 7) &^ 7
+		if need >= maxSize {
+			need = maxSize
+			break
+		}
+	}
+	if cap(h.listBuf) < need {
+		h.listBuf = make([]byte, 0, need)
+	}
+	out := h.listBuf[:0]
 	for i := start; i < len(h.entries); i++ {
 		e := h.entries[i]
-		entrySize := entryOutSize + fuseDirentSize + len(e.Name)
-		padded := (entrySize + 7) &^ 7
+		padded := (fuseEntryOutSize + fuseDirentSize + len(e.Name) + 7) &^ 7
 		if len(out)+padded > maxSize {
 			break
 		}
@@ -1368,16 +1391,20 @@ func (s *fuseServer) handleReaddirPlus(body []byte) ([]byte, error) {
 		if err != nil {
 			continue
 		}
+		prev := len(out)
+		out = out[:prev+padded]
+		// The scratch is reused, so the name's trailing padding would
+		// otherwise carry the previous reply's bytes.
+		clear(out[prev:])
 		entry := s.entryOut(id, e.Attr)
-		buf := make([]byte, padded)
-		copy(buf, encodeStruct(&entry))
-		binary.LittleEndian.PutUint64(buf[entryOutSize:], uint64(i+2))
-		binary.LittleEndian.PutUint64(buf[entryOutSize+8:], uint64(i+1))
-		binary.LittleEndian.PutUint32(buf[entryOutSize+16:], uint32(len(e.Name)))
-		binary.LittleEndian.PutUint32(buf[entryOutSize+20:], direntType(e.Attr.Kind))
-		copy(buf[entryOutSize+fuseDirentSize:], e.Name)
-		out = append(out, buf...)
+		putEntryOut(out[prev:], &entry)
+		binary.LittleEndian.PutUint64(out[prev+fuseEntryOutSize:], uint64(i+2))
+		binary.LittleEndian.PutUint64(out[prev+fuseEntryOutSize+8:], uint64(i+1))
+		binary.LittleEndian.PutUint32(out[prev+fuseEntryOutSize+16:], uint32(len(e.Name)))
+		binary.LittleEndian.PutUint32(out[prev+fuseEntryOutSize+20:], direntType(e.Attr.Kind))
+		copy(out[prev+fuseEntryOutSize+fuseDirentSize:], e.Name)
 	}
+	h.listBuf = out
 	return out, nil
 }
 
@@ -1726,10 +1753,11 @@ var (
 // encodeStruct encodes one response body. The two hot reply types — the entry
 // and attribute bodies every lookup and getattr carries — encode through
 // direct field writes, because a reply is built once per request and the
-// reflection encoder costs more than the rest of a stat reply. Every other
-// type keeps the reflection encoder. The kernel parses a reply by its own
-// struct offsets, so the direct path must preserve the exact wire order.
-// See TheoryOfFuseMount.
+// reflection encoder costs more than the rest of a stat reply. The entry body
+// has one writer, putEntryOut, which the READDIRPLUS batch calls in place.
+// Every other type keeps the reflection encoder. The kernel parses a reply by
+// its own struct offsets, so the direct path must preserve the exact wire
+// order. See TheoryOfFuseMount.
 func encodeStruct(src any) []byte {
 	switch v := src.(type) {
 	case *fuseEntryOut:
@@ -1737,13 +1765,7 @@ func encodeStruct(src any) []byte {
 			return nil
 		}
 		buf := make([]byte, fuseEntryOutSize)
-		binary.LittleEndian.PutUint64(buf[0:], v.Nodeid)
-		binary.LittleEndian.PutUint64(buf[8:], v.Generation)
-		binary.LittleEndian.PutUint64(buf[16:], v.EntryValid)
-		binary.LittleEndian.PutUint64(buf[24:], v.AttrValid)
-		binary.LittleEndian.PutUint32(buf[32:], v.EntryValidNsec)
-		binary.LittleEndian.PutUint32(buf[36:], v.AttrValidNsec)
-		putFuseAttr(buf[40:], v.Attr)
+		putEntryOut(buf, v)
 		return buf
 	case *fuseAttrOut:
 		if v == nil {
@@ -1762,6 +1784,22 @@ func encodeStruct(src any) []byte {
 	buf := make([]byte, size)
 	_ = binary.Write(bytes.NewBuffer(buf[:0]), binary.LittleEndian, src)
 	return buf
+}
+
+// putEntryOut writes one fuse_entry_out at the start of dst, which must hold
+// at least fuseEntryOutSize bytes: the node id, the generation, the entry and
+// attribute cache timeouts, and the attribute. It is the one writer of the
+// entry body, shared by the reply encoder and the READDIRPLUS batch, so the
+// wire layout cannot drift between them. See TheoryOfFuseMount and
+// TheoryOfAttrCaching.
+func putEntryOut(dst []byte, e *fuseEntryOut) {
+	binary.LittleEndian.PutUint64(dst[0:], e.Nodeid)
+	binary.LittleEndian.PutUint64(dst[8:], e.Generation)
+	binary.LittleEndian.PutUint64(dst[16:], e.EntryValid)
+	binary.LittleEndian.PutUint64(dst[24:], e.AttrValid)
+	binary.LittleEndian.PutUint32(dst[32:], e.EntryValidNsec)
+	binary.LittleEndian.PutUint32(dst[36:], e.AttrValidNsec)
+	putFuseAttr(dst[40:], e.Attr)
 }
 
 // putFuseAttr writes one fuse_attr in the kernel's wire order: three 64-bit
