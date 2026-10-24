@@ -76,8 +76,9 @@ func TestOpenPreparesTheRequestPath(t *testing.T) {
 }
 
 // TestPreparedWriteKeepsMultiChunkWindow checks that a window crossing a chunk
-// boundary still stores every byte it covers, so the prepared single-chunk
-// shortcut never truncates the general shape. See TheoryOfPreparedWrites.
+// boundary stores every byte it covers: the prepared single-chunk upsert runs
+// once per covered chunk, so the loop shape never truncates the window at its
+// first chunk. See TheoryOfPreparedStatements.
 func TestPreparedWriteKeepsMultiChunkWindow(t *testing.T) {
 	store, err := Open(filepath.Join(t.TempDir(), "prepared.db"), t.TempDir())
 	if err != nil {

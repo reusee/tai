@@ -5,14 +5,12 @@ import (
 	"errors"
 	"io"
 	"os"
-	"strings"
 	"syscall"
 	"time"
 )
 
-// TheoryOfChunkedContent explains where content lives and why.
 const TheoryOfChunkedContent = `
-Content lives in fixed-size chunks, one row per contentChunkSize window, so a
+Content lives in fixed-size chunks, one row per contentChunkSize bytes, so a
 change costs the bytes it changes. The files table carries metadata only —
 kind, mode, mtime, deleted, size, link target, and the recorded original — and
 the chunks table carries the bytes. A write rewrites the chunks its payload
@@ -23,12 +21,26 @@ blob column instead rewrote the whole file per window, which made the write
 traffic quadratic in the window count — the defect the execution trace and the
 profile both pointed at.
 
-The write path's statement count does not grow with the window either. One
+The chunk's size is the balance between two measured costs. A partial write
+rewrites the chunk it lands inside, so the traffic a small edit costs is the
+chunk's size, not the edit's. A bulk window pays one b-tree insert per chunk
+it covers, so a window of many chunks pays a row count that grows as the
+chunk shrinks. Neither extreme wins: a 64 KiB chunk charged a 4 KiB edit for
+128 KiB of traffic, and a one-page chunk made a 1 MiB bulk window pay 256 row
+inserts. The store's concurrency lives below the mount, and small edits dominate
+the write traffic, so the chosen size favours the partial write: a small edit
+stays near the transaction's own cost, and a bulk window pays its own bytes
+plus one row per chunk of payload.
+
+The write path's parse count does not grow with the window either. One
 statement guards the row and records the new size, so the delta's
-admissibility costs no separate lookup, and one more statement carries every
-covered chunk, so a window of one chunk and a window of a thousand cost the
-same statements. Only a chunk the payload partly covers is read first, and only
-for the bytes the payload leaves untouched.
+admissibility costs no separate lookup, and one prepared statement carries
+each covered chunk, executed once per chunk without a fresh parse. A
+multi-row INSERT whose VALUES the window builds instead pays a parse of a
+statement whose length grows with the window; the benchmark put the two
+shapes within noise of each other, because the prepared form's own
+per-execute cost stands close to the parse it saves, so the loop shape is
+kept for its simpler code.
 
 The row is the identity; the chunks are the content. A chunk exists only for a
 live regular row: a whiteout, a directory, a link, and a pipe drop their
@@ -46,7 +58,12 @@ file; a truncation materialises only the prefix it keeps.
 
 // contentChunkSize is the length of one stored chunk. It bounds the bytes a
 // partly covered window rewrites and the bytes one read query returns per row.
-const contentChunkSize = 64 << 10
+// Every chunk is one row, so the value trades two measured costs: a partial
+// write rewrites the chunk it lands inside, and a bulk write pays one b-tree
+// insert per chunk. The store's concurrency lives below the mount, and small
+// edits dominate the write traffic, so the value favours the partial write.
+// See TheoryOfChunkedContent.
+const contentChunkSize = 4 << 10
 
 // errNoLiveRegularRow reports that the upper layer holds no live regular row
 // for a path, so a content mutation must materialise it first.
@@ -83,9 +100,7 @@ func (s *Store) putContent(r fileRow, content []byte) error {
 // putContent or splice stored. Chunks therefore exist only for live regular
 // rows. See TheoryOfChunkedContent and TheoryOfPreparedStatements.
 func (s *Store) putMetaTx(tx *sql.Tx, r fileRow) error {
-	s.mu.Lock()
-	delete(s.absent, r.path)
-	s.mu.Unlock()
+	s.absent.Delete(r.path)
 	var deleted, originalExists int
 	if r.deleted {
 		deleted = 1
@@ -118,41 +133,30 @@ func (s *Store) readChunk(ex dbExecer, p string, idx int64) ([]byte, error) {
 	return data, err
 }
 
-// putChunks writes a run of chunks in one statement: the rows are the values of
-// one INSERT, so a window costs one statement whatever its chunk count. A
-// single-chunk run takes the prepared upsert, so the hot shape pays no parse;
-// the multi-chunk form keeps its dynamic text, because the row count varies and
-// its statement would have to be rebuilt per shape.
-// See TheoryOfChunkedContent and TheoryOfPreparedStatements.
+// putChunks writes a run of chunks by executing the prepared single-chunk
+// upsert once per chunk. The prepared form reaches the insert directly; a
+// multi-row INSERT whose VALUES the window builds instead pays a parse of a
+// statement whose length grows with the window. The two shapes measured
+// within noise of each other — a prepared form's per-execute cost stands
+// close to the parse it saves — so the loop is kept for its simpler code and
+// one execution path. A single-chunk window, the hot shape of a partial
+// write, pays exactly one execute. See TheoryOfChunkedContent and
+// TheoryOfPreparedStatements.
 func (s *Store) putChunks(ex dbExecer, p string, first int64, chunks [][]byte) error {
-	if len(chunks) == 0 {
-		return nil
-	}
-	if len(chunks) == 1 {
-		_, err := runStmt(ex, s.stmts.putChunk, queryPutChunk, p, first, chunks[0])
-		return err
-	}
-	var b strings.Builder
-	b.WriteString(`INSERT INTO chunks (path, idx, data) VALUES `)
-	args := make([]any, 0, len(chunks)*3)
 	for i, data := range chunks {
-		if i > 0 {
-			b.WriteString(",")
+		if _, err := runStmt(ex, s.stmts.putChunk, queryPutChunk, p, first+int64(i), data); err != nil {
+			return err
 		}
-		b.WriteString("(?, ?, ?)")
-		args = append(args, p, first+int64(i), data)
 	}
-	b.WriteString(` ON CONFLICT(path, idx) DO UPDATE SET data = excluded.data`)
-	_, err := ex.Exec(b.String(), args...)
-	return err
+	return nil
 }
 
 // replaceChunks replaces every chunk of p with content: one statement drops the
-// old run and one writes the new run, so a whole-file write costs its own bytes
-// and a fixed statement count, not one statement per chunk. An empty content
-// leaves no chunk at all, so an empty file stores nothing. Both statements run
-// the prepared forms through the caller's transaction.
-// See TheoryOfChunkedContent and TheoryOfPreparedStatements.
+// old run, and the new run's chunks leave through the prepared upsert, executed
+// once per chunk, so a whole-file write costs its own bytes and no SQL parse
+// per chunk. An empty content leaves no chunk at all, so an empty file stores
+// nothing. The drop and each upsert run their prepared forms through the
+// caller's transaction. See TheoryOfChunkedContent and TheoryOfPreparedStatements.
 func (s *Store) replaceChunks(ex dbExecer, p string, content []byte) error {
 	if _, err := runStmt(ex, s.stmts.dropChunks, queryDropChunks, p); err != nil {
 		return err
@@ -208,10 +212,9 @@ func (s *Store) readContent(p string, size int64) ([]byte, error) {
 
 // spliceChunks writes one payload into the stored content in one transaction.
 // One statement both guards the row and extends its size, so the delta's
-// admissibility costs no separate lookup, and one more statement carries every
-// covered chunk, so a window costs the same statements whatever its chunk
-// count. Both statements run their prepared forms, so a window pays no SQL
-// parse. A path without a live regular row refuses the splice with
+// admissibility costs no separate lookup, and the prepared chunk upsert
+// executes once per covered chunk, so a window pays one execute per chunk with
+// no SQL parse. A path without a live regular row refuses the splice with
 // errNoLiveRegularRow, so the caller materialises the row and retries.
 // See TheoryOfChunkedContent and TheoryOfPreparedStatements.
 func (s *Store) spliceChunks(p string, off int64, data []byte) error {
@@ -249,8 +252,8 @@ func (s *Store) spliceChunks(p string, off int64, data []byte) error {
 // chunk, no second copy of the payload — and a chunk the payload only partly
 // covers keeps its bytes outside the payload, read once for that purpose. A
 // write past the stored end inserts no zeros, because an absent chunk reads as
-// zeros, and every covered chunk leaves in one statement.
-// See TheoryOfChunkedContent and TheoryOfPreparedStatements.
+// zeros, and every covered chunk leaves through the prepared upsert, executed
+// once per chunk. See TheoryOfChunkedContent and TheoryOfPreparedStatements.
 func (s *Store) spliceChunkRange(ex dbExecer, p string, off int64, data []byte) error {
 	end := off + int64(len(data))
 	first := off / contentChunkSize

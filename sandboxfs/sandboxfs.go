@@ -77,9 +77,9 @@ A metadata lookup never loads content. Stat needs the kind, mode, mtime,
 and size; the row's metadata is the whole answer, and the content lives in the
 chunk table. The size therefore comes from the row's stored size column, so a
 getattr or lookup on a large file costs one small row, not a heap copy of the
-file. A read's window, kind, and deletion state come back in one indexed query
-over the chunks covering the window, so one kernel-sized read is one round trip
-instead of a lookup plus a window.
+file. A read of a written path is two prepared round trips: the row's kind,
+deletion state, and stored size, then one indexed query over the chunks
+covering the window, never one query per chunk.
 
 A read handle opens the base file once. The kernel streams a file in
 windows; reopening and re-checking the host file per window spends a stat
@@ -112,7 +112,11 @@ make an absence more true, never less.
 
 The cache is bounded by the paths a session touches, and the audit trail
 already spends one record per such path, so it adds no memory the session did
-not already spend. One mutex guards it, the same lock the read audit takes.
+not already spend. It is a sync.Map, so a lookup runs without a lock: the read
+path consults it on every request, and a shared mutex would serialize every
+reader against the first-read audit. The first-read record uses the same form
+— one lock-free Load per read, and a LoadOrStore only for the first — because
+the audit keeps one record per path, not one per read.
 `
 
 const TheoryOfWriteSplice = `
@@ -135,8 +139,8 @@ store for the content the last write left there.
 
 The splice runs in one transaction whose first statement both guards the row
 and extends its size, so the delta's admissibility and its length cost one
-statement, and one more statement carries every covered chunk. A path the
-upper layer holds no live regular row for refuses the splice, the caller
+statement, and one prepared statement executes once per covered chunk. A path
+the upper layer holds no live regular row for refuses the splice, the caller
 materialises it, and the splice runs once more; the hot path therefore costs
 one commit and never a second lookup of the content this write exists to avoid
 copying.
@@ -357,17 +361,24 @@ type Store struct {
 	// os.Root. See TheoryOfBaseFdAccess.
 	baseFd int
 
-	mu   sync.Mutex
-	read map[string]bool
 	// absent caches the paths the upper layer is known not to hold, so the
 	// hot read and stat paths answer a path the session never wrote without
-	// a sqlite round trip. Any write of the path clears its entry. See
-	// TheoryOfUpperAbsentCache.
-	absent map[string]bool
-	// pending buffers the audit rows not yet written, so a mutation's audit
-	// row joins the next batch instead of paying a commit of its own. audit
-	// writes the batch when it fills; Ops and Close flush the tail. See
-	// TheoryOfAuditBatching.
+	// a sqlite round trip. Any write of the path clears its entry. It is a
+	// sync.Map so a lookup takes no lock: the read path consults it on every
+	// request, and a shared mutex would serialize every reader against the
+	// first-read audit. See TheoryOfUpperAbsentCache.
+	absent sync.Map // p string -> bool
+
+	// read records the paths the session already audited a read of, so the
+	// trail keeps one record per path instead of one per read. It is a
+	// sync.Map for the same reason as absent: a repeated read is the common
+	// case and pays one lock-free Load.
+	read sync.Map // p string -> bool
+
+	// mu guards pending, the audit rows not yet written; the rows share one
+	// commit per batch (see TheoryOfAuditBatching). The read caches above stay
+	// outside this lock, so an audit flush never waits on a read.
+	mu      sync.Mutex
 	pending []Op
 
 	// stmts is the statement set the request path executes. It is a value, not
@@ -381,9 +392,8 @@ type Store struct {
 // missing entry says nothing: the caller must ask the database.
 // See TheoryOfUpperAbsentCache.
 func (s *Store) upperAbsent(p string) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.absent[p]
+	_, ok := s.absent.Load(p)
+	return ok
 }
 
 // Open opens the sandbox store at dbPath over the read-through base
@@ -666,11 +676,11 @@ func (s *Store) metaRow(p string) (fileRow, bool, error) {
 	return r, true, nil
 }
 
-// readUpperRange reads one window of a path the upper layer holds. The row's
-// metadata — kind, deletion state, and stored size — and the chunk window come
-// back in one indexed query, and the window clamps to the stored size, so the
-// size column is the authority on length. See TheoryOfReadPath and
-// TheoryOfPreparedStatements.
+// readUpperRange reads one window of a path the upper layer holds. One
+// indexed query returns the row's metadata — kind, deletion state, and stored
+// size — and a second returns the chunk window; the window clamps to the
+// stored size, so the size column is the authority on length. See
+// TheoryOfReadPath and TheoryOfPreparedStatements.
 func (s *Store) readUpperRange(p string, off int64, size int) (chunk []byte, kind Kind, found bool, err error) {
 	if s.upperAbsent(p) {
 		return nil, 0, false, nil
@@ -755,10 +765,10 @@ func (s *Store) put(r fileRow) error {
 // SpliceFile writes data at byte offset off of p without reading or rewriting
 // the surrounding content, so a write costs bytes proportional to its own
 // payload instead of the whole file. A write past the stored end pads the gap
-// with zeros, matching the buffer the FUSE layer maintains. A path the upper
-// layer holds no live regular row for is materialised first, carrying the base
-// content the write starts from; a path the session deleted starts from nothing.
-// See TheoryOfWriteSplice.
+// with zeros: an absent chunk reads as zeros, so the gap stores no bytes.
+// A path the upper layer holds no live regular row for is materialised first,
+// carrying the base content the write starts from; a path the session deleted
+// starts from nothing. See TheoryOfWriteSplice.
 func (s *Store) SpliceFile(p string, off int64, data []byte, perm os.FileMode) error {
 	p = Canonical(p)
 	if p == "/" {
@@ -847,18 +857,17 @@ func (s *Store) checkWrite(p string) error {
 }
 
 // auditRead records the first read of a path in the session. The audit
-// question is which files a session touched, so repeated reads add nothing.
+// question is which files a session touched, so repeated reads add nothing:
+// the common read pays one lock-free Load, and only the first read of a path
+// reaches the batch that carries the audit row. See TheoryOfUpperAbsentCache
+// and TheoryOfAuditBatching.
 func (s *Store) auditRead(p string) {
-	s.mu.Lock()
-	if s.read == nil {
-		s.read = make(map[string]bool)
-	}
-	if s.read[p] {
-		s.mu.Unlock()
+	if _, ok := s.read.Load(p); ok {
 		return
 	}
-	s.read[p] = true
-	s.mu.Unlock()
+	if _, loaded := s.read.LoadOrStore(p, true); loaded {
+		return
+	}
 	s.audit("read", p, "")
 }
 
@@ -874,15 +883,10 @@ func (s *Store) flushOps() {
 }
 
 // rememberAbsent records that the upper layer does not hold p, so the next
-// lookup of the path costs no sqlite round trip. put clears the entry.
-// See TheoryOfUpperAbsentCache.
+// lookup of the path costs no sqlite round trip. A write of the path clears
+// the entry. See TheoryOfUpperAbsentCache.
 func (s *Store) rememberAbsent(p string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.absent == nil {
-		s.absent = make(map[string]bool)
-	}
-	s.absent[p] = true
+	s.absent.Store(p, true)
 }
 
 // Ops returns the audit trail in insertion order. The buffered tail is

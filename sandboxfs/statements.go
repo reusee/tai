@@ -4,9 +4,6 @@ import (
 	"database/sql"
 )
 
-// TheoryOfPreparedStatements states what the store prepares, why it prepares
-// it, where a prepared statement may run, and what the write profile shows
-// once the set carries the request path.
 const TheoryOfPreparedStatements = `
 Prepared statements theory:
 - sqlite parses and plans a statement every time it executes SQL text. The
@@ -22,13 +19,14 @@ Prepared statements theory:
   size update, and the three chunk drop-and-trim statements. A preparation
   failure fails Open: a store that served requests without the set would pay
   the parse the set exists to remove, silently.
-- One shape keeps its SQL text by design. A whole-file write, and a window
-  spanning more than one chunk, carries one INSERT whose row count the kernel
-  chooses per request; preparing every count would fix the count at open time
-  for a shape the request decides. That form pays one parse per multi-chunk
-  window, bounded by the window size over the chunk size, and the profile
-  taken after this change no longer shows the parser: the hole is not the
-  expensive one.
+- Every statement the request path runs has a prepared form, the multi-chunk
+  window included: a window spanning many chunks executes the prepared
+  single-chunk upsert once per chunk. A multi-row INSERT whose VALUES the
+  window builds pays a fresh parse of a statement whose length grows with the
+  window. The two shapes measured within noise of each other — a prepared
+  form's per-execute cost stands close to the parse it saves — so the loop is
+  kept for its simpler code: one statement and one execution path instead of a
+  statement the window builds.
 - A prepared statement belongs to a connection. The store holds one
   connection (see OpenWithPolicy), so a transaction runs the same prepared
   statement through database/sql's own view of it, and the transaction keeps

@@ -119,9 +119,9 @@ func (s *Store) ReadFile(p string) ([]byte, error) {
 // materialising the whole file: the upper layer's window is one indexed query
 // over the chunks covering it, and a base file is read with ReadAt. A window
 // past the end yields an empty slice, never an error. The upper layer's kind
-// and deletion state come back in the same query that sizes the window. The
-// base descriptor serves the window with one fstatat, one openat, and one
-// pread; a store without the descriptor falls back to the os.Root walk
+// and deletion state come back in the row query whose stored size clamps the
+// window. The base descriptor serves the window with one fstatat, one openat,
+// and one pread; a store without the descriptor falls back to the os.Root walk
 // unchanged. See TheoryOfCompletePOSIX, TheoryOfReadPath and
 // TheoryOfBaseFdAccess.
 func (s *Store) ReadRange(p string, off int64, size int) ([]byte, error) {
