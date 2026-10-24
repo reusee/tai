@@ -320,12 +320,6 @@ func (s *Store) readBaseContent(p string, limit int64) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(f, min(limit, maxFileSize)))
 }
 
-// materializeContent gives p a live regular row whose content starts from the
-// base file, so the caller's first change to a base path keeps the bytes it
-// does not change. copySize bounds the base content read: a negative value
-// takes the whole file, a non-negative one takes that prefix. It is the cold
-// path of every content change, taken once per file; a whiteout starts from
-// nothing, because resurrecting the deleted bytes would undo the deletion.
 func (s *Store) materializeContent(p string, copySize int64, perm os.FileMode) (fileRow, error) {
 	if err := s.checkParent(p); err != nil {
 		return fileRow{}, err
@@ -340,11 +334,19 @@ func (s *Store) materializeContent(p string, copySize int64, perm os.FileMode) (
 			return fileRow{}, err
 		}
 	}
+	// A whiteout keeps the kind of the row it replaced, and that kind no
+	// longer constrains the path: after the deletion the name is free for a
+	// regular file. Only a live row of another kind refuses the write.
+	// See TheoryOfCompletePOSIX.
 	switch r.kind {
 	case KindDir:
-		return fileRow{}, syscall.EISDIR
+		if !r.deleted {
+			return fileRow{}, syscall.EISDIR
+		}
 	case KindFIFO, KindSymlink:
-		return fileRow{}, syscall.EINVAL
+		if !r.deleted {
+			return fileRow{}, syscall.EINVAL
+		}
 	}
 	var content []byte
 	if !r.deleted {
@@ -353,8 +355,15 @@ func (s *Store) materializeContent(p string, copySize int64, perm os.FileMode) (
 			return fileRow{}, err
 		}
 	}
+	// The caller's mode is a default for a path that carries none: the
+	// recorded base mode, or the mode an existing row already holds, is the
+	// honest source when the caller leaves the choice to the store, so a
+	// content or time change never rewrites the permission bits.
 	if perm == 0 {
-		perm = 0o644
+		perm = r.mode
+		if perm == 0 {
+			perm = 0o644
+		}
 	}
 	r.path = p
 	r.kind = KindRegular
@@ -369,18 +378,20 @@ func (s *Store) materializeContent(p string, copySize int64, perm os.FileMode) (
 	return r, nil
 }
 
-// TruncateFile sets the stored content length of one regular file: a shrink
-// drops the chunks beyond the length and keeps the boundary chunk's prefix,
-// and a grow raises the length alone, because an absent chunk reads as zeros.
-// Neither path copies content through the caller, so a truncate of a large
-// file costs a size update and at most one chunk trim, both prepared.
-// See TheoryOfPreparedStatements.
 func (s *Store) TruncateFile(p string, size int64, perm os.FileMode) error {
 	p = Canonical(p)
 	if p == "/" {
 		return syscall.EISDIR
 	}
-	if size < 0 || size > maxFileSize {
+	if err := s.checkWrite(p); err != nil {
+		return err
+	}
+	// A negative length is a malformed request, not a size the store cannot
+	// hold: EINVAL, while the bound keeps EFBIG. See TheoryOfCompletePOSIX.
+	if size < 0 {
+		return syscall.EINVAL
+	}
+	if size > maxFileSize {
 		return syscall.EFBIG
 	}
 	r, ok, err := s.row(p)
@@ -388,6 +399,17 @@ func (s *Store) TruncateFile(p string, size int64, perm os.FileMode) error {
 		return err
 	}
 	if !ok {
+		// truncate(2) names an existing file. A path the upper and the base
+		// both lack reports ENOENT instead of creating one; the first change
+		// to a base file still materialises it, with only the prefix the
+		// truncation keeps. See TheoryOfCompletePOSIX.
+		orig, err := s.captureOriginal(p)
+		if err != nil {
+			return err
+		}
+		if !orig.originalExists {
+			return ErrNotExist
+		}
 		r, err = s.materializeContent(p, size, perm)
 		if err != nil {
 			return err

@@ -14,11 +14,12 @@ Prepared statements theory:
   runs. Executing text is what pays the parse; the operation is not.
 - The store prepares the statements its request path runs, once, when it
   opens, and the request path executes the prepared forms. The set covers the
-  stat select, the full-row select, the upper-row select, the two chunk
-  selects, the metadata upsert, the single-chunk upsert, the size guard, the
-  size update, and the three chunk drop-and-trim statements. A preparation
-  failure fails Open: a store that served requests without the set would pay
-  the parse the set exists to remove, silently.
+  stat select, the full-row select, the upper-row select, the directory
+  listing select, the two chunk selects, the metadata upsert, the single-chunk
+  upsert, the audit-row insert, the size guard, the size update, and the three
+  chunk drop-and-trim statements. A preparation failure fails Open: a store
+  that served requests without the set would pay the parse the set exists to
+  remove, silently.
 - Every statement the request path runs has a prepared form, the multi-chunk
   window included: a window spanning many chunks executes the prepared
   single-chunk upsert once per chunk. A multi-row INSERT whose VALUES the
@@ -47,6 +48,18 @@ Prepared statements theory:
   prepared, so the set needs no separate close on the open-and-close path the
   tests and the review command follow.
 `
+
+// querySelectDir is the directory listing's row select: a listing walks every
+// entry under a prefix, and the listing is one request, so the select has a
+// prepared form like every other request-path statement.
+// See TheoryOfPreparedStatements.
+const querySelectDir = `SELECT path, kind, mode, mtime, deleted, size, length(target)
+		 FROM files WHERE path >= ? AND path < ?`
+
+// queryPutOp is the audit-row insert: a batch shares one commit, and the
+// insert itself is prepared so the batch pays no SQL parse per row.
+// See TheoryOfPreparedStatements and TheoryOfAuditBatching.
+const queryPutOp = `INSERT INTO ops (time, op, path, detail) VALUES (?, ?, ?, ?)`
 
 // The SQL text of every statement the request path runs. A statement is
 // prepared from its text and executed by its prepared form, so the text lives
@@ -86,9 +99,11 @@ type preparedStatements struct {
 	selectStat   *sql.Stmt
 	selectRow    *sql.Stmt
 	selectUpper  *sql.Stmt
+	selectDir    *sql.Stmt
 	selectChunks *sql.Stmt
 	selectChunk  *sql.Stmt
 	putMeta      *sql.Stmt
+	putOp        *sql.Stmt
 	putChunk     *sql.Stmt
 	guardWrite   *sql.Stmt
 	setSize      *sql.Stmt
@@ -110,9 +125,11 @@ func (s *Store) prepareStatements() error {
 		{&s.stmts.selectStat, querySelectStat},
 		{&s.stmts.selectRow, querySelectRow},
 		{&s.stmts.selectUpper, querySelectUpper},
+		{&s.stmts.selectDir, querySelectDir},
 		{&s.stmts.selectChunks, querySelectChunks},
 		{&s.stmts.selectChunk, querySelectChunk},
 		{&s.stmts.putMeta, queryPutMeta},
+		{&s.stmts.putOp, queryPutOp},
 		{&s.stmts.putChunk, queryPutChunk},
 		{&s.stmts.guardWrite, queryGuardWrite},
 		{&s.stmts.setSize, querySetSize},

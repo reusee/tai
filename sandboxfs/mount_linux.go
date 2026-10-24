@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"golang.org/x/sys/unix"
@@ -92,6 +93,10 @@ func Mount(opts MountOptions) (*MountedFS, error) {
 	if err != nil {
 		return nil, err
 	}
+	absDB, err := filepath.Abs(opts.DBPath)
+	if err != nil {
+		return nil, err
+	}
 	if err := os.MkdirAll(opts.Mountpoint, 0o755); err != nil {
 		return nil, err
 	}
@@ -103,10 +108,21 @@ func Mount(opts MountOptions) (*MountedFS, error) {
 	if err != nil {
 		return nil, err
 	}
-	store, err := OpenWithPolicy(opts.DBPath, viewDir, opts.WritePolicy)
+	store, err := OpenWithPolicy(absDB, viewDir, opts.WritePolicy)
 	if err != nil {
 		detachView()
 		return nil, err
+	}
+	// The store's base is the private view, not the host base the database
+	// was opened with. A database inside the base reaches the sandbox as the
+	// path relative to the base, so the two names are recorded by identity
+	// through the view; without this the store would compare the sandbox path
+	// with a host path they do not share and miss the match.
+	// See TheoryOfSandboxFilesystem.
+	if rel, relErr := filepath.Rel(absBase, absDB); relErr == nil &&
+		rel != "." && rel != ".." &&
+		!strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		store.dbPath = filepath.Join(viewDir, rel)
 	}
 	detachView()
 	devFd, err := unix.Open("/dev/fuse", unix.O_RDWR|unix.O_CLOEXEC, 0)

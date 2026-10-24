@@ -33,6 +33,25 @@ handler is driven synchronously: read one request, dispatch it, write one
 response. The kernel serializes requests per connection, so no worker pool
 is needed; a slow handler delays later requests but not correctness.
 
+The read loop separates the errors that do not end the daemon from the ones
+that do. EINTR says a signal arrived. ENOENT says the caller interrupted its
+request before this server read it, and the answer is to read the next
+request. Returning on either stops the server, and from then on every
+filesystem call through the mount fails with EIO.
+
+A request body carries its fixed header followed by its names. A body
+shorter than the fixed header, or a name with no terminator, is malformed:
+the handler reports EINVAL rather than slicing past the body, because a
+panic on the server's single goroutine kills the daemon for every later
+request. The decodeStruct padding covers the fixed fields only; the names
+come from the raw length.
+
+The request header's length field is checked before the body is sliced. The
+read buffer is reused, so a length that claims bytes the read did not
+deliver would hand the handler the previous request's bytes. A length below
+the header or above the bytes read is EINVAL; a zero length leaves the
+whole read as the body.
+
 Node ids are paths. The protocol requires stable node ids, and the store is
 path-addressed, so the server allocates numeric ids on first use and keeps
 the mapping until the process exits. Paths are the identity; numeric ids
@@ -94,6 +113,13 @@ const TheoryOfInitNegotiation = `
 The FUSE INIT handshake is the first and cheapest performance lever: it sets the
 per-request ceiling every later file operation runs under, before a single byte
 moves.
+
+The handshake also names the protocol version. This server speaks major 7, so
+a kernel that names a newer major is told to fall back to 7 and reopens the
+handshake at that version; a kernel that names an older major speaks a
+protocol this server cannot serve, and the negotiation fails with EPROTO. The
+minor is capped the same way: a newer kernel is answered at the last field
+definition this server knows.
 
 BIG_WRITES dominates the write path. Without it the kernel caps one WRITE at a
 single page, so a toolchain writing a multi-megabyte file sends hundreds of
@@ -217,6 +243,11 @@ const (
 	// definitions through Linux 7.31.
 	fuseProtocolMinor = 31
 )
+
+// fuseProtocolMajor is the kernel protocol major this server speaks. The
+// handshake echoes it when the kernel names a newer major, so the kernel
+// reopens the negotiation at that version. See TheoryOfInitNegotiation.
+const fuseProtocolMajor = 7
 
 // Linux FUSE opcodes, matching include/uapi/linux/fuse.h.
 const (
@@ -385,15 +416,17 @@ type fuseInitIn struct {
 	Pad          uint32
 }
 
-// fuseInitOut mirrors struct fuse_init_out through protocol 7.31: major,
-// minor, max_readahead, flags, max_background, congestion_threshold,
-// max_write, time_gran, then the 7.28 max_pages field and the 7.36
-// map_alignment and flags2 fields. The field order is the wire order the
-// kernel parses by its own struct offsets, so a field placed anywhere else
-// shifts every value after it — max_write and max_background would arrive as
-// zero and time_gran as garbage. A field whose negotiating flag is absent stays
-// zero, which the kernel ignores. See TheoryOfFuseMount and
-// TheoryOfInitNegotiation.
+// fuseInitOut mirrors struct fuse_init_out through protocol 7.31, plus the
+// 7.36 flags2 field the kernel reads at the same offset: major, minor,
+// max_readahead, flags, max_background, congestion_threshold, max_write,
+// time_gran, then the 7.28 max_pages field, the 7.31 map_alignment field,
+// the 7.36 flags2 field, and the unused tail. The field order is the wire
+// order the kernel parses by its own struct offsets. A max_pages wider than
+// 16 bits pushes map_alignment and flags2 two bytes late, and the kernel
+// reads an alignment and a flag set the server never announced; the two
+// fields' zero defaults hide that until one of them is set. A field whose
+// negotiating flag is absent stays zero, which the kernel ignores.
+// See TheoryOfFuseMount and TheoryOfInitNegotiation.
 type fuseInitOut struct {
 	Major               uint32
 	Minor               uint32
@@ -403,9 +436,9 @@ type fuseInitOut struct {
 	CongestionThreshold uint16
 	MaxWrite            uint32
 	TimeGran            uint32
-	MaxPages            uint32
+	MaxPages            uint16
 	MapAlignment        uint16
-	Flags2              uint16
+	Flags2              uint32
 	Unused              [7]uint32
 }
 
@@ -617,6 +650,12 @@ type fuseServer struct {
 	store *Store
 	devFd int
 
+	// readReq reads one request from the FUSE device. It is a field so a test
+	// can drive the request loop without a kernel mount and inject the errors
+	// the device reports, above all the ENOENT of an interrupted request.
+	// See TheoryOfFuseMount.
+	readReq func([]byte) (int, error)
+
 	mu      sync.Mutex
 	nodes   map[uint64]string
 	byPath  map[string]uint64
@@ -651,6 +690,12 @@ func newFuseServer(store *Store, devFd int) *fuseServer {
 		timings: newOpTimings(),
 		done:    make(chan struct{}),
 	}
+	// The request read goes through the device descriptor the mount opened.
+	// A test replaces it to drive the loop from a script and to inject the
+	// errors the device reports. See TheoryOfFuseMount.
+	s.readReq = func(buf []byte) (int, error) {
+		return unix.Read(devFd, buf)
+	}
 	// The flight window's report names the path behind a slow request, so the
 	// aggregate resolves a node id through the server's node table. Rendering
 	// happens outside the aggregate's lock and the resolver takes the node
@@ -666,9 +711,14 @@ func (s *fuseServer) run() {
 	// fuseMaxWriteMax payload. See TheoryOfInitNegotiation.
 	buf := make([]byte, fuseInHeaderSize+binary.Size(fuseWriteIn{})+fuseMaxWriteMax)
 	for {
-		n, err := unix.Read(s.devFd, buf)
+		n, err := s.readReq(buf)
 		if err != nil {
-			if errors.Is(err, unix.EINTR) {
+			// Two read errors do not end the daemon. EINTR says a signal
+			// arrived. ENOENT says the caller interrupted its request before
+			// this server read it; the FUSE device asks for the next request.
+			// Returning on either kills the daemon and every later filesystem
+			// call fails with EIO. See TheoryOfFuseMount.
+			if errors.Is(err, unix.EINTR) || errors.Is(err, unix.ENOENT) {
 				continue
 			}
 			return
@@ -689,13 +739,32 @@ func (s *fuseServer) run() {
 }
 
 func (s *fuseServer) dispatch(buf []byte) {
+	if len(buf) < fuseInHeaderSize {
+		return
+	}
 	h := fuseInHeader{
 		Len:    binary.LittleEndian.Uint32(buf[0:4]),
 		Opcode: binary.LittleEndian.Uint32(buf[4:8]),
 		Unique: binary.LittleEndian.Uint64(buf[8:16]),
 		Nodeid: binary.LittleEndian.Uint64(buf[16:24]),
 	}
-	body := buf[fuseInHeaderSize:]
+	// The header's Len field is the request's own length. A length shorter
+	// than the header or longer than the bytes read describes a body that is
+	// not there, and the reused request buffer still holds the previous
+	// request's bytes beyond the read: parsing them would answer a request
+	// the kernel never sent. A zero length means the sender left the field
+	// empty, so the whole read stands as the body. See TheoryOfFuseMount.
+	end := len(buf)
+	if h.Len != 0 {
+		if h.Len < fuseInHeaderSize || int(h.Len) > len(buf) {
+			if h.Unique != 0 {
+				s.respond(h.Unique, syscall.EINVAL, nil)
+			}
+			return
+		}
+		end = int(h.Len)
+	}
+	body := buf[fuseInHeaderSize:end]
 	var respBody []byte
 	var err error
 	switch h.Opcode {
@@ -850,6 +919,32 @@ func (s *fuseServer) pathName(nodeid uint64) string {
 	return p
 }
 
+// afterHeader returns the bytes of a request body that follow a fixed header
+// of headerSize bytes. A body shorter than the header has no such bytes: the
+// decodeStruct padding makes the fixed fields parse, but a name's start comes
+// from the raw length, so the caller reports EINVAL rather than panicking on
+// the slice. The FUSE handler runs on the server's single goroutine, and a
+// panic there kills the daemon for every later request. See TheoryOfFuseMount.
+func afterHeader(body []byte, headerSize int) ([]byte, bool) {
+	if headerSize < 0 || len(body) < headerSize {
+		return nil, false
+	}
+	return body[headerSize:], true
+}
+
+// splitName splits a NUL-terminated name from the bytes that follow it. ok is
+// false when no terminator is present, so a malformed name cannot advance a
+// cursor past the body: the reply is EINVAL rather than a panic.
+// See TheoryOfFuseMount.
+func splitName(b []byte) (name, rest []byte, ok bool) {
+	for i, c := range b {
+		if c == 0 {
+			return b[:i], b[i+1:], true
+		}
+	}
+	return b, nil, false
+}
+
 // nodeOf returns the node id of p, allocating one on first use. When
 // mustExist is true the path is stat'ed first, so an id never names a path
 // the store does not hold.
@@ -936,20 +1031,30 @@ func (s *fuseServer) entryOut(id uint64, a Attr) fuseEntryOut {
 }
 
 // handleInit answers the kernel's INIT with the capability set the server
-// supports and the request ceiling those capabilities buy: BIG_WRITES lifts the
-// one-page write limit, and MAX_PAGES raises the announced window to
+// supports and the request ceiling those capabilities buy: BIG_WRITES lifts
+// the one-page write limit, and MAX_PAGES raises the announced window to
 // fuseMaxWriteMax. Only bits the kernel offers are echoed, so an older kernel
-// keeps the conservative window. See TheoryOfInitNegotiation.
+// keeps the conservative window. The handshake also fixes the protocol
+// version: a newer kernel is told to fall back to fuseProtocolMajor, and an
+// older one fails with EPROTO. See TheoryOfInitNegotiation.
 func (s *fuseServer) handleInit(body []byte) ([]byte, error) {
 	var in fuseInitIn
 	decodeStruct(&in, body)
+	// The kernel names its protocol version here. This server speaks major 7,
+	// so a newer kernel is told to fall back to 7; the kernel then reopens the
+	// handshake at that version. An older kernel speaks a protocol this server
+	// cannot serve, so the negotiation fails with EPROTO. See
+	// TheoryOfInitNegotiation.
+	if in.Major < fuseProtocolMajor {
+		return nil, syscall.EPROTO
+	}
 	minor := in.Minor
 	if minor > fuseProtocolMinor {
 		minor = fuseProtocolMinor
 	}
 	flags := in.Flags & fuseInitWanted
 	out := fuseInitOut{
-		Major:               in.Major,
+		Major:               fuseProtocolMajor,
 		Minor:               minor,
 		MaxReadahead:        in.MaxReadahead,
 		Flags:               flags,
@@ -1322,15 +1427,6 @@ func (s *fuseServer) handleOpendir(nodeid uint64) ([]byte, error) {
 	return encodeStruct(&fuseOpenOut{Fh: fh, OpenFlags: fuseOpenCacheDir}), nil
 }
 
-// handleReaddir serves READDIR: one fuse_dirent per entry, encoded in place in
-// the handle's listing scratch. The kernel chooses this form with
-// READDIRPLUS_AUTO for a directory whose entries are few, so a plain listing
-// stays on the hot path of a directory walk. The scratch is sized from the
-// entries that fit rather than from the announced window, which can be a
-// hundred times larger than a small directory, and the padding of a reused
-// slot is cleared before its entry is encoded, so the reply never carries a
-// previous reply's bytes. See TheoryOfFuseMount and
-// TheoryOfInitNegotiation.
 func (s *fuseServer) handleReaddir(body []byte) ([]byte, error) {
 	var in fuseReadIn
 	decodeStruct(&in, body)
@@ -1366,12 +1462,21 @@ func (s *fuseServer) handleReaddir(body []byte) ([]byte, error) {
 		if len(out)+padded > maxSize {
 			break
 		}
+		// The dirent's inode number is the node id the kernel gets from a
+		// LOOKUP of the same name: a tool that compares a listing's d_ino
+		// with a stat's st_ino must see one number, not two. A path the
+		// server cannot name carries no record, so it is skipped rather than
+		// reported with a made-up inode. See TheoryOfFuseMount.
+		id, err := s.nodeOf(path.Join(h.path, e.Name), false)
+		if err != nil {
+			continue
+		}
 		prev := len(out)
 		out = out[:prev+padded]
 		// The scratch is reused, so the name's trailing padding would
 		// otherwise carry the previous reply's bytes.
 		clear(out[prev:])
-		binary.LittleEndian.PutUint64(out[prev:], uint64(i+2))
+		binary.LittleEndian.PutUint64(out[prev:], id)
 		binary.LittleEndian.PutUint64(out[prev+8:], uint64(i+1))
 		binary.LittleEndian.PutUint32(out[prev+16:], uint32(len(e.Name)))
 		binary.LittleEndian.PutUint32(out[prev+20:], direntType(e.Attr.Kind))
@@ -1381,16 +1486,6 @@ func (s *fuseServer) handleReaddir(body []byte) ([]byte, error) {
 	return out, nil
 }
 
-// handleReaddirPlus serves READDIRPLUS: one fuse_direntplus per entry, each
-// carrying the fuse_entry_out the kernel would otherwise request with a
-// separate LOOKUP. A directory walk therefore costs one request instead of one
-// plus one per entry, which is the toolchain's dominant directory pattern.
-// The entries and their attributes are already in the handle, so the extra
-// work is one node-id lookup per entry. The reply is built in place in the
-// handle's scratch buffer, sized from the entries that can fit rather than
-// from the request's announced window, and each entry is encoded straight into
-// it, so a repeated listing of one directory allocates nothing after its first
-// call. See TheoryOfInitNegotiation.
 func (s *fuseServer) handleReaddirPlus(body []byte) ([]byte, error) {
 	var in fuseReadIn
 	decodeStruct(&in, body)
@@ -1439,7 +1534,9 @@ func (s *fuseServer) handleReaddirPlus(body []byte) ([]byte, error) {
 		clear(out[prev:])
 		entry := s.entryOut(id, e.Attr)
 		putEntryOut(out[prev:], &entry)
-		binary.LittleEndian.PutUint64(out[prev+fuseEntryOutSize:], uint64(i+2))
+		// The dirent carries the same node id the entry_out above announces:
+		// one record must not name two inodes. See TheoryOfFuseMount.
+		binary.LittleEndian.PutUint64(out[prev+fuseEntryOutSize:], id)
 		binary.LittleEndian.PutUint64(out[prev+fuseEntryOutSize+8:], uint64(i+1))
 		binary.LittleEndian.PutUint32(out[prev+fuseEntryOutSize+16:], uint32(len(e.Name)))
 		binary.LittleEndian.PutUint32(out[prev+fuseEntryOutSize+20:], direntType(e.Attr.Kind))
@@ -1469,7 +1566,11 @@ func (s *fuseServer) handleCreate(parent uint64, body []byte) ([]byte, error) {
 	}
 	var in fuseCreateIn
 	decodeStruct(&in, body)
-	name := cstring(body[binary.Size(in):])
+	rest, ok := afterHeader(body, binary.Size(in))
+	if !ok {
+		return nil, syscall.EINVAL
+	}
+	name := cstring(rest)
 	if name == "" || name == "." || name == ".." {
 		return nil, syscall.EINVAL
 	}
@@ -1488,11 +1589,21 @@ func (s *fuseServer) handleCreate(parent uint64, body []byte) ([]byte, error) {
 			return nil, syscall.EISDIR
 		}
 		if in.Flags&uint32(unix.O_TRUNC) != 0 {
-			// A truncating create drops the content chunks without writing
-			// the file back. See TheoryOfChunkedContent.
-			if err := s.store.TruncateFile(p, 0, perm); err != nil {
+			// The create's mode describes a file that does not exist yet; an
+			// existing file keeps the mode it already has, and the create
+			// changes nothing but the length. See TheoryOfCompletePOSIX.
+			mode := cur.Mode
+			if mode == 0 {
+				mode = perm
+			}
+			if err := s.store.TruncateFile(p, 0, mode); err != nil {
 				return nil, err
 			}
+			// A truncation drops every cached base reader of the path, the
+			// same way the truncating open does: a handle that opened the
+			// file earlier must serve the store's new content, not the
+			// descriptor that fixes the old view. See TheoryOfReadPath.
+			s.invalidateHandles(p)
 		} else if err := s.store.CanWrite(p); err != nil {
 			return nil, err
 		}
@@ -1537,7 +1648,11 @@ func (s *fuseServer) handleMkdir(parent uint64, body []byte) ([]byte, error) {
 	}
 	var in fuseMkdirIn
 	decodeStruct(&in, body)
-	name := cstring(body[binary.Size(in):])
+	rest, ok := afterHeader(body, binary.Size(in))
+	if !ok {
+		return nil, syscall.EINVAL
+	}
+	name := cstring(rest)
 	if name == "" || name == "." || name == ".." {
 		return nil, syscall.EINVAL
 	}
@@ -1557,14 +1672,10 @@ func (s *fuseServer) handleMkdir(parent uint64, body []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return encodeStruct(&[]fuseEntryOut{s.entryOut(id, a)}[0]), nil
+	entry := s.entryOut(id, a)
+	return encodeStruct(&entry), nil
 }
 
-// handleMknod creates the special files a task asks for. A named pipe is the
-// only kind the store records: device nodes belong to the mount layer's
-// passthrough view and sockets carry no filesystem content, so both report
-// EPERM instead of recording a node the sandbox cannot serve.
-// See TheoryOfCompletePOSIX.
 func (s *fuseServer) handleMknod(parent uint64, body []byte) ([]byte, error) {
 	parentPath, err := s.pathOf(parent)
 	if err != nil {
@@ -1572,7 +1683,11 @@ func (s *fuseServer) handleMknod(parent uint64, body []byte) ([]byte, error) {
 	}
 	var in fuseMknodIn
 	decodeStruct(&in, body)
-	name := cstring(body[binary.Size(in):])
+	rest, ok := afterHeader(body, binary.Size(in))
+	if !ok {
+		return nil, syscall.EINVAL
+	}
+	name := cstring(rest)
 	if name == "" || name == "." || name == ".." {
 		return nil, syscall.EINVAL
 	}
@@ -1629,10 +1744,11 @@ func (s *fuseServer) handleUnlink(parent uint64, body []byte, isDir bool) ([]byt
 // handleRename serves RENAME and RENAME2. RENAME2's flags select the
 // semantic: RENAME_NOREPLACE refuses an existing destination with EEXIST,
 // and RENAME_EXCHANGE and RENAME_WHITEOUT need an atomic inode swap the
-// path-addressed store cannot provide, so they are refused with ENOSYS
-// and the caller falls back to the plain form. The three flag bits mirror
-// linux/fs.h; the wire protocol carries them as a uint32.
-// See TheoryOfCompletePOSIX.
+// path-addressed store cannot provide, so they are refused with ENOSYS and the
+// caller falls back to the plain form. The three flag bits mirror linux/fs.h;
+// the wire protocol carries them as a uint32. A body whose first name carries
+// no terminator cannot name the second, so the reply is EINVAL.
+// See TheoryOfCompletePOSIX and TheoryOfFuseMount.
 func (s *fuseServer) handleRename(parent uint64, body []byte, two bool) ([]byte, error) {
 	parentPath, err := s.pathOf(parent)
 	if err != nil {
@@ -1653,21 +1769,27 @@ func (s *fuseServer) handleRename(parent uint64, body []byte, two bool) ([]byte,
 		newdir = in.Newdir
 		hdrSize = binary.Size(in)
 	}
+	// The fixed header is checked before the node id it carries is resolved:
+	// a short body decodes the id as zero, and a lookup of that id would
+	// report ENOENT for a malformed request where EINVAL is the answer.
+	// See TheoryOfFuseMount.
+	rest, ok := afterHeader(body, hdrSize)
+	if !ok {
+		return nil, syscall.EINVAL
+	}
 	newParent, err := s.pathOf(newdir)
 	if err != nil {
 		return nil, err
 	}
-	rest := body[hdrSize:]
-	oldName := cstring(rest)
-	if oldName == "" {
+	oldNameB, rest, ok := splitName(rest)
+	if !ok || len(oldNameB) == 0 {
 		return nil, syscall.EINVAL
 	}
-	rest = rest[len(oldName)+1:]
 	newName := cstring(rest)
 	if newName == "" {
 		return nil, syscall.EINVAL
 	}
-	oldPath := path.Join(parentPath, oldName)
+	oldPath := path.Join(parentPath, string(oldNameB))
 	newPath := path.Join(newParent, newName)
 	const (
 		renameNoReplace = 1
@@ -1687,18 +1809,22 @@ func (s *fuseServer) handleRename(parent uint64, body []byte, two bool) ([]byte,
 
 // handleSymlink creates a symbolic link. The kernel wire form is
 // link_name\0link_target\0 — the name first, matching FUSE_SYMLINK's
-// documented fields — so the two strings decode in that order.
-// See TheoryOfCompletePOSIX.
+// documented fields — so the two strings decode in that order. A body whose
+// name carries no terminator cannot name a target, so the reply is EINVAL.
+// See TheoryOfCompletePOSIX and TheoryOfFuseMount.
 func (s *fuseServer) handleSymlink(parent uint64, body []byte) ([]byte, error) {
 	parentPath, err := s.pathOf(parent)
 	if err != nil {
 		return nil, err
 	}
-	name := cstring(body)
+	nameB, rest, ok := splitName(body)
+	if !ok {
+		return nil, syscall.EINVAL
+	}
+	name := string(nameB)
 	if name == "" || name == "." || name == ".." {
 		return nil, syscall.EINVAL
 	}
-	rest := body[len(name)+1:]
 	target := cstring(rest)
 	if target == "" {
 		return nil, syscall.EINVAL
@@ -1737,11 +1863,19 @@ func (s *fuseServer) handleLink(parent uint64, body []byte) ([]byte, error) {
 	}
 	var in fuseLinkIn
 	decodeStruct(&in, body)
+	// The fixed header is checked before the node id it carries is resolved:
+	// a short body decodes the id as zero, and a lookup of that id would
+	// report ENOENT for a malformed request where EINVAL is the answer.
+	// See TheoryOfFuseMount.
+	rest, ok := afterHeader(body, binary.Size(in))
+	if !ok {
+		return nil, syscall.EINVAL
+	}
 	oldPath, err := s.pathOf(in.Oldnodeid)
 	if err != nil {
 		return nil, err
 	}
-	name := cstring(body[binary.Size(in):])
+	name := cstring(rest)
 	if name == "" || name == "." || name == ".." {
 		return nil, syscall.EINVAL
 	}

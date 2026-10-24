@@ -175,11 +175,6 @@ func (s *Store) ReadRange(p string, off int64, size int) ([]byte, error) {
 	return buf[:n], nil
 }
 
-// ReadDir lists one directory, merging the base's entries with the upper
-// layer's: an upper entry overrides a base entry of the same name, and a
-// whiteout removes it. The upper rows' sizes come from the stored size column
-// and a link's from its target, so a listing never loads content. See
-// TheoryOfChunkedContent.
 func (s *Store) ReadDir(p string) ([]DirEntry, error) {
 	p = Canonical(p)
 	a, err := s.Stat(p)
@@ -213,9 +208,10 @@ func (s *Store) ReadDir(p string) ([]DirEntry, error) {
 		prefix += "/"
 	}
 	hi := prefix[:len(prefix)-1] + "0"
-	rows, err := s.db.Query(
-		`SELECT path, kind, mode, mtime, deleted, size, length(target)
-		 FROM files WHERE path >= ? AND path < ?`, prefix, hi)
+	// The listing is one request, so its row select runs the prepared form
+	// like every other statement the request path runs.
+	// See TheoryOfPreparedStatements.
+	rows, err := queryStmt(s.db, s.stmts.selectDir, querySelectDir, prefix, hi)
 	if err != nil {
 		return nil, err
 	}
@@ -241,10 +237,15 @@ func (s *Store) ReadDir(p string) ([]DirEntry, error) {
 			Mode:    os.FileMode(mode),
 			ModTime: time.Unix(0, mtime),
 		}
-		if Kind(kind) == KindSymlink {
-			at.Size = targetSize.Int64
-		} else {
+		// The size column names content, and only a regular file carries it:
+		// a link carries its target's length, and a directory or a pipe
+		// carries nothing, matching the same choice in Stat so a listing and
+		// a stat never disagree on one path. See TheoryOfChunkedContent.
+		switch at.Kind {
+		case KindRegular:
 			at.Size = size.Int64
+		case KindSymlink:
+			at.Size = targetSize.Int64
 		}
 		entries[rest] = at
 	}
@@ -266,11 +267,12 @@ func (s *Store) ReadDir(p string) ([]DirEntry, error) {
 // captureOriginal records the base state of a path the upper layer is about
 // to touch for the first time: whether the base holds the path, its kind and
 // mode, and — for a regular file or a symbolic link — the content hash the
-// apply step compares the host against. A named pipe has no content, so its
-// kind is recorded as a sentinel the net-change comparison recognises. A
-// path that names the store's own database is refused before the read, so a
-// stray write or delete never drags the record through captureOriginal's
-// whole-file hash.
+// apply step compares the host against. A symbolic link's hash carries a tag,
+// so replacing a link with a byte-identical regular file stays a change of
+// kind. A named pipe has no content, so its kind is recorded as a sentinel the
+// net-change comparison recognises. A path that names the store's own database
+// is refused before the read, so a stray write or delete never drags the
+// record through captureOriginal's whole-file hash.
 // See TheoryOfApplyConflict and TheoryOfCompletePOSIX.
 func (s *Store) captureOriginal(p string) (fileRow, error) {
 	if s.isOwnDBPath(p) {
@@ -301,7 +303,7 @@ func (s *Store) captureOriginal(p string) (fileRow, error) {
 			return fileRow{}, err
 		}
 		r.target = target
-		r.originalHash = contentHash([]byte(target))
+		r.originalHash = symlinkOriginalPrefix + contentHash([]byte(target))
 	case KindFIFO:
 		r.originalHash = fifoOriginalHash
 	}
@@ -320,14 +322,13 @@ func (s *Store) checkParent(p string) error {
 	return nil
 }
 
-// WriteFile writes a regular file into the upper layer: the row's metadata and
-// its content chunks leave in one transaction. A directory target reports
-// EISDIR and a pipe target EINVAL: neither carries writable content.
-// See TheoryOfChunkedContent.
 func (s *Store) WriteFile(p string, content []byte, perm os.FileMode) error {
 	p = Canonical(p)
 	if p == "/" {
 		return syscall.EISDIR
+	}
+	if err := s.checkWrite(p); err != nil {
+		return err
 	}
 	if err := s.checkParent(p); err != nil {
 		return err
@@ -351,10 +352,17 @@ func (s *Store) WriteFile(p string, content []byte, perm os.FileMode) error {
 		if err != nil {
 			return err
 		}
-		if perm == 0 {
-			perm = 0o644
-		}
+	}
+	// perm names the mode the write gives the file, whichever branch above
+	// supplied the row: a rename gives its destination the source's mode even
+	// when an earlier whiteout already left a row there. A zero perm keeps
+	// the mode the path already has — the base file's own, or the store's
+	// default — so a content change never rewrites the permission bits by
+	// omission. See TheoryOfCompletePOSIX.
+	if perm != 0 {
 		r.mode = perm
+	} else if r.mode == 0 {
+		r.mode = 0o644
 	}
 	r.path = p
 	r.kind = KindRegular
@@ -368,14 +376,13 @@ func (s *Store) WriteFile(p string, content []byte, perm os.FileMode) error {
 	return nil
 }
 
-// Mkdir creates a directory in the upper layer. A path the base already holds
-// reports ErrExist, as mkdir must. A directory carries no content, so the
-// row's metadata write drops any chunks the path held. See
-// TheoryOfChunkedContent.
 func (s *Store) Mkdir(p string, perm os.FileMode) error {
 	p = Canonical(p)
 	if p == "/" {
 		return ErrExist
+	}
+	if err := s.checkWrite(p); err != nil {
+		return err
 	}
 	if err := s.checkParent(p); err != nil {
 		return err
@@ -405,6 +412,10 @@ func (s *Store) Mkdir(p string, perm os.FileMode) error {
 	r.target = ""
 	r.mode = perm
 	r.mtime = time.Now()
+	// A directory carries no content, so the size column reports zero: a
+	// path that was a file keeps a stale length otherwise, and a listing
+	// would report it beside a stat that says zero. See TheoryOfChunkedContent.
+	r.size = 0
 	if err := s.put(r); err != nil {
 		return err
 	}
@@ -412,11 +423,11 @@ func (s *Store) Mkdir(p string, perm os.FileMode) error {
 	return nil
 }
 
-// Symlink records a symbolic link in the upper layer. A link carries a target,
-// never content, so the row's metadata write drops any chunks the path held.
-// See TheoryOfChunkedContent.
 func (s *Store) Symlink(target, p string) error {
 	p = Canonical(p)
+	if err := s.checkWrite(p); err != nil {
+		return err
+	}
 	if err := s.checkParent(p); err != nil {
 		return err
 	}
@@ -440,6 +451,10 @@ func (s *Store) Symlink(target, p string) error {
 	r.deleted = false
 	r.target = target
 	r.mtime = time.Now()
+	// The stored size column names content the link never has, so a path that
+	// was a file must not keep its length behind the new link: the size a
+	// reader sees comes from the target. See TheoryOfChunkedContent.
+	r.size = 0
 	if err := s.put(r); err != nil {
 		return err
 	}
@@ -447,12 +462,11 @@ func (s *Store) Symlink(target, p string) error {
 	return nil
 }
 
-// Mkfifo records a named pipe in the upper layer. The store records only the
-// pipe's existence and mode: a pipe carries no content, and its blocking
-// semantics belong to the kernel, so its metadata write drops any chunks the
-// path held. See TheoryOfCompletePOSIX and TheoryOfChunkedContent.
 func (s *Store) Mkfifo(p string, mode os.FileMode) error {
 	p = Canonical(p)
+	if err := s.checkWrite(p); err != nil {
+		return err
+	}
 	if err := s.checkParent(p); err != nil {
 		return err
 	}
@@ -480,6 +494,9 @@ func (s *Store) Mkfifo(p string, mode os.FileMode) error {
 	r.target = ""
 	r.mode = mode
 	r.mtime = time.Now()
+	// A pipe carries no content, so the size column reports zero: a path that
+	// was a file keeps a stale length otherwise. See TheoryOfCompletePOSIX.
+	r.size = 0
 	if err := s.put(r); err != nil {
 		return err
 	}
@@ -506,14 +523,13 @@ func (s *Store) Readlink(p string) (string, error) {
 	return s.baseRoot.Readlink(relPath(p))
 }
 
-// Remove deletes a path: a whiteout hides a base file, and an upper entry is
-// replaced by a whiteout that keeps its recorded origin. A whiteout drops the
-// path's content chunks, so a deleted file stores no bytes. See
-// TheoryOfChunkedContent.
 func (s *Store) Remove(p string) error {
 	p = Canonical(p)
 	if p == "/" {
 		return syscall.EBUSY
+	}
+	if err := s.checkWrite(p); err != nil {
+		return err
 	}
 	r, ok, err := s.row(p)
 	if err != nil {
@@ -666,19 +682,6 @@ func (s *Store) Rename(oldPath, newPath string) error {
 	return nil
 }
 
-// renameDir moves a directory tree within the store. The path-addressed
-// upper layer has no directory inode to move, so the rename materializes
-// every entry under the destination and whiteouts the source: the net
-// change a user reviews is N additions plus N deletions, exactly what a
-// filesystem rename produces for a directory the base still holds. Every
-// entry kind the store records — regular file, directory, symbolic link,
-// named pipe — is materialized at the destination, so a pipe inside the
-// tree survives the move. POSIX rename semantics are honoured at the
-// destination: an existing empty directory is replaced, a populated one
-// reports ENOTEMPTY, a non-directory reports ENOTDIR, and a destination
-// inside the source reports EINVAL. The destination is removed only after
-// every write of the tree is admitted, so a refused write leaves it
-// untouched. See TheoryOfSandboxFilesystem and TheoryOfCompletePOSIX.
 func (s *Store) renameDir(oldPath, newPath string) error {
 	if strings.HasPrefix(newPath, oldPath+"/") {
 		return syscall.EINVAL
@@ -718,10 +721,15 @@ func (s *Store) renameDir(oldPath, newPath string) error {
 		if err != nil {
 			return err
 		}
-		if p != oldPath {
-			if err := s.checkWrite(dst(p)); err != nil {
-				return err
-			}
+		// Both endpoints are mutations — the destination write and the
+		// source whiteout — and both are asked before any of them happens,
+		// so a refused write leaves the tree untouched.
+		// See TheoryOfWritePolicy.
+		if err := s.checkWrite(p); err != nil {
+			return err
+		}
+		if err := s.checkWrite(dst(p)); err != nil {
+			return err
 		}
 		e := entry{path: p, attr: a}
 		switch a.Kind {
@@ -790,14 +798,11 @@ func (s *Store) renameDir(oldPath, newPath string) error {
 	return nil
 }
 
-// SetMode changes the permission bits of one path. A base file that the
-// session has not yet touched is materialised with its content first, so a
-// mode-only change never appears to empty the file: the content moves into the
-// chunk table beside the new mode. A link, directory, or pipe carries no
-// content, so its captured row needs no materialisation. See
-// TheoryOfChunkedContent.
 func (s *Store) SetMode(p string, mode os.FileMode) error {
 	p = Canonical(p)
+	if err := s.checkWrite(p); err != nil {
+		return err
+	}
 	r, ok, err := s.row(p)
 	if err != nil {
 		return err
@@ -807,8 +812,15 @@ func (s *Store) SetMode(p string, mode os.FileMode) error {
 		if err != nil {
 			return err
 		}
+		// A mode change names a path that must exist. captureOriginal leaves
+		// kind at its zero value, which is KindRegular, so originalExists is
+		// the only honest test of the base's verdict.
+		// See TheoryOfCompletePOSIX.
+		if !r.originalExists {
+			return ErrNotExist
+		}
 		if r.kind == KindRegular {
-			r, err = s.materializeContent(p, -1, 0o644)
+			r, err = s.materializeContent(p, -1, 0)
 			if err != nil {
 				return err
 			}
@@ -899,14 +911,11 @@ func (s *Store) Link(oldPath, newPath string) error {
 	return nil
 }
 
-// SetTimes replaces the recorded modification time of one path. The store
-// tracks mtime only: atime is not part of the recorded identity, and a
-// toolchain reads mtime to judge staleness, not access time. A base file the
-// session has not touched is materialised with its content first, so a
-// time-only change never appears to empty the file. See TheoryOfCompletePOSIX
-// and TheoryOfChunkedContent.
 func (s *Store) SetTimes(p string, mtime time.Time) error {
 	p = Canonical(p)
+	if err := s.checkWrite(p); err != nil {
+		return err
+	}
 	r, ok, err := s.row(p)
 	if err != nil {
 		return err
@@ -916,8 +925,15 @@ func (s *Store) SetTimes(p string, mtime time.Time) error {
 		if err != nil {
 			return err
 		}
+		// A time change names a path that must exist; see SetMode for why
+		// originalExists carries that answer. The materialisation keeps the
+		// base's mode, because a time-only change must not rewrite the
+		// permission bits. See TheoryOfCompletePOSIX.
+		if !r.originalExists {
+			return ErrNotExist
+		}
 		if r.kind == KindRegular {
-			r, err = s.materializeContent(p, -1, 0o644)
+			r, err = s.materializeContent(p, -1, 0)
 			if err != nil {
 				return err
 			}

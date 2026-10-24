@@ -26,15 +26,19 @@ const (
 
 // Change is one net filesystem change of the sandbox. Dir, Symlink, and
 // FIFO distinguish the added or modified kinds that carry no regular
-// content. Original is the host content the session started from, filled
-// when the host still matches that snapshot; a conflict leaves it empty.
-// See TheoryOfApplyConflict and TheoryOfCompletePOSIX.
+// content. Mode is the permission bits the upper layer recorded, and an
+// apply reproduces them beside the bytes: a mode the session chose must not
+// be replaced with a default at the host. Original is the host content the
+// session started from, filled when the host still matches that snapshot; a
+// conflict leaves it empty. See TheoryOfApplyConflict,
+// TheoryOfCompletePOSIX, and TheoryOfSandboxFilesystem.
 type Change struct {
 	Path     string
 	Kind     ChangeKind
 	Dir      bool
 	Symlink  bool
 	FIFO     bool
+	Mode     os.FileMode
 	Original []byte
 	Current  []byte
 	Conflict string
@@ -96,22 +100,22 @@ func (s *Store) Changes() ([]Change, error) {
 	return changes, nil
 }
 
-// netChange derives one path's net change from its recorded original and its
-// current upper state, with the current content supplied by the caller because
-// it lives in the chunk table. Directories and pipes carry no content, so only
-// their existence and kind count; a rewritten-to-identical file and a
-// create-then-delete pair yield no change at all.
-// See TheoryOfSandboxFilesystem and TheoryOfCompletePOSIX.
 func netChange(r fileRow, content []byte) *Change {
 	if r.kind == KindDir {
 		switch {
 		case r.deleted:
 			if r.originalExists {
-				return &Change{Path: r.path, Kind: ChangeDeleted, Dir: true}
+				return &Change{Path: r.path, Kind: ChangeDeleted, Dir: true, Mode: r.mode}
 			}
 			return nil
 		case !r.originalExists:
-			return &Change{Path: r.path, Kind: ChangeAdded, Dir: true}
+			return &Change{Path: r.path, Kind: ChangeAdded, Dir: true, Mode: r.mode}
+		case r.originalHash != "":
+			// A base directory records no content hash, so a recorded hash
+			// means the base held a file, a link, or a pipe and the session
+			// put a directory in its place: a change of kind, which the host
+			// does not hold yet. See TheoryOfSandboxFilesystem.
+			return &Change{Path: r.path, Kind: ChangeModified, Dir: true, Mode: r.mode}
 		}
 		return nil
 	}
@@ -119,13 +123,13 @@ func netChange(r fileRow, content []byte) *Change {
 		switch {
 		case r.deleted:
 			if r.originalExists {
-				return &Change{Path: r.path, Kind: ChangeDeleted, FIFO: true}
+				return &Change{Path: r.path, Kind: ChangeDeleted, FIFO: true, Mode: r.mode}
 			}
 			return nil
 		case !r.originalExists:
-			return &Change{Path: r.path, Kind: ChangeAdded, FIFO: true}
+			return &Change{Path: r.path, Kind: ChangeAdded, FIFO: true, Mode: r.mode}
 		case r.originalHash != fifoOriginalHash:
-			return &Change{Path: r.path, Kind: ChangeModified, FIFO: true}
+			return &Change{Path: r.path, Kind: ChangeModified, FIFO: true, Mode: r.mode}
 		}
 		return nil
 	}
@@ -133,27 +137,41 @@ func netChange(r fileRow, content []byte) *Change {
 		if !r.originalExists {
 			return nil
 		}
-		return &Change{Path: r.path, Kind: ChangeDeleted, Symlink: r.kind == KindSymlink}
+		return &Change{Path: r.path, Kind: ChangeDeleted, Symlink: r.kind == KindSymlink, Mode: r.mode}
 	}
-	current := content
 	if r.kind == KindSymlink {
-		current = []byte(r.target)
+		// A link's recorded original carries the kind tag, so a link retargeted
+		// to the same string is no change while a regular file whose bytes
+		// spell that target is one. See TheoryOfSandboxFilesystem.
+		target := []byte(r.target)
+		if !r.originalExists {
+			return &Change{Path: r.path, Kind: ChangeAdded, Symlink: true, Mode: r.mode, Current: target}
+		}
+		if symlinkOriginalPrefix+contentHash(target) == r.originalHash {
+			return nil
+		}
+		return &Change{Path: r.path, Kind: ChangeModified, Symlink: true, Mode: r.mode, Current: target}
 	}
 	if !r.originalExists {
-		return &Change{Path: r.path, Kind: ChangeAdded, Symlink: r.kind == KindSymlink, Current: current}
+		return &Change{Path: r.path, Kind: ChangeAdded, Mode: r.mode, Current: content}
 	}
-	if contentHash(current) == r.originalHash {
+	if contentHash(content) == r.originalHash {
 		return nil
 	}
-	return &Change{Path: r.path, Kind: ChangeModified, Symlink: r.kind == KindSymlink, Current: current}
+	return &Change{Path: r.path, Kind: ChangeModified, Mode: r.mode, Current: content}
 }
 
 // detectConflict fills the change's conflict reason when applying it would
-// discard a host modification the session never saw. A pipe has no content
-// to compare, so its check is the recorded kind against the host's current
-// kind. A session deletion whose host path is already gone is not a conflict:
-// the two sides agree on the end state, so the apply is a no-op.
-// See TheoryOfApplyConflict and TheoryOfCompletePOSIX.
+// discard a host modification the session never saw, and fills its Original
+// with the host content the snapshot recorded. A pipe has no content to
+// compare, so its check is the recorded kind against the host's current
+// kind; a directory records no content hash either, so the same comparison
+// covers a host path that turned into a directory. A symbolic link's recorded
+// hash carries the same kind tag its snapshot used. A session deletion whose
+// host path is already gone is not a conflict: the two sides agree on the end
+// state, so the apply is a no-op. A deletion whose host path still matches
+// the snapshot carries the deleted bytes as Original, matching a
+// modification. See TheoryOfApplyConflict and TheoryOfCompletePOSIX.
 func (s *Store) detectConflict(c *Change, r fileRow) {
 	if !r.originalExists {
 		if _, err := s.baseRoot.Lstat(relPath(r.path)); err == nil {
@@ -185,21 +203,26 @@ func (s *Store) detectConflict(c *Change, r fileRow) {
 			c.Conflict = "the host file changed after the session snapshot"
 			return
 		}
-		if c.Kind != ChangeDeleted {
-			c.Original = content
-		}
+		c.Original = content
 	case KindSymlink:
 		target, err := s.baseRoot.Readlink(relPath(r.path))
 		if err != nil {
 			c.Conflict = err.Error()
 			return
 		}
-		if contentHash([]byte(target)) != r.originalHash {
+		if symlinkOriginalPrefix+contentHash([]byte(target)) != r.originalHash {
 			c.Conflict = "the host symbolic link changed after the session snapshot"
 			return
 		}
-		if c.Kind != ChangeDeleted {
-			c.Original = []byte(target)
+		c.Original = []byte(target)
+	case KindDir:
+		// A directory records no content hash, so a recorded hash means the
+		// host held a file, a link, or a pipe at the snapshot and turned into
+		// a directory since. A recorded emptiness is the ordinary case: the
+		// base held a directory too. See TheoryOfApplyConflict.
+		if r.originalHash != "" {
+			c.Conflict = "the host path changed kind after the session snapshot"
+			return
 		}
 	case KindFIFO:
 		// A pipe carries no content; the kind check above is the whole
@@ -266,25 +289,42 @@ func applyPhase(c Change) int {
 }
 
 // applyOne writes one selected change to the host. A path whose host entry
-// is not the kind the change replaces is removed first, so a regular write
-// never lands on a pipe or a link. The store's own database is a hard
-// refusal even if a stale row somehow reached this call: writing it would
-// corrupt the record the review depends on. A delete of a host path that is
-// already gone is a no-op, matching detectConflict's agreement case.
+// is not the kind the change creates is removed first, so a regular write
+// never lands on a pipe, a link, or a directory, and a directory never lands
+// on a file, a link, or a pipe. The mode the session recorded is reproduced
+// beside the content, so an apply never replaces a chosen permission with a
+// default. The removal succeeds only where the host entry is empty; a
+// populated directory the session did not expect is a conflict, so it never
+// reaches this call. The store's own database is a hard refusal even if a
+// stale row somehow reached this call: writing it would corrupt the record
+// the review depends on. A delete of a host path that is already gone is a
+// no-op, matching detectConflict's agreement case.
 // See TheoryOfCompletePOSIX and TheoryOfSandboxFilesystem.
 func (s *Store) applyOne(c Change) error {
 	if s.isOwnDBPath(c.Path) {
 		return fmt.Errorf("%w: refusing to apply a change to the session database: %s", os.ErrPermission, c.Path)
 	}
 	rel := relPath(c.Path)
+	// A change that carries a mode applies it; a zero mode keeps the store's
+	// default, which is what a change from an older store carries.
+	perm := c.Mode.Perm()
 	switch c.Kind {
 	case ChangeAdded, ChangeModified:
 		if c.Dir {
-			return s.baseRoot.Mkdir(rel, 0o755)
+			if info, err := s.baseRoot.Lstat(rel); err == nil && !info.IsDir() {
+				_ = s.baseRoot.Remove(rel)
+			}
+			if perm == 0 {
+				perm = 0o755
+			}
+			return s.baseRoot.Mkdir(rel, perm)
 		}
 		if c.FIFO {
 			_ = s.baseRoot.Remove(rel)
-			return mkfifoAt(s.baseRoot, rel, 0o644)
+			if perm == 0 {
+				perm = 0o644
+			}
+			return mkfifoAt(s.baseRoot, rel, perm)
 		}
 		if c.Symlink {
 			_ = s.baseRoot.Remove(rel)
@@ -293,7 +333,10 @@ func (s *Store) applyOne(c Change) error {
 		if info, err := s.baseRoot.Lstat(rel); err == nil && !info.Mode().IsRegular() {
 			_ = s.baseRoot.Remove(rel)
 		}
-		return s.baseRoot.WriteFile(rel, c.Current, 0o644)
+		if perm == 0 {
+			perm = 0o644
+		}
+		return s.baseRoot.WriteFile(rel, c.Current, perm)
 	case ChangeDeleted:
 		err := s.baseRoot.Remove(rel)
 		if errors.Is(err, os.ErrNotExist) {

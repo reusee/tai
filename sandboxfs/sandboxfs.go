@@ -48,9 +48,13 @@ often it read them.
 A path's net change is derived from hashes, never from a stored second copy
 of the content: the first mutation stores the base content hash, so a path
 rewritten to its original bytes — or created and deleted in one session —
-shows no change. Applying a change writes the upper content to the host and
-drops the upper row, so the next diff is exact and a repeated apply is a
-no-op.
+shows no change. The recorded hash also marks a change of kind, because a
+bare digest cannot: a directory records no hash of its own, so a hash on a
+live directory row states that the base held content, and a link's recorded
+hash carries a tag, so a regular file whose bytes spell a base link's target
+is still a change. Applying a change writes the upper content to the host,
+with the mode the row recorded beside it, and drops the upper row, so the
+next diff is exact and a repeated apply is a no-op.
 
 The store never targets its own database. The review session holds the
 database open for its whole life, and its records are the review surface; a
@@ -59,6 +63,14 @@ siblings — would corrupt the record the review depends on. The store
 refuses such a mutation before it reads the base and omits the path's net
 change, so the path never enters the reviewable set. See
 TheoryOfCompletePOSIX for how the file's SQLite siblings arise.
+
+The check matches by file identity, not by text alone. A direct store names
+the database and its base as host paths from one tree, so a relative path
+between them locates the file's sandbox name. A mounted store serves a
+private bind view of the base, whose paths are not the host paths the
+database was opened with; the mount records the database's name in the view
+so the two names still meet on one inode. Without that step a text
+comparison misses every mutation of a database that lives inside the base.
 
 The environment is deliberately not a fresh isolated copy. The model must
 reach the host's real data; the safety comes from intercepting writes and
@@ -151,10 +163,19 @@ Write-write conflicts are detected at apply time, against the snapshot the
 session computed its changes from. The stored base hash is that snapshot: a
 host file whose current content no longer hashes to it changed after the
 session read it, and applying would discard the outside change. The same
-holds in the other direction: a path the session created, but which now
-exists on the host, and a path the session deleted, but which the host no
-longer holds. Such a change is reported with its conflict reason and never
-applied silently; the user resolves it.
+holds in the other direction for a path the session created, but which now
+exists on the host. Such a change is reported with its conflict reason and
+never applied silently; the user resolves it. A path the session deleted,
+which the host no longer holds, is not a conflict: both sides agree on the
+end state, so applying the deletion is a no-op. A deletion whose host path
+still matches the snapshot carries the deleted bytes as Original, the same
+content a modification reports, so a review shows what the session removed.
+
+A change of kind is a conflict too, and the recorded hash is what detects it.
+A base directory carries no content hash, and a base pipe carries a sentinel,
+so the hash of the path the session replaced tells what the snapshot held:
+a host path that now holds a directory where the snapshot held a file, a
+link, or a pipe changed outside the session exactly as a rewritten file did.
 
 Detection reads the host, so it belongs to the review step, not to every
 read: a session pays nothing for it until it asks what changed or applies.
@@ -518,18 +539,44 @@ func OpenWithPolicy(dbPath, base string, policy func(string) error) (*Store, err
 // SQLite siblings. The review session holds the database open for its whole
 // life, so a sandbox mutation of that path — or of its -wal and -shm files —
 // would corrupt the record the review itself depends on. The comparison is
-// textual, because the mount's base view is a bind of a directory: a base
-// of "/" makes the sandbox path and the recorded database path identical,
-// and a deeper base puts the database outside the sandbox view entirely.
-// See TheoryOfSandboxFilesystem.
+// textual first, because a sandbox path that equals the recorded database path
+// names the file with no resolution at all. A base that holds the database
+// gives the file a second name, the path relative to the base, and that name
+// is compared by file identity through the store's own base root: a mounted
+// store detaches the base view, so the recorded base path no longer resolves
+// while the root still holds the tree. See TheoryOfSandboxFilesystem.
 func (s *Store) isOwnDBPath(p string) bool {
 	if s.dbPath == "" {
 		return false
 	}
+	cp := Canonical(p)
 	db := filepath.ToSlash(s.dbPath)
-	switch Canonical(p) {
+	switch cp {
 	case db, db + "-wal", db + "-shm":
 		return true
+	}
+	rel, err := filepath.Rel(s.base, s.dbPath)
+	if err != nil || rel == "." || rel == ".." ||
+		strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return false
+	}
+	var own []os.FileInfo
+	for _, name := range [3]string{rel, rel + "-wal", rel + "-shm"} {
+		if fi, err := s.baseRoot.Stat(name); err == nil {
+			own = append(own, fi)
+		}
+	}
+	if len(own) == 0 {
+		return false
+	}
+	fi, err := s.baseRoot.Stat(relPath(cp))
+	if err != nil {
+		return false
+	}
+	for _, o := range own {
+		if os.SameFile(fi, o) {
+			return true
+		}
 	}
 	return false
 }
@@ -577,6 +624,14 @@ func contentHash(b []byte) string {
 // not a hex digest, so it never collides with a file's content hash.
 // See TheoryOfCompletePOSIX.
 const fifoOriginalHash = "fifo"
+
+// symlinkOriginalPrefix tags the recorded-original of a base symbolic link.
+// Its hash is the hash of the link's target string, and a plain hash would
+// equal the hash of a regular file whose bytes spell that target: the session
+// replaced a link with a file and the diff would report nothing. The prefix is
+// not a hex digest, so it never collides with a file's content hash.
+// See TheoryOfSandboxFilesystem.
+const symlinkOriginalPrefix = "symlink:"
 
 // auditBatchSize bounds the audit rows one transaction carries: a batch this
 // size pays one commit for its rows and keeps the buffer small enough that a
@@ -762,13 +817,6 @@ func (s *Store) put(r fileRow) error {
 	return tx.Commit()
 }
 
-// SpliceFile writes data at byte offset off of p without reading or rewriting
-// the surrounding content, so a write costs bytes proportional to its own
-// payload instead of the whole file. A write past the stored end pads the gap
-// with zeros: an absent chunk reads as zeros, so the gap stores no bytes.
-// A path the upper layer holds no live regular row for is materialised first,
-// carrying the base content the write starts from; a path the session deleted
-// starts from nothing. See TheoryOfWriteSplice.
 func (s *Store) SpliceFile(p string, off int64, data []byte, perm os.FileMode) error {
 	p = Canonical(p)
 	if p == "/" {
@@ -776,6 +824,15 @@ func (s *Store) SpliceFile(p string, off int64, data []byte, perm os.FileMode) e
 	}
 	if off < 0 {
 		return syscall.EINVAL
+	}
+	// A zero-byte write transfers nothing and does not extend the file, so it
+	// must not reach the size guard, which would raise the stored length to
+	// the offset. See TheoryOfCompletePOSIX.
+	if len(data) == 0 {
+		return nil
+	}
+	if err := s.checkWrite(p); err != nil {
+		return err
 	}
 	if off > maxFileSize || off+int64(len(data)) > maxFileSize {
 		return syscall.EFBIG
@@ -823,8 +880,9 @@ func (s *Store) audit(op, p, detail string) {
 
 // writeOps writes one batch of audit rows in a single transaction: the rows
 // share one commit, which is what makes batching worth its buffer. The rows
-// keep the buffer's order, so a batch's own chronology survives.
-// See TheoryOfAuditBatching.
+// keep the buffer's order, so a batch's own chronology survives. The insert
+// runs the prepared form, so a batch pays one parse, not one per row.
+// See TheoryOfAuditBatching and TheoryOfPreparedStatements.
 func (s *Store) writeOps(ops []Op) error {
 	if len(ops) == 0 {
 		return nil
@@ -834,8 +892,8 @@ func (s *Store) writeOps(ops []Op) error {
 		return err
 	}
 	for _, o := range ops {
-		if _, err := tx.Exec(
-			`INSERT INTO ops (time, op, path, detail) VALUES (?, ?, ?, ?)`,
+		if _, err := runStmt(
+			tx, s.stmts.putOp, queryPutOp,
 			o.Time.Format(time.RFC3339Nano), o.Op, o.Path, o.Detail,
 		); err != nil {
 			_ = tx.Rollback()
@@ -845,11 +903,17 @@ func (s *Store) writeOps(ops []Op) error {
 	return tx.Commit()
 }
 
-// checkWrite asks the store's write policy about one path. The policy must
-// be pure: the FUSE server answers requests on one goroutine, so a policy
-// that performed filesystem I/O through the mount would wait for the server
-// it is running on. See TheoryOfWritePolicy.
+// checkWrite asks the store's write policy about one path, and refuses the
+// store's own database up front. The policy must be pure: the FUSE server
+// answers requests on one goroutine, so a policy that performed filesystem
+// I/O through the mount would wait for the server it is running on. The
+// database refusal lives here, on every mutation's common entry, so a stale
+// row can never reach a write that skips the capture that used to refuse it.
+// See TheoryOfWritePolicy and TheoryOfSandboxFilesystem.
 func (s *Store) checkWrite(p string) error {
+	if s.isOwnDBPath(p) {
+		return fmt.Errorf("%w: the sandbox database is never a sandbox target: %s", os.ErrPermission, p)
+	}
 	if s.policy == nil {
 		return nil
 	}
