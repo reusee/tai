@@ -724,25 +724,6 @@ func (s *Store) statRow(p string) (a Attr, found bool, err error) {
 	return a, true, nil
 }
 
-func (s *Store) allRows() ([]fileRow, error) {
-	rows, err := s.db.Query(
-		`SELECT path, kind, mode, mtime, deleted, content, target, original_exists, original_hash
-		 FROM files ORDER BY path`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []fileRow
-	for rows.Next() {
-		r, err := scanFileRow(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, r)
-	}
-	return out, rows.Err()
-}
-
 // put stores one row's metadata. Content lives in the chunk table: a caller
 // that changes content writes it through putContent or the splice, while a row
 // that stops being a live regular file drops its chunks here.
