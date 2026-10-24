@@ -9,9 +9,18 @@ import (
 	"testing"
 )
 
+// TestResolveGoWritableDirsIncludesGOCACHE checks the fallback resolution:
+// with no pre-resolved value in the environment, an explicit GOCACHE enters
+// the set. A test process running inside the sandbox inherits the parent's
+// pre-resolved value, so the test clears it; the pre-resolved precedence has
+// its own test. Every variable is set so the resolution spawns no toolchain.
+// See TheoryOfWritableDirs.
 func TestResolveGoWritableDirsIncludesGOCACHE(t *testing.T) {
 	cacheDir := t.TempDir()
 	t.Setenv("GOCACHE", cacheDir)
+	t.Setenv("GOMODCACHE", t.TempDir())
+	t.Setenv("GOPATH", t.TempDir())
+	t.Setenv(goWritableDirsEnv, "")
 
 	dirs := resolveGoWritableDirs()
 
@@ -40,7 +49,33 @@ func TestResolveGoWritableDirsAllExist(t *testing.T) {
 	}
 }
 
+// TestResolveGoWritableDirsPrefersPreResolved checks that a sandboxed start
+// reads the toolchain directories the parent resolved before the mount
+// restrictions, instead of spawning the Go toolchain inside the sandbox. The
+// empty PATH makes a spawn impossible, so the pre-resolved value is the only
+// way the directory can enter the set. See TheoryOfWritableDirs.
+func TestResolveGoWritableDirsPrefersPreResolved(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv(goWritableDirsEnv, dir)
+	t.Setenv("GOCACHE", "/nonexistent/cache")
+	t.Setenv("GOMODCACHE", "/nonexistent/mod")
+	t.Setenv("GOPATH", "/nonexistent/gopath")
+	t.Setenv("PATH", t.TempDir())
+
+	dirs := resolveGoWritableDirs()
+
+	if !slices.Contains(dirs, filepath.Clean(dir)) {
+		t.Fatalf("pre-resolved directory %s missing from %v", dir, dirs)
+	}
+}
+
+// TestResolveGoWritableDirsSkipsNonExistent checks that the fallback
+// resolution drops a configured value that names no existing directory: the
+// set feeds a prefix-matched write policy, so a stale entry would widen it.
+// The pre-resolved value is cleared for the same reason as in the GOCACHE
+// test. See TheoryOfWritableDirs.
 func TestResolveGoWritableDirsSkipsNonExistent(t *testing.T) {
+	t.Setenv(goWritableDirsEnv, "")
 	t.Setenv("GOCACHE", "/nonexistent/path/should/be/skipped")
 	t.Setenv("GOMODCACHE", "/nonexistent/mod/path")
 	t.Setenv("GOPATH", "/nonexistent/gopath")
@@ -79,14 +114,32 @@ func TestResolveConfigDir(t *testing.T) {
 	}
 }
 
+// TestResolveConfigDirSkipsNonExistent checks the fallback resolution: when
+// the config location points at a non-existent directory, resolveConfigDir
+// returns an empty string rather than a stale path. A test process running
+// inside the sandbox inherits the parent's pre-resolved value, so the test
+// clears it. See TheoryOfWritableDirs.
 func TestResolveConfigDirSkipsNonExistent(t *testing.T) {
-	// When HOME points to a non-existent directory, resolveConfigDir
-	// should return an empty string rather than a stale path.
+	t.Setenv(configDirEnv, "")
 	t.Setenv("XDG_CONFIG_HOME", "/nonexistent/config/path")
 	t.Setenv("HOME", "/nonexistent/home/path")
 	dir := resolveConfigDir()
 	if dir != "" {
 		t.Fatalf("expected empty string for non-existent config dir, got %s", dir)
+	}
+}
+
+// TestResolveConfigDirPrefersPreResolved checks that the sandboxed start reads
+// the config directory the parent resolved, even when os.UserConfigDir would
+// name a different one. See TheoryOfWritableDirs.
+func TestResolveConfigDirPrefersPreResolved(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv(configDirEnv, dir)
+	t.Setenv("XDG_CONFIG_HOME", "/nonexistent/config/path")
+	t.Setenv("HOME", "/nonexistent/home/path")
+
+	if got := resolveConfigDir(); got != filepath.Clean(dir) {
+		t.Fatalf("resolveConfigDir = %q, want %q", got, filepath.Clean(dir))
 	}
 }
 
@@ -124,5 +177,19 @@ func TestTmpfsMountData(t *testing.T) {
 	t.Setenv("CAI_TEST_TMPFS_EMPTY", "")
 	if got := tmpfsMountData("CAI_TEST_TMPFS_EMPTY"); got != "" {
 		t.Fatalf("expected empty mount data for empty env, got %q", got)
+	}
+}
+
+// TestParseGoEnvJSON checks the one-invocation decoder: the three values
+// decode from one document, and a malformed document yields zero values so a
+// changed output shape degrades to "no toolchain directories" instead of
+// failing the caller. See TheoryOfWritableDirs.
+func TestParseGoEnvJSON(t *testing.T) {
+	values := parseGoEnvJSON([]byte(`{"GOCACHE":"/c","GOMODCACHE":"/m","GOPATH":"/g"}`))
+	if values.GOCACHE != "/c" || values.GOMODCACHE != "/m" || values.GOPATH != "/g" {
+		t.Fatalf("decoded %+v", values)
+	}
+	if values := parseGoEnvJSON([]byte(`not json`)); values != (goEnvValues{}) {
+		t.Fatalf("malformed document decoded to %+v", values)
 	}
 }

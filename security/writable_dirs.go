@@ -1,6 +1,7 @@
 package security
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -29,6 +30,21 @@ dirs, config dir, /tmp, /dev/shm) are cached via sync.OnceValue because
 they are determined by the environment and do not change during execution.
 IsWritablePath resolves the CWD fresh on every call and checks it before
 the cached static dirs, ensuring correctness even after CWD changes.
+
+Resolution spawns no subprocess inside the sandbox. The toolchain
+directories and the config directory are resolved once, before the mount
+restrictions, and the hardened environment carries them (goWritableDirsEnv,
+configDirEnv); inside the container the set is read from those values. Two
+facts decide this: ` + "`go env`" + ` may not work after the mounts hardened,
+and every file a toolchain start touches pays a round trip through the
+sandbox server that answers the start's own reads. Outside the container one
+'go env -json' invocation supplies the three toolchain values together, so
+a start that sets none of the variables pays one toolchain start instead of
+three, and a start that sets every variable pays none.
+
+A resolved value enters the set only while it still names an existing
+directory: the sandbox write policy matches paths by prefix, so a stale
+entry would widen the policy over a path that no longer exists.
 
 The Landlock layer (see TheoryOfLandlock in landlock_linux.go) does not
 call WritableDirs: it consumes the pre-namespace-resolved environment
@@ -150,71 +166,12 @@ var cachedCanonicalStaticWritableDirs = sync.OnceValue(func() []string {
 	return dirs
 })
 
-// resolveGoWritableDirs resolves directories that the Go toolchain needs
-// write access to: GOCACHE (build cache), GOMODCACHE (downloaded modules),
-// and GOPATH/pkg (package objects). These are resolved before entering the
-// container namespace because `go env` may not function correctly after
-// mount restrictions are applied. Directories that don't exist are skipped.
-// See TheoryOfContainerIsolation in container_linux.go.
-func resolveGoWritableDirs() []string {
-	var dirs []string
-	seen := make(map[string]bool)
-
-	addDir := func(dir string) {
-		dir = filepath.Clean(dir)
-		if dir == "" || dir == "/" || dir == "." {
-			return
-		}
-		if info, err := os.Stat(dir); err != nil || !info.IsDir() {
-			return
-		}
-		if !seen[dir] {
-			seen[dir] = true
-			dirs = append(dirs, dir)
-		}
-	}
-
-	// GOCACHE: build cache directory.
-	if dir := os.Getenv("GOCACHE"); dir != "" {
-		addDir(dir)
-	} else {
-		addDir(goEnv("GOCACHE"))
-	}
-
-	// GOMODCACHE: module download cache.
-	if dir := os.Getenv("GOMODCACHE"); dir != "" {
-		addDir(dir)
-	} else {
-		addDir(goEnv("GOMODCACHE"))
-	}
-
-	// GOPATH/pkg: package object cache. GOPATH may contain multiple
-	// paths separated by colons; each one's pkg subdirectory is added.
-	gopath := os.Getenv("GOPATH")
-	if gopath == "" {
-		gopath = goEnv("GOPATH")
-	}
-	if gopath != "" {
-		for _, p := range filepath.SplitList(gopath) {
-			addDir(filepath.Join(p, "pkg"))
-		}
-	}
-
-	return dirs
-}
-
-// resolveConfigDir resolves the user config directory where the memory
-// system (ai-memory.json) and chat history (ai-chat-history.json) persist
-// data. This is resolved before entering the container namespace because
-// os.UserConfigDir may not function correctly after mount restrictions
-// are applied. Returns an empty string if the directory does not exist
-// or cannot be determined. See TheoryOfContainerIsolation in
-// container_linux.go.
-func resolveConfigDir() string {
-	dir, err := os.UserConfigDir()
-	if err != nil {
-		return ""
-	}
+// usableDir returns the cleaned absolute form of dir when it names an existing
+// directory, and the empty string otherwise. The sandbox write policy matches
+// paths by prefix, so a value that no longer names a directory must not enter
+// the set: a stale entry would widen the policy over a path that no longer
+// exists. See TheoryOfWritableDirs.
+func usableDir(dir string) string {
 	dir = filepath.Clean(dir)
 	if dir == "" || dir == "/" || dir == "." {
 		return ""
@@ -225,14 +182,122 @@ func resolveConfigDir() string {
 	return dir
 }
 
-// goEnv runs `go env <key>` and returns the trimmed result. Returns an
-// empty string if go is not available or the key is not set.
-func goEnv(key string) string {
-	cmd := exec.Command("go", "env", key)
+// goEnvValues holds the toolchain environment values the writable-set
+// resolution consumes. One `go env -json` invocation returns all three, where
+// three separate `go env <key>` invocations returned one each; the toolchain
+// start is the expensive part, so the count of starts is what matters.
+// See TheoryOfWritableDirs.
+type goEnvValues struct {
+	GOCACHE    string `json:"GOCACHE"`
+	GOMODCACHE string `json:"GOMODCACHE"`
+	GOPATH     string `json:"GOPATH"`
+}
+
+// resolveGoWritableDirs resolves directories that the Go toolchain needs
+// write access to: GOCACHE (build cache), GOMODCACHE (downloaded modules),
+// and GOPATH/pkg (package objects). Inside the container the directories come
+// from the values the parent resolved before the mount restrictions, so a
+// sandboxed start spawns no toolchain process; otherwise one `go env -json`
+// invocation supplies every variable the environment leaves unset. These are
+// resolved before entering the container namespace because `go env` may not
+// function correctly after mount restrictions are applied. Directories that
+// don't exist are skipped.
+// See TheoryOfContainerIsolation in container_linux.go and
+// TheoryOfWritableDirs.
+func resolveGoWritableDirs() []string {
+	var dirs []string
+	seen := make(map[string]bool)
+
+	addDir := func(dir string) {
+		dir = usableDir(dir)
+		if dir == "" {
+			return
+		}
+		if !seen[dir] {
+			seen[dir] = true
+			dirs = append(dirs, dir)
+		}
+	}
+
+	// The parent resolved the toolchain directories before the mount
+	// restrictions and carried them in the environment, because `go env` may
+	// not work inside the container. Reading them here keeps a sandboxed start
+	// free of subprocesses, and makes this set identical to the mount layer's
+	// writable set by construction. See TheoryOfWritableDirs.
+	if pre := os.Getenv(goWritableDirsEnv); pre != "" {
+		for _, dir := range filepath.SplitList(pre) {
+			addDir(dir)
+		}
+		return dirs
+	}
+
+	gocache := os.Getenv("GOCACHE")
+	gomodcache := os.Getenv("GOMODCACHE")
+	gopath := os.Getenv("GOPATH")
+	if gocache == "" || gomodcache == "" || gopath == "" {
+		// One invocation resolves every unset variable, so a start that sets
+		// none of them pays one toolchain start instead of three.
+		values := readGoEnv()
+		if gocache == "" {
+			gocache = values.GOCACHE
+		}
+		if gomodcache == "" {
+			gomodcache = values.GOMODCACHE
+		}
+		if gopath == "" {
+			gopath = values.GOPATH
+		}
+	}
+
+	addDir(gocache)
+	addDir(gomodcache)
+	for _, p := range filepath.SplitList(gopath) {
+		addDir(filepath.Join(p, "pkg"))
+	}
+
+	return dirs
+}
+
+// readGoEnv resolves the toolchain environment values in one subprocess
+// invocation. A missing `go` or a failed invocation yields zero values, and
+// the caller then adds no toolchain directory. See TheoryOfWritableDirs.
+func readGoEnv() goEnvValues {
+	cmd := exec.Command("go", "env", "-json", "GOCACHE", "GOMODCACHE", "GOPATH")
 	cmd.Env = os.Environ()
 	output, err := cmd.Output()
 	if err != nil {
+		return goEnvValues{}
+	}
+	return parseGoEnvJSON(output)
+}
+
+// resolveConfigDir resolves the user config directory where the memory
+// system (ai-memory.json) and chat history (ai-chat-history.json) persist
+// data. Inside the container the directory comes from the value the parent
+// resolved before the mount restrictions, because os.UserConfigDir may not
+// function correctly after them. Returns an empty string if the directory
+// does not exist or cannot be determined.
+// See TheoryOfContainerIsolation in container_linux.go and
+// TheoryOfWritableDirs.
+func resolveConfigDir() string {
+	if dir := usableDir(os.Getenv(configDirEnv)); dir != "" {
+		return dir
+	}
+	dir, err := os.UserConfigDir()
+	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(output))
+	return usableDir(dir)
+}
+
+// parseGoEnvJSON decodes one `go env -json` document. A malformed document
+// yields zero values, so a toolchain whose output shape changed degrades to
+// "no toolchain directories" instead of failing the caller.
+// See TheoryOfWritableDirs.
+func parseGoEnvJSON(output []byte) goEnvValues {
+	var values goEnvValues
+	if err := json.Unmarshal(output, &values); err != nil {
+		return goEnvValues{}
+	}
+	return values
 }

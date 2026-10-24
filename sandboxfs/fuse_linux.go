@@ -589,9 +589,11 @@ type fuseHandle struct {
 	readBuf []byte
 
 	// listBuf is the directory listing's reply scratch, reused across
-	// READDIRPLUS calls for the same reason readBuf is reused: the reply
-	// reaches the kernel before the next request is read, so a repeated
-	// listing of one directory allocates nothing after its first call.
+	// READDIR and READDIRPLUS calls for the same reason readBuf is reused:
+	// the reply reaches the kernel before the next request is read, so a
+	// repeated listing of one directory allocates nothing after its first
+	// call. Both handlers size it from the entries that fit instead of the
+	// announced window, which can be far larger than a small directory.
 	// See TheoryOfInitNegotiation.
 	listBuf []byte
 
@@ -1320,8 +1322,15 @@ func (s *fuseServer) handleOpendir(nodeid uint64) ([]byte, error) {
 	return encodeStruct(&fuseOpenOut{Fh: fh, OpenFlags: fuseOpenCacheDir}), nil
 }
 
-// handleReaddir encodes dirents from the offset the kernel supplies.
-// See TheoryOfFuseMount.
+// handleReaddir serves READDIR: one fuse_dirent per entry, encoded in place in
+// the handle's listing scratch. The kernel chooses this form with
+// READDIRPLUS_AUTO for a directory whose entries are few, so a plain listing
+// stays on the hot path of a directory walk. The scratch is sized from the
+// entries that fit rather than from the announced window, which can be a
+// hundred times larger than a small directory, and the padding of a reused
+// slot is cleared before its entry is encoded, so the reply never carries a
+// previous reply's bytes. See TheoryOfFuseMount and
+// TheoryOfInitNegotiation.
 func (s *fuseServer) handleReaddir(body []byte) ([]byte, error) {
 	var in fuseReadIn
 	decodeStruct(&in, body)
@@ -1335,24 +1344,40 @@ func (s *fuseServer) handleReaddir(body []byte) ([]byte, error) {
 	if start < 0 || start > len(h.entries) {
 		return []byte{}, nil
 	}
-	const direntHeader = 24
 	maxSize := int(in.Size)
-	out := make([]byte, 0, maxSize)
+	// The announced window is the negotiated 1 MiB even for a small
+	// directory, so sizing the scratch from it would reserve far more than
+	// the reply uses. Sum the entries that can fit instead.
+	need := 0
+	for i := start; i < len(h.entries); i++ {
+		need += (fuseDirentSize + len(h.entries[i].Name) + 7) &^ 7
+		if need >= maxSize {
+			need = maxSize
+			break
+		}
+	}
+	if cap(h.listBuf) < need {
+		h.listBuf = make([]byte, 0, need)
+	}
+	out := h.listBuf[:0]
 	for i := start; i < len(h.entries); i++ {
 		e := h.entries[i]
-		entrySize := direntHeader + len(e.Name)
-		padded := (entrySize + 7) &^ 7
+		padded := (fuseDirentSize + len(e.Name) + 7) &^ 7
 		if len(out)+padded > maxSize {
 			break
 		}
-		buf := make([]byte, padded)
-		binary.LittleEndian.PutUint64(buf[0:], uint64(i+2))
-		binary.LittleEndian.PutUint64(buf[8:], uint64(i+1))
-		binary.LittleEndian.PutUint32(buf[16:], uint32(len(e.Name)))
-		binary.LittleEndian.PutUint32(buf[20:], direntType(e.Attr.Kind))
-		copy(buf[direntHeader:], e.Name)
-		out = append(out, buf...)
+		prev := len(out)
+		out = out[:prev+padded]
+		// The scratch is reused, so the name's trailing padding would
+		// otherwise carry the previous reply's bytes.
+		clear(out[prev:])
+		binary.LittleEndian.PutUint64(out[prev:], uint64(i+2))
+		binary.LittleEndian.PutUint64(out[prev+8:], uint64(i+1))
+		binary.LittleEndian.PutUint32(out[prev+16:], uint32(len(e.Name)))
+		binary.LittleEndian.PutUint32(out[prev+20:], direntType(e.Attr.Kind))
+		copy(out[prev+fuseDirentSize:], e.Name)
 	}
+	h.listBuf = out
 	return out, nil
 }
 

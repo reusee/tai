@@ -3,6 +3,7 @@ package sandboxfs
 import (
 	"encoding/binary"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -153,5 +154,51 @@ func TestReaddirPlusSizesScratchFromEntries(t *testing.T) {
 	}
 	if got := cap(h.listBuf); got > 4<<10 {
 		t.Fatalf("scratch grew to %d bytes on a repeated listing", got)
+	}
+}
+
+// TestReaddirSizesScratchFromEntries checks the plain READDIR reply: the
+// scratch is sized from the entries that fit instead of the announced window,
+// every entry decodes from the reply, and a repeated listing reuses the
+// scratch without growing it. See TheoryOfFuseMount.
+func TestReaddirSizesScratchFromEntries(t *testing.T) {
+	store, err := Open(filepath.Join(t.TempDir(), "sandbox.db"), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	s := newFuseServer(store, -1)
+	names := []string{"alpha", "beta", "gamma"}
+	entries := make([]DirEntry, 0, len(names))
+	for _, name := range names {
+		entries = append(entries, DirEntry{
+			Name: name,
+			Attr: Attr{Kind: KindRegular, Mode: 0o644, Size: 1},
+		})
+	}
+	s.handles[1] = &fuseHandle{path: "/d", isDir: true, entries: entries}
+	req := encodeStruct(&fuseReadIn{Fh: 1, Size: 1 << 16})
+	out, err := s.handleReaddir(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for off := 0; off+fuseDirentSize <= len(out); {
+		namelen := int(binary.LittleEndian.Uint32(out[off+16:]))
+		got = append(got, string(out[off+fuseDirentSize:off+fuseDirentSize+namelen]))
+		off += (fuseDirentSize + namelen + 7) &^ 7
+	}
+	if !slices.Equal(got, names) {
+		t.Fatalf("entries = %v, want %v", got, names)
+	}
+	if cap(s.handles[1].listBuf) >= 1<<16 {
+		t.Fatalf("scratch = %d bytes, want the entries' size rather than the announced window", cap(s.handles[1].listBuf))
+	}
+	before := cap(s.handles[1].listBuf)
+	if _, err := s.handleReaddir(req); err != nil {
+		t.Fatal(err)
+	}
+	if cap(s.handles[1].listBuf) != before {
+		t.Fatalf("repeated listing grew the scratch: %d -> %d bytes", before, cap(s.handles[1].listBuf))
 	}
 }
