@@ -997,20 +997,14 @@ func (s *fuseServer) handleSetattr(nodeid uint64, body []byte) ([]byte, error) {
 		if in.Size > maxFileSize {
 			return nil, syscall.EFBIG
 		}
-		// Read only the prefix the new size retains, then pad with
-		// zeros when the file grows: the whole file never enters
-		// memory for a truncate. See TheoryOfCompletePOSIX.
-		content, err := s.store.ReadRange(p, 0, int(in.Size))
-		if err != nil {
-			return nil, err
-		}
-		truncated := make([]byte, in.Size)
-		copy(truncated, content)
+		// Truncation touches the chunks beyond the new length and the chunk
+		// the length ends inside; no content passes through this handler.
+		// See TheoryOfChunkedContent.
 		perm := cur.Mode
 		if perm == 0 {
 			perm = 0o644
 		}
-		if err := s.store.WriteFile(p, truncated, perm); err != nil {
+		if err := s.store.TruncateFile(p, int64(in.Size), perm); err != nil {
 			return nil, err
 		}
 		s.invalidateHandles(p)
@@ -1096,15 +1090,17 @@ func (s *fuseServer) handleOpen(nodeid uint64, body []byte) ([]byte, error) {
 		if perm == 0 {
 			perm = 0o644
 		}
-		if err := s.store.WriteFile(p, nil, perm); err != nil {
+		// A truncating open drops the content chunks; it never writes the
+		// file back. See TheoryOfChunkedContent.
+		if err := s.store.TruncateFile(p, 0, perm); err != nil {
 			return nil, err
 		}
 		s.invalidateHandles(p)
 	}
 	// The open already read the attribute, so the handle carries the mode and
-	// the write path needs no lookup of its own. The store keeps the content,
-	// so a truncating open leaves nothing for the handle to remember.
-	// See TheoryOfWriteSplice.
+	// the write path needs no lookup of its own. The store keeps the content
+	// in its chunk table, so a truncating open leaves nothing for the handle
+	// to remember. See TheoryOfWriteSplice.
 	h := &fuseHandle{path: p, mode: a.Mode}
 	s.mu.Lock()
 	fh := s.nextFh
@@ -1447,7 +1443,9 @@ func (s *fuseServer) handleCreate(parent uint64, body []byte) ([]byte, error) {
 			return nil, syscall.EISDIR
 		}
 		if in.Flags&uint32(unix.O_TRUNC) != 0 {
-			if err := s.store.WriteFile(p, nil, perm); err != nil {
+			// A truncating create drops the content chunks without writing
+			// the file back. See TheoryOfChunkedContent.
+			if err := s.store.TruncateFile(p, 0, perm); err != nil {
 				return nil, err
 			}
 		} else if err := s.store.CanWrite(p); err != nil {
@@ -1470,8 +1468,8 @@ func (s *fuseServer) handleCreate(parent uint64, body []byte) ([]byte, error) {
 	}
 	// The stat above already read the attribute, so the handle carries the
 	// mode and the write path needs no lookup of its own. The store keeps the
-	// content, so nothing about the create state belongs to the handle.
-	// See TheoryOfWriteSplice.
+	// content in its chunk table, so nothing about the create state belongs to
+	// the handle. See TheoryOfWriteSplice.
 	h := &fuseHandle{path: p, mode: a.Mode}
 	s.mu.Lock()
 	fh := s.nextFh

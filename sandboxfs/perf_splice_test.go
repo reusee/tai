@@ -32,6 +32,58 @@ func spliceTestContent(t *testing.T, store *Store, p string) []byte {
 	return b
 }
 
+// TestTruncateFileShrinksAndGrows checks the chunk-shaped truncation: a shrink
+// keeps the prefix the new length retains and drops the chunks beyond it, and
+// a grow extends the length with zeros without writing them. See
+// TheoryOfChunkedContent.
+func TestTruncateFileShrinksAndGrows(t *testing.T) {
+	store := newSpliceTestStore(t)
+	content := bytes.Repeat([]byte("abc"), 48<<10) // 144 KiB, three chunks
+	if err := store.WriteFile("/t.bin", content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.TruncateFile("/t.bin", 100<<10, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := spliceTestContent(t, store, "/t.bin")
+	if !bytes.Equal(got, content[:100<<10]) {
+		t.Fatalf("shrunk content mismatch: %d bytes", len(got))
+	}
+	if err := store.TruncateFile("/t.bin", 120<<10, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got = spliceTestContent(t, store, "/t.bin")
+	if len(got) != 120<<10 {
+		t.Fatalf("grown length = %d, want %d", len(got), 120<<10)
+	}
+	if !bytes.Equal(got[:100<<10], content[:100<<10]) {
+		t.Fatal("grown file lost its prefix")
+	}
+	for _, b := range got[100<<10:] {
+		if b != 0 {
+			t.Fatal("grown tail is not zero-filled")
+		}
+	}
+}
+
+// TestSpliceFileAlignedChunk checks the chunk-aligned window: a payload that
+// covers a chunk whole stores that payload, so the aligned windows a toolchain
+// emits round-trip without a read of the stored chunk. See
+// TheoryOfChunkedContent.
+func TestSpliceFileAlignedChunk(t *testing.T) {
+	store := newSpliceTestStore(t)
+	if err := store.WriteFile("/c.bin", nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	payload := bytes.Repeat([]byte("ab"), contentChunkSize/2)
+	if err := store.SpliceFile("/c.bin", 0, payload, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := spliceTestContent(t, store, "/c.bin"); !bytes.Equal(got, payload) {
+		t.Fatalf("aligned chunk write stored %d bytes, want %d", len(got), len(payload))
+	}
+}
+
 // TestSpliceFileOverwritesAndAppends checks the two shapes of a delta that
 // land inside or exactly at the stored end: an overwrite keeps the surrounding
 // bytes and an append adds at the end. See TheoryOfWriteSplice.
@@ -119,10 +171,10 @@ func TestSpliceFileRevivesDeletedPath(t *testing.T) {
 	}
 }
 
-// TestMetaRowOmitsContent checks that the overwrite path's row read leaves the
-// content blob in the database: the write already holds the bytes it stores, so
-// loading the old blob would copy a file the write is about to discard.
-// See TheoryOfWriteSplice.
+// TestMetaRowOmitsContent checks that the overwrite path's row read loads
+// metadata only: content lives in the chunk table, and the write already holds
+// the bytes it stores, so a read that assembled content would copy a file the
+// write is about to discard. See TheoryOfChunkedContent.
 func TestMetaRowOmitsContent(t *testing.T) {
 	store := newSpliceTestStore(t)
 	content := bytes.Repeat([]byte("x"), 1<<16)
@@ -133,8 +185,8 @@ func TestMetaRowOmitsContent(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("metaRow: ok = %v, err = %v", ok, err)
 	}
-	if len(r.content) != 0 {
-		t.Fatalf("metaRow loaded %d content bytes, want none", len(r.content))
+	if r.size != int64(len(content)) {
+		t.Fatalf("metaRow size = %d, want %d", r.size, len(content))
 	}
 	if r.kind != KindRegular || r.mode != 0o644 {
 		t.Fatalf("metaRow = %+v, want the kind and mode fields", r)

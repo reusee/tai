@@ -42,21 +42,48 @@ type Change struct {
 
 // Changes returns the net changes of the sandbox in path order. A change
 // that a conflict blocks still appears, with its reason: the review step
-// shows every change and lets the user decide. The store's own database
-// and its SQLite siblings never enter the list: they are the review's
-// record, not a reviewable change. See TheoryOfSandboxFilesystem and
-// TheoryOfApplyConflict.
+// shows every change and lets the user decide. Every upper row's metadata
+// leaves one query before any content is read, because the store holds a
+// single connection: a row set kept open while a content query runs would wait
+// for the connection it holds. A live regular row's content comes from the
+// chunk table, and a deletion's from nothing. The store's own database and its
+// SQLite siblings never enter the list: they are the review's record, not a
+// reviewable change. See TheoryOfSandboxFilesystem, TheoryOfApplyConflict, and
+// TheoryOfChunkedContent.
 func (s *Store) Changes() ([]Change, error) {
-	rows, err := s.allRows()
+	rows, err := s.db.Query(
+		`SELECT path, kind, mode, mtime, deleted, size, target, original_exists, original_hash
+		 FROM files ORDER BY path`)
+	if err != nil {
+		return nil, err
+	}
+	var all []fileRow
+	for rows.Next() {
+		r, err := scanFileRow(rows)
+		if err != nil {
+			rows.Close()
+			return nil, err
+		}
+		all = append(all, r)
+	}
+	err = rows.Err()
+	rows.Close()
 	if err != nil {
 		return nil, err
 	}
 	var changes []Change
-	for _, r := range rows {
+	for _, r := range all {
 		if s.isOwnDBPath(r.path) {
 			continue
 		}
-		c := netChange(r)
+		var content []byte
+		if r.kind == KindRegular && !r.deleted {
+			content, err = s.readContent(r.path, r.size)
+			if err != nil {
+				return nil, err
+			}
+		}
+		c := netChange(r, content)
 		if c == nil {
 			continue
 		}
@@ -70,11 +97,12 @@ func (s *Store) Changes() ([]Change, error) {
 }
 
 // netChange derives one path's net change from its recorded original and its
-// current upper state. Directories and pipes carry no content, so only their
-// existence and kind count; a rewritten-to-identical file and a
+// current upper state, with the current content supplied by the caller because
+// it lives in the chunk table. Directories and pipes carry no content, so only
+// their existence and kind count; a rewritten-to-identical file and a
 // create-then-delete pair yield no change at all.
 // See TheoryOfSandboxFilesystem and TheoryOfCompletePOSIX.
-func netChange(r fileRow) *Change {
+func netChange(r fileRow, content []byte) *Change {
 	if r.kind == KindDir {
 		switch {
 		case r.deleted:
@@ -107,7 +135,7 @@ func netChange(r fileRow) *Change {
 		}
 		return &Change{Path: r.path, Kind: ChangeDeleted, Symlink: r.kind == KindSymlink}
 	}
-	current := []byte(r.content)
+	current := content
 	if r.kind == KindSymlink {
 		current = []byte(r.target)
 	}
@@ -180,12 +208,12 @@ func (s *Store) detectConflict(c *Change, r fileRow) {
 }
 
 // Apply writes the selected net changes to the host and drops their upper
-// rows, so a repeated apply is a no-op and the next diff is exact.
-// Conflicting changes are skipped and reported alongside the applied ones;
-// selected nil selects every change. Created directories apply first, files
-// next, and deletions deepest first, so a nested creation or deletion lands
-// in an order the host accepts.
-// See TheoryOfApplyConflict.
+// rows, content chunks included, so a repeated apply is a no-op and the next
+// diff is exact. Conflicting changes are skipped and reported alongside the
+// applied ones; selected nil selects every change. Created directories apply
+// first, files next, and deletions deepest first, so a nested creation or
+// deletion lands in an order the host accepts. See TheoryOfApplyConflict and
+// TheoryOfChunkedContent.
 func (s *Store) Apply(selected func(Change) bool) (applied []Change, err error) {
 	changes, err := s.Changes()
 	if err != nil {
@@ -218,7 +246,7 @@ func (s *Store) Apply(selected func(Change) bool) (applied []Change, err error) 
 		if err := s.applyOne(c); err != nil {
 			return applied, err
 		}
-		if _, err := s.db.Exec(`DELETE FROM files WHERE path = ?`, c.Path); err != nil {
+		if err := s.removeAppliedRow(c.Path); err != nil {
 			return applied, err
 		}
 		s.audit("apply", c.Path, string(c.Kind))
@@ -274,6 +302,23 @@ func (s *Store) applyOne(c Change) error {
 		return err
 	}
 	return fmt.Errorf("sandboxfs: unknown change kind %q", c.Kind)
+}
+
+// removeAppliedRow drops one applied path's upper row and its content chunks in
+// one transaction, so the next diff is exact. See TheoryOfChunkedContent.
+func (s *Store) removeAppliedRow(p string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec(`DELETE FROM files WHERE path = ?`, p); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM chunks WHERE path = ?`, p); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // mkfifoAt creates a named pipe beneath root. os.Root has no mkfifo, so the

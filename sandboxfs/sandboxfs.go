@@ -74,11 +74,11 @@ reads thousands of paths while a session writes a few dozen. Every
 optimization here leaves the write path untouched.
 
 A metadata lookup never loads content. Stat needs the kind, mode, mtime,
-and size; the row's content blob is the expensive part. The size therefore
-comes from sqlite's length() instead of a scanned blob, so a getattr or
-lookup on a large file costs one small row, not a heap copy of the file.
-A read's window, kind, and deletion state come back in one statement:
-substr windows the blob, so one kernel-sized read is one round trip
+and size; the row's metadata is the whole answer, and the content lives in the
+chunk table. The size therefore comes from the row's stored size column, so a
+getattr or lookup on a large file costs one small row, not a heap copy of the
+file. A read's window, kind, and deletion state come back in one indexed query
+over the chunks covering the window, so one kernel-sized read is one round trip
 instead of a lookup plus a window.
 
 A read handle opens the base file once. The kernel streams a file in
@@ -117,16 +117,13 @@ not already spend. One mutex guards it, the same lock the read audit takes.
 
 const TheoryOfWriteSplice = `
 The write path grows with the payload, never with the file. A kernel WRITE
-carries at most one negotiated request window of bytes, but the store's blob
-holds the whole file, so storing a handle's full buffer on every write copies
-the file once per window: a ten-megabyte file written in one-megabyte windows
-copies fifty-five megabytes, and the cost is quadratic in the window count.
-sqlite splices instead: one UPDATE concatenates the retained prefix, the zero
-gap a write past the stored end inserts, the new bytes, and the retained
-suffix, so the bytes a window moves through Go memory are proportional to
-its own payload. The UPDATE still rewrites the stored blob, so a file's
-store traffic grows with its window count, and the 1 MiB window the INIT
-negotiation buys is what turns that count down.
+carries at most one negotiated request window of bytes. The store writes that
+window's bytes into the chunks the payload covers, so a window costs its own
+bytes and the two chunks it begins and ends inside; it inserts no zeros for a
+gap, because an absent chunk reads as zeros, so a write past the stored end
+costs its size update and its payload. A ten-megabyte file written in
+one-megabyte windows therefore moves ten megabytes, never the growing prefix
+an in-place whole-blob rewrite would copy once per window.
 
 The store is the only copy. A handle holds no buffer, so a large open file
 costs no memory and a write needs no reload before its delta: the first write
@@ -136,11 +133,13 @@ payload. Two handles over one path therefore cannot diverge: there is no stale
 buffer to overwrite another handle's bytes, and the kernel's next read asks the
 store for the content the last write left there.
 
-The guarded UPDATE carries the kind and whiteout checks, so one statement
-answers whether the delta may land. A path the upper layer holds no live
-regular row for matches nothing, the caller materialises it, and the splice
-runs once more; the hot path therefore costs one statement and never the row
-lookup that would load the blob this write exists to avoid copying.
+The splice runs in one transaction whose first statement both guards the row
+and extends its size, so the delta's admissibility and its length cost one
+statement, and one more statement carries every covered chunk. A path the
+upper layer holds no live regular row for refuses the splice, the caller
+materialises it, and the splice runs once more; the hot path therefore costs
+one commit and never a second lookup of the content this write exists to avoid
+copying.
 `
 
 const TheoryOfApplyConflict = `
@@ -189,17 +188,17 @@ whether or not the file is created — and a write-mode OPEN is checked
 against the write policy first, so a caller sees EACCES from open rather
 than from its first write.
 
-The read path streams: a read serves the requested window from sqlite's
-substr over the stored blob, or from the base file's own ReadAt, so a large
-dependency costs one sized response rather than a whole-file allocation.
-The write path splices: one UPDATE concatenates the retained prefix, the
-delta, and the retained suffix, so a window costs bytes proportional to its
-payload and no handle holds a copy of the file (see TheoryOfWriteSplice).
-A zero-byte write transfers nothing and does not extend the file, matching
-Linux. Truncation reads only the retained prefix and pads with zeros; a
-grow past the size bound is refused with EFBIG rather than allocating a
-file the sandbox cannot hold, and the same bound refuses a write whose
-offset would overflow. See TheoryOfFuseMount.
+The read path streams: a read serves the requested window from the chunks
+covering it, or from the base file's own ReadAt, so a large dependency costs
+one sized response rather than a whole-file allocation. The write path
+splices: a window rewrites the chunks its payload covers, so it costs bytes
+proportional to its payload and no handle holds a copy of the file (see
+TheoryOfWriteSplice). A zero-byte write transfers nothing and does not extend
+the file, matching Linux. Truncation drops the chunks beyond the new length
+and keeps the boundary chunk's prefix, and a grow raises the length alone
+because an absent chunk reads as zeros; a grow past the size bound is refused
+with EFBIG rather than allocating a file the sandbox cannot hold, and the same
+bound refuses a write whose offset would overflow. See TheoryOfFuseMount.
 
 Durability: FSYNC and FSYNCDIR succeed without doing anything, because the
 store's writes are sqlite transactions that persist as they complete. A
@@ -250,6 +249,29 @@ environment never allowed — the same set the mount layer binds read-write —
 and the review step's job is to let the user choose.
 `
 
+// TheoryOfAuditBatching explains how the audit trail trades a little
+// durability for one commit per batch: audit buffers a row and writes the
+// buffer when it fills, and Ops and Close flush the tail.
+const TheoryOfAuditBatching = `
+The audit trail records what a session did to which path. Its rows are
+buffered and written in batches: audit appends a row and writes the buffer in
+one transaction when it reaches auditBatchSize, and Ops and Close flush the
+tail, so one commit serves a whole batch.
+
+A commit dominates a small statement's cost in this store, so a row written
+per commit charged every mutation and every path's first read a commit of its
+own beside the operation's own statement. Batching removes that second commit
+from the request path without changing what the trail records.
+
+The trade-off is the tail: rows buffered when a process dies outside a close
+are lost, so the trail is complete for a session that ends normally and may be
+short for one that was killed. The audit is best-effort by design — it never
+fails an operation — and the review step reads changes from the content rows,
+which stay durable at every write. Rows keep their call order within a batch;
+under concurrent mutation a later batch can commit before an earlier one, so
+Ops orders by insertion id and each batch keeps its own order.
+`
+
 const schema = `
 CREATE TABLE IF NOT EXISTS files (
     path TEXT PRIMARY KEY,
@@ -257,11 +279,17 @@ CREATE TABLE IF NOT EXISTS files (
     mode INTEGER NOT NULL,
     mtime INTEGER NOT NULL,
     deleted INTEGER NOT NULL DEFAULT 0,
-    content BLOB,
+    size INTEGER NOT NULL DEFAULT 0,
     target TEXT NOT NULL DEFAULT '',
     original_exists INTEGER NOT NULL DEFAULT 0,
     original_hash TEXT NOT NULL DEFAULT ''
 );
+CREATE TABLE IF NOT EXISTS chunks (
+    path TEXT NOT NULL,
+    idx INTEGER NOT NULL,
+    data BLOB NOT NULL,
+    PRIMARY KEY (path, idx)
+) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS ops (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     time TEXT NOT NULL,
@@ -271,32 +299,6 @@ CREATE TABLE IF NOT EXISTS ops (
 );
 CREATE INDEX IF NOT EXISTS idx_ops_path ON ops(path);
 `
-
-// spliceSQL writes one kernel write's delta into the stored blob without
-// materialising the file: the retained prefix, the zero gap a write past the
-// stored end inserts, the new bytes, and the retained suffix are one UPDATE.
-// Every fragment is coalesced to a blob, because a fragment of an empty blob is
-// not itself a blob and a NULL operand swallows the whole concatenation — the
-// write would then store nothing at all, which is exactly the shape a create or
-// a truncating open leaves behind. CAST keeps the column a blob, so binary
-// content never round-trips through text. sqlite counts blob positions in bytes
-// from 1, so the suffix starts at off+len(data)+1.
-//
-// The WHERE clause carries the kind guard and the whiteout guard, so one
-// statement answers whether the delta may land. A path the upper layer holds no
-// live regular row for matches nothing, the caller materialises it, and the
-// splice runs again; the hot path therefore costs one UPDATE, and never the row
-// lookup that would load the blob this write exists to avoid copying.
-// See TheoryOfWriteSplice.
-const spliceSQL = `UPDATE files SET
- content = CAST(
-   coalesce(substr(coalesce(content, x''), 1, ?), x'')
-   || zeroblob(max(0, ? - length(coalesce(content, x''))))
-   || ?
-   || coalesce(substr(coalesce(content, x''), ?), x'')
-   AS BLOB),
- mtime = ?
- WHERE path = ? AND kind = ? AND deleted = 0`
 
 // Kind is the file type of a sandbox path.
 type Kind int
@@ -362,6 +364,11 @@ type Store struct {
 	// a sqlite round trip. Any write of the path clears its entry. See
 	// TheoryOfUpperAbsentCache.
 	absent map[string]bool
+	// pending buffers the audit rows not yet written, so a mutation's audit
+	// row joins the next batch instead of paying a commit of its own. audit
+	// writes the batch when it fills; Ops and Close flush the tail. See
+	// TheoryOfAuditBatching.
+	pending []Op
 }
 
 // upperAbsent reports whether the upper layer is known not to hold p. A
@@ -393,8 +400,10 @@ func (s *Store) Base() string {
 	return s.base
 }
 
-// Close releases the database and the base handles.
+// Close flushes the buffered audit rows, then releases the database and the
+// base handles. See TheoryOfAuditBatching.
 func (s *Store) Close() error {
+	s.flushOps()
 	closeBaseDirFd(s.baseFd)
 	s.baseFd = -1
 	err := s.baseRoot.Close()
@@ -543,6 +552,12 @@ func contentHash(b []byte) string {
 // See TheoryOfCompletePOSIX.
 const fifoOriginalHash = "fifo"
 
+// auditBatchSize bounds the audit rows one transaction carries: a batch this
+// size pays one commit for its rows and keeps the buffer small enough that a
+// process killed outside a close loses at most one batch.
+// See TheoryOfAuditBatching.
+const auditBatchSize = 64
+
 // maxFileSize bounds one stored file, so a malformed or malicious request never
 // makes the store allocate or splice a size the session cannot hold. A grow past
 // this bound is refused with EFBIG. The FUSE layer's truncate bound mirrors it,
@@ -558,7 +573,7 @@ type fileRow struct {
 	mode           os.FileMode
 	mtime          time.Time
 	deleted        bool
-	content        []byte
+	size           int64
 	target         string
 	originalExists bool
 	originalHash   string
@@ -576,8 +591,8 @@ func scanFileRow(rs rowScanner) (fileRow, error) {
 	var deleted int
 	var originalExists int
 	if err := rs.Scan(
-		&r.path, &kind, &mode, &mtime, &deleted,
-		&r.content, &r.target, &originalExists, &r.originalHash,
+		&r.path, &kind, &mode, &mtime, &deleted, &r.size,
+		&r.target, &originalExists, &r.originalHash,
 	); err != nil {
 		return fileRow{}, err
 	}
@@ -594,7 +609,7 @@ func (s *Store) row(p string) (fileRow, bool, error) {
 		return fileRow{}, false, nil
 	}
 	r, err := scanFileRow(s.db.QueryRow(
-		`SELECT path, kind, mode, mtime, deleted, content, target, original_exists, original_hash
+		`SELECT path, kind, mode, mtime, deleted, size, target, original_exists, original_hash
 		 FROM files WHERE path = ?`, p))
 	if errors.Is(err, sql.ErrNoRows) {
 		s.rememberAbsent(p)
@@ -606,10 +621,10 @@ func (s *Store) row(p string) (fileRow, bool, error) {
 	return r, true, nil
 }
 
-// metaRow reads one path's row without its content blob: the overwrite path
-// already holds the bytes it is about to store, so only the net-change baseline
-// and the kind guard need the row's other fields. A read that loaded the blob
-// would copy a file the write is about to discard. See TheoryOfWriteSplice.
+// metaRow reads one path's row: metadata only, because the content lives in the
+// chunk table and a write already holds the bytes it is about to store, so a
+// read that loaded content would copy a file the write is about to discard.
+// See TheoryOfChunkedContent.
 func (s *Store) metaRow(p string) (fileRow, bool, error) {
 	if s.upperAbsent(p) {
 		return fileRow{}, false, nil
@@ -618,9 +633,9 @@ func (s *Store) metaRow(p string) (fileRow, bool, error) {
 	var kind, deleted, originalExists int
 	var mode, mtime int64
 	err := s.db.QueryRow(
-		`SELECT path, kind, mode, mtime, deleted, target, original_exists, original_hash
+		`SELECT path, kind, mode, mtime, deleted, size, target, original_exists, original_hash
 		 FROM files WHERE path = ?`, p,
-	).Scan(&r.path, &kind, &mode, &mtime, &deleted,
+	).Scan(&r.path, &kind, &mode, &mtime, &deleted, &r.size,
 		&r.target, &originalExists, &r.originalHash)
 	if errors.Is(err, sql.ErrNoRows) {
 		s.rememberAbsent(p)
@@ -637,15 +652,19 @@ func (s *Store) metaRow(p string) (fileRow, bool, error) {
 	return r, true, nil
 }
 
+// readUpperRange reads one window of a path the upper layer holds. The row's
+// metadata — kind, deletion state, and stored size — and the chunk window come
+// back in one indexed query, and the window clamps to the stored size, so the
+// size column is the authority on length. See TheoryOfReadPath.
 func (s *Store) readUpperRange(p string, off int64, size int) (chunk []byte, kind Kind, found bool, err error) {
 	if s.upperAbsent(p) {
 		return nil, 0, false, nil
 	}
 	var k, deleted int
+	var stored int64
 	err = s.db.QueryRow(
-		`SELECT kind, deleted, substr(content, ?, ?) FROM files WHERE path = ?`,
-		off+1, size, p,
-	).Scan(&k, &deleted, &chunk)
+		`SELECT kind, deleted, size FROM files WHERE path = ?`, p,
+	).Scan(&k, &deleted, &stored)
 	if errors.Is(err, sql.ErrNoRows) {
 		s.rememberAbsent(p)
 		return nil, 0, false, nil
@@ -656,6 +675,17 @@ func (s *Store) readUpperRange(p string, off int64, size int) (chunk []byte, kin
 	if deleted != 0 {
 		return nil, 0, true, ErrNotExist
 	}
+	if Kind(k) != KindRegular {
+		return nil, Kind(k), true, nil
+	}
+	end := min(off+int64(size), stored)
+	if off >= end {
+		return []byte{}, Kind(k), true, nil
+	}
+	chunk, err = s.readChunks(s.db, p, off, int(end-off))
+	if err != nil {
+		return nil, 0, true, err
+	}
 	return chunk, Kind(k), true, nil
 }
 
@@ -664,10 +694,10 @@ func (s *Store) statRow(p string) (a Attr, found bool, err error) {
 		return Attr{}, false, nil
 	}
 	var kind, deleted int
-	var mode, mtime int64
-	var size, targetSize sql.NullInt64
+	var mode, mtime, size int64
+	var targetSize sql.NullInt64
 	err = s.db.QueryRow(
-		`SELECT kind, mode, mtime, deleted, length(content), length(target)
+		`SELECT kind, mode, mtime, deleted, size, length(target)
 		 FROM files WHERE path = ?`, p,
 	).Scan(&kind, &mode, &mtime, &deleted, &size, &targetSize)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -687,7 +717,7 @@ func (s *Store) statRow(p string) (a Attr, found bool, err error) {
 	}
 	switch a.Kind {
 	case KindRegular:
-		a.Size = size.Int64
+		a.Size = size
 	case KindSymlink:
 		a.Size = targetSize.Int64
 	}
@@ -713,36 +743,20 @@ func (s *Store) allRows() ([]fileRow, error) {
 	return out, rows.Err()
 }
 
+// put stores one row's metadata. Content lives in the chunk table: a caller
+// that changes content writes it through putContent or the splice, while a row
+// that stops being a live regular file drops its chunks here.
+// See TheoryOfChunkedContent.
 func (s *Store) put(r fileRow) error {
-	// The write clears any cached absence, so the next lookup reads the row
-	// this call stores. See TheoryOfUpperAbsentCache.
-	s.mu.Lock()
-	delete(s.absent, r.path)
-	s.mu.Unlock()
-	var deleted int
-	if r.deleted {
-		deleted = 1
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
 	}
-	var originalExists int
-	if r.originalExists {
-		originalExists = 1
+	defer func() { _ = tx.Rollback() }()
+	if err := s.putMetaTx(tx, r); err != nil {
+		return err
 	}
-	_, err := s.db.Exec(
-		`INSERT INTO files (path, kind, mode, mtime, deleted, content, target, original_exists, original_hash)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-		 ON CONFLICT(path) DO UPDATE SET
-		   kind = excluded.kind,
-		   mode = excluded.mode,
-		   mtime = excluded.mtime,
-		   deleted = excluded.deleted,
-		   content = excluded.content,
-		   target = excluded.target,
-		   original_exists = excluded.original_exists,
-		   original_hash = excluded.original_hash`,
-		r.path, int(r.kind), int64(r.mode), r.mtime.UnixNano(), deleted,
-		r.content, r.target, originalExists, r.originalHash,
-	)
-	return err
+	return tx.Commit()
 }
 
 // SpliceFile writes data at byte offset off of p without reading or rewriting
@@ -763,93 +777,69 @@ func (s *Store) SpliceFile(p string, off int64, data []byte, perm os.FileMode) e
 	if off > maxFileSize || off+int64(len(data)) > maxFileSize {
 		return syscall.EFBIG
 	}
-	spliced, err := s.db.Exec(spliceSQL,
-		off, off, data, off+int64(len(data))+1,
-		time.Now().UnixNano(), p, int(KindRegular),
-	)
-	if err != nil {
-		return err
-	}
-	n, err := spliced.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if n == 0 {
+	err := s.spliceChunks(p, off, data)
+	if errors.Is(err, errNoLiveRegularRow) {
 		// No live regular row answered the delta: the path is fresh, a
 		// whiteout, or not a regular file. Materialising it either produces
 		// the row the splice needs or the error the type deserves, and the
 		// splice then runs once more. See TheoryOfWriteSplice.
-		if err := s.materializeForSplice(p, perm); err != nil {
+		if _, err := s.materializeContent(p, -1, perm); err != nil {
 			return err
 		}
-		if _, err := s.db.Exec(spliceSQL,
-			off, off, data, off+int64(len(data))+1,
-			time.Now().UnixNano(), p, int(KindRegular),
-		); err != nil {
-			return err
-		}
+		err = s.spliceChunks(p, off, data)
+	}
+	if err != nil {
+		return err
 	}
 	s.audit("write", p, fmt.Sprintf("%d bytes at %d", len(data), off))
 	return nil
 }
 
-// materializeForSplice prepares a path the upper layer holds no live regular
-// row for: it captures the base state, carries the base content the delta
-// starts from, and stores both, so the splice that follows has a row to land on.
-// A path the session deleted starts from nothing, because the whiteout already
-// recorded the deletion and resurrecting the deleted bytes would undo it. The
-// call is the cold path, taken once per file, so it may read what the hot path
-// refuses to. See TheoryOfWriteSplice.
-func (s *Store) materializeForSplice(p string, perm os.FileMode) error {
-	if err := s.checkParent(p); err != nil {
-		return err
+// audit records one audit-trail row. Rows accumulate and leave in batches, so
+// a burst of mutations shares one commit; Ops and Close flush the tail, so a
+// finished session's trail is complete. Audit writes are best-effort: they
+// never fail an operation, and a batch that cannot be written is dropped.
+// See TheoryOfAuditBatching.
+func (s *Store) audit(op, p, detail string) {
+	s.mu.Lock()
+	s.pending = append(s.pending, Op{
+		Time:   time.Now().UTC(),
+		Op:     op,
+		Path:   p,
+		Detail: detail,
+	})
+	if len(s.pending) < auditBatchSize {
+		s.mu.Unlock()
+		return
 	}
-	r, ok, err := s.metaRow(p)
+	batch := s.pending
+	s.pending = nil
+	s.mu.Unlock()
+	_ = s.writeOps(batch)
+}
+
+// writeOps writes one batch of audit rows in a single transaction: the rows
+// share one commit, which is what makes batching worth its buffer. The rows
+// keep the buffer's order, so a batch's own chronology survives.
+// See TheoryOfAuditBatching.
+func (s *Store) writeOps(ops []Op) error {
+	if len(ops) == 0 {
+		return nil
+	}
+	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
-	if !ok {
-		r, err = s.captureOriginal(p)
-		if err != nil {
+	for _, o := range ops {
+		if _, err := tx.Exec(
+			`INSERT INTO ops (time, op, path, detail) VALUES (?, ?, ?, ?)`,
+			o.Time.Format(time.RFC3339Nano), o.Op, o.Path, o.Detail,
+		); err != nil {
+			_ = tx.Rollback()
 			return err
 		}
 	}
-	switch r.kind {
-	case KindDir:
-		return syscall.EISDIR
-	case KindFIFO, KindSymlink:
-		return syscall.EINVAL
-	}
-	if !r.deleted {
-		content, readErr := s.baseRoot.ReadFile(relPath(p))
-		switch {
-		case readErr == nil:
-			r.content = content
-		case errors.Is(readErr, os.ErrNotExist):
-			r.content = nil
-		default:
-			return readErr
-		}
-	}
-	if perm == 0 {
-		perm = 0o644
-	}
-	r.path = p
-	r.kind = KindRegular
-	r.mode = perm
-	r.deleted = false
-	r.target = ""
-	r.mtime = time.Now()
-	return s.put(r)
-}
-
-// audit appends one audit-trail row. Audit writes are best-effort: they
-// never fail an operation.
-func (s *Store) audit(op, p, detail string) {
-	_, _ = s.db.Exec(
-		`INSERT INTO ops (time, op, path, detail) VALUES (?, ?, ?, ?)`,
-		time.Now().UTC().Format(time.RFC3339Nano), op, p, detail,
-	)
+	return tx.Commit()
 }
 
 // checkWrite asks the store's write policy about one path. The policy must
@@ -879,6 +869,17 @@ func (s *Store) auditRead(p string) {
 	s.audit("read", p, "")
 }
 
+// flushOps writes every buffered audit row. The buffer is detached under the
+// lock before the write, so a concurrent audit call keeps its own rows and
+// never blocks behind the transaction. See TheoryOfAuditBatching.
+func (s *Store) flushOps() {
+	s.mu.Lock()
+	pending := s.pending
+	s.pending = nil
+	s.mu.Unlock()
+	_ = s.writeOps(pending)
+}
+
 // rememberAbsent records that the upper layer does not hold p, so the next
 // lookup of the path costs no sqlite round trip. put clears the entry.
 // See TheoryOfUpperAbsentCache.
@@ -891,8 +892,11 @@ func (s *Store) rememberAbsent(p string) {
 	s.absent[p] = true
 }
 
-// Ops returns the audit trail in application order.
+// Ops returns the audit trail in insertion order. The buffered tail is
+// flushed first, so the answer carries every row the session recorded up to
+// this call. See TheoryOfAuditBatching.
 func (s *Store) Ops() ([]Op, error) {
+	s.flushOps()
 	rows, err := s.db.Query(`SELECT time, op, path, detail FROM ops ORDER BY id`)
 	if err != nil {
 		return nil, err

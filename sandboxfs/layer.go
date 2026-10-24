@@ -70,7 +70,9 @@ func kindOf(info os.FileInfo) Kind {
 // when the session wrote the path, the base's content otherwise. A pipe and
 // a symbolic link cannot be read as content and report EINVAL, and a
 // directory reports EISDIR, matching the kernel's own answers. A base entry
-// is Lstat'ed first, so a pipe path never blocks on open.
+// is Lstat'ed first, so a pipe path never blocks on open. The upper layer's
+// content lives in the chunk table, assembled by the stored size. See
+// TheoryOfChunkedContent.
 func (s *Store) ReadFile(p string) ([]byte, error) {
 	p = Canonical(p)
 	r, ok, err := s.row(p)
@@ -87,8 +89,12 @@ func (s *Store) ReadFile(p string) ([]byte, error) {
 		case KindSymlink, KindFIFO:
 			return nil, syscall.EINVAL
 		}
+		content, err := s.readContent(p, r.size)
+		if err != nil {
+			return nil, err
+		}
 		s.auditRead(p)
-		return r.content, nil
+		return content, nil
 	}
 	rel := relPath(p)
 	info, err := s.baseRoot.Lstat(rel)
@@ -110,13 +116,14 @@ func (s *Store) ReadFile(p string) ([]byte, error) {
 }
 
 // ReadRange returns the content window [off, off+size) of one path without
-// materialising the whole file: the upper layer's blob is windowed with
-// sqlite's substr, and a base file is read with ReadAt. A window past the
-// end yields an empty slice, never an error. The upper layer's kind, deletion
-// state, and window come back in one query. The base descriptor serves the
-// window with one fstatat, one openat, and one pread; a store without the
-// descriptor falls back to the os.Root walk unchanged. See
-// TheoryOfCompletePOSIX, TheoryOfReadPath and TheoryOfBaseFdAccess.
+// materialising the whole file: the upper layer's window is one indexed query
+// over the chunks covering it, and a base file is read with ReadAt. A window
+// past the end yields an empty slice, never an error. The upper layer's kind
+// and deletion state come back in the same query that sizes the window. The
+// base descriptor serves the window with one fstatat, one openat, and one
+// pread; a store without the descriptor falls back to the os.Root walk
+// unchanged. See TheoryOfCompletePOSIX, TheoryOfReadPath and
+// TheoryOfBaseFdAccess.
 func (s *Store) ReadRange(p string, off int64, size int) ([]byte, error) {
 	p = Canonical(p)
 	if off < 0 || size < 0 {
@@ -170,7 +177,9 @@ func (s *Store) ReadRange(p string, off int64, size int) ([]byte, error) {
 
 // ReadDir lists one directory, merging the base's entries with the upper
 // layer's: an upper entry overrides a base entry of the same name, and a
-// whiteout removes it.
+// whiteout removes it. The upper rows' sizes come from the stored size column
+// and a link's from its target, so a listing never loads content. See
+// TheoryOfChunkedContent.
 func (s *Store) ReadDir(p string) ([]DirEntry, error) {
 	p = Canonical(p)
 	a, err := s.Stat(p)
@@ -205,7 +214,7 @@ func (s *Store) ReadDir(p string) ([]DirEntry, error) {
 	}
 	hi := prefix[:len(prefix)-1] + "0"
 	rows, err := s.db.Query(
-		`SELECT path, kind, mode, mtime, deleted, length(content), length(target)
+		`SELECT path, kind, mode, mtime, deleted, size, length(target)
 		 FROM files WHERE path >= ? AND path < ?`, prefix, hi)
 	if err != nil {
 		return nil, err
@@ -311,8 +320,10 @@ func (s *Store) checkParent(p string) error {
 	return nil
 }
 
-// WriteFile writes a regular file into the upper layer. A directory target
-// reports EISDIR and a pipe target EINVAL: neither carries writable content.
+// WriteFile writes a regular file into the upper layer: the row's metadata and
+// its content chunks leave in one transaction. A directory target reports
+// EISDIR and a pipe target EINVAL: neither carries writable content.
+// See TheoryOfChunkedContent.
 func (s *Store) WriteFile(p string, content []byte, perm os.FileMode) error {
 	p = Canonical(p)
 	if p == "/" {
@@ -348,18 +359,19 @@ func (s *Store) WriteFile(p string, content []byte, perm os.FileMode) error {
 	r.path = p
 	r.kind = KindRegular
 	r.deleted = false
-	r.content = append([]byte(nil), content...)
 	r.target = ""
 	r.mtime = time.Now()
-	if err := s.put(r); err != nil {
+	if err := s.putContent(r, content); err != nil {
 		return err
 	}
 	s.audit("write", p, fmt.Sprintf("%d bytes", len(content)))
 	return nil
 }
 
-// Mkdir creates a directory in the upper layer. A path the base already
-// holds reports ErrExist, as mkdir must.
+// Mkdir creates a directory in the upper layer. A path the base already holds
+// reports ErrExist, as mkdir must. A directory carries no content, so the
+// row's metadata write drops any chunks the path held. See
+// TheoryOfChunkedContent.
 func (s *Store) Mkdir(p string, perm os.FileMode) error {
 	p = Canonical(p)
 	if p == "/" {
@@ -390,7 +402,6 @@ func (s *Store) Mkdir(p string, perm os.FileMode) error {
 	r.path = p
 	r.kind = KindDir
 	r.deleted = false
-	r.content = nil
 	r.target = ""
 	r.mode = perm
 	r.mtime = time.Now()
@@ -401,7 +412,9 @@ func (s *Store) Mkdir(p string, perm os.FileMode) error {
 	return nil
 }
 
-// Symlink records a symbolic link in the upper layer.
+// Symlink records a symbolic link in the upper layer. A link carries a target,
+// never content, so the row's metadata write drops any chunks the path held.
+// See TheoryOfChunkedContent.
 func (s *Store) Symlink(target, p string) error {
 	p = Canonical(p)
 	if err := s.checkParent(p); err != nil {
@@ -425,7 +438,6 @@ func (s *Store) Symlink(target, p string) error {
 	r.path = p
 	r.kind = KindSymlink
 	r.deleted = false
-	r.content = nil
 	r.target = target
 	r.mtime = time.Now()
 	if err := s.put(r); err != nil {
@@ -435,9 +447,10 @@ func (s *Store) Symlink(target, p string) error {
 	return nil
 }
 
-// Mkfifo records a named pipe in the upper layer. The store records only
-// the pipe's existence and mode: a pipe carries no content, and its blocking
-// semantics belong to the kernel. See TheoryOfCompletePOSIX.
+// Mkfifo records a named pipe in the upper layer. The store records only the
+// pipe's existence and mode: a pipe carries no content, and its blocking
+// semantics belong to the kernel, so its metadata write drops any chunks the
+// path held. See TheoryOfCompletePOSIX and TheoryOfChunkedContent.
 func (s *Store) Mkfifo(p string, mode os.FileMode) error {
 	p = Canonical(p)
 	if err := s.checkParent(p); err != nil {
@@ -464,7 +477,6 @@ func (s *Store) Mkfifo(p string, mode os.FileMode) error {
 	r.path = p
 	r.kind = KindFIFO
 	r.deleted = false
-	r.content = nil
 	r.target = ""
 	r.mode = mode
 	r.mtime = time.Now()
@@ -495,7 +507,9 @@ func (s *Store) Readlink(p string) (string, error) {
 }
 
 // Remove deletes a path: a whiteout hides a base file, and an upper entry is
-// replaced by a whiteout that keeps its recorded origin.
+// replaced by a whiteout that keeps its recorded origin. A whiteout drops the
+// path's content chunks, so a deleted file stores no bytes. See
+// TheoryOfChunkedContent.
 func (s *Store) Remove(p string) error {
 	p = Canonical(p)
 	if p == "/" {
@@ -529,7 +543,6 @@ func (s *Store) Remove(p string) error {
 	}
 	r.path = p
 	r.deleted = true
-	r.content = nil
 	r.target = ""
 	r.mtime = time.Now()
 	if err := s.put(r); err != nil {
@@ -543,7 +556,9 @@ func (s *Store) Remove(p string) error {
 // write policy before either row changes, so a refused destination never
 // leaves the source deleted. A directory materializes its whole tree at the
 // destination and whiteouts the source, because the store is path-addressed
-// and has no directory node to move; see renameDir.
+// and has no directory node to move; see renameDir. A regular file's content
+// travels as chunks: the destination's content is replaced and the source's
+// chunks drop with its whiteout. See TheoryOfChunkedContent.
 func (s *Store) Rename(oldPath, newPath string) error {
 	oldPath = Canonical(oldPath)
 	newPath = Canonical(newPath)
@@ -574,7 +589,13 @@ func (s *Store) Rename(oldPath, newPath string) error {
 		if src.deleted {
 			return ErrNotExist
 		}
-		kind, mode, content, target = src.kind, src.mode, src.content, src.target
+		kind, mode, target = src.kind, src.mode, src.target
+		if kind == KindRegular {
+			content, err = s.readContent(oldPath, src.size)
+			if err != nil {
+				return err
+			}
+		}
 	} else {
 		info, err := s.baseRoot.Lstat(relPath(oldPath))
 		if err != nil {
@@ -619,10 +640,9 @@ func (s *Store) Rename(oldPath, newPath string) error {
 	dst.kind = kind
 	dst.mode = mode
 	dst.deleted = false
-	dst.content = content
 	dst.target = target
 	dst.mtime = time.Now()
-	if err := s.put(dst); err != nil {
+	if err := s.putContent(dst, content); err != nil {
 		return err
 	}
 	rem, remOK, err := s.row(oldPath)
@@ -637,7 +657,6 @@ func (s *Store) Rename(oldPath, newPath string) error {
 	}
 	rem.path = oldPath
 	rem.deleted = true
-	rem.content = nil
 	rem.target = ""
 	rem.mtime = time.Now()
 	if err := s.put(rem); err != nil {
@@ -772,8 +791,11 @@ func (s *Store) renameDir(oldPath, newPath string) error {
 }
 
 // SetMode changes the permission bits of one path. A base file that the
-// session has not yet touched is captured with its content first, so a
-// mode-only change never appears to empty the file.
+// session has not yet touched is materialised with its content first, so a
+// mode-only change never appears to empty the file: the content moves into the
+// chunk table beside the new mode. A link, directory, or pipe carries no
+// content, so its captured row needs no materialisation. See
+// TheoryOfChunkedContent.
 func (s *Store) SetMode(p string, mode os.FileMode) error {
 	p = Canonical(p)
 	r, ok, err := s.row(p)
@@ -785,12 +807,11 @@ func (s *Store) SetMode(p string, mode os.FileMode) error {
 		if err != nil {
 			return err
 		}
-		if r.kind == KindRegular && r.originalExists {
-			content, err := s.baseRoot.ReadFile(relPath(p))
+		if r.kind == KindRegular {
+			r, err = s.materializeContent(p, -1, 0o644)
 			if err != nil {
 				return err
 			}
-			r.content = content
 		}
 	}
 	if r.deleted {
@@ -813,12 +834,13 @@ func (s *Store) CanWrite(p string) error {
 	return s.checkWrite(Canonical(p))
 }
 
-// Link creates a hard link at newPath sharing oldPath's content. POSIX
-// allows hard links only to regular files and symbolic links; directories
-// report EPERM. The store is path-addressed with no shared inode, so the
-// link copies the current content into a new row that then evolves
-// independently, matching the observable behavior a coding agent expects
-// from a hard link: same content at both paths until either is written.
+// Link creates a hard link at newPath sharing oldPath's content. POSIX allows
+// hard links only to regular files and symbolic links; directories report
+// EPERM. The store is path-addressed with no shared inode, so the link copies
+// the current content into a new row that then evolves independently, matching
+// the observable behavior a coding agent expects from a hard link: same
+// content at both paths until either is written. The copied content lands as
+// the destination's chunks. See TheoryOfChunkedContent.
 func (s *Store) Link(oldPath, newPath string) error {
 	oldPath = Canonical(oldPath)
 	newPath = Canonical(newPath)
@@ -868,10 +890,9 @@ func (s *Store) Link(oldPath, newPath string) error {
 	r.kind = a.Kind
 	r.mode = a.Mode
 	r.deleted = false
-	r.content = content
 	r.target = target
 	r.mtime = time.Now()
-	if err := s.put(r); err != nil {
+	if err := s.putContent(r, content); err != nil {
 		return err
 	}
 	s.audit("link", oldPath, newPath)
@@ -881,8 +902,9 @@ func (s *Store) Link(oldPath, newPath string) error {
 // SetTimes replaces the recorded modification time of one path. The store
 // tracks mtime only: atime is not part of the recorded identity, and a
 // toolchain reads mtime to judge staleness, not access time. A base file the
-// session has not touched is captured with its content first, so a time-only
-// change never appears to empty the file. See TheoryOfCompletePOSIX.
+// session has not touched is materialised with its content first, so a
+// time-only change never appears to empty the file. See TheoryOfCompletePOSIX
+// and TheoryOfChunkedContent.
 func (s *Store) SetTimes(p string, mtime time.Time) error {
 	p = Canonical(p)
 	r, ok, err := s.row(p)
@@ -894,12 +916,11 @@ func (s *Store) SetTimes(p string, mtime time.Time) error {
 		if err != nil {
 			return err
 		}
-		if r.kind == KindRegular && r.originalExists {
-			content, err := s.baseRoot.ReadFile(relPath(p))
+		if r.kind == KindRegular {
+			r, err = s.materializeContent(p, -1, 0o644)
 			if err != nil {
 				return err
 			}
-			r.content = content
 		}
 	}
 	if r.deleted {
