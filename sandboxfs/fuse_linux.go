@@ -621,6 +621,13 @@ type fuseServer struct {
 	// and a reply costs no allocation.
 	outBuf []byte
 
+	// timings aggregates the measured cost of every answered request, so a
+	// session can report which operation its workload spends its time in.
+	// The constructor installs it and the read loop stamps every request; a
+	// nil value measures nothing, which is what a server built without the
+	// constructor gets. See TheoryOfOperationTiming.
+	timings *OpTimings
+
 	done chan struct{}
 }
 
@@ -633,6 +640,7 @@ func newFuseServer(store *Store, devFd int) *fuseServer {
 		handles: make(map[uint64]*fuseHandle),
 		nextID:  fuseRootID + 1,
 		nextFh:  1,
+		timings: newOpTimings(),
 		done:    make(chan struct{}),
 	}
 }
@@ -654,7 +662,13 @@ func (s *fuseServer) run() {
 		if n <= 0 || n < fuseInHeaderSize {
 			return
 		}
+		// One start stamp and one record per request attribute the server's
+		// own cost — dispatch plus the reply write — to the request's opcode.
+		// See TheoryOfOperationTiming.
+		opcode := binary.LittleEndian.Uint32(buf[4:8])
+		mark := s.timings.markRequest()
 		s.dispatch(buf[:n])
+		s.timings.recordRequest(opcode, mark)
 	}
 }
 

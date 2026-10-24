@@ -4,6 +4,7 @@ package sandboxfs
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -67,6 +68,12 @@ type MountedFS struct {
 
 	devFd  int
 	server *fuseServer
+	// stopTiming stops the periodic operation-timing reporter; nil when
+	// the timing environment left reporting disabled. Unmount stops it
+	// and writes the final snapshot, so a session that ends before the
+	// first report interval still reports where its time went.
+	// See TheoryOfOperationTiming.
+	stopTiming func()
 }
 
 // Mount mounts the sandbox filesystem and, when requested, pivots the
@@ -123,6 +130,13 @@ func Mount(opts MountOptions) (*MountedFS, error) {
 		server:     server,
 	}
 	go server.run()
+	if timing := os.Getenv(timingEnv); timing != "" {
+		// The reporter runs until Unmount stops it: a measurement is a
+		// debugging aid, and the final snapshot at unmount covers a session
+		// too short to reach the first interval.
+		// See TheoryOfOperationTiming.
+		mfs.stopTiming = server.timings.StartReporter(timingIntervalOf(timing), os.Stderr)
+	}
 	if err := mfs.bindPassthrough(opts.Passthrough); err != nil {
 		_ = mfs.Unmount()
 		return nil, err
@@ -134,6 +148,16 @@ func Mount(opts MountOptions) (*MountedFS, error) {
 		}
 	}
 	return mfs, nil
+}
+
+// Timings returns the mount's operation-timing aggregate, or nil when the
+// mount carries no server. A measurement reads it after a workload ran.
+// See TheoryOfOperationTiming.
+func (m *MountedFS) Timings() *OpTimings {
+	if m == nil || m.server == nil {
+		return nil
+	}
+	return m.server.timings
 }
 
 // privateBaseView clones base into a fresh bind mount that predates the FUSE
@@ -260,6 +284,10 @@ func (m *MountedFS) Unmount() error {
 	}
 	if m.server != nil {
 		<-m.server.done
+		// The final snapshot is the whole session's distribution, written
+		// after the server stopped so no request lands beside it.
+		// See TheoryOfOperationTiming.
+		m.reportTimings(os.Stderr)
 	}
 	if m.Store != nil {
 		if e := m.Store.Close(); err == nil {
@@ -267,4 +295,21 @@ func (m *MountedFS) Unmount() error {
 		}
 	}
 	return err
+}
+
+// reportTimings stops the periodic operation-timing reporter and writes the
+// final snapshot to w, so a session that ends before the first report
+// interval still reports where its time went. Reporting stays gated: a mount
+// without the timing environment carries no stop function and writes nothing,
+// and a second call writes nothing because the first cleared it.
+// See TheoryOfOperationTiming.
+func (m *MountedFS) reportTimings(w io.Writer) {
+	if m == nil || m.server == nil || m.server.timings == nil || m.stopTiming == nil {
+		return
+	}
+	m.stopTiming()
+	m.stopTiming = nil
+	if w != nil {
+		_, _ = io.WriteString(w, m.server.timings.Report())
+	}
 }
