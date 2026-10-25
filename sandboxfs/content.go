@@ -334,13 +334,23 @@ func (s *Store) truncateChunks(ex dbExecer, p string, size int64) error {
 // it never reads bytes it is about to drop. A whole-file capture is bounded by
 // the store's own limit instead, because the bytes it reads become a stored
 // row: a base file above maxFileSize reports EFBIG before a byte reaches
-// memory. See TheoryOfBaseCapture.
+// memory. A base node that is not a regular file reports EINVAL without being
+// opened: a device blocks on its peer's data, and the read would swallow what
+// it waits for. See TheoryOfBaseCapture.
 func (s *Store) readBaseContent(p string, limit int64) ([]byte, error) {
-	f, err := s.baseRoot.Open(relPath(p))
+	rel := relPath(p)
+	info, err := s.baseRoot.Lstat(rel)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, nil
 		}
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%w: the base node holds no content: %s", syscall.EINVAL, p)
+	}
+	f, err := s.baseRoot.Open(rel)
+	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
@@ -364,8 +374,18 @@ func (s *Store) readBaseContent(p string, limit int64) ([]byte, error) {
 // sequential read of the whole file, so the request path stays bounded in
 // time as well as in memory. The digest is the one contentHash produces for
 // the same bytes, and the apply reads the host through the same bound, so
-// both sides of the comparison cover one prefix. See TheoryOfBaseCapture.
+// both sides of the comparison cover one prefix. A base node that is not a
+// regular file reports EINVAL before it is opened, so a character device
+// never blocks the server's one goroutine on its peer's data.
+// See TheoryOfBaseCapture.
 func hashBaseFile(root *os.Root, rel string) (string, error) {
+	info, err := root.Lstat(rel)
+	if err != nil {
+		return "", err
+	}
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("%w: the base node holds no content: %s", syscall.EINVAL, rel)
+	}
 	f, err := root.Open(rel)
 	if err != nil {
 		return "", err
@@ -385,14 +405,22 @@ func hashBaseFile(root *os.Root, rel string) (string, error) {
 // same bounded read the capture paid. A file the host no longer holds reports
 // no content rather than an error, the same answer readBaseContent gives: the
 // conflict check names the vanished host path, and a review that stopped at
-// the read would lose every other change beside it. See TheoryOfBaseCapture
-// and TheoryOfApplyConflict.
+// the read would lose every other change beside it. A base node that is not a
+// regular file reports EINVAL before it is opened, so the review never blocks
+// on a device either. See TheoryOfBaseCapture and TheoryOfApplyConflict.
 func readBasePrefix(root *os.Root, rel string) ([]byte, error) {
-	f, err := root.Open(rel)
+	info, err := root.Lstat(rel)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, nil
 		}
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%w: the base node holds no content: %s", syscall.EINVAL, rel)
+	}
+	f, err := root.Open(rel)
+	if err != nil {
 		return nil, err
 	}
 	defer f.Close()

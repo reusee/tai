@@ -45,6 +45,14 @@ Without the three rules the pause grows with whatever the session touches —
 an image, an archive, a database — and every other process's file I/O waits
 behind it. A network client that loads its certificate bundle during a
 handshake then pays that pause against a deadline it never set.
+
+Only a node the store can serve is captured: a regular file, a directory, a
+link, or a pipe. A device and a socket are refused with EINVAL before
+anything opens them. A character device blocks on read until its peer writes
+— the controlling terminal blocks until a key arrives — and that read
+consumes the bytes it waited for, so a capture that hashed one would swallow
+the user's input and freeze every other process behind the server's single
+goroutine.
 `
 
 // Stat returns the attributes of one sandbox path. It never follows a
@@ -98,6 +106,19 @@ func kindOf(info os.FileInfo) Kind {
 	default:
 		return KindRegular
 	}
+}
+
+// baseServable reports whether a base node is one the store can record and
+// serve: a regular file, a directory, a symbolic link, or a named pipe. A
+// character device, a block device, and a socket are none of them, and
+// opening a character device blocks until its peer writes — the controlling
+// terminal blocks until a key arrives — while the read consumes the bytes it
+// waited for. See TheoryOfBaseCapture.
+func baseServable(mode os.FileMode) bool {
+	return mode.IsRegular() ||
+		mode.IsDir() ||
+		mode&os.ModeSymlink != 0 ||
+		mode&os.ModeNamedPipe != 0
 }
 
 // ReadFile returns the content of a regular file: the upper layer's content
@@ -288,9 +309,11 @@ func (s *Store) ReadDir(p string) ([]DirEntry, error) {
 // no bytes; a write replaces the sentinel with the stored length. A symbolic
 // link's hash carries a tag, so replacing a link with a byte-identical
 // regular file stays a change of kind. A named pipe has no content, so its
-// kind is recorded as a sentinel the net-change comparison recognises. A path
-// that names the store's own database is refused before the read, so a stray
-// write or delete never drags the record through the hash. See
+// kind is recorded as a sentinel the net-change comparison recognises. A base
+// node the store cannot serve — a device or a socket — is refused with EINVAL
+// before anything opens it, because opening one blocks on its peer's data. A
+// path that names the store's own database is refused before the read, so a
+// stray write or delete never drags the record through the hash. See
 // TheoryOfApplyConflict, TheoryOfBaseCapture and TheoryOfCompletePOSIX.
 func (s *Store) captureOriginal(p string) (fileRow, error) {
 	if s.isOwnDBPath(p) {
@@ -303,6 +326,9 @@ func (s *Store) captureOriginal(p string) (fileRow, error) {
 			return r, nil
 		}
 		return fileRow{}, err
+	}
+	if !baseServable(info.Mode()) {
+		return fileRow{}, fmt.Errorf("%w: the base node is not a file, a directory, a link, or a pipe: %s", syscall.EINVAL, p)
 	}
 	r.kind = kindOf(info)
 	r.mode = info.Mode().Perm()

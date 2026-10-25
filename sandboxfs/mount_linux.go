@@ -103,6 +103,25 @@ var recursivePassthrough = map[string]bool{
 	"/sys":  true,
 }
 
+// kernelFilesystems lists the host trees that must stay real kernel
+// filesystems inside the mount. The theory names them as always passthrough,
+// so the mount binds them whatever the caller passes: a caller that forgets
+// /dev hands the store a character device, the store reports it as a regular
+// file, and a capture of it opens the device to hash its content — a terminal
+// blocks until a key arrives, and the read consumes what it waited for.
+// See TheoryOfPassthrough.
+var kernelFilesystems = []string{"/dev", "/proc", "/sys"}
+
+// passthroughPaths returns the directories the mount binds over the store:
+// the kernel filesystems first, then the caller's own list. The bind cleans
+// the paths and skips a duplicate, so a caller that passes one of the kernel
+// filesystems binds it once. See TheoryOfPassthrough.
+func passthroughPaths(caller []string) []string {
+	out := make([]string, 0, len(kernelFilesystems)+len(caller))
+	out = append(out, kernelFilesystems...)
+	return append(out, caller...)
+}
+
 // MountedFS is one mounted sandbox filesystem.
 type MountedFS struct {
 	// Store is the sqlite-backed upper layer serving the mount.
@@ -121,8 +140,8 @@ type MountedFS struct {
 	stopTiming func()
 }
 
-// Mount mounts the sandbox filesystem and, when requested, pivots the
-// process root to it. See TheoryOfFuseMount and TheoryOfPassthrough.
+// Mount mounts the sandbox filesystem and, when requested, pivots the process
+// root to it. See TheoryOfFuseMount and TheoryOfPassthrough.
 func Mount(opts MountOptions) (*MountedFS, error) {
 	if opts.Mountpoint == "" {
 		return nil, fmt.Errorf("sandboxfs: empty mountpoint")
@@ -197,7 +216,10 @@ func Mount(opts MountOptions) (*MountedFS, error) {
 		// See TheoryOfOperationTiming.
 		mfs.stopTiming = server.timings.StartReporter(timingIntervalOf(timing), os.Stderr)
 	}
-	if err := mfs.bindPassthrough(opts.Passthrough); err != nil {
+	// The kernel filesystems ride beside the caller's list: the theory names
+	// them as always passthrough, and a caller that forgets one hands the
+	// store a device node it must not serve. See TheoryOfPassthrough.
+	if err := mfs.bindPassthrough(passthroughPaths(opts.Passthrough)); err != nil {
 		_ = mfs.Unmount()
 		return nil, err
 	}

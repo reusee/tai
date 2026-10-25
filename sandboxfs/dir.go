@@ -205,17 +205,19 @@ func (c *dirCursor) readUpper() error {
 
 // openBase opens the base directory once, so later windows resume the
 // enumeration instead of reopening it. A directory the base does not hold
-// contributes no entry: the upper layer answers it alone.
-// See TheoryOfDirectoryStream.
+// contributes no entry: the upper layer answers it alone. The base's own kind
+// is read before the open, because opening a named pipe or a device blocks on
+// its peer's data and this server answers every request on one goroutine.
+// See TheoryOfDirectoryStream and TheoryOfBaseCapture.
 func (c *dirCursor) openBase() {
 	c.baseDone = true
-	f, err := c.store.baseRoot.Open(canonicalRel(c.path))
-	if err != nil {
+	rel := canonicalRel(c.path)
+	info, err := c.store.baseRoot.Lstat(rel)
+	if err != nil || !info.IsDir() {
 		return
 	}
-	info, err := f.Stat()
-	if err != nil || !info.IsDir() {
-		_ = f.Close()
+	f, err := c.store.baseRoot.Open(rel)
+	if err != nil {
 		return
 	}
 	c.base = f

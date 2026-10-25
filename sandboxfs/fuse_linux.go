@@ -208,6 +208,13 @@ directly. A passthrough whose host directory is absent is skipped before its
 target is created, so a skip leaves no directory behind for the session to
 review.
 
+The kernel filesystems are bound whatever the caller passes. A caller that
+omits /dev is the failure the rule exists to prevent: the store would serve
+a character device, report it as a regular file, and open it to hash its
+content — a terminal blocks until a key arrives, and the read consumes what
+it waited for — while the server answers every request on one goroutine. The
+caller's own entries ride beside them, and a duplicate binds once.
+
 The store's sqlite database is the one file that must not transit FUSE: the
 FUSE daemon serves the store, so a store read that reached the daemon would
 recurse. Its directory must therefore be one of the passthroughs, or the
@@ -1441,15 +1448,6 @@ func (s *fuseServer) handleRead(body []byte) ([]byte, error) {
 	return s.readFrom(h, int64(in.Offset), int(in.Size))
 }
 
-// baseHandleFile returns the handle's cached base-layer reader, opening it on
-// first use. The base descriptor answers the open with one fstatat and one
-// openat: the kind check and the open are the read window's own pair, so a
-// streamed file pays no component-by-component guard per open. A directory,
-// link, or pipe has no readable content, and a pipe is never opened, so a pipe
-// read never blocks. The caller has already established that the upper layer
-// holds no window for the path. A store without the descriptor keeps the same
-// kind check through the portable walk, so the refusal and the no-open rule
-// hold on both paths. See TheoryOfReadPath and TheoryOfBaseFdAccess.
 func (s *fuseServer) baseHandleFile(h *fuseHandle) (*os.File, error) {
 	if h.base != nil {
 		return h.base, nil
@@ -1470,6 +1468,18 @@ func (s *fuseServer) baseHandleFile(h *fuseHandle) (*os.File, error) {
 		case KindDir:
 			return nil, syscall.EISDIR
 		case KindSymlink, KindFIFO:
+			return nil, syscall.EINVAL
+		}
+		// The attribute above may come from an upper row, which records what
+		// the session made of the path rather than what the base holds. The
+		// base node is therefore read before the open: a device and a socket
+		// are not content, and opening one waits for its peer. See
+		// TheoryOfBaseCapture.
+		info, lerr := s.store.baseRoot.Lstat(rel)
+		if lerr != nil {
+			return nil, lerr
+		}
+		if !info.Mode().IsRegular() {
 			return nil, syscall.EINVAL
 		}
 		f, err = s.store.baseRoot.Open(rel)
