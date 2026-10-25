@@ -55,61 +55,6 @@ func TestUpperAbsentCacheRefreshesOnWrite(t *testing.T) {
 	}
 }
 
-// TestBaseReadDirMatchesRootWalk checks the fast listing against the os.Root
-// walk: the same names with the same kinds, sizes, modes, and times, and a base
-// path that is not a directory contributes no entry. See TheoryOfBaseFdAccess.
-func TestBaseReadDirMatchesRootWalk(t *testing.T) {
-	store, base := newCacheTestStore(t)
-	if store.baseFd < 0 {
-		t.Skip("the platform offers no base descriptor")
-	}
-	if err := os.Mkdir(filepath.Join(base, "d"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink("a.txt", filepath.Join(base, "link")); err != nil {
-		t.Fatal(err)
-	}
-	fast, ok, err := baseReadDir(store.baseFd, ".")
-	if err != nil || !ok {
-		t.Fatalf("baseReadDir: ok = %v, err = %v", ok, err)
-	}
-	f, err := store.baseRoot.Open(".")
-	if err != nil {
-		t.Fatal(err)
-	}
-	des, err := f.ReadDir(-1)
-	f.Close()
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := make(map[string]Attr, len(des))
-	for _, de := range des {
-		info, err := de.Info()
-		if err != nil {
-			t.Fatal(err)
-		}
-		want[de.Name()] = attrOf(info)
-	}
-	if len(fast) != len(want) {
-		t.Fatalf("fast listing holds %d entries, root walk holds %d", len(fast), len(want))
-	}
-	for _, e := range fast {
-		w, found := want[e.Name]
-		if !found {
-			t.Fatalf("fast listing names %q, which the root walk does not", e.Name)
-		}
-		if e.Attr.Kind != w.Kind || e.Attr.Size != w.Size || e.Attr.Mode != w.Mode {
-			t.Fatalf("%s: fast = %+v, root = %+v", e.Name, e.Attr, w)
-		}
-		if !e.Attr.ModTime.Equal(w.ModTime) {
-			t.Fatalf("%s: mtime = %v, want %v", e.Name, e.Attr.ModTime, w.ModTime)
-		}
-	}
-	if list, ok, err := baseReadDir(store.baseFd, "a.txt"); !ok || err == nil || len(list) != 0 {
-		t.Fatalf("listing a regular file: entries = %v, ok = %v, err = %v, want no entry and an error", list, ok, err)
-	}
-}
-
 // TestBaseOpenFileMatchesRootWalk checks the descriptor open against the
 // os.Root walk the read handle used before: a regular file opens with its
 // bytes, and a directory, a symbolic link, and a missing path report the errors

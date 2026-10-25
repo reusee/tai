@@ -28,14 +28,13 @@ its own and asks the store again for the target's path. The descriptor is
 opened read-only, so a leak of it cannot widen write containment. Writes keep
 the os.Root walk, because containment matters exactly where the store writes.
 
-A directory listing takes the same path: one openat of the directory, one
-getdents run, and one fstatat per entry. The os.Root walk answered the same
-listing by reopening every component of the directory's path, and it priced
-each entry through the same walk. The entry stat stays, because a READDIRPLUS
-reply carries a full attribute per entry — the mode, size, and time a dirent
-does not hold — so the saving is the walk, not the stat. O_NOFOLLOW keeps the
-rule above: a base symbolic link reports itself and never becomes a listing of
-its target.
+A directory listing opens the directory once through the root and takes the
+enumeration position from that handle, so the windows one listing delivers
+resume instead of reopening. Each entry is one fstatat beneath that same
+handle, so a window costs its entry count and never that count times the
+directory's depth. The entry stat stays because a dirent carries the entry's
+type and a READDIRPLUS reply carries its full attribute — the mode, size, and
+time a name alone does not hold — so the saving is the walk, not the stat.
 
 The window read checks the host kind before it opens, matching the os.Root
 path's order: a directory reports EISDIR, a link or pipe EINVAL, and a regular
@@ -76,6 +75,24 @@ func baseStatAt(fd int, rel string) (a Attr, ok bool, err error) {
 	}
 	var st unix.Stat_t
 	if statErr := unix.Fstatat(fd, rel, &st, unix.AT_SYMLINK_NOFOLLOW); statErr != nil {
+		return Attr{}, true, statErr
+	}
+	return attrOfStatT(&st), true, nil
+}
+
+// baseDirEntryStat reports one directory entry's attributes relative to the
+// open directory dir: one fstatat per entry instead of a resolution of the
+// entry's whole path, so one window of a deep directory costs its entry count
+// and never that count times the depth. The never-follow rule holds: a link
+// reports itself and is never reported as its target. ok reports whether the
+// platform serves the call; a false result sends the caller back to the base
+// path. See TheoryOfBaseFdAccess and TheoryOfDirectoryStream.
+func baseDirEntryStat(dir *os.File, name string) (a Attr, ok bool, err error) {
+	if dir == nil {
+		return Attr{}, false, nil
+	}
+	var st unix.Stat_t
+	if statErr := unix.Fstatat(int(dir.Fd()), name, &st, unix.AT_SYMLINK_NOFOLLOW); statErr != nil {
 		return Attr{}, true, statErr
 	}
 	return attrOfStatT(&st), true, nil
@@ -140,44 +157,6 @@ func baseReadAt(fd int, rel string, off int64, size int) (data []byte, ok bool, 
 		return nil, true, err
 	}
 	return buf[:n], true, nil
-}
-
-// baseReadDir lists one directory beneath fd: one openat of the directory, one
-// getdents run, and one fstatat per entry, so a tree walk pays no
-// component-by-component guard per directory and no path-based stat per entry.
-// ok reports whether the fast path handled the listing; a store without the
-// descriptor falls back to the os.Root walk unchanged.
-// See TheoryOfBaseFdAccess.
-func baseReadDir(fd int, rel string) (entries []DirEntry, ok bool, err error) {
-	if fd < 0 {
-		return nil, false, nil
-	}
-	// O_NOFOLLOW keeps the rule the stat path keeps: a base symbolic link
-	// reports itself and never becomes a listing of its target.
-	dirFd, openErr := unix.Openat(fd, rel,
-		unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
-	if openErr != nil {
-		return nil, true, openErr
-	}
-	dir := os.NewFile(uintptr(dirFd), rel)
-	if dir == nil {
-		_ = unix.Close(dirFd)
-		return nil, true, syscall.EBADF
-	}
-	defer dir.Close()
-	des, readErr := dir.ReadDir(-1)
-	if readErr != nil {
-		return nil, true, readErr
-	}
-	entries = make([]DirEntry, 0, len(des))
-	for _, de := range des {
-		var st unix.Stat_t
-		if statErr := unix.Fstatat(dirFd, de.Name(), &st, unix.AT_SYMLINK_NOFOLLOW); statErr != nil {
-			continue
-		}
-		entries = append(entries, DirEntry{Name: de.Name(), Attr: attrOfStatT(&st)})
-	}
-	return entries, true, nil
 }
 
 // baseOpenFile opens one base file beneath fd for a read handle: one fstatat

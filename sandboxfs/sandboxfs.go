@@ -87,20 +87,21 @@ reads thousands of paths while a session writes a few dozen. Every
 optimization here leaves the write path untouched.
 
 A listing of a session that has written nothing costs no merge. The base is the
-only layer that holds an entry, so the listing is the base's own entries,
-sorted: no map, no name slice, and no second pass to overlay rows that cannot
-exist. A store that holds a row takes the merged path, so a listing and a stat
-still agree on one path. The base walk itself has one implementation, shared by
-both listings, so they can never disagree on which entries the base holds. See
-TheoryOfUpperAbsentCache.
+only layer that holds an entry, so the listing is the base's own entries:
+no map, no name slice, and no second pass to overlay rows that cannot exist.
+A store that holds a row takes the merged path, so a listing and a stat still
+agree on one path. The cursor is the one implementation of the walk and the
+merge, so the mount's windows and the store's own whole-listing API can never
+disagree on which entries exist. See TheoryOfUpperAbsentCache and
+TheoryOfDirectoryStream.
 
 A listing carries "." and ".." from the store, and the directory's own
 attribute is not read twice to supply them: the kind check a listing already
 pays produces the attribute the "." entry reports, the parent's name is a prefix
 of the directory's own, and the parent's attributes cost one stat. A tree walk
 therefore pays per directory one stat of the directory, one of its parent, and
-the base's own openat, getdents, and per-entry stat — never a second stat of a
-directory the same request already stat'ed.
+the base's own enumerated window — never a second stat of a directory the same
+request already stat'ed.
 
 A metadata lookup never loads content. Stat needs the kind, mode, mtime,
 and size; the row's metadata is the whole answer, and the content lives in the
@@ -128,15 +129,17 @@ content from then on. The cached descriptor fixes a base file's view at open,
 the same snapshot the review step compares the host against when it reports a
 conflict.
 
-A directory handle carries the listing snapshot it filled, and every
-mutation the mount serves that adds, removes, or renames an entry clears
-the snapshot of that directory's open handles. The kernel cannot see a
-change this mount makes on its own: FOPEN_CACHE_DIR keeps the listing it
-read, and no notify call tells it otherwise, so the server clears its own
-cache and the next read rebuilds it from the store, the one source of the
-directory's current entries. A continued read keeps the one snapshot its
-offsets name, so the rebuild happens only after a mutation, never in the
-middle of a listing.
+A directory handle carries the entries its replies already named and a cursor
+for the rest, so one reply pulls only the window it carries and a large
+directory never costs one long request (see TheoryOfDirectoryStream). A
+mutation the mount serves marks the handle stale, and the effect depends on
+where the kernel reads next: a read from the first entry reseeds the listing
+from the store, so a re-listing sees the session's own change, while a
+continued read keeps the stream it started with, so a walk never skips or
+repeats a name because its own offsets shifted. The kernel cannot see a change
+this mount makes on its own — FOPEN_CACHE_DIR keeps the listing it read, and
+no notify call tells it otherwise — which is why the stale mark is the
+server's own notice.
 `
 
 const TheoryOfUpperAbsentCache = `

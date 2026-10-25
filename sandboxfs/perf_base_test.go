@@ -61,6 +61,49 @@ func TestBaseStatMatchesRootWalk(t *testing.T) {
 	}
 }
 
+// TestBaseDirEntryStatMatchesBasePath checks the window's per-entry stat against
+// the store's own: one listing entry must report the kind, size, mode, and time
+// the store reports for the entry's path, so a window and a stat never disagree
+// on one file. The link case protects the never-follow rule: an entry stat
+// reports the link itself, never its target. See TheoryOfDirectoryStream.
+func TestBaseDirEntryStatMatchesBasePath(t *testing.T) {
+	store := newBaseFastStore(t)
+	nested := filepath.Join(store.base, "d", "e")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nested, "f.txt"), []byte("hello"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("f.txt", filepath.Join(nested, "l")); err != nil {
+		t.Fatal(err)
+	}
+	dir, err := store.baseRoot.Open("d/e")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dir.Close()
+	for _, name := range []string{"f.txt", "l"} {
+		got, ok, err := baseDirEntryStat(dir, name)
+		if !ok || err != nil {
+			t.Fatalf("%s: the fast path did not answer: ok %v, err %v", name, ok, err)
+		}
+		want, err := store.Stat("/d/e/" + name)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if got.Kind != want.Kind || got.Size != want.Size || got.Mode != want.Mode {
+			t.Fatalf("%s: entry stat = %+v, store stat = %+v", name, got, want)
+		}
+		if !got.ModTime.Equal(want.ModTime) {
+			t.Fatalf("%s: entry mtime = %v, store mtime = %v", name, got.ModTime, want.ModTime)
+		}
+	}
+	if got, _, err := baseDirEntryStat(dir, "l"); err != nil || got.Kind != KindSymlink {
+		t.Fatalf("the link entry reports kind %v (error %v), want a symbolic link", got.Kind, err)
+	}
+}
+
 // TestBaseReadRangeMatchesRootWalk checks the fast window read: a window of a
 // base file serves its bytes, a directory reports EISDIR, and a link reports
 // EINVAL, matching the os.Root path's answers.

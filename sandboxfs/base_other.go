@@ -2,6 +2,8 @@
 
 package sandboxfs
 
+import "os"
+
 // The base descriptor fast path is Linux-only: the O_PATH descriptor and the
 // fstatat/openat/pread calls it rests on have no portable equivalent. A store
 // on another platform answers every base access through os.Root and keeps the
@@ -12,6 +14,10 @@ func openBaseDirFd(dir string) int { return -1 }
 func closeBaseDirFd(fd int) {}
 
 func baseStatAt(fd int, rel string) (Attr, bool, error) {
+	return Attr{}, false, nil
+}
+
+func baseDirEntryStat(dir *os.File, name string) (Attr, bool, error) {
 	return Attr{}, false, nil
 }
 

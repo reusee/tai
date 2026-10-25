@@ -601,9 +601,26 @@ type fuseDirent struct {
 // one open and one type check per handle instead of one of each per window.
 // See TheoryOfWriteSplice and TheoryOfReadPath.
 type fuseHandle struct {
-	path    string
-	isDir   bool
-	entries []DirEntry
+	path  string
+	isDir bool
+
+	// entries holds the directory entries this handle's replies already named,
+	// and the kernel's reply offset is an index into it: a continued read
+	// resumes where it stopped and a rewind reads the same entries again. dir
+	// is the cursor the entry past the last one comes from, nil once the
+	// listing is exhausted, so one request pulls only the entries it replies
+	// with. dirStale reports that a mutation through this mount changed the
+	// directory, so a read from the first entry reseeds the listing while a
+	// continued read keeps the stream it started with.
+	// See TheoryOfDirectoryStream.
+	entries  []DirEntry
+	dir      *dirCursor
+	dirStale bool
+
+	// dirWindow holds the entries one listing reply carries, reused across
+	// requests so a reply costs no allocation after its first.
+	// See TheoryOfDirectoryStream.
+	dirWindow []DirEntry
 
 	// mode is the file's permission bits, captured at open or create, so the
 	// write path needs no metadata lookup of its own: the open that handed
@@ -629,6 +646,15 @@ type fuseHandle struct {
 	// first read the upper layer does not answer, closed on release or
 	// invalidation. See TheoryOfReadPath.
 	base *os.File
+}
+
+// closeDir releases the handle's listing cursor, if any.
+// See TheoryOfDirectoryStream.
+func (h *fuseHandle) closeDir() {
+	if h.dir != nil {
+		h.dir.Close()
+		h.dir = nil
+	}
 }
 
 // closeBase releases the handle's cached base-layer reader, if any. The
@@ -1254,22 +1280,93 @@ func (s *fuseServer) invalidateOtherHandles(p string, self uint64) {
 	}
 }
 
-// invalidateDirListings clears the cached entries of every open handle of a
-// directory, so a read that follows a mutation fills the handle with the
-// entries the store holds now. The kernel cannot see a change this mount makes
-// on its own: FOPEN_CACHE_DIR keeps the listing it read, and no notify call
-// tells it otherwise, so the server clears the snapshot its own handler
-// mutated. A continued read keeps the one snapshot its offsets name, so the
-// rebuild happens only after a mutation, never in the middle of a listing.
-// See TheoryOfOpenCaching and TheoryOfReadPath.
+// invalidateDirListings marks the open listings of a directory stale, so a read
+// that starts over reseeds them from the store. The entries already delivered
+// and the cursor's position stay: resetting them would answer the kernel's next
+// cookie with an empty body, which the kernel reads as the end of the
+// directory, and a walk that a create or a delete interrupted would lose every
+// entry past the mutation. The kernel cannot see a change this mount makes on
+// its own, and FOPEN_CACHE_DIR keeps the listing it read, so the stale mark is
+// the server's own notice. See TheoryOfOpenCaching, TheoryOfReadPath and
+// TheoryOfDirectoryStream.
 func (s *fuseServer) invalidateDirListings(p string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, h := range s.handles {
 		if h.isDir && h.path == p {
-			h.entries = nil
+			h.dirStale = true
 		}
 	}
+}
+
+// seedListing opens a fresh cursor for one directory handle and fills the
+// entries that lead its reply: "." reports the directory's own attribute and
+// ".." its parent's, both from the reads openDir already paid, so a listing
+// costs no second stat of the directory it just checked.
+// See TheoryOfReadPath and TheoryOfDirectoryStream.
+func (s *fuseServer) seedListing(h *fuseHandle) error {
+	h.closeDir()
+	h.entries = h.entries[:0]
+	h.dirWindow = h.dirWindow[:0]
+	dir, err := s.store.openDir(h.path)
+	if err != nil {
+		return err
+	}
+	h.dir = dir
+	h.entries = append(h.entries, DirEntry{Name: ".", Attr: dir.self})
+	if dir.hasParent {
+		h.entries = append(h.entries, DirEntry{Name: "..", Attr: dir.parent})
+	}
+	return nil
+}
+
+// refreshListing reseeds a listing a mutation through this mount marked stale,
+// but only for a read from the first entry. A continued read keeps the stream
+// it started with and leaves the mark in place, so a later rewind still reseeds:
+// the entries the kernel holds cookies for stay addressable, and positioning a
+// fresh cursor at an arbitrary index would walk every entry before it in one
+// request — the cost this design removes — while a walk that shifted its own
+// offsets mid-way would repeat or skip a name. See TheoryOfDirectoryStream.
+func (s *fuseServer) refreshListing(h *fuseHandle, off int) error {
+	if !h.dirStale || off != 0 {
+		return nil
+	}
+	h.dirStale = false
+	return s.seedListing(h)
+}
+
+// dirEntryAt returns the entry at one index of a handle's listing, pulling one
+// window from the cursor when the index lies past what the handle holds. ok is
+// false at the end of the listing, and the cursor is then released.
+// See TheoryOfDirectoryStream.
+func (s *fuseServer) dirEntryAt(h *fuseHandle, i int) (entry DirEntry, ok bool, err error) {
+	for i >= len(h.entries) {
+		if h.dir == nil {
+			return DirEntry{}, false, nil
+		}
+		more, err := h.dir.next(dirBatchEntries)
+		if err != nil {
+			return DirEntry{}, false, err
+		}
+		if len(more) == 0 {
+			h.closeDir()
+			return DirEntry{}, false, nil
+		}
+		h.entries = append(h.entries, more...)
+	}
+	return h.entries[i], true, nil
+}
+
+// direntRecordSize is the padded length one READDIR record occupies: the fixed
+// dirent, the name, and the padding that aligns the next record.
+func direntRecordSize(name string) int {
+	return (fuseDirentSize + len(name) + 7) &^ 7
+}
+
+// entryRecordSize is the padded length one READDIRPLUS record occupies: the
+// entry body, the dirent, the name, and the padding.
+func entryRecordSize(name string) int {
+	return (fuseEntryOutSize + fuseDirentSize + len(name) + 7) &^ 7
 }
 
 func (s *fuseServer) handleOpen(nodeid uint64, body []byte) ([]byte, error) {
@@ -1494,6 +1591,7 @@ func (s *fuseServer) handleRelease(body []byte) ([]byte, error) {
 	s.mu.Unlock()
 	if h != nil {
 		h.closeBase()
+		h.closeDir()
 	}
 	return nil, nil
 }
@@ -1503,35 +1601,21 @@ func (s *fuseServer) handleOpendir(nodeid uint64) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	all, err := s.listEntries(p)
-	if err != nil {
+	// Opening a listing reads the directory's own attributes, the upper layer's
+	// rows for it, and one handle on the base directory. It enumerates nothing:
+	// a request that walked the directory would make its duration grow with the
+	// directory's entry count and hold the server's one goroutine for the whole
+	// walk. See TheoryOfDirectoryStream.
+	h := &fuseHandle{path: p, isDir: true}
+	if err := s.seedListing(h); err != nil {
+		h.closeDir()
 		return nil, err
 	}
-	fh := s.registerHandle(&fuseHandle{path: p, isDir: true, entries: all})
+	fh := s.registerHandle(h)
 	// The kernel keeps the listing across opens, so a repeated walk costs no
-	// request; a mutation through this mount clears the snapshot, and the
-	// next read rebuilds it. See TheoryOfOpenCaching and TheoryOfReadPath.
+	// request; a mutation through this mount clears the entries, and the next
+	// read reopens them. See TheoryOfOpenCaching and TheoryOfReadPath.
 	return encodeStruct(&fuseOpenOut{Fh: fh, OpenFlags: fuseOpenCacheDir}), nil
-}
-
-// listEntries returns the directory's entries with "." and "..": the listing a
-// READDIR reply carries. The store merges the two layers, and the parent comes
-// from the store so a sandbox path's ".." reports the sandbox's own attributes.
-// The directory's own attribute arrives from readDir, which reads it for the
-// kind check anyway, so one directory costs one stat of itself, one of its
-// parent, and the base's own walk. The parent's name is a prefix of the
-// directory's path, so naming it allocates nothing. See TheoryOfReadPath.
-func (s *fuseServer) listEntries(p string) ([]DirEntry, error) {
-	self, entries, err := s.store.readDir(p)
-	if err != nil {
-		return nil, err
-	}
-	all := make([]DirEntry, 0, len(entries)+2)
-	all = append(all, DirEntry{Name: ".", Attr: self})
-	if parent, err := s.store.Stat(parentOf(p)); err == nil {
-		all = append(all, DirEntry{Name: "..", Attr: parent})
-	}
-	return append(all, entries...), nil
 }
 
 func (s *fuseServer) handleReaddir(body []byte) ([]byte, error) {
@@ -1543,35 +1627,51 @@ func (s *fuseServer) handleReaddir(body []byte) ([]byte, error) {
 	if h == nil || !h.isDir {
 		return nil, syscall.ENOTDIR
 	}
-	if h.entries == nil {
-		// A mutation through this mount cleared the snapshot: the kernel
-		// cannot see such a change, so the server rebuilds it from the store,
-		// the one source of the directory's current entries.
-		// See TheoryOfReadPath.
-		all, err := s.listEntries(h.path)
-		if err != nil {
-			return nil, err
-		}
-		h.entries = all
-	}
 	start := int(in.Offset)
+	// A cookie past the entries the handle already holds names a reply the
+	// kernel never received, so the answer is the empty body a read at the end
+	// of a listing gets: pulling the listing forward to it would walk entries
+	// no reply carries. See TheoryOfDirectoryStream.
 	if start < 0 || start > len(h.entries) {
 		return []byte{}, nil
 	}
+	if err := s.refreshListing(h, start); err != nil {
+		return nil, err
+	}
 	maxSize := int(in.Size)
-	// The announced window is the negotiated 1 MiB even for a small
-	// directory, so sizing the scratch from it would reserve far more than
-	// the reply uses. Sum the entries that can fit instead.
-	need := 0
-	for i := start; i < len(h.entries); i++ {
-		need += (fuseDirentSize + len(h.entries[i].Name) + 7) &^ 7
-		if need >= maxSize {
-			need = maxSize
+	// The entries that fit are gathered before the node table's lock: one past
+	// the handle's window comes from the cursor, which reads the base and the
+	// store, and the lock must not cover that work. The gather also stops once
+	// this reply has pulled one window from the cursor, although the announced
+	// window could hold far more: a request's duration must not grow with the
+	// directory's entry count, and the kernel asks again at the cookie for the
+	// rest. See TheoryOfDirectoryStream.
+	h.dirWindow = h.dirWindow[:0]
+	held := len(h.entries)
+	used := 0
+	for i := start; ; i++ {
+		e, ok, err := s.dirEntryAt(h, i)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			break
+		}
+		padded := direntRecordSize(e.Name)
+		if used+padded > maxSize {
+			break
+		}
+		h.dirWindow = append(h.dirWindow, e)
+		used += padded
+		if len(h.entries)-held >= dirBatchEntries {
 			break
 		}
 	}
-	if cap(h.listBuf) < need {
-		h.listBuf = make([]byte, 0, need)
+	// The scratch is sized from the entries that fit rather than the announced
+	// window, which is the negotiated megabyte even for a small directory.
+	// See TheoryOfInitNegotiation.
+	if cap(h.listBuf) < used {
+		h.listBuf = make([]byte, 0, used)
 	}
 	out := h.listBuf[:0]
 	// One acquisition of the node table serves the whole reply, and each
@@ -1580,20 +1680,16 @@ func (s *fuseServer) handleReaddir(body []byte) ([]byte, error) {
 	// name: a tool that compares a listing's d_ino with a stat's st_ino must
 	// see one number, not two. See TheoryOfFuseMount.
 	s.mu.Lock()
-	for i := start; i < len(h.entries); i++ {
-		e := h.entries[i]
-		padded := (fuseDirentSize + len(e.Name) + 7) &^ 7
-		if len(out)+padded > maxSize {
-			break
-		}
+	for k, e := range h.dirWindow {
+		padded := direntRecordSize(e.Name)
 		id := s.childNodeLocked(h.path, e.Name)
 		prev := len(out)
 		out = out[:prev+padded]
-		// The scratch is reused, so the name's trailing padding would
-		// otherwise carry the previous reply's bytes.
+		// The scratch is reused, so the name's trailing padding would otherwise
+		// carry the previous reply's bytes.
 		clear(out[prev:])
 		binary.LittleEndian.PutUint64(out[prev:], id)
-		binary.LittleEndian.PutUint64(out[prev+8:], uint64(i+1))
+		binary.LittleEndian.PutUint64(out[prev+8:], uint64(start+k+1))
 		binary.LittleEndian.PutUint32(out[prev+16:], uint32(len(e.Name)))
 		binary.LittleEndian.PutUint32(out[prev+20:], direntType(e.Attr.Kind))
 		copy(out[prev+fuseDirentSize:], e.Name)
@@ -1612,58 +1708,61 @@ func (s *fuseServer) handleReaddirPlus(body []byte) ([]byte, error) {
 	if h == nil || !h.isDir {
 		return nil, syscall.ENOTDIR
 	}
-	if h.entries == nil {
-		// The listing was cleared by a mutation through this mount: the
-		// server rebuilds it from the store, the one source of the
-		// directory's current entries. See TheoryOfReadPath.
-		all, err := s.listEntries(h.path)
-		if err != nil {
-			return nil, err
-		}
-		h.entries = all
-	}
 	start := int(in.Offset)
+	// A cookie past the entries the handle already holds names a reply the
+	// kernel never received; see handleReaddir.
+	// See TheoryOfDirectoryStream.
 	if start < 0 || start > len(h.entries) {
 		return []byte{}, nil
 	}
+	if err := s.refreshListing(h, start); err != nil {
+		return nil, err
+	}
 	maxSize := int(in.Size)
-	// The announced window is the negotiated 1 MiB even for a small
-	// directory, so sizing the scratch from it would reserve far more than
-	// the reply uses. Sum the entries that can fit instead.
-	need := 0
-	for i := start; i < len(h.entries); i++ {
-		need += (fuseEntryOutSize + fuseDirentSize + len(h.entries[i].Name) + 7) &^ 7
-		if need >= maxSize {
-			need = maxSize
+	// The entries that fit are gathered before the node table's lock, and the
+	// gather stops once this reply has pulled one window from the cursor, the
+	// same split handleReaddir makes. See TheoryOfDirectoryStream.
+	h.dirWindow = h.dirWindow[:0]
+	held := len(h.entries)
+	used := 0
+	for i := start; ; i++ {
+		e, ok, err := s.dirEntryAt(h, i)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			break
+		}
+		padded := entryRecordSize(e.Name)
+		if used+padded > maxSize {
+			break
+		}
+		h.dirWindow = append(h.dirWindow, e)
+		used += padded
+		if len(h.entries)-held >= dirBatchEntries {
 			break
 		}
 	}
-	if cap(h.listBuf) < need {
-		h.listBuf = make([]byte, 0, need)
+	if cap(h.listBuf) < used {
+		h.listBuf = make([]byte, 0, used)
 	}
 	out := h.listBuf[:0]
-	// One acquisition of the node table serves the whole reply, and each
-	// entry's path comes from appending to the canonical parent, which also
-	// resolves "." and ".." onto the directory and its parent. The dirent
-	// carries the same node id the entry_out above announces: one record must
-	// not name two inodes. See TheoryOfFuseMount.
+	// One acquisition of the node table serves the whole reply. The dirent
+	// carries the same node id the entry_out ahead of it announces: one record
+	// must not name two inodes. See TheoryOfFuseMount.
 	s.mu.Lock()
-	for i := start; i < len(h.entries); i++ {
-		e := h.entries[i]
-		padded := (fuseEntryOutSize + fuseDirentSize + len(e.Name) + 7) &^ 7
-		if len(out)+padded > maxSize {
-			break
-		}
+	for k, e := range h.dirWindow {
+		padded := entryRecordSize(e.Name)
 		id := s.childNodeLocked(h.path, e.Name)
 		prev := len(out)
 		out = out[:prev+padded]
-		// The scratch is reused, so the name's trailing padding would
-		// otherwise carry the previous reply's bytes.
+		// The scratch is reused, so the name's trailing padding would otherwise
+		// carry the previous reply's bytes.
 		clear(out[prev:])
 		entry := s.entryOut(id, e.Attr)
 		putEntryOut(out[prev:], &entry)
 		binary.LittleEndian.PutUint64(out[prev+fuseEntryOutSize:], id)
-		binary.LittleEndian.PutUint64(out[prev+fuseEntryOutSize+8:], uint64(i+1))
+		binary.LittleEndian.PutUint64(out[prev+fuseEntryOutSize+8:], uint64(start+k+1))
 		binary.LittleEndian.PutUint32(out[prev+fuseEntryOutSize+16:], uint32(len(e.Name)))
 		binary.LittleEndian.PutUint32(out[prev+fuseEntryOutSize+20:], direntType(e.Attr.Kind))
 		copy(out[prev+fuseEntryOutSize+fuseDirentSize:], e.Name)

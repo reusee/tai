@@ -2,8 +2,11 @@ package sandboxfs
 
 import (
 	"encoding/binary"
+	"fmt"
+	"os"
 	"path/filepath"
 	"slices"
+	"syscall"
 	"testing"
 )
 
@@ -195,5 +198,179 @@ func TestReaddirSizesScratchFromEntries(t *testing.T) {
 	}
 	if cap(s.handles[1].listBuf) != before {
 		t.Fatalf("repeated listing grew the scratch: %d -> %d bytes", before, cap(s.handles[1].listBuf))
+	}
+}
+
+// newLargeListingServer builds a server whose base holds files entries named
+// f000.. so a listing test reads a directory larger than one window.
+// See TheoryOfDirectoryStream.
+func newLargeListingServer(t *testing.T, files int) (*fuseServer, uint64) {
+	t.Helper()
+	base := t.TempDir()
+	for i := 0; i < files; i++ {
+		if err := os.WriteFile(filepath.Join(base, fmt.Sprintf("f%03d", i)), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	store, err := Open(filepath.Join(t.TempDir(), "sandbox.db"), base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	s := newFuseServer(store, -1)
+	root, err := s.nodeOf("/", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s, root
+}
+
+// openListing opens one directory handle and returns it with its number.
+func openListing(t *testing.T, s *fuseServer, nodeid uint64) (*fuseHandle, uint64) {
+	t.Helper()
+	reply, err := s.handleOpendir(nodeid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out fuseOpenOut
+	decodeStruct(&out, reply)
+	h := s.handles[out.Fh]
+	if h == nil {
+		t.Fatal("opendir registered no handle")
+	}
+	return h, out.Fh
+}
+
+// TestOpendirDoesNotEnumerateTheDirectory protects TheoryOfDirectoryStream:
+// opening a listing reads the directory's own attributes, the upper layer's
+// rows, and one handle on the base directory, never its entries. A request that
+// enumerated the directory would make its duration grow with the directory's
+// entry count and hold the server's one goroutine for the whole walk, and every
+// other process's file I/O would wait behind it.
+func TestOpendirDoesNotEnumerateTheDirectory(t *testing.T) {
+	s, root := newLargeListingServer(t, 300)
+	h, _ := openListing(t, s, root)
+	if h.dir == nil {
+		t.Fatal("the directory handle carries no cursor")
+	}
+	if len(h.entries) != 2 {
+		t.Fatalf("opendir materialised %d entries, want only \".\" and \"..\"", len(h.entries))
+	}
+	for _, e := range h.entries {
+		if e.Name != "." && e.Name != ".." {
+			t.Fatalf("opendir materialised the base entry %q", e.Name)
+		}
+	}
+}
+
+// TestReaddirWindowsPullOneWindow protects TheoryOfDirectoryStream: every
+// READDIR reply costs at most the window it carries, and continuing the
+// listing until the end reports every name exactly once. The announced window
+// is the negotiated megabyte, which could hold far more entries than one
+// window; the reply stops there and the kernel asks again at the cookie. A
+// reply that pulled the whole directory would make the request's duration grow
+// with the directory's size.
+func TestReaddirWindowsPullOneWindow(t *testing.T) {
+	const files = 600
+	s, root := newLargeListingServer(t, files)
+	h, fh := openListing(t, s, root)
+	seen := make(map[string]bool)
+	off := 0
+	replies := 0
+	for {
+		before := len(h.entries)
+		reply, err := s.handleReaddir(encodeStruct(&fuseReadIn{
+			Fh: fh, Offset: uint64(off), Size: fuseMaxWriteMax,
+		}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(reply) == 0 {
+			break
+		}
+		replies++
+		if got := len(h.entries) - before; got > dirBatchEntries {
+			t.Fatalf("one reply pulled %d entries, want at most %d", got, dirBatchEntries)
+		}
+		for rest := reply; len(rest) >= fuseDirentSize; {
+			namelen := int(binary.LittleEndian.Uint32(rest[16:]))
+			if fuseDirentSize+namelen > len(rest) {
+				t.Fatalf("truncated record: %d bytes left, name length %d", len(rest), namelen)
+			}
+			name := string(rest[fuseDirentSize : fuseDirentSize+namelen])
+			if seen[name] {
+				t.Fatalf("name %q reported twice", name)
+			}
+			seen[name] = true
+			off++
+			rest = rest[(fuseDirentSize+namelen+7)&^7:]
+		}
+	}
+	if len(seen) != files+2 {
+		t.Fatalf("the listing reported %d names, want %d", len(seen), files+2)
+	}
+	if replies < (files+2)/dirBatchEntries {
+		t.Fatalf("the listing fit in %d replies, want the directory to span several windows", replies)
+	}
+	for _, name := range []string{".", ".."} {
+		if !seen[name] {
+			t.Fatalf("the listing holds no %q entry", name)
+		}
+	}
+	for i := 0; i < files; i += files / 10 {
+		if !seen[fmt.Sprintf("f%03d", i)] {
+			t.Fatalf("the listing holds no f%03d entry", i)
+		}
+	}
+	if got := cap(h.listBuf); got > fuseMaxWriteMax {
+		t.Fatalf("scratch holds %d bytes, want the entries' size rather than the announced window", got)
+	}
+}
+
+// TestReaddirContinuesAfterAMidWalkMutation protects TheoryOfDirectoryStream:
+// a create through the mount marks an open listing stale, and the walk the
+// create interrupted must still report the rest of its entries. Resetting the
+// stream would answer the kernel's next cookie with an empty body, which the
+// kernel reads as the end of the directory, and a walk of a large tree would
+// lose every entry past the mutation.
+func TestReaddirContinuesAfterAMidWalkMutation(t *testing.T) {
+	const files = 600
+	s, root := newLargeListingServer(t, files)
+	_, fh := openListing(t, s, root)
+	seen := make(map[string]bool)
+	off := 0
+	read := func() bool {
+		t.Helper()
+		reply, err := s.handleReaddir(encodeStruct(&fuseReadIn{
+			Fh: fh, Offset: uint64(off), Size: fuseMaxWriteMax,
+		}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(reply) == 0 {
+			return false
+		}
+		for rest := reply; len(rest) >= fuseDirentSize; {
+			namelen := int(binary.LittleEndian.Uint32(rest[16:]))
+			if fuseDirentSize+namelen > len(rest) {
+				t.Fatalf("truncated record: %d bytes left, name length %d", len(rest), namelen)
+			}
+			seen[string(rest[fuseDirentSize:fuseDirentSize+namelen])] = true
+			off++
+			rest = rest[(fuseDirentSize+namelen+7)&^7:]
+		}
+		return true
+	}
+	if !read() {
+		t.Fatal("the first listing reply is empty")
+	}
+	createIn := fuseCreateIn{Flags: uint32(syscall.O_WRONLY | syscall.O_CREAT), Mode: 0o644}
+	if _, err := s.handleCreate(root, append(encodeStruct(&createIn), "new.txt\x00"...)); err != nil {
+		t.Fatal(err)
+	}
+	for read() {
+	}
+	if len(seen) != files+2 {
+		t.Fatalf("the interrupted walk reported %d names, want %d", len(seen), files+2)
 	}
 }

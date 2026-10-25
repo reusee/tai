@@ -1,7 +1,6 @@
 package sandboxfs
 
 import (
-	"database/sql"
 	"errors"
 	"fmt"
 	"io"
@@ -175,64 +174,6 @@ func (s *Store) ReadFile(p string) ([]byte, error) {
 	return b, nil
 }
 
-// upperEntries overlays the upper layer's rows onto one listing: a deleted row
-// hides its name, and a live row replaces the base's attribute, so a listing
-// and a stat never disagree on one path. A metadata-only row contributes the
-// base's own length rather than a stored one, so the listing reports the size
-// the stat reports. The listing is one request, so the select runs its
-// prepared form. See TheoryOfBaseCapture and TheoryOfPreparedStatements.
-func (s *Store) upperEntries(p string, entries map[string]Attr) error {
-	prefix := p
-	if !strings.HasSuffix(prefix, "/") {
-		prefix += "/"
-	}
-	hi := prefix[:len(prefix)-1] + "0"
-	rows, err := queryStmt(s.db, s.stmts.selectDir, querySelectDir, prefix, hi)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var rp string
-		var kind, deleted int
-		var mode, mtime int64
-		var size, targetSize sql.NullInt64
-		if err := rows.Scan(&rp, &kind, &mode, &mtime, &deleted, &size, &targetSize); err != nil {
-			return err
-		}
-		rest := strings.TrimPrefix(rp, prefix)
-		if rest == "" || strings.Contains(rest, "/") {
-			continue
-		}
-		if deleted != 0 {
-			delete(entries, rest)
-			continue
-		}
-		at := Attr{
-			Kind:    Kind(kind),
-			Mode:    os.FileMode(mode),
-			ModTime: time.Unix(0, mtime),
-		}
-		// The size column names content, and only a regular file carries it:
-		// a link carries its target's length, and a directory or a pipe
-		// carries nothing, matching the same choice in Stat so a listing and
-		// a stat never disagree on one path. A metadata-only row keeps the
-		// base's own length. See TheoryOfBaseCapture.
-		switch at.Kind {
-		case KindRegular:
-			if size.Int64 >= 0 {
-				at.Size = size.Int64
-			} else if base, has := entries[rest]; has {
-				at.Size = base.Size
-			}
-		case KindSymlink:
-			at.Size = targetSize.Int64
-		}
-		entries[rest] = at
-	}
-	return rows.Err()
-}
-
 // ReadRange returns the content window [off, off+size) of one path without
 // materialising the whole file: the upper layer's window is one indexed query
 // over the chunks covering it, and a base file is read with ReadAt. A window
@@ -301,46 +242,31 @@ func (s *Store) ReadRange(p string, off int64, size int) ([]byte, error) {
 // readDir returns the directory's own attribute beside its entries: a listing
 // carries "." and "..", both of which come from the store, and a separate stat
 // of the directory would repeat the base lookup the kind check already paid.
-// The entries are in name order. See TheoryOfReadPath.
+// The entries are in name order, which the mount itself does not need: its
+// reply carries windows in the base's own order. The cursor is the one
+// implementation of the walk and the merge, so this whole-listing API and the
+// windowed mount cannot disagree on which entries exist.
+// See TheoryOfReadPath and TheoryOfDirectoryStream.
 func (s *Store) readDir(p string) (self Attr, entries []DirEntry, err error) {
-	p = Canonical(p)
-	self, err = s.Stat(p)
+	c, err := s.openDir(p)
 	if err != nil {
 		return Attr{}, nil, err
 	}
-	if self.Kind != KindDir {
-		return Attr{}, nil, syscall.ENOTDIR
+	defer c.Close()
+	for {
+		batch, err := c.next(dirBatchEntries)
+		if err != nil {
+			return Attr{}, nil, err
+		}
+		if len(batch) == 0 {
+			break
+		}
+		entries = append(entries, batch...)
 	}
-	list, err := s.baseEntries(p)
-	if err != nil {
-		return Attr{}, nil, err
-	}
-	// An empty upper layer holds no row to overlay or hide, so the listing is
-	// the base's own and the merge below would cost a map and two slices for
-	// entries no row can change. See TheoryOfUpperAbsentCache.
-	if s.upperEmpty.Load() {
-		slices.SortFunc(list, func(a, b DirEntry) int {
-			return strings.Compare(a.Name, b.Name)
-		})
-		return self, list, nil
-	}
-	merged := make(map[string]Attr, len(list))
-	for _, e := range list {
-		merged[e.Name] = e.Attr
-	}
-	if err := s.upperEntries(p, merged); err != nil {
-		return Attr{}, nil, err
-	}
-	names := make([]string, 0, len(merged))
-	for name := range merged {
-		names = append(names, name)
-	}
-	slices.Sort(names)
-	out := make([]DirEntry, 0, len(names))
-	for _, name := range names {
-		out = append(out, DirEntry{Name: name, Attr: merged[name]})
-	}
-	return self, out, nil
+	slices.SortFunc(entries, func(a, b DirEntry) int {
+		return strings.Compare(a.Name, b.Name)
+	})
+	return c.self, entries, nil
 }
 
 // ReadDir returns the entries of one sandbox directory in name order. The
@@ -350,55 +276,6 @@ func (s *Store) readDir(p string) (self Attr, entries []DirEntry, err error) {
 func (s *Store) ReadDir(p string) ([]DirEntry, error) {
 	_, entries, err := s.readDir(p)
 	return entries, err
-}
-
-// baseEntries returns the base layer's listing of one canonical directory, in
-// the order the base reported it. A path the base does not hold as a directory
-// contributes no entry: a missing path, a regular file, and a symbolic link are
-// the upper layer's to answer. The base descriptor answers the whole listing
-// with one openat and one fstatat per entry, so a walk of a large tree pays no
-// component-by-component guard per directory and no path-based stat per entry.
-// A store without the descriptor falls back to the os.Root walk unchanged.
-// Two callers share this one walk — the merged listing and the listing of a
-// session that wrote nothing — so the two can never disagree on which entries
-// the base holds. See TheoryOfBaseFdAccess and TheoryOfReadPath.
-func (s *Store) baseEntries(p string) ([]DirEntry, error) {
-	rel := canonicalRel(p)
-	list, fast, err := baseReadDir(s.baseFd, rel)
-	if fast {
-		switch {
-		case err == nil:
-			return list, nil
-		case errors.Is(err, syscall.ENOENT),
-			errors.Is(err, syscall.ENOTDIR),
-			errors.Is(err, syscall.ELOOP):
-			return nil, nil
-		default:
-			return nil, err
-		}
-	}
-	info, err := s.baseRoot.Lstat(rel)
-	if err != nil || !info.IsDir() {
-		return nil, nil
-	}
-	f, err := s.baseRoot.Open(rel)
-	if err != nil {
-		return nil, err
-	}
-	des, err := f.ReadDir(-1)
-	f.Close()
-	if err != nil {
-		return nil, err
-	}
-	out := make([]DirEntry, 0, len(des))
-	for _, de := range des {
-		info, err := de.Info()
-		if err != nil {
-			continue
-		}
-		out = append(out, DirEntry{Name: de.Name(), Attr: attrOf(info)})
-	}
-	return out, nil
 }
 
 // captureOriginal records the base state of a path the upper layer is about
@@ -689,11 +566,20 @@ func (s *Store) Remove(p string) error {
 		return err
 	}
 	if a.Kind == KindDir {
-		entries, err := s.ReadDir(p)
+		// Emptiness is the first window's question, never the whole listing's:
+		// a directory of a million entries answers a removal with one window,
+		// so the request's duration does not grow with the directory.
+		// See TheoryOfDirectoryStream.
+		c, err := s.openDir(p)
 		if err != nil {
 			return err
 		}
-		if len(entries) > 0 {
+		first, err := c.next(1)
+		c.Close()
+		if err != nil {
+			return err
+		}
+		if len(first) > 0 {
 			return ErrNotEmpty
 		}
 	}
