@@ -30,8 +30,12 @@ party library: the protocol is small (a request header, an opcode, and
 opcode-specific fixed bodies), the kernel ABI is stable, and one dependency
 fewer keeps the sandbox inside the module's existing constraints. The
 handler is driven synchronously: read one request, dispatch it, write one
-response. The kernel serializes requests per connection, so no worker pool
-is needed; a slow handler delays later requests but not correctness.
+response. The kernel does not serialize requests — it sends them as its
+callers ask, and the background ones, the readahead among them, queue up to
+the depth the INIT reply announces (see TheoryOfInitNegotiation) — but a
+single reader is enough: each reply names the request it answers, so no
+worker pool is needed, and a slow handler delays later requests but not
+correctness.
 
 The read loop separates the errors that do not end the daemon from the ones
 that do. EINTR says a signal arrived. ENOENT says the caller interrupted its
@@ -102,6 +106,16 @@ at, so the same write costs one request, one transaction, and one commit.
 READDIRPLUS carries a fuse_entry_out per directory entry, so the kernel needs no
 LOOKUP after a listing: a directory walk — the toolchain's dominant pattern —
 becomes one request instead of one plus one per entry.
+
+The read side has two more levers. A reply that leaves max_readahead at zero
+turns the kernel's readahead off, and every file read becomes one request per
+page; the reply echoes the kernel's own window, so a streamed file arrives as
+a few large requests. Readahead reads are background requests, so the echo
+buys nothing while the background queue is too shallow to hold them:
+max_background and congestion_threshold are announced far above the server's
+own concurrency on purpose — the server answers one request at a time, and the
+queue exists to keep that one reader supplied, never to parallelize it (see
+TheoryOfFuseMount).
 
 The remaining bits cost one round trip each: ATOMIC_O_TRUNC folds the truncating
 open's SETATTR into the OPEN the caller already issues, ASYNC_READ keeps several
