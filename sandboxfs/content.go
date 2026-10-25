@@ -376,8 +376,7 @@ func (s *Store) readBaseContent(p string, limit int64) ([]byte, error) {
 // the same bytes, and the apply reads the host through the same bound, so
 // both sides of the comparison cover one prefix. A base node that is not a
 // regular file reports EINVAL before it is opened, so a character device
-// never blocks the server's one goroutine on its peer's data.
-// See TheoryOfBaseCapture.
+// never holds a worker on its peer's data. See TheoryOfBaseCapture.
 func hashBaseFile(root *os.Root, rel string) (string, error) {
 	info, err := root.Lstat(rel)
 	if err != nil {

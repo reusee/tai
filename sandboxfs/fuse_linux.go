@@ -255,8 +255,9 @@ The kernel filesystems are bound whatever the caller passes. A caller that
 omits /dev is the failure the rule exists to prevent: the store would serve
 a character device, report it as a regular file, and open it to hash its
 content — a terminal blocks until a key arrives, and the read consumes what
-it waited for — while the server answers every request on one goroutine. The
-caller's own entries ride beside them, and a duplicate binds once.
+it waited for — and the blocked request holds its worker for as long as the
+terminal stays silent. The caller's own entries ride beside them, and a
+duplicate binds once.
 
 The store's sqlite database is the one file that must not transit FUSE: the
 FUSE daemon serves the store, so a store read that reached the daemon would
@@ -357,13 +358,6 @@ const (
 	// fuseMaxPages is the page count covering fuseMaxWriteMax.
 	fuseMaxPages = fuseMaxWriteMax / fusePageSize
 
-	// fuseMaxBackground and fuseCongestionThreshold size the kernel's
-	// background request queue. Every readahead read is a background request,
-	// so the negotiated window reaches the server only while the queue holds
-	// the readahead the kernel issues for a streamed file. The depth sits far
-	// above the server's own concurrency on purpose: the server drains one
-	// request at a time, and the queue exists to keep that one goroutine
-	// supplied, never to parallelize it. See TheoryOfInitNegotiation.
 	fuseMaxBackground       = 256
 	fuseCongestionThreshold = 192
 
@@ -1060,8 +1054,8 @@ func (s *fuseServer) pathName(nodeid uint64) string {
 // of headerSize bytes. A body shorter than the header has no such bytes: the
 // decodeStruct padding makes the fixed fields parse, but a name's start comes
 // from the raw length, so the caller reports EINVAL rather than panicking on
-// the slice. The FUSE handler runs on the server's single goroutine, and a
-// panic there kills the daemon for every later request. See TheoryOfFuseMount.
+// the slice. An unrecovered panic in a handler terminates the process on any
+// goroutine, killing the daemon for every later request. See TheoryOfFuseMount.
 func afterHeader(body []byte, headerSize int) ([]byte, bool) {
 	if headerSize < 0 || len(body) < headerSize {
 		return nil, false

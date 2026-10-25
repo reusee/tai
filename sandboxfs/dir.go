@@ -207,7 +207,7 @@ func (c *dirCursor) readUpper() error {
 // enumeration instead of reopening it. A directory the base does not hold
 // contributes no entry: the upper layer answers it alone. The base's own kind
 // is read before the open, because opening a named pipe or a device blocks on
-// its peer's data and this server answers every request on one goroutine.
+// its peer's data and would hold its worker until the peer writes.
 // See TheoryOfDirectoryStream and TheoryOfBaseCapture.
 func (c *dirCursor) openBase() {
 	c.baseDone = true

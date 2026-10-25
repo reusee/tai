@@ -16,8 +16,9 @@ const TheoryOfBaseCapture = `
 A path's first mutation records the base state it started from: existence,
 kind, mode, and — for a regular file or a symbolic link — the content hash
 the apply step compares the host against. That record costs the request path
-work proportional to the file's size, and one reader serves every request, so
-the work is the whole filesystem's pause. Three rules keep the pause small.
+work proportional to the file's size, and a request that runs long holds one
+worker of the fixed pool for its whole duration, so enough of them leave no
+worker answering. Three rules keep the pause small.
 
 The hash streams through one fixed buffer and stops at maxFileSize. Memory
 stays the buffer's, and a path above that bound costs the prefix the store
@@ -42,17 +43,18 @@ record metadata and a hash only, so they stay available on a file of any size,
 compared on its prefix alone.
 
 Without the three rules the pause grows with whatever the session touches —
-an image, an archive, a database — and every other process's file I/O waits
-behind it. A network client that loads its certificate bundle during a
-handshake then pays that pause against a deadline it never set.
+an image, an archive, a database — and a few such pauses together hold every
+worker of the pool, until every other process's file I/O waits behind them.
+A network client that loads its certificate bundle during a handshake then
+pays that pause against a deadline it never set.
 
 Only a node the store can serve is captured: a regular file, a directory, a
 link, or a pipe. A device and a socket are refused with EINVAL before
 anything opens them. A character device blocks on read until its peer writes
 — the controlling terminal blocks until a key arrives — and that read
 consumes the bytes it waited for, so a capture that hashed one would swallow
-the user's input and freeze every other process behind the server's single
-goroutine.
+the user's input and hold its worker until the peer writes. See
+TheoryOfFuseConcurrency.
 `
 
 // Stat returns the attributes of one sandbox path. It never follows a
