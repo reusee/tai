@@ -31,6 +31,12 @@ task decision theory:
 - The criteria are independent. A task that only reviews or explains code is a
   programming task that is also read-only; a task that renames a configuration
   file or edits a document changes files without being a programming task.
+- The read-only criterion reads intent, not literal wording: reporting a bug,
+  a defect, a failure, or a wrong behavior implies a request to fix it, and the
+  fix modifies the working tree. Only an explicit request to explain or review
+  the fault makes such a task read-only. A literal reading would call the
+  report "explaining" the defect, and the harmful false read-only answer would
+  withhold the change component.
 - Only these two introductions depend on the judgment: the component sections,
   the generation pipeline, and every other prompt part are unchanged.
 - The decision model's inputs are the user prompt, the session facts
@@ -312,9 +318,10 @@ const decisionReadOnlyFuncName = "read_only_task"
 
 // decisionReadOnlyFuncDescription is the criterion the decision request
 // declares for the read-only answer. It states the artifact the task leaves
-// unchanged, so a task that writes a file does not match it. See
-// TheoryOfTaskDecision.
-const decisionReadOnlyFuncDescription = "handles a read-only task: inspecting, explaining, or reviewing files without modifying them, and running no command that modifies the working tree"
+// unchanged, so a task that writes a file does not match it, and it reads
+// intent, so a report of a fault implies the fix and does not match it either.
+// See TheoryOfTaskDecision.
+const decisionReadOnlyFuncDescription = "handles a read-only task: inspecting, explaining, or reviewing files without modifying them, and running no command that modifies the working tree. Reporting a bug, a defect, a failure, or a wrong behavior implies a request to fix it, and the fix modifies the working tree, so such a task is not read-only unless the message explicitly asks only to explain or review the fault."
 
 // decisionSystemPrompt frames the decision request. The task and its session
 // facts form the request's user message and the criteria are the declared

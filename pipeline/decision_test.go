@@ -319,6 +319,32 @@ func TestReadOnlyTaskGatesChange(t *testing.T) {
 	}
 }
 
+// TestReadOnlyCriterionRejectsBugReports pins the intent rule of the read-only
+// criterion: reporting a bug, a defect, a failure, or a wrong behavior implies
+// a request to fix it, and the fix modifies the working tree, so the decision
+// model must not read such a task as read-only unless the message explicitly
+// asks only to explain or review the fault. A literal reading would call the
+// report "explaining" the defect, and the harmful false read-only answer would
+// withhold the change component. See TheoryOfTaskDecision.
+func TestReadOnlyCriterionRejectsBugReports(t *testing.T) {
+	generator := &decisionTestGenerator{programming: true}
+	decisionTestScope(t, generator, "the parser crashes on empty input").Get[ProgrammingTask]()
+	var description string
+	for _, fn := range generator.funcs {
+		if fn.Name == decisionReadOnlyFuncName {
+			description = fn.Description
+		}
+	}
+	if description == "" {
+		t.Fatalf("the decision request must declare the read-only criterion, got %v", generator.funcs)
+	}
+	for _, want := range []string{"bug", "defect", "fix", "not read-only"} {
+		if !strings.Contains(description, want) {
+			t.Fatalf("the read-only criterion must read the fix intent of a defect report, missing %q in %q", want, description)
+		}
+	}
+}
+
 // TestDirEntryNamesListsTopLevelOnly pins the collection: the names of a
 // directory's top-level entries — directories and files alike, sorted — and
 // never the contents of its subdirectories, so a large tree under one entry
