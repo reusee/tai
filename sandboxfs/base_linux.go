@@ -4,6 +4,7 @@ package sandboxfs
 
 import (
 	"errors"
+	"io"
 	"os"
 	"syscall"
 	"time"
@@ -27,11 +28,23 @@ its own and asks the store again for the target's path. The descriptor is
 opened read-only, so a leak of it cannot widen write containment. Writes keep
 the os.Root walk, because containment matters exactly where the store writes.
 
+A directory listing takes the same path: one openat of the directory, one
+getdents run, and one fstatat per entry. The os.Root walk answered the same
+listing by reopening every component of the directory's path, and it priced
+each entry through the same walk. The entry stat stays, because a READDIRPLUS
+reply carries a full attribute per entry — the mode, size, and time a dirent
+does not hold — so the saving is the walk, not the stat. O_NOFOLLOW keeps the
+rule above: a base symbolic link reports itself and never becomes a listing of
+its target.
+
 The window read checks the host kind before it opens, matching the os.Root
 path's order: a directory reports EISDIR, a link or pipe EINVAL, and a regular
-file serves its window. A store without the descriptor falls back to the
-os.Root path unchanged, so the fast path is an optimization, never a
-requirement.
+file serves its window. A read handle opens its base file through the same
+kind check and the same single openat, so streaming a file pays no walk per
+open and a pipe stays unopened. A whole-file read takes the same open, so the
+store's own read API pays no walk either. A store without the descriptor falls
+back to the os.Root path unchanged, so the fast path is an optimization, never
+a requirement.
 `
 
 // openBaseDirFd opens the read-through base directory once: one O_PATH
@@ -127,4 +140,98 @@ func baseReadAt(fd int, rel string, off int64, size int) (data []byte, ok bool, 
 		return nil, true, err
 	}
 	return buf[:n], true, nil
+}
+
+// baseReadDir lists one directory beneath fd: one openat of the directory, one
+// getdents run, and one fstatat per entry, so a tree walk pays no
+// component-by-component guard per directory and no path-based stat per entry.
+// ok reports whether the fast path handled the listing; a store without the
+// descriptor falls back to the os.Root walk unchanged.
+// See TheoryOfBaseFdAccess.
+func baseReadDir(fd int, rel string) (entries []DirEntry, ok bool, err error) {
+	if fd < 0 {
+		return nil, false, nil
+	}
+	// O_NOFOLLOW keeps the rule the stat path keeps: a base symbolic link
+	// reports itself and never becomes a listing of its target.
+	dirFd, openErr := unix.Openat(fd, rel,
+		unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if openErr != nil {
+		return nil, true, openErr
+	}
+	dir := os.NewFile(uintptr(dirFd), rel)
+	if dir == nil {
+		_ = unix.Close(dirFd)
+		return nil, true, syscall.EBADF
+	}
+	defer dir.Close()
+	des, readErr := dir.ReadDir(-1)
+	if readErr != nil {
+		return nil, true, readErr
+	}
+	entries = make([]DirEntry, 0, len(des))
+	for _, de := range des {
+		var st unix.Stat_t
+		if statErr := unix.Fstatat(dirFd, de.Name(), &st, unix.AT_SYMLINK_NOFOLLOW); statErr != nil {
+			continue
+		}
+		entries = append(entries, DirEntry{Name: de.Name(), Attr: attrOfStatT(&st)})
+	}
+	return entries, true, nil
+}
+
+// baseOpenFile opens one base file beneath fd for a read handle: one fstatat
+// and one openat, the same pair the window read pays. The host kind is checked
+// before the open, so a directory reports EISDIR and a link or pipe EINVAL, and
+// a pipe is never opened, so its read never blocks. O_NOFOLLOW keeps the rule
+// the stat path keeps: a link reports itself and is never opened as content.
+// ok reports whether the fast path handled the open; a false result sends the
+// caller back to the os.Root walk unchanged. See TheoryOfBaseFdAccess.
+func baseOpenFile(fd int, rel string) (f *os.File, ok bool, err error) {
+	if fd < 0 {
+		return nil, false, nil
+	}
+	var st unix.Stat_t
+	if statErr := unix.Fstatat(fd, rel, &st, unix.AT_SYMLINK_NOFOLLOW); statErr != nil {
+		return nil, true, statErr
+	}
+	switch st.Mode & unix.S_IFMT {
+	case unix.S_IFDIR:
+		return nil, true, syscall.EISDIR
+	case unix.S_IFREG:
+	default:
+		return nil, true, syscall.EINVAL
+	}
+	fileFd, openErr := unix.Openat(fd, rel, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if openErr != nil {
+		// The stat above named a regular file, so a link here appeared between
+		// the two calls: it still reports EINVAL, never its target's bytes.
+		if openErr == unix.ELOOP {
+			return nil, true, syscall.EINVAL
+		}
+		return nil, true, openErr
+	}
+	file := os.NewFile(uintptr(fileFd), rel)
+	if file == nil {
+		_ = unix.Close(fileFd)
+		return nil, true, syscall.EBADF
+	}
+	return file, true, nil
+}
+
+// baseReadFile returns one base file's whole content through the base
+// descriptor: the same kind check and the same single open the window read
+// pays, so the store's read API costs no component-by-component walk either,
+// and a directory or a link reports the error the API answers instead of being
+// opened. ok reports whether the fast path handled the read; a false result
+// sends the caller back to the os.Root walk unchanged.
+// See TheoryOfBaseFdAccess.
+func baseReadFile(fd int, rel string) (data []byte, ok bool, err error) {
+	f, ok, err := baseOpenFile(fd, rel)
+	if !ok || err != nil {
+		return nil, ok, err
+	}
+	defer f.Close()
+	data, err = io.ReadAll(f)
+	return data, true, err
 }

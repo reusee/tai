@@ -3,8 +3,12 @@ package sandboxfs
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
+	"io"
 	"os"
+	"path"
 	"path/filepath"
+	"syscall"
 	"testing"
 )
 
@@ -51,6 +55,195 @@ func TestUpperAbsentCacheRefreshesOnWrite(t *testing.T) {
 	}
 }
 
+// TestBaseReadDirMatchesRootWalk checks the fast listing against the os.Root
+// walk: the same names with the same kinds, sizes, modes, and times, and a base
+// path that is not a directory contributes no entry. See TheoryOfBaseFdAccess.
+func TestBaseReadDirMatchesRootWalk(t *testing.T) {
+	store, base := newCacheTestStore(t)
+	if store.baseFd < 0 {
+		t.Skip("the platform offers no base descriptor")
+	}
+	if err := os.Mkdir(filepath.Join(base, "d"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("a.txt", filepath.Join(base, "link")); err != nil {
+		t.Fatal(err)
+	}
+	fast, ok, err := baseReadDir(store.baseFd, ".")
+	if err != nil || !ok {
+		t.Fatalf("baseReadDir: ok = %v, err = %v", ok, err)
+	}
+	f, err := store.baseRoot.Open(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	des, err := f.ReadDir(-1)
+	f.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := make(map[string]Attr, len(des))
+	for _, de := range des {
+		info, err := de.Info()
+		if err != nil {
+			t.Fatal(err)
+		}
+		want[de.Name()] = attrOf(info)
+	}
+	if len(fast) != len(want) {
+		t.Fatalf("fast listing holds %d entries, root walk holds %d", len(fast), len(want))
+	}
+	for _, e := range fast {
+		w, found := want[e.Name]
+		if !found {
+			t.Fatalf("fast listing names %q, which the root walk does not", e.Name)
+		}
+		if e.Attr.Kind != w.Kind || e.Attr.Size != w.Size || e.Attr.Mode != w.Mode {
+			t.Fatalf("%s: fast = %+v, root = %+v", e.Name, e.Attr, w)
+		}
+		if !e.Attr.ModTime.Equal(w.ModTime) {
+			t.Fatalf("%s: mtime = %v, want %v", e.Name, e.Attr.ModTime, w.ModTime)
+		}
+	}
+	if list, ok, err := baseReadDir(store.baseFd, "a.txt"); !ok || err == nil || len(list) != 0 {
+		t.Fatalf("listing a regular file: entries = %v, ok = %v, err = %v, want no entry and an error", list, ok, err)
+	}
+}
+
+// TestBaseOpenFileMatchesRootWalk checks the descriptor open against the
+// os.Root walk the read handle used before: a regular file opens with its
+// bytes, and a directory, a symbolic link, and a missing path report the errors
+// the read path answers, so a node without readable content is never opened and
+// a pipe never blocks. See TheoryOfBaseFdAccess.
+func TestBaseOpenFileMatchesRootWalk(t *testing.T) {
+	store, base := newCacheTestStore(t)
+	if store.baseFd < 0 {
+		t.Skip("the platform offers no base descriptor")
+	}
+	if err := os.Mkdir(filepath.Join(base, "d"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("a.txt", filepath.Join(base, "link")); err != nil {
+		t.Fatal(err)
+	}
+	f, ok, err := baseOpenFile(store.baseFd, "a.txt")
+	if !ok || err != nil {
+		t.Fatalf("baseOpenFile: ok = %v, err = %v", ok, err)
+	}
+	got, err := io.ReadAll(f)
+	f.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "hello" {
+		t.Fatalf("content = %q, want %q", got, "hello")
+	}
+	if _, ok, err := baseOpenFile(store.baseFd, "d"); !ok || !errors.Is(err, syscall.EISDIR) {
+		t.Fatalf("directory open: ok = %v, err = %v, want EISDIR", ok, err)
+	}
+	if _, ok, err := baseOpenFile(store.baseFd, "link"); !ok || !errors.Is(err, syscall.EINVAL) {
+		t.Fatalf("link open: ok = %v, err = %v, want EINVAL", ok, err)
+	}
+	if _, ok, err := baseOpenFile(store.baseFd, "missing"); !ok || !errors.Is(err, syscall.ENOENT) {
+		t.Fatalf("missing open: ok = %v, err = %v, want ENOENT", ok, err)
+	}
+}
+
+// TestBaseReadFileMatchesRootWalk checks the descriptor read against the
+// os.Root read the store used before: a regular file yields the same bytes,
+// and a directory, a symbolic link, and a missing path report the errors the
+// store's read API answers, so a node without readable content is never read.
+// See TheoryOfBaseFdAccess.
+func TestBaseReadFileMatchesRootWalk(t *testing.T) {
+	store, base := newCacheTestStore(t)
+	if store.baseFd < 0 {
+		t.Skip("the platform offers no base descriptor")
+	}
+	if err := os.Mkdir(filepath.Join(base, "d"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("a.txt", filepath.Join(base, "link")); err != nil {
+		t.Fatal(err)
+	}
+	got, ok, err := baseReadFile(store.baseFd, "a.txt")
+	if !ok || err != nil {
+		t.Fatalf("baseReadFile: ok = %v, err = %v", ok, err)
+	}
+	want, err := store.baseRoot.ReadFile("a.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("fast content = %q, want %q", got, want)
+	}
+	if _, ok, err := baseReadFile(store.baseFd, "d"); !ok || !errors.Is(err, syscall.EISDIR) {
+		t.Fatalf("directory read: ok = %v, err = %v, want EISDIR", ok, err)
+	}
+	if _, ok, err := baseReadFile(store.baseFd, "link"); !ok || !errors.Is(err, syscall.EINVAL) {
+		t.Fatalf("link read: ok = %v, err = %v, want EINVAL", ok, err)
+	}
+	if _, ok, err := baseReadFile(store.baseFd, "missing"); !ok || !errors.Is(err, syscall.ENOENT) {
+		t.Fatalf("missing read: ok = %v, err = %v, want ENOENT", ok, err)
+	}
+}
+
+// TestBaseHandleFileFallbackChecksTheKind protects TheoryOfBaseFdAccess on the
+// path a platform without the base descriptor takes: the portable walk still
+// refuses a directory and a symbolic link before it opens them, so a read
+// handle never serves a directory's bytes and never follows a link. The test
+// keeps off a pipe, because the defect it guards against would block rather
+// than fail. See baseHandleFile.
+func TestBaseHandleFileFallbackChecksTheKind(t *testing.T) {
+	store, base := newCacheTestStore(t)
+	if err := os.Mkdir(filepath.Join(base, "d"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("a.txt", filepath.Join(base, "link")); err != nil {
+		t.Fatal(err)
+	}
+	// A negative descriptor sends every base open through the portable walk,
+	// the path a platform without the descriptor takes. The real descriptor is
+	// closed first, so the test leaks none.
+	closeBaseDirFd(store.baseFd)
+	store.baseFd = -1
+	server := newFuseServer(store, -1)
+	if _, err := server.baseHandleFile(&fuseHandle{path: "/d"}); !errors.Is(err, syscall.EISDIR) {
+		t.Fatalf("directory handle: err = %v, want EISDIR", err)
+	}
+	if _, err := server.baseHandleFile(&fuseHandle{path: "/link"}); !errors.Is(err, syscall.EINVAL) {
+		t.Fatalf("link handle: err = %v, want EINVAL", err)
+	}
+	f, err := server.baseHandleFile(&fuseHandle{path: "/a.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := io.ReadAll(f)
+	f.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "hello" {
+		t.Fatalf("content = %q, want %q", got, "hello")
+	}
+}
+
+// TestChildPathMatchesPathJoin checks that naming one directory entry by
+// appending to its canonical parent yields the path a LOOKUP of the same name
+// stores: the reply's d_ino and the path's st_ino agree only if both name one
+// path. "." and ".." resolve to the parent itself and its own parent, the
+// values path.Join gives. See TheoryOfFuseMount.
+func TestChildPathMatchesPathJoin(t *testing.T) {
+	for _, parent := range []string{"/", "/a", "/a/b", "/a/b/c"} {
+		for _, name := range []string{".", "..", "x", "main.go", "v2", "a.b-c_d"} {
+			got := childPath(parent, name)
+			want := path.Join(parent, name)
+			if got != want {
+				t.Errorf("childPath(%q, %q) = %q, want %q", parent, name, got, want)
+			}
+		}
+	}
+}
+
 // TestReadRangeServesWrittenWindowAfterCachedAbsence checks the read path: a
 // window read recorded the absence, and the write that follows makes the upper
 // layer answer the same window.
@@ -75,6 +268,44 @@ func TestReadRangeServesWrittenWindowAfterCachedAbsence(t *testing.T) {
 	}
 	if string(chunk) != "hello world" {
 		t.Fatalf("chunk = %q, want %q", chunk, "hello world")
+	}
+}
+
+// TestFreshStoreReadsWithoutItsUpperLayer protects TheoryOfUpperAbsentCache: a
+// session that has written nothing answers every lookup from the base, so its
+// read path never reaches sqlite. The closed database states that fact — a
+// lookup that asked it would fail — and the answers must be the base's own.
+func TestFreshStoreReadsWithoutItsUpperLayer(t *testing.T) {
+	store, base := newCacheTestStore(t)
+	if err := os.Mkdir(filepath.Join(base, "d"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if !store.upperEmpty.Load() {
+		t.Fatal("a store opened on an empty database did not record the empty upper layer")
+	}
+	if err := store.db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	a, err := store.Stat("/a.txt")
+	if err != nil {
+		t.Fatalf("stat of a base path with an empty upper layer: %v", err)
+	}
+	if a.Size != int64(len("hello")) {
+		t.Fatalf("size = %d, want %d", a.Size, len("hello"))
+	}
+	content, err := store.ReadRange("/a.txt", 0, 5)
+	if err != nil {
+		t.Fatalf("read of a base path with an empty upper layer: %v", err)
+	}
+	if string(content) != "hello" {
+		t.Fatalf("content = %q, want %q", content, "hello")
+	}
+	entries, err := store.ReadDir("/")
+	if err != nil {
+		t.Fatalf("listing with an empty upper layer: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("listing holds %d entries, want a.txt and d", len(entries))
 	}
 }
 

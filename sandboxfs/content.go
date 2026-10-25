@@ -78,11 +78,11 @@ func (s *Store) putContent(r fileRow, content []byte) error {
 	return tx.Commit()
 }
 
-// putMetaTx writes one row's metadata through the prepared upsert and drops the
-// path's chunks unless the row is a live regular file, whose content a prior
-// putContent or splice stored. Chunks therefore exist only for live regular
-// rows. See TheoryOfChunkedContent and TheoryOfPreparedStatements.
 func (s *Store) putMetaTx(tx *sql.Tx, r fileRow) error {
+	// A row exists from this write on, so the whole-layer shortcut is over. The
+	// store holds one connection, so a reader that still sees the flag read
+	// before the row could commit. See TheoryOfUpperAbsentCache.
+	s.upperEmpty.Store(false)
 	s.absent.Delete(r.path)
 	var deleted, originalExists int
 	if r.deleted {

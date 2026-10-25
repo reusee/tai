@@ -56,7 +56,11 @@ Node ids are paths. The protocol requires stable node ids, and the store is
 path-addressed, so the server allocates numeric ids on first use and keeps
 the mapping until the process exits. Paths are the identity; numeric ids
 are only the wire form. LOOKUP of a fresh path allocates a new node id, and
-LOOKUP of a known path returns the existing id. FORGET is accepted without a
+LOOKUP of a known path returns the existing id. A listing resolves every
+entry it carries under one acquisition of the node table and names each
+entry by appending to the canonical parent, because a directory walk is the
+toolchain's dominant pattern and a lock and a path cleaning per entry are
+the costs that pattern repeats for a large tree. FORGET is accepted without a
 reply and ignored: paths stay addressable for the session's life, matching
 the store, which keeps every touched path in the audit trail and the
 sqlite file.
@@ -910,6 +914,42 @@ func splitName(b []byte) (name, rest []byte, ok bool) {
 	return b, nil, false
 }
 
+// childPath names one directory entry of a canonical parent without the
+// cleaning path.Join performs on every component: a listing builds one path per
+// entry, and the parent is already clean and absolute. "." and ".." resolve to
+// the parent itself and its own parent, the values path.Join gives, so a listing
+// and a later LOOKUP of the same name reach one node id and the kernel sees one
+// number for the entry's d_ino and the path's st_ino. See TheoryOfFuseMount.
+func childPath(parent, name string) string {
+	switch name {
+	case ".":
+		return parent
+	case "..":
+		return path.Dir(parent)
+	}
+	if parent == "/" {
+		return "/" + name
+	}
+	return parent + "/" + name
+}
+
+// childNodeLocked returns the node id of one directory entry, allocating it on
+// first use. The caller holds the server's lock, so a listing resolves every
+// entry it carries under one acquisition instead of one per entry: the
+// directory walk is the toolchain's dominant pattern, and a listing of a large
+// tree repeats that acquisition once per entry. See TheoryOfFuseMount.
+func (s *fuseServer) childNodeLocked(parent, name string) uint64 {
+	p := childPath(parent, name)
+	if id, ok := s.byPath[p]; ok {
+		return id
+	}
+	id := s.nextID
+	s.nextID++
+	s.nodes[id] = p
+	s.byPath[p] = id
+	return id
+}
+
 // nodeOf returns the node id of p, allocating one on first use. When
 // mustExist is true the path is stat'ed first, so an id never names a path
 // the store does not hold.
@@ -1075,7 +1115,11 @@ func (s *fuseServer) handleLookup(parent uint64, body []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return encodeStruct(&[]fuseEntryOut{s.entryOut(id, a)}[0]), nil
+	// The entry body is built once per lookup, so it is a local value: a slice
+	// literal whose element the encoder addresses would allocate beside the
+	// reply the kernel parses anyway. See TheoryOfFuseMount.
+	entry := s.entryOut(id, a)
+	return encodeStruct(&entry), nil
 }
 
 func (s *fuseServer) handleGetattr(nodeid uint64) ([]byte, error) {
@@ -1262,26 +1306,39 @@ func (s *fuseServer) handleRead(body []byte) ([]byte, error) {
 	return s.readFrom(h, int64(in.Offset), int(in.Size))
 }
 
-// baseHandleFile returns the handle's cached base-layer reader, opening it
-// on first use. The host path is stat'ed once here: a directory, link, or
-// pipe has no readable content, and a pipe is never opened, so a pipe read
-// never blocks. The caller has already established that the upper layer
-// holds no window for the path. See TheoryOfReadPath.
+// baseHandleFile returns the handle's cached base-layer reader, opening it on
+// first use. The base descriptor answers the open with one fstatat and one
+// openat: the kind check and the open are the read window's own pair, so a
+// streamed file pays no component-by-component guard per open. A directory,
+// link, or pipe has no readable content, and a pipe is never opened, so a pipe
+// read never blocks. The caller has already established that the upper layer
+// holds no window for the path. A store without the descriptor keeps the same
+// kind check through the portable walk, so the refusal and the no-open rule
+// hold on both paths. See TheoryOfReadPath and TheoryOfBaseFdAccess.
 func (s *fuseServer) baseHandleFile(h *fuseHandle) (*os.File, error) {
 	if h.base != nil {
 		return h.base, nil
 	}
-	a, err := s.store.Stat(h.path)
-	if err != nil {
-		return nil, err
+	rel := relPath(h.path)
+	f, fast, err := baseOpenFile(s.store.baseFd, rel)
+	if !fast {
+		// The platform offers no base descriptor, so the kind check and the
+		// open run through the portable walk. The check must precede the open:
+		// an open of a pipe blocks the server's one goroutine for every later
+		// request, and an open of a link would serve its target's bytes.
+		// See TheoryOfBaseFdAccess.
+		a, statErr := s.store.Stat(h.path)
+		if statErr != nil {
+			return nil, statErr
+		}
+		switch a.Kind {
+		case KindDir:
+			return nil, syscall.EISDIR
+		case KindSymlink, KindFIFO:
+			return nil, syscall.EINVAL
+		}
+		f, err = s.store.baseRoot.Open(rel)
 	}
-	switch a.Kind {
-	case KindDir:
-		return nil, syscall.EISDIR
-	case KindSymlink, KindFIFO:
-		return nil, syscall.EINVAL
-	}
-	f, err := s.store.baseRoot.Open(relPath(h.path))
 	if err != nil {
 		return nil, err
 	}
@@ -1478,21 +1535,19 @@ func (s *fuseServer) handleReaddir(body []byte) ([]byte, error) {
 		h.listBuf = make([]byte, 0, need)
 	}
 	out := h.listBuf[:0]
+	// One acquisition of the node table serves the whole reply, and each
+	// entry's path comes from appending to the canonical parent. The dirent's
+	// inode number is the node id the kernel gets from a LOOKUP of the same
+	// name: a tool that compares a listing's d_ino with a stat's st_ino must
+	// see one number, not two. See TheoryOfFuseMount.
+	s.mu.Lock()
 	for i := start; i < len(h.entries); i++ {
 		e := h.entries[i]
 		padded := (fuseDirentSize + len(e.Name) + 7) &^ 7
 		if len(out)+padded > maxSize {
 			break
 		}
-		// The dirent's inode number is the node id the kernel gets from a
-		// LOOKUP of the same name: a tool that compares a listing's d_ino
-		// with a stat's st_ino must see one number, not two. A path the
-		// server cannot name carries no record, so it is skipped rather than
-		// reported with a made-up inode. See TheoryOfFuseMount.
-		id, err := s.nodeOf(path.Join(h.path, e.Name), false)
-		if err != nil {
-			continue
-		}
+		id := s.childNodeLocked(h.path, e.Name)
 		prev := len(out)
 		out = out[:prev+padded]
 		// The scratch is reused, so the name's trailing padding would
@@ -1504,6 +1559,7 @@ func (s *fuseServer) handleReaddir(body []byte) ([]byte, error) {
 		binary.LittleEndian.PutUint32(out[prev+20:], direntType(e.Attr.Kind))
 		copy(out[prev+fuseDirentSize:], e.Name)
 	}
+	s.mu.Unlock()
 	h.listBuf = out
 	return out, nil
 }
@@ -1547,18 +1603,19 @@ func (s *fuseServer) handleReaddirPlus(body []byte) ([]byte, error) {
 		h.listBuf = make([]byte, 0, need)
 	}
 	out := h.listBuf[:0]
+	// One acquisition of the node table serves the whole reply, and each
+	// entry's path comes from appending to the canonical parent, which also
+	// resolves "." and ".." onto the directory and its parent. The dirent
+	// carries the same node id the entry_out above announces: one record must
+	// not name two inodes. See TheoryOfFuseMount.
+	s.mu.Lock()
 	for i := start; i < len(h.entries); i++ {
 		e := h.entries[i]
 		padded := (fuseEntryOutSize + fuseDirentSize + len(e.Name) + 7) &^ 7
 		if len(out)+padded > maxSize {
 			break
 		}
-		// path.Join cleans "." and ".." onto the handle's own path and its
-		// parent, so the entry names need no special case.
-		id, err := s.nodeOf(path.Join(h.path, e.Name), false)
-		if err != nil {
-			continue
-		}
+		id := s.childNodeLocked(h.path, e.Name)
 		prev := len(out)
 		out = out[:prev+padded]
 		// The scratch is reused, so the name's trailing padding would
@@ -1566,14 +1623,13 @@ func (s *fuseServer) handleReaddirPlus(body []byte) ([]byte, error) {
 		clear(out[prev:])
 		entry := s.entryOut(id, e.Attr)
 		putEntryOut(out[prev:], &entry)
-		// The dirent carries the same node id the entry_out above announces:
-		// one record must not name two inodes. See TheoryOfFuseMount.
 		binary.LittleEndian.PutUint64(out[prev+fuseEntryOutSize:], id)
 		binary.LittleEndian.PutUint64(out[prev+fuseEntryOutSize+8:], uint64(i+1))
 		binary.LittleEndian.PutUint32(out[prev+fuseEntryOutSize+16:], uint32(len(e.Name)))
 		binary.LittleEndian.PutUint32(out[prev+fuseEntryOutSize+20:], direntType(e.Attr.Kind))
 		copy(out[prev+fuseEntryOutSize+fuseDirentSize:], e.Name)
 	}
+	s.mu.Unlock()
 	h.listBuf = out
 	return out, nil
 }
@@ -1940,7 +1996,12 @@ func (s *fuseServer) handleSymlink(parent uint64, body []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return encodeStruct(&[]fuseEntryOut{s.entryOut(id, a)}[0]), nil
+	// The entry body is built once per create, so it is a local value: a slice
+	// literal whose element the encoder addresses would allocate beside the
+	// reply the kernel parses anyway, the same shape handleLookup removed.
+	// See TheoryOfFuseMount.
+	entry := s.entryOut(id, a)
+	return encodeStruct(&entry), nil
 }
 
 func (s *fuseServer) handleReadlink(nodeid uint64) ([]byte, error) {

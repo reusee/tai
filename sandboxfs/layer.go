@@ -70,9 +70,12 @@ func kindOf(info os.FileInfo) Kind {
 // when the session wrote the path, the base's content otherwise. A pipe and
 // a symbolic link cannot be read as content and report EINVAL, and a
 // directory reports EISDIR, matching the kernel's own answers. A base entry
-// is Lstat'ed first, so a pipe path never blocks on open. The upper layer's
-// content lives in the chunk table, assembled by the stored size. See
-// TheoryOfChunkedContent.
+// is kind-checked before it is opened, so a pipe path never blocks on open.
+// The base descriptor answers the open and the read with one fstatat and one
+// openat, the same pair a read window pays; a store without the descriptor
+// falls back to the os.Root walk unchanged. The upper layer's content lives in
+// the chunk table, assembled by the stored size. See TheoryOfChunkedContent and
+// TheoryOfBaseFdAccess.
 func (s *Store) ReadFile(p string) ([]byte, error) {
 	p = Canonical(p)
 	r, ok, err := s.row(p)
@@ -97,6 +100,13 @@ func (s *Store) ReadFile(p string) ([]byte, error) {
 		return content, nil
 	}
 	rel := relPath(p)
+	if b, fast, readErr := baseReadFile(s.baseFd, rel); fast {
+		if readErr != nil {
+			return nil, readErr
+		}
+		s.auditRead(p)
+		return b, nil
+	}
 	info, err := s.baseRoot.Lstat(rel)
 	if err != nil {
 		return nil, err
@@ -113,6 +123,58 @@ func (s *Store) ReadFile(p string) ([]byte, error) {
 	}
 	s.auditRead(p)
 	return b, nil
+}
+
+// upperEntries overlays the upper layer's rows onto one listing: a deleted row
+// hides its name, and a live row replaces the base's attribute, so a listing
+// and a stat never disagree on one path. The listing is one request, so the
+// select runs its prepared form. See TheoryOfSandboxFilesystem and
+// TheoryOfPreparedStatements.
+func (s *Store) upperEntries(p string, entries map[string]Attr) error {
+	prefix := p
+	if !strings.HasSuffix(prefix, "/") {
+		prefix += "/"
+	}
+	hi := prefix[:len(prefix)-1] + "0"
+	rows, err := queryStmt(s.db, s.stmts.selectDir, querySelectDir, prefix, hi)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var rp string
+		var kind, deleted int
+		var mode, mtime int64
+		var size, targetSize sql.NullInt64
+		if err := rows.Scan(&rp, &kind, &mode, &mtime, &deleted, &size, &targetSize); err != nil {
+			return err
+		}
+		rest := strings.TrimPrefix(rp, prefix)
+		if rest == "" || strings.Contains(rest, "/") {
+			continue
+		}
+		if deleted != 0 {
+			delete(entries, rest)
+			continue
+		}
+		at := Attr{
+			Kind:    Kind(kind),
+			Mode:    os.FileMode(mode),
+			ModTime: time.Unix(0, mtime),
+		}
+		// The size column names content, and only a regular file carries it:
+		// a link carries its target's length, and a directory or a pipe
+		// carries nothing, matching the same choice in Stat so a listing and
+		// a stat never disagree on one path. See TheoryOfChunkedContent.
+		switch at.Kind {
+		case KindRegular:
+			at.Size = size.Int64
+		case KindSymlink:
+			at.Size = targetSize.Int64
+		}
+		entries[rest] = at
+	}
+	return rows.Err()
 }
 
 // ReadRange returns the content window [off, off+size) of one path without
@@ -190,72 +252,16 @@ func (s *Store) ReadDir(p string) ([]DirEntry, error) {
 		return nil, syscall.ENOTDIR
 	}
 	entries := make(map[string]Attr)
-	if info, err := s.baseRoot.Lstat(relPath(p)); err == nil && info.IsDir() {
-		f, err := s.baseRoot.Open(relPath(p))
-		if err != nil {
-			return nil, err
-		}
-		des, err := f.ReadDir(-1)
-		f.Close()
-		if err != nil {
-			return nil, err
-		}
-		for _, de := range des {
-			info, err := de.Info()
-			if err != nil {
-				continue
-			}
-			entries[de.Name()] = attrOf(info)
-		}
-	}
-	prefix := p
-	if !strings.HasSuffix(prefix, "/") {
-		prefix += "/"
-	}
-	hi := prefix[:len(prefix)-1] + "0"
-	// The listing is one request, so its row select runs the prepared form
-	// like every other statement the request path runs.
-	// See TheoryOfPreparedStatements.
-	rows, err := queryStmt(s.db, s.stmts.selectDir, querySelectDir, prefix, hi)
-	if err != nil {
+	if err := s.baseEntries(p, entries); err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var rp string
-		var kind, deleted int
-		var mode, mtime int64
-		var size, targetSize sql.NullInt64
-		if err := rows.Scan(&rp, &kind, &mode, &mtime, &deleted, &size, &targetSize); err != nil {
+	// An empty upper layer holds no row to overlay, and the select would be a
+	// round trip per directory of a walk that never wrote one.
+	// See TheoryOfUpperAbsentCache.
+	if !s.upperEmpty.Load() {
+		if err := s.upperEntries(p, entries); err != nil {
 			return nil, err
 		}
-		rest := strings.TrimPrefix(rp, prefix)
-		if rest == "" || strings.Contains(rest, "/") {
-			continue
-		}
-		if deleted != 0 {
-			delete(entries, rest)
-			continue
-		}
-		at := Attr{
-			Kind:    Kind(kind),
-			Mode:    os.FileMode(mode),
-			ModTime: time.Unix(0, mtime),
-		}
-		// The size column names content, and only a regular file carries it:
-		// a link carries its target's length, and a directory or a pipe
-		// carries nothing, matching the same choice in Stat so a listing and
-		// a stat never disagree on one path. See TheoryOfChunkedContent.
-		switch at.Kind {
-		case KindRegular:
-			at.Size = size.Int64
-		case KindSymlink:
-			at.Size = targetSize.Int64
-		}
-		entries[rest] = at
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
 	}
 	names := make([]string, 0, len(entries))
 	for name := range entries {
@@ -267,6 +273,55 @@ func (s *Store) ReadDir(p string) ([]DirEntry, error) {
 		out = append(out, DirEntry{Name: name, Attr: entries[name]})
 	}
 	return out, nil
+}
+
+// baseEntries fills entries with the base layer's listing of p, when the base
+// holds a directory there. The base descriptor answers the whole listing with
+// one openat and one fstatat per entry, so a walk of a large tree pays no
+// component-by-component guard per directory and no path-based stat per entry.
+// A path the base does not hold as a directory contributes nothing: a missing
+// path, a regular file, and a symbolic link are the upper layer's to answer. A
+// store without the descriptor falls back to the os.Root walk unchanged.
+// See TheoryOfBaseFdAccess and TheoryOfReadPath.
+func (s *Store) baseEntries(p string, entries map[string]Attr) error {
+	rel := relPath(p)
+	list, fast, err := baseReadDir(s.baseFd, rel)
+	if fast {
+		switch {
+		case err == nil:
+			for _, e := range list {
+				entries[e.Name] = e.Attr
+			}
+			return nil
+		case errors.Is(err, syscall.ENOENT),
+			errors.Is(err, syscall.ENOTDIR),
+			errors.Is(err, syscall.ELOOP):
+			return nil
+		default:
+			return err
+		}
+	}
+	info, err := s.baseRoot.Lstat(rel)
+	if err != nil || !info.IsDir() {
+		return nil
+	}
+	f, err := s.baseRoot.Open(rel)
+	if err != nil {
+		return err
+	}
+	des, err := f.ReadDir(-1)
+	f.Close()
+	if err != nil {
+		return err
+	}
+	for _, de := range des {
+		info, err := de.Info()
+		if err != nil {
+			continue
+		}
+		entries[de.Name()] = attrOf(info)
+	}
+	return nil
 }
 
 // captureOriginal records the base state of a path the upper layer is about

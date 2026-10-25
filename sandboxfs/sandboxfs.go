@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -100,13 +101,15 @@ descriptor it opened, and the host type is checked once, before the open,
 so a pipe is never opened and its read never blocks.
 
 The cache never shadows the session. Every read asks the upper layer
-first, so a written path serves its new content and a whiteout reports the
-deletion without any invalidation. A truncation — the truncating open or
-setattr's size change — drops every reader cached for the path, and a
-write drops its own handle's reader and every other handle's, because the
-content that was just written is the store content from then on. The
-cached descriptor fixes a base file's view at open, the same snapshot the
-review step compares the host against when it reports a conflict.
+first — a session that has written nothing skips the question, because the
+layer holds nothing (see TheoryOfUpperAbsentCache) — so a written path serves
+its new content and a whiteout reports the deletion without any invalidation.
+A truncation — the truncating open or setattr's size change — drops every
+reader cached for the path, and a write drops its own handle's reader and
+every other handle's, because the content that was just written is the store
+content from then on. The cached descriptor fixes a base file's view at open,
+the same snapshot the review step compares the host against when it reports a
+conflict.
 
 A directory handle carries the listing snapshot it filled, and every
 mutation the mount serves that adds, removes, or renames an entry clears
@@ -124,6 +127,16 @@ The read path is the hot path, and most of its paths never enter the upper
 layer: a dependency the session only reads is answered by the base. An
 uncached negative lookup pays a sqlite round trip for every one of them, and
 that round trip dominates a read request which otherwise costs one base read.
+
+A fresh session starts with an empty table, so the per-path record is not the
+cheapest statement of that fact: one flag says the whole layer holds no row,
+and a lookup that reads it answers from the base without touching sqlite. The
+flag is set once, when Open finds the files table empty, and the first metadata
+write clears it, because the metadata upsert is the only statement that ever
+inserts a row. A directory listing reads the same flag and skips its select,
+which saves a query per directory of a walk that never wrote one. A resumed
+session finds rows and takes the per-path cache, so the flag changes nothing
+for a store that already holds work.
 
 The cache therefore records the paths a lookup found absent, and clears a
 path's entry whenever the store writes the path. put is the only writer of
@@ -424,8 +437,6 @@ type Op struct {
 	Detail string
 }
 
-// Store is the sqlite-backed upper layer over a read-through base. All methods
-// are safe for concurrent use.
 type Store struct {
 	db       *sql.DB
 	base     string
@@ -440,6 +451,12 @@ type Store struct {
 	// absent caches the paths the upper layer is known not to hold. A write of
 	// the path clears its entry. See TheoryOfUpperAbsentCache.
 	absent sync.Map // p string -> bool
+
+	// upperEmpty reports that the upper layer holds no row at all, so every
+	// lookup is answered by the base without a sqlite round trip. Open sets it
+	// when the table is empty, and the first metadata write clears it.
+	// See TheoryOfUpperAbsentCache.
+	upperEmpty atomic.Bool
 
 	// read records the paths the session already audited a read of, so the
 	// trail keeps one record per path. See TheoryOfAuditBatching.
@@ -456,11 +473,33 @@ type Store struct {
 }
 
 // upperAbsent reports whether the upper layer is known not to hold p. A
-// missing entry says nothing: the caller must ask the database.
-// See TheoryOfUpperAbsentCache.
+// missing entry says nothing: the caller must ask the database. An empty upper
+// layer answers for every path at once, so a fresh session reaches the base
+// without a query. See TheoryOfUpperAbsentCache.
 func (s *Store) upperAbsent(p string) bool {
+	if s.upperEmpty.Load() {
+		return true
+	}
 	_, ok := s.absent.Load(p)
 	return ok
+}
+
+// detectUpperEmpty records whether the upper layer holds no row, so every
+// lookup of a fresh session costs no sqlite round trip. It runs once, from the
+// open path, before the store serves a request. A database that already holds
+// rows takes the per-path cache instead, so a resumed session reads exactly as
+// it did before. See TheoryOfUpperAbsentCache.
+func (s *Store) detectUpperEmpty() error {
+	var one int
+	err := s.db.QueryRow(`SELECT 1 FROM files LIMIT 1`).Scan(&one)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		s.upperEmpty.Store(true)
+		return nil
+	case err != nil:
+		return err
+	}
+	return nil
 }
 
 // Open opens the sandbox store at dbPath over the read-through base
@@ -573,6 +612,15 @@ func OpenWithPolicy(dbPath, base string, policy func(string) error) (*Store, err
 	// request pays a parse or waits for a preparation.
 	// See TheoryOfPreparedStatements.
 	if err := store.prepareStatements(); err != nil {
+		db.Close()
+		closeBaseDirFd(baseFd)
+		baseRoot.Close()
+		return nil, err
+	}
+	// The whole-layer shortcut is decided once, before the store serves a
+	// request: a database that already holds rows takes the per-path cache
+	// instead. See TheoryOfUpperAbsentCache.
+	if err := store.detectUpperEmpty(); err != nil {
 		db.Close()
 		closeBaseDirFd(baseFd)
 		baseRoot.Close()
@@ -878,7 +926,10 @@ func (s *Store) audit(op, p, detail string) {
 }
 
 // writeOps writes one batch of audit rows in a single transaction, keeping the
-// buffer's order. See TheoryOfAuditBatching and TheoryOfPreparedStatements.
+// buffer's order. The batch takes one transaction view of the insert and
+// executes it per row: database/sql prepares a transaction-local statement per
+// Tx.Stmt call, so a row that asked for its own view paid a parse per row.
+// See TheoryOfAuditBatching and TheoryOfPreparedStatements.
 func (s *Store) writeOps(ops []Op) error {
 	if len(ops) == 0 {
 		return nil
@@ -887,12 +938,17 @@ func (s *Store) writeOps(ops []Op) error {
 	if err != nil {
 		return err
 	}
+	defer func() { _ = tx.Rollback() }()
+	var exec func(args ...any) (sql.Result, error)
+	if s.stmts.putOp == nil {
+		exec = func(args ...any) (sql.Result, error) {
+			return tx.Exec(queryPutOp, args...)
+		}
+	} else {
+		exec = tx.Stmt(s.stmts.putOp).Exec
+	}
 	for _, o := range ops {
-		if _, err := runStmt(
-			tx, s.stmts.putOp, queryPutOp,
-			o.Time.Format(time.RFC3339Nano), o.Op, o.Path, o.Detail,
-		); err != nil {
-			_ = tx.Rollback()
+		if _, err := exec(o.Time.Format(time.RFC3339Nano), o.Op, o.Path, o.Detail); err != nil {
 			return err
 		}
 	}

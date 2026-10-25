@@ -35,6 +35,13 @@ Prepared statements theory:
   one connection is checked out, so no other caller's statement can join it.
   The post-change profile reaches the driver through ctxDriverStmtExec — the
   prepared statement, not a re-preparation.
+- database/sql caches a transaction's view of a prepared statement from the
+  first Tx.Stmt call on, so a row-at-a-time helper is correct as written and
+  pays one map lookup and one mutex acquisition per row. The audit insert is
+  the one such shape on the read path — it records the first read of every path
+  a large tree touches, sixty-four rows per batch — so the batch asks for its
+  view once and executes that view per row. The saving is that lookup, not a
+  parse: the parse was paid when the set was prepared.
 - The remaining top of the write profile is the driver's blob binding: the
   bound []byte is copied into sqlite's page cache. That is the storage
   engine's data movement, once per window, and no statement set removes it;
