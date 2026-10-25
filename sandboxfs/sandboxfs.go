@@ -162,6 +162,16 @@ refreshed on the next lookup, and a cached absence states exactly what the
 table said when it was recorded. The apply step only removes rows, which can
 make an absence more true, never less.
 
+A lookup and the write that invalidates it run on different goroutines, so the
+record must lose to a write that intervened. The lookup stamps itself with the
+write epoch before it queries, and the write moves the epoch and clears the
+entry under one lock; a record whose stamp no longer holds writes nothing. The
+stamp alone would leave a window between the check and the store, so the two
+writers of the cache share a mutex — taken once per path, never on the lookup
+itself. Without that order a lookup that missed a row just before a concurrent
+write committed would hide that row for the rest of the session, because
+nothing else clears an entry.
+
 The cache is bounded by the paths a session touches, and the audit trail
 already spends one record per such path, so it adds no memory the session did
 not already spend. It is a sync.Map, so a lookup runs without a lock: the read
@@ -186,6 +196,23 @@ content the delta starts from — and every write, first or later, lands its own
 payload. Two handles over one path therefore cannot diverge: there is no stale
 buffer to overwrite another handle's bytes, and the kernel's next read asks the
 store for the content the last write left there.
+
+The materialisation is the one step two concurrent first writes can both
+reach, so it re-checks its own premise inside its transaction: the row is
+written only while the path holds no live regular row that already carries
+content. A row another writer created first is that writer's content, and
+replacing it would drop the bytes that writer already stored — the same
+divergence the no-buffer rule rules out for two handles. The loser leaves the
+winner's row alone and answers with it, so the caller's delta lands on the
+content that exists.
+
+The size sentinel separates the two cases the guard must tell apart. A
+committed metadata-only row records a chmod, a utimes, or a revived whiteout:
+no content write produced it, so the row is exactly what a materialisation
+replaces, and treating it as a competing writer would strand every splice
+into a path the session only touched by metadata. A committed row with a
+stored length is the competing writer; the sentinel means the guard's premise
+still holds.
 
 The splice runs in one transaction whose first statement both guards the row
 and extends its size, so the delta's admissibility and its length cost one
@@ -468,6 +495,18 @@ type Store struct {
 	// absent caches the paths the upper layer is known not to hold. A write of
 	// the path clears its entry. See TheoryOfUpperAbsentCache.
 	absent sync.Map // p string -> bool
+
+	// absentMu serialises the cache's two writers: the record a lookup makes
+	// and the invalidation a write makes. A lookup still reads the map without
+	// a lock; the lock is taken once per path, never once per request.
+	// See TheoryOfUpperAbsentCache.
+	absentMu sync.Mutex
+
+	// upperEpoch counts the metadata writes the upper layer received. A lookup
+	// stamps itself with the value before it queries and records an absence
+	// only while the stamp still holds, so an absence found before a concurrent
+	// write is never recorded after it. See TheoryOfUpperAbsentCache.
+	upperEpoch atomic.Uint64
 
 	// upperEmpty reports that the upper layer holds no row at all, so every
 	// lookup is answered by the base without a sqlite round trip. Open sets it
@@ -809,14 +848,19 @@ func scanFileRow(rs rowScanner) (fileRow, error) {
 // mutation's lookup pays no SQL parse. The scan reads metadata only: content
 // lives in the chunk table, and a write already holds the bytes it is about to
 // store, so a read that assembled content would copy a file the write is about
-// to discard. See TheoryOfChunkedContent and TheoryOfPreparedStatements.
+// to discard. See TheoryOfChunkedContent, TheoryOfPreparedStatements and
+// TheoryOfUpperAbsentCache.
 func (s *Store) row(p string) (fileRow, bool, error) {
 	if s.upperAbsent(p) {
 		return fileRow{}, false, nil
 	}
+	// The stamp is read before the query: a write that commits between the
+	// query and the record below moves the epoch, and the absence is then not
+	// recorded. See TheoryOfUpperAbsentCache.
+	epoch := s.upperEpoch.Load()
 	r, err := scanFileRow(queryRowStmt(s.db, s.stmts.selectRow, querySelectRow, p))
 	if errors.Is(err, sql.ErrNoRows) {
-		s.rememberAbsent(p)
+		s.rememberAbsent(p, epoch)
 		return fileRow{}, false, nil
 	}
 	if err != nil {
@@ -828,17 +872,21 @@ func (s *Store) row(p string) (fileRow, bool, error) {
 // readUpperRange reads one window of a path the upper layer holds, clamped to
 // the stored size. A metadata-only row — the size sentinel saying the content
 // still lives in the base — reports found false, so the caller serves the
-// window from the base. See TheoryOfBaseCapture and
-// TheoryOfPreparedStatements.
+// window from the base. See TheoryOfBaseCapture,
+// TheoryOfPreparedStatements and TheoryOfUpperAbsentCache.
 func (s *Store) readUpperRange(p string, off int64, size int) (chunk []byte, kind Kind, found bool, err error) {
 	if s.upperAbsent(p) {
 		return nil, 0, false, nil
 	}
+	// The stamp is read before the query, so a write that commits in between
+	// keeps its row from being hidden by the absence recorded below.
+	// See TheoryOfUpperAbsentCache.
+	epoch := s.upperEpoch.Load()
 	var k, deleted int
 	var stored int64
 	err = queryRowStmt(s.db, s.stmts.selectUpper, querySelectUpper, p).Scan(&k, &deleted, &stored)
 	if errors.Is(err, sql.ErrNoRows) {
-		s.rememberAbsent(p)
+		s.rememberAbsent(p, epoch)
 		return nil, 0, false, nil
 	}
 	if err != nil {
@@ -869,17 +917,22 @@ func (s *Store) readUpperRange(p string, off int64, size int) (chunk []byte, kin
 // statRow reads one path's metadata for a stat, from the prepared stat
 // statement, so a stat pays no SQL parse. A metadata-only row reports the
 // base's own length, which costs one Lstat and never the file's content. See
-// TheoryOfBaseCapture and TheoryOfPreparedStatements.
+// TheoryOfBaseCapture, TheoryOfPreparedStatements and
+// TheoryOfUpperAbsentCache.
 func (s *Store) statRow(p string) (a Attr, found bool, err error) {
 	if s.upperAbsent(p) {
 		return Attr{}, false, nil
 	}
+	// The stamp is read before the query, so a write that commits in between
+	// keeps its row from being hidden by the absence recorded below.
+	// See TheoryOfUpperAbsentCache.
+	epoch := s.upperEpoch.Load()
 	var kind, deleted int
 	var mode, mtime, size int64
 	var targetSize sql.NullInt64
 	err = queryRowStmt(s.db, s.stmts.selectStat, querySelectStat, p).Scan(&kind, &mode, &mtime, &deleted, &size, &targetSize)
 	if errors.Is(err, sql.ErrNoRows) {
-		s.rememberAbsent(p)
+		s.rememberAbsent(p, epoch)
 		return Attr{}, false, nil
 	}
 	if err != nil {
@@ -1053,9 +1106,31 @@ func (s *Store) flushOps() {
 
 // rememberAbsent records that the upper layer does not hold p, so the next
 // lookup of the path costs no sqlite round trip. A write of the path clears
-// the entry. See TheoryOfUpperAbsentCache.
-func (s *Store) rememberAbsent(p string) {
+// the entry, and a write that committed after epoch was read keeps the entry
+// from being recorded at all: that write's row is what the lookup must serve.
+// See TheoryOfUpperAbsentCache.
+func (s *Store) rememberAbsent(p string, epoch uint64) {
+	s.absentMu.Lock()
+	defer s.absentMu.Unlock()
+	if s.upperEpoch.Load() != epoch {
+		return
+	}
 	s.absent.Store(p, true)
+}
+
+// markUpperWritten invalidates what the absence cache says about one written
+// path. The row exists from this write on, so a lookup that found the path
+// absent before it must not record that absence after it. The epoch moves and
+// the entry clears under one lock, so neither writer of the cache can
+// interleave with the other. The call runs before the transaction commits, so
+// no later lookup can pass the stamp check in the interval between the commit
+// and the invalidation. See TheoryOfUpperAbsentCache.
+func (s *Store) markUpperWritten(p string) {
+	s.absentMu.Lock()
+	defer s.absentMu.Unlock()
+	s.upperEpoch.Add(1)
+	s.absent.Delete(p)
+	s.upperEmpty.Store(false)
 }
 
 // Ops returns the audit trail in insertion order. The buffered tail is

@@ -88,12 +88,52 @@ func (s *Store) putContent(r fileRow, content []byte) error {
 	return tx.Commit()
 }
 
+// putContentGuarded stores one row's metadata and its content, but only while
+// the path holds no live regular row that already carries content: such a row
+// is another writer's committed bytes, and replacing it would drop what that
+// writer stored. A metadata-only row is not that row — its size sentinel says
+// it records metadata alone, and materialising it is exactly this call's job.
+// created reports whether this call wrote the row. The guard and the write
+// share one transaction, so the row that decided the outcome is the row the
+// write replaces. See TheoryOfWriteSplice and TheoryOfBaseCapture.
+func (s *Store) putContentGuarded(r fileRow, content []byte) (created bool, err error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var kind, deleted int
+	var size int64
+	switch err := queryRowStmt(tx, s.stmts.selectUpper, querySelectUpper, r.path).
+		Scan(&kind, &deleted, &size); {
+	case err == nil:
+		// A committed metadata-only row carries the size sentinel: no content
+		// write produced it, so it is the state this call exists to replace.
+		// See TheoryOfBaseCapture.
+		if deleted == 0 && Kind(kind) == KindRegular && size >= 0 {
+			return false, nil
+		}
+	case !errors.Is(err, sql.ErrNoRows):
+		return false, err
+	}
+	r.size = int64(len(content))
+	if err := s.replaceChunks(tx, r.path, content); err != nil {
+		return false, err
+	}
+	if err := s.putMetaTx(tx, r); err != nil {
+		return false, err
+	}
+	return true, tx.Commit()
+}
+
 func (s *Store) putMetaTx(tx *sql.Tx, r fileRow) error {
-	// A row exists from this write on, so the whole-layer shortcut is over. The
-	// store holds one connection, so a reader that still sees the flag read
-	// before the row could commit. See TheoryOfUpperAbsentCache.
-	s.upperEmpty.Store(false)
-	s.absent.Delete(r.path)
+	// A row exists from this write on, so no lookup may keep the path cached as
+	// absent: the write epoch moves and the entry clears under one lock, and a
+	// lookup whose stamp predates this write records nothing. The call runs
+	// before the transaction commits, so a lookup that passes the stamp check
+	// still sees either the pre-write state or the committed row, never a
+	// stale absence on top of it. See TheoryOfUpperAbsentCache.
+	s.markUpperWritten(r.path)
 	var deleted, originalExists int
 	if r.deleted {
 		deleted = 1
@@ -364,8 +404,10 @@ func readBasePrefix(root *os.Root, rel string) ([]byte, error) {
 // keeps a prefix never presents the content as freshly written: a caller that
 // means to stamp the content sets the time after this returns. The mode is
 // applied as given, 000 included: a caller that means to keep an existing mode
-// reads it first, so no layer substitutes a default.
-// See TheoryOfCompletePOSIX and TheoryOfWriteSplice.
+// reads it first, so no layer substitutes a default. A live regular row another
+// writer created while this call ran is that writer's content, and the returned
+// row is the one the caller's delta lands on. See TheoryOfCompletePOSIX,
+// TheoryOfWriteSplice and TheoryOfUpperAbsentCache.
 func (s *Store) materializeContent(p string, copySize int64, perm os.FileMode) (fileRow, error) {
 	if err := s.checkParent(p); err != nil {
 		return fileRow{}, err
@@ -406,11 +448,32 @@ func (s *Store) materializeContent(p string, copySize int64, perm os.FileMode) (
 	r.mode = perm
 	r.deleted = false
 	r.target = ""
-	if err := s.putContent(r, content); err != nil {
+	created, err := s.putContentGuarded(r, content)
+	if err != nil {
 		return fileRow{}, err
 	}
-	r.size = int64(len(content))
-	return r, nil
+	if created {
+		r.size = int64(len(content))
+		return r, nil
+	}
+	// Another writer created the path's live regular row after the lookup
+	// above. That row is the content the caller's delta lands on; replacing it
+	// would drop the bytes the writer stored. See TheoryOfWriteSplice.
+	cur, found, err := s.row(p)
+	if err != nil {
+		return fileRow{}, err
+	}
+	if !found || cur.deleted {
+		return fileRow{}, ErrNotExist
+	}
+	switch cur.kind {
+	case KindRegular:
+		return cur, nil
+	case KindDir:
+		return fileRow{}, syscall.EISDIR
+	default:
+		return fileRow{}, syscall.EINVAL
+	}
 }
 
 // TruncateFile shapes one regular file to size. The chunks beyond the length

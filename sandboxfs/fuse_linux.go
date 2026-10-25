@@ -978,18 +978,23 @@ func (s *fuseServer) childNodeLocked(parent, name string) uint64 {
 }
 
 // nodeOf returns the node id of p, allocating one on first use. When
-// mustExist is true the path is stat'ed first, so an id never names a path
-// the store does not hold.
+// mustExist is true the path is stat'ed first, so an id never names a path the
+// store does not hold. The stat runs before the node table's lock is taken:
+// it reaches the store's one sqlite connection, and every other user of the
+// table — a listing's entry resolution, the flight window's report — would
+// wait behind that round trip for the whole lock. A caller that already read
+// the path's attribute, the lookup and the create handlers among them, passes
+// mustExist false and pays only the map write. See TheoryOfFuseMount.
 func (s *fuseServer) nodeOf(p string, mustExist bool) (uint64, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if id, ok := s.byPath[p]; ok {
-		return id, nil
-	}
 	if mustExist {
 		if _, err := s.store.Stat(p); err != nil {
 			return 0, err
 		}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if id, ok := s.byPath[p]; ok {
+		return id, nil
 	}
 	id := s.nextID
 	s.nextID++
