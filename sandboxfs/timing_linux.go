@@ -16,29 +16,34 @@ const TheoryOfOperationTiming = `
 Operation timing theory:
 - The filesystem's cost is the sum of its requests' costs, so the measurement
   attributes one request's duration and count to the request's opcode: one
-  start stamp and one record per request in the server's read loop and one map
-  entry per opcode. Nothing is sampled, and nothing is recorded per byte or per
-  cell, so the numbers answer which operation a workload spends its time in
+  start stamp and one record per request in the server's worker loop and one
+  map entry per opcode. Nothing is sampled, and nothing is recorded per byte or
+  per cell, so the numbers answer which operation a workload spends its time in
   without changing what the workload does.
 - The table and the flight window answer different questions from one
   measurement: the table names the operation that costs the most over a run,
   the window names the requests that led to the slowest one. They share the
-  request loop, the start stamp, and the lock that guards the aggregate, so a
+  worker loop, the start stamp, and the lock that guards the aggregate, so a
   session pays one measurement, not two; the window's own model lives in
-  TheoryOfFlightRecorder.
+  TheoryOfFlightRecorder. The aggregate carries its own lock because several
+  workers record at once. See TheoryOfFuseConcurrency.
 - The measurement covers the server's own work: dispatch plus the reply
   write. Kernel-side work never reaches the server, so a lookup the kernel
   answers from its attribute cache, the caller's own syscalls, and the
   scheduling between them are invisible here. A run whose kernel hit rate is
   high therefore shows a small measured total, and the per-opcode average is
   the number to read: it is the cost each additional request would pay.
+- A measured duration is the request's own work, never a wait for another
+  request's turn: concurrency is what makes the two distinguishable, and a
+  duration that grew with the queue would name the wrong bottleneck. See
+  TheoryOfFuseConcurrency.
 - Recording is always on because a flag would be missing exactly when nobody
   thought to enable it; the cost is negligible against the sqlite round trip
   and the syscall that produced the request. Reporting is gated, because a
   report writes to a stream the session does not otherwise touch.
 - A report is a snapshot: entries are copied under one lock, so a report never
-  blocks a request for longer than a map scan, and the reporter runs beside
-  the server without synchronizing with it. Entries are ordered by
+  blocks a request for longer than a map scan, and the reporter runs beside the
+  workers without synchronizing with them. Entries are ordered by
   accumulated time, so the first row names the bottleneck. The periodic
   reporter writes one snapshot per interval, and unmounting the mount writes
   the final one, so a session that ends before the first interval still

@@ -13,10 +13,12 @@ import (
 const TheoryOfDirectoryStream = `
 The mount answers a directory listing in windows, never in one request. A
 request that enumerated a whole directory would make its duration grow with
-the directory's entry count, and the server answers one request at a time, so
-every other process's file I/O — the certificate bundle a TLS handshake reads
-among them — would wait behind that one walk and fail against a deadline it
-never set. See TheoryOfFuseMount.
+the directory's entry count, and a request's duration keeps one worker of
+the request pool busy — the kernel holds the requests that follow behind the
+walk — so every other process's file I/O — the certificate bundle a TLS
+handshake reads among them — would wait behind that one walk and fail
+against a deadline it never set. See TheoryOfFuseMount and
+TheoryOfFuseConcurrency.
 
 The cursor is the fix. Opening a listing reads the directory's own attribute,
 its parent's, the upper layer's rows for the directory, and one handle on the
@@ -29,9 +31,7 @@ requests instead of one long one.
 
 The upper layer's rows arrive in one query per listing, keyed by entry name,
 so a merging window never queries per entry. A fresh session holds no row and
-skips the query (see TheoryOfUpperAbsentCache). A name the session created
-surfaces after the base's own entries, and a whiteout hides its base entry, so
-a listing and a stat still agree on one path. The entries of one window keep
+skips the query (see TheoryOfUpperAbsentCache). The entries of one window keep
 the base's own order; only the store's whole-listing API sorts, because a
 caller of that API reads the result as a set.
 

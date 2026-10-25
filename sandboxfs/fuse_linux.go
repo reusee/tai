@@ -28,17 +28,14 @@ defeats the design.
 The implementation speaks the kernel protocol directly instead of a third-
 party library: the protocol is small (a request header, an opcode, and
 opcode-specific fixed bodies), the kernel ABI is stable, and one dependency
-fewer keeps the sandbox inside the module's existing constraints. The
-handler is driven synchronously: read one request, dispatch it, write one
-response. The kernel does not serialize requests — it sends them as its
-callers ask, and the background ones, the readahead among them, queue up to
-the depth the INIT reply announces (see TheoryOfInitNegotiation) — but a
-single reader is enough: each reply names the request it answers, so no
-worker pool is needed. Delaying later requests is the price of one reader,
-and it is affordable only while every request stays short: the request path
-is bounded in the bytes it moves and the rows it writes, so a request's
-duration never grows with the size of a file or a directory the session
-happens to touch (see TheoryOfBaseCapture).
+fewer keeps the sandbox inside the module's existing constraints. One reader
+takes requests from the device and a fixed set of workers answers them; the
+concurrent model, its locking, and the bound on requests in flight live in
+TheoryOfFuseConcurrency. The request path is still bounded in the bytes it
+moves and the rows it writes, so a request's duration never grows with the
+size of a file or a directory the session happens to touch (see
+TheoryOfBaseCapture) — and concurrency is what keeps one request that does
+run long from becoming the whole process's stall.
 
 The read loop separates the errors that do not end the daemon from the ones
 that do. EINTR says a signal arrived. ENOENT says the caller interrupted its
@@ -49,13 +46,13 @@ filesystem call through the mount fails with EIO.
 A request body carries its fixed header followed by its names. A body
 shorter than the fixed header, or a name with no terminator, is malformed:
 the handler reports EINVAL rather than slicing past the body, because a
-panic on the server's single goroutine kills the daemon for every later
-request. The decodeStruct padding covers the fixed fields only; the names
-come from the raw length.
+panic in a handler kills the daemon for every later request. The
+decodeStruct padding covers the fixed fields only; the names come from the
+raw length.
 
 The request header's length field is checked before the body is sliced. The
-read buffer is reused, so a length that claims bytes the read did not
-deliver would hand the handler the previous request's bytes. A length below
+request buffer is reused, so a length that claims bytes the read did not
+deliver would hand the handler another request's bytes. A length below
 the header or above the bytes read is EINVAL; a zero length leaves the
 whole read as the body.
 
@@ -87,6 +84,46 @@ is the shape a toolchain emits for every full block of a large file.
 Passthrough directories bypass FUSE entirely. See TheoryOfPassthrough.
 `
 
+const TheoryOfFuseConcurrency = `
+Request concurrency theory:
+- One reader takes requests from the device and a fixed set of workers
+  answers them. A single goroutine makes every request's duration the whole
+  process's stall: the kernel holds the requests of every process in the
+  sandbox behind the one being answered, so a request that runs long — a
+  first write materialising a base file, a directory rename walking a
+  subtree, a hash of an untouched file — stops every filesystem operation of
+  the process until it finishes. The pool removes that single point.
+- The pool is bounded by its buffers. The reader takes a buffer from the free
+  set before it reads, so the number of requests in flight bounds itself,
+  memory stays fixed whatever the workload asks for, and a wedged request
+  costs one worker rather than the process. A request's buffer is recycled
+  once its reply is written, because the reply payload is read from it.
+- Two replies never interleave. Each reply is one write of one header and one
+  body, and the request's unique id names the reply it answers, so workers
+  answer out of order without corruption.
+- Handle-scoped requests — read, write, both listings, and release — share
+  the per-handle state: the read window buffer, the listing window and the
+  entries already delivered, the cached base reader, and the stale mark. One
+  lock serializes them and holds through the reply write, because the reply
+  payload aliases that state: releasing it sooner would let the next request
+  on the handle overwrite bytes the kernel is about to read. Path-scoped
+  requests — lookup, getattr, setattr, open, create, mkdir, unlink, rename,
+  link, symlink, readlink, access, statfs, init — hold no handle state and
+  run concurrently with each other and with a slow handle request.
+- Invalidation is the one path-scoped step that reaches into handles. A
+  mutation closes the cached base reader of every open handle of its path and
+  marks their listings stale, and a handle-scoped request may be using those
+  fields at that moment, so the step takes the handle lock. The order is
+  always the handle lock first and the node table second, the order dispatch
+  takes, so the two never nest the other way.
+- The store is safe for concurrent use: sqlite's handle is, the statement set
+  is, the audit buffer and the absence cache and the node table carry their
+  own locks. Paths stay addressable, so two workers naming one path agree on
+  its node id.
+- FORGET, BATCH_FORGET, and INTERRUPT expect no reply and get none, on
+  whatever worker reads them.
+`
+
 const TheoryOfInitNegotiation = `
 The FUSE INIT handshake is the first and cheapest performance lever: it sets the
 per-request ceiling every later file operation runs under, before a single byte
@@ -116,9 +153,9 @@ page; the reply echoes the kernel's own window, so a streamed file arrives as
 a few large requests. Readahead reads are background requests, so the echo
 buys nothing while the background queue is too shallow to hold them:
 max_background and congestion_threshold are announced far above the server's
-own concurrency on purpose — the server answers one request at a time, and the
-queue exists to keep that one reader supplied, never to parallelize it (see
-TheoryOfFuseMount).
+worker count on purpose — the queue exists to keep every worker supplied, and
+its depth costs nothing while the workers are idle (see
+TheoryOfFuseConcurrency).
 
 The remaining bits cost one round trip each: ATOMIC_O_TRUNC folds the truncating
 open's SETATTR into the OPEN the caller already issues, ASYNC_READ keeps several
@@ -276,6 +313,12 @@ const (
 // byte-range lock this store does not implement and answers as ENOSYS.
 // See TheoryOfCompletePOSIX.
 const fuseOpFsyncdir = 30
+
+// fuseWorkerCount is the number of request workers. One worker would make
+// every request's duration the whole process's stall, and a pool wider than
+// the store's own concurrency buys nothing while it multiplies the request
+// buffers the pool holds. See TheoryOfFuseConcurrency.
+const fuseWorkerCount = 4
 
 const (
 	fuseInitAsyncRead       = 1 << 0  // several reads in flight
@@ -635,17 +678,17 @@ type fuseHandle struct {
 	mode os.FileMode
 
 	// readBuf is the handle's read window buffer, reused across reads: the
-	// server answers one request at a time and the reply reaches the kernel
-	// before the next request is read, so a streamed file costs one buffer per
-	// handle instead of one allocation per window. See TheoryOfReadPath.
+	// handle's requests are serialized through their reply write, so a
+	// streamed file costs one buffer per handle instead of one allocation per
+	// window. See TheoryOfReadPath and TheoryOfFuseConcurrency.
 	readBuf []byte
 
 	// listBuf is the directory listing's reply scratch, reused across
 	// READDIR and READDIRPLUS calls for the same reason readBuf is reused:
-	// the reply reaches the kernel before the next request is read, so a
-	// repeated listing of one directory allocates nothing after its first
-	// call. Both handlers size it from the entries that fit instead of the
-	// announced window, which can be far larger than a small directory.
+	// the handle's requests are serialized, so a repeated listing of one
+	// directory allocates nothing after its first call. Both handlers size it
+	// from the entries that fit instead of the announced window, which can be
+	// far larger than a small directory.
 	// See TheoryOfInitNegotiation.
 	listBuf []byte
 
@@ -665,8 +708,8 @@ func (h *fuseHandle) closeDir() {
 }
 
 // closeBase releases the handle's cached base-layer reader, if any. The
-// server is single-threaded, so no read is in flight while it runs.
-// See TheoryOfReadPath.
+// handle's requests are serialized through their reply write, so no read is
+// in flight while it runs. See TheoryOfReadPath and TheoryOfFuseConcurrency.
 func (h *fuseHandle) closeBase() {
 	if h.base != nil {
 		_ = h.base.Close()
@@ -684,6 +727,11 @@ type fuseServer struct {
 	// See TheoryOfFuseMount.
 	readReq func([]byte) (int, error)
 
+	// beforeDispatch runs at the top of dispatch, before the request takes any
+	// lock. It is a field so a test can hold one request open and prove that
+	// the other workers keep answering. See TheoryOfFuseConcurrency.
+	beforeDispatch func(opcode uint32)
+
 	mu      sync.Mutex
 	nodes   map[uint64]string
 	byPath  map[string]uint64
@@ -691,10 +739,10 @@ type fuseServer struct {
 	nextID  uint64
 	nextFh  uint64
 
-	// outBuf is the response scratch the server reuses for every reply. The
-	// server answers one request at a time, so one buffer serves all responses
-	// and a reply costs no allocation.
-	outBuf []byte
+	// handleMu serializes the handle-scoped requests through their reply
+	// write: they share the per-handle state, and their reply payload aliases
+	// it. Path-scoped requests never take it. See TheoryOfFuseConcurrency.
+	handleMu sync.Mutex
 
 	// timings aggregates the measured cost of every answered request, so a
 	// session can report which operation its workload spends its time in.
@@ -704,6 +752,14 @@ type fuseServer struct {
 	timings *OpTimings
 
 	done chan struct{}
+}
+
+// fuseRequest is one request the reader handed to the pool: a pooled buffer
+// and the length of the request in it. The buffer returns to the pool once the
+// reply is written. See TheoryOfFuseConcurrency.
+type fuseRequest struct {
+	buf []byte
+	n   int
 }
 
 func newFuseServer(store *Store, devFd int) *fuseServer {
@@ -734,13 +790,41 @@ func newFuseServer(store *Store, devFd int) *fuseServer {
 
 func (s *fuseServer) run() {
 	defer close(s.done)
-	// The buffer holds the largest request the kernel may send after the
-	// negotiation: the request header, one write header, and a full
-	// fuseMaxWriteMax payload. See TheoryOfInitNegotiation.
-	buf := make([]byte, fuseInHeaderSize+binary.Size(fuseWriteIn{})+fuseMaxWriteMax)
+	// The buffers, the request queue, and the workers are the request pool:
+	// the reader takes a buffer before it reads, so the number of requests in
+	// flight bounds itself and memory stays fixed whatever the workload asks
+	// for. See TheoryOfFuseConcurrency.
+	size := fuseInHeaderSize + binary.Size(fuseWriteIn{}) + fuseMaxWriteMax
+	free := make(chan []byte, fuseWorkerCount)
+	for i := 0; i < fuseWorkerCount; i++ {
+		free <- make([]byte, size)
+	}
+	requests := make(chan fuseRequest, fuseWorkerCount)
+	var wg sync.WaitGroup
+	for i := 0; i < fuseWorkerCount; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for req := range requests {
+				// One start stamp and one record per request attribute the
+				// server's own cost — dispatch plus the reply write — to the
+				// request's opcode, and the request joins the flight ring the
+				// moment it finishes.
+				// See TheoryOfOperationTiming and TheoryOfFlightRecorder.
+				opcode := binary.LittleEndian.Uint32(req.buf[4:8])
+				nodeid := binary.LittleEndian.Uint64(req.buf[16:24])
+				mark := s.timings.markRequest(nodeid)
+				s.dispatch(req.buf[:req.n])
+				s.timings.recordRequest(opcode, mark)
+				free <- req.buf
+			}
+		}()
+	}
 	for {
+		buf := <-free
 		n, err := s.readReq(buf)
 		if err != nil {
+			free <- buf
 			// Two read errors do not end the daemon. EINTR says a signal
 			// arrived. ENOENT says the caller interrupted its request before
 			// this server read it; the FUSE device asks for the next request.
@@ -749,21 +833,18 @@ func (s *fuseServer) run() {
 			if errors.Is(err, unix.EINTR) || errors.Is(err, unix.ENOENT) {
 				continue
 			}
-			return
+			break
 		}
 		if n <= 0 || n < fuseInHeaderSize {
-			return
+			free <- buf
+			break
 		}
-		// One start stamp and one record per request attribute the server's
-		// own cost — dispatch plus the reply write — to the request's opcode,
-		// and the request joins the flight ring the moment it finishes.
-		// See TheoryOfOperationTiming and TheoryOfFlightRecorder.
-		opcode := binary.LittleEndian.Uint32(buf[4:8])
-		nodeid := binary.LittleEndian.Uint64(buf[16:24])
-		mark := s.timings.markRequest(nodeid)
-		s.dispatch(buf[:n])
-		s.timings.recordRequest(opcode, mark)
+		requests <- fuseRequest{buf: buf, n: n}
 	}
+	// The queued requests drain before the server reports itself stopped, so
+	// Unmount observes every answered request's timing.
+	close(requests)
+	wg.Wait()
 }
 
 func (s *fuseServer) dispatch(buf []byte) {
@@ -776,12 +857,15 @@ func (s *fuseServer) dispatch(buf []byte) {
 		Unique: binary.LittleEndian.Uint64(buf[8:16]),
 		Nodeid: binary.LittleEndian.Uint64(buf[16:24]),
 	}
+	if s.beforeDispatch != nil {
+		s.beforeDispatch(h.Opcode)
+	}
 	// The header's Len field is the request's own length. A length shorter
 	// than the header or longer than the bytes read describes a body that is
-	// not there, and the reused request buffer still holds the previous
-	// request's bytes beyond the read: parsing them would answer a request
-	// the kernel never sent. A zero length means the sender left the field
-	// empty, so the whole read stands as the body. See TheoryOfFuseMount.
+	// not there, and the reused request buffer still holds another request's
+	// bytes beyond the read: parsing them would answer a request the kernel
+	// never sent. A zero length means the sender left the field empty, so the
+	// whole read stands as the body. See TheoryOfFuseMount.
 	end := len(buf)
 	if h.Len != 0 {
 		if h.Len < fuseInHeaderSize || int(h.Len) > len(buf) {
@@ -791,6 +875,15 @@ func (s *fuseServer) dispatch(buf []byte) {
 			return
 		}
 		end = int(h.Len)
+	}
+	// Handle-scoped requests share the per-handle state and their reply
+	// payload aliases it, so one lock serializes them through the reply
+	// write. Path-scoped requests hold no handle state and run concurrently,
+	// so a long operation never becomes the process's stall.
+	// See TheoryOfFuseConcurrency.
+	if isHandleScoped(h.Opcode) {
+		s.handleMu.Lock()
+		defer s.handleMu.Unlock()
 	}
 	body := buf[fuseInHeaderSize:end]
 	var respBody []byte
@@ -873,30 +966,41 @@ func (s *fuseServer) dispatch(buf []byte) {
 	s.respond(h.Unique, err, respBody)
 }
 
+// isHandleScoped reports whether one opcode reads or writes per-handle state
+// or replies with a payload that aliases it, so its request must hold the
+// handle lock through its reply write. See TheoryOfFuseConcurrency.
+func isHandleScoped(opcode uint32) bool {
+	switch opcode {
+	case fuseOpRead, fuseOpWrite, fuseOpReaddir, fuseOpReaddirplus,
+		fuseOpRelease, fuseOpReleasedir:
+		return true
+	}
+	return false
+}
+
 // respond writes one reply. The header and the payload leave as one writev:
 // a read reply can carry a whole negotiated request window, and copying that
 // payload behind the header would move the bytes a second time per read. The
-// kernel consumes one write per reply, and writev is one write. The header
-// buffer is the server's reused scratch, so a reply costs no allocation.
-// See TheoryOfFuseMount.
+// kernel consumes one write per reply, and writev is one write, so concurrent
+// workers never interleave two replies. The header is a fixed array on the
+// worker's stack, because a shared scratch would let one worker overwrite a
+// reply another is writing. See TheoryOfFuseMount and
+// TheoryOfFuseConcurrency.
 func (s *fuseServer) respond(unique uint64, err error, body []byte) {
 	errno := int32(0)
 	if err != nil {
 		errno = fuseErrno(err)
 		body = nil
 	}
-	if cap(s.outBuf) < fuseOutHeaderSize {
-		s.outBuf = make([]byte, fuseOutHeaderSize)
-	}
-	out := s.outBuf[:fuseOutHeaderSize]
-	binary.LittleEndian.PutUint32(out[0:4], uint32(fuseOutHeaderSize+len(body)))
-	binary.LittleEndian.PutUint32(out[4:8], uint32(errno))
-	binary.LittleEndian.PutUint64(out[8:16], unique)
+	var hdr [fuseOutHeaderSize]byte
+	binary.LittleEndian.PutUint32(hdr[0:4], uint32(fuseOutHeaderSize+len(body)))
+	binary.LittleEndian.PutUint32(hdr[4:8], uint32(errno))
+	binary.LittleEndian.PutUint64(hdr[8:16], unique)
 	if len(body) == 0 {
-		_, _ = unix.Write(s.devFd, out)
+		_, _ = unix.Write(s.devFd, hdr[:])
 		return
 	}
-	_, _ = unix.Writev(s.devFd, [][]byte{out, body})
+	_, _ = unix.Writev(s.devFd, [][]byte{hdr[:], body})
 }
 
 // fuseErrno maps an error to the negative errno the kernel expects in a
@@ -1263,10 +1367,13 @@ func (s *fuseServer) handleSetattr(nodeid uint64, body []byte) ([]byte, error) {
 // invalidateHandles drops the cached base reader of every open handle of p, so
 // a read that follows a truncation serves the store's new content instead of a
 // descriptor that fixes the old view. The store is the only copy of the
-// content, so no other state needs dropping, and handle numbers start at 1, so
-// a self of 0 names no handle and the loop reaches all of them.
-// See TheoryOfReadPath.
+// content, so no other state needs dropping. It takes the handle lock: a
+// handle-scoped request may be using a reader at this moment, and those
+// requests hold the same lock, so the two never interleave.
+// See TheoryOfReadPath and TheoryOfFuseConcurrency.
 func (s *fuseServer) invalidateHandles(p string) {
+	s.handleMu.Lock()
+	defer s.handleMu.Unlock()
 	s.invalidateOtherHandles(p, 0)
 }
 
@@ -1294,9 +1401,15 @@ func (s *fuseServer) invalidateOtherHandles(p string, self uint64) {
 // directory, and a walk that a create or a delete interrupted would lose every
 // entry past the mutation. The kernel cannot see a change this mount makes on
 // its own, and FOPEN_CACHE_DIR keeps the listing it read, so the stale mark is
-// the server's own notice. See TheoryOfOpenCaching, TheoryOfReadPath and
-// TheoryOfDirectoryStream.
+// the server's own notice. It takes the handle lock before the node table's:
+// a listing request may be using the handle at this moment, and the
+// handle-scoped requests hold the handle lock, so the two never interleave —
+// and the order is the one dispatch takes, so the two locks never nest the
+// other way. See TheoryOfOpenCaching, TheoryOfReadPath,
+// TheoryOfDirectoryStream and TheoryOfFuseConcurrency.
 func (s *fuseServer) invalidateDirListings(p string) {
+	s.handleMu.Lock()
+	defer s.handleMu.Unlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, h := range s.handles {
