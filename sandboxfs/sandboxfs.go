@@ -107,6 +107,16 @@ write drops its own handle's reader and every other handle's, because the
 content that was just written is the store content from then on. The
 cached descriptor fixes a base file's view at open, the same snapshot the
 review step compares the host against when it reports a conflict.
+
+A directory handle carries the listing snapshot it filled, and every
+mutation the mount serves that adds, removes, or renames an entry clears
+the snapshot of that directory's open handles. The kernel cannot see a
+change this mount makes on its own: FOPEN_CACHE_DIR keeps the listing it
+read, and no notify call tells it otherwise, so the server clears its own
+cache and the next read rebuilds it from the store, the one source of the
+directory's current entries. A continued read keeps the one snapshot its
+offsets name, so the rebuild happens only after a mutation, never in the
+middle of a listing.
 `
 
 const TheoryOfUpperAbsentCache = `
@@ -178,6 +188,17 @@ Detection reads the host, so it belongs to the review step, not to every
 read: a session pays nothing for it until it asks what changed or applies.
 The hash is content-addressed, so it catches a same-size rewrite that an
 mtime comparison would miss.
+
+A permission bit is not content, and no hash sees it: a live path whose
+recorded mode differs from the host's own is a change of mode alone, and
+applying it sets the bits without replacing the node. The mode-only path
+reads the host kind as well as the bytes: a node that is not the regular
+file the snapshot recorded is a change of kind and takes the full write,
+even when its bytes happen to equal the session's — a base link whose
+target string spells a file's content is the case. The recorded mode is
+applied as recorded, 000 included: a mode of no bits is a choice, not an
+absent one, and a default substituted for it hands the host a mode the
+session never made.
 `
 
 const TheoryOfCompletePOSIX = `
@@ -192,29 +213,62 @@ serves.
 
 A named pipe is recorded by existence and mode alone: the store never opens
 it, because pipe reads and writes are kernel objects whose blocking
-semantics a filesystem does not route through FUSE. Applying a pipe
-recreates the node with MKNODAT. A read or write addressed to a pipe path
-reports EINVAL: the store cannot emulate blocking, and returning content
-would be worse than an honest refusal.
+semantics a filesystem does not route through FUSE. Applying a pipe creates
+the node with MKNODAT where the host holds none and sets the recorded bits
+on the pipe the host already holds, so an open end survives a mode change. A
+read or write addressed to a pipe path reports EINVAL: the store cannot
+emulate blocking, and returning content would be worse than an honest
+refusal.
+
+A symbolic link reports mode 0o777 on the wire, as Linux does: a link's
+permission bits are not its own, and the store's row may carry the bits of
+a node the link replaced. Those bits must not leak into the reply. A link
+names a target, and an empty target names nothing: the store refuses it with
+ENOENT, the answer symlink(2) gives.
 
 Times are recorded, not served: SETATTR's mtime bits replace the stored
 mtime, because a toolchain reads mtime to judge staleness, and a caller
 that sets the time expects the next read to report it. atime is not part of
-the recorded identity and is dropped.
+the recorded identity and is dropped. A mode change is not a content
+change: chmod records the bits and leaves the stored mtime as the base
+recorded it, because POSIX gives chmod no mtime effect and a toolchain that
+reads mtime to judge staleness must not see a permission change as one.
+Rename and a hard link are not content changes either: POSIX gives neither
+an mtime effect, so both carry the source's recorded time to the new name,
+and a toolchain that renames the parts of a fresh build must not see their
+staleness jump.
+
+The mode is authoritative, 000 included, and a recorded mode is applied as
+recorded. A create's mode reaches the store after the umask its request
+carries: the kernel hands the filesystem both the mode and the mask, and a
+filesystem that ignores the mask hands the caller bits the process's umask
+withdrew — the same widening a local filesystem never allows. Below that
+mask nothing changes the bits: a file with no bits is a file a session
+deliberately closed, and a default substituted anywhere on the way — at the
+create, the materialisation, the truncate, or the apply — hands the host or
+the reader bits the session never chose. A caller that means to keep an
+existing mode reads it first, so no layer carries a default to substitute.
 
 Open flags are honoured where the kernel routes them to the filesystem.
 CREATE carries O_CREAT, O_EXCL, and O_TRUNC: an existing path is refused
 under O_EXCL, kept under O_CREAT alone, and emptied under O_TRUNC. A plain
 OPEN with O_TRUNC truncates too — POSIX gives the flag the same effect
-whether or not the file is created — and a write-mode OPEN is checked
-against the write policy first, so a caller sees EACCES from open rather
-than from its first write.
+whether or not the file is created — and the truncate it performs is a
+mutation, so it passes the write policy whatever the access mode: a refused
+path reports EACCES at open rather than being emptied behind the policy's
+back. A write-mode OPEN and a write-mode CREATE pass the policy first for
+the same reason, so the caller sees EACCES from open rather than from its
+first write. A create-open that mutates nothing — the path exists, no
+O_TRUNC, and the access mode is read-only — asks no permission, because
+nothing changes.
 
 Reads and writes cost their own window, never the whole file; the mechanisms
 live in TheoryOfReadPath and TheoryOfWriteSplice. A zero-byte write transfers
 nothing and does not extend the file, matching Linux. A grow past the size
 bound is refused with EFBIG rather than allocating a file the sandbox cannot
-hold, and the same bound refuses a write whose offset would overflow. See
+hold, and a request's size field is bounded before it becomes a length or an
+allocation: a value above the bound is EFBIG, so a malformed claim never
+slices a body or reserves memory for bytes that cannot exist. See
 TheoryOfFuseMount.
 
 Durability: FSYNC and FSYNCDIR succeed without doing anything, because the
@@ -230,7 +284,10 @@ form. The plain rename is the one path the toolchain uses, and its
 semantics are what the store implements: a file or link replaces the
 destination, a directory replaces an existing empty destination directory,
 a populated destination reports ENOTEMPTY, a non-directory destination
-reports ENOTDIR, and a destination inside the source reports EINVAL.
+reports ENOTDIR, and a destination inside the source reports EINVAL. A
+rename whose two names are equal is a no-op on an existing source and
+reports ENOENT on a missing one, because rename(2) resolves the source
+before it treats the no-op.
 
 One deviation is known and accepted for the initial version: a file opened
 for reading and then unlinked stops serving reads, because the store keeps
@@ -258,6 +315,11 @@ it serves: the FUSE server answers every request on one goroutine, so a
 policy that opened a path through the mount would block on the request its
 own call is answering. The writable set is therefore resolved once before
 the mount and matched by path prefix, not by resolving symlinks per write.
+
+The access check is the policy's second reader: a probe for W_OK answers
+from the policy, so a caller learns at access time what its first write
+would report, while a read-only probe stays admitted. The check reads the
+path's existence first, so a probe of a deleted path reports ENOENT.
 
 Write confinement is a second barrier, not the review mechanism. A write
 the policy admits still lands in the upper layer and still needs the user's

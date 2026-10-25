@@ -3,6 +3,7 @@ package sandboxfs
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"syscall"
@@ -296,6 +297,13 @@ func (s *Store) readBaseContent(p string, limit int64) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(f, min(limit, maxFileSize)))
 }
 
+// materializeContent gives one path a live regular row holding its content.
+// The row keeps the time it recorded, so a change that only touches the mode or
+// keeps a prefix never presents the content as freshly written: a caller that
+// means to stamp the content sets the time after this returns. The mode is
+// applied as given, 000 included: a caller that means to keep an existing mode
+// reads it first, so no layer substitutes a default.
+// See TheoryOfCompletePOSIX and TheoryOfWriteSplice.
 func (s *Store) materializeContent(p string, copySize int64, perm os.FileMode) (fileRow, error) {
 	if err := s.checkParent(p); err != nil {
 		return fileRow{}, err
@@ -331,22 +339,11 @@ func (s *Store) materializeContent(p string, copySize int64, perm os.FileMode) (
 			return fileRow{}, err
 		}
 	}
-	// The caller's mode is a default for a path that carries none: the
-	// recorded base mode, or the mode an existing row already holds, is the
-	// honest source when the caller leaves the choice to the store, so a
-	// content or time change never rewrites the permission bits.
-	if perm == 0 {
-		perm = r.mode
-		if perm == 0 {
-			perm = 0o644
-		}
-	}
 	r.path = p
 	r.kind = KindRegular
 	r.mode = perm
 	r.deleted = false
 	r.target = ""
-	r.mtime = time.Now()
 	if err := s.putContent(r, content); err != nil {
 		return fileRow{}, err
 	}
@@ -354,6 +351,11 @@ func (s *Store) materializeContent(p string, copySize int64, perm os.FileMode) (
 	return r, nil
 }
 
+// TruncateFile shapes one regular file to size. The chunks beyond the length
+// drop and the chunk the length ends inside keeps its prefix, so the work grows
+// with the length, never with the file. A truncation is a mutation, so it writes
+// an audit row like every other one. See TheoryOfChunkedContent and
+// TheoryOfSandboxFilesystem.
 func (s *Store) TruncateFile(p string, size int64, perm os.FileMode) error {
 	p = Canonical(p)
 	if p == "/" {
@@ -413,5 +415,9 @@ func (s *Store) TruncateFile(p string, size int64, perm os.FileMode) error {
 	); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.audit("truncate", p, fmt.Sprintf("%d bytes", size))
+	return nil
 }

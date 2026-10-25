@@ -20,10 +20,12 @@ thousands of paths it never writes.
 
 One O_PATH descriptor of the base directory answers a metadata lookup with a
 single fstatat and a content window with one fstatat, one openat, and one
-pread. Following symbolic links while reading is the design's existing rule —
-the base is read through unchanged — and the descriptor is opened read-only, so
-a leak of the descriptor cannot widen write containment. Writes keep the
-os.Root walk, because containment matters exactly where the store writes.
+pread. The descriptor never follows the final link of a path it reads, the
+same rule the os.Root walk keeps: a link reports itself as a link, and the
+store serves content only for a regular file. The kernel resolves a link on
+its own and asks the store again for the target's path. The descriptor is
+opened read-only, so a leak of it cannot widen write containment. Writes keep
+the os.Root walk, because containment matters exactly where the store writes.
 
 The window read checks the host kind before it opens, matching the os.Root
 path's order: a directory reports EISDIR, a link or pipe EINVAL, and a regular
@@ -68,7 +70,9 @@ func baseStatAt(fd int, rel string) (a Attr, ok bool, err error) {
 
 // attrOfStatT renders one kernel stat buffer as a sandbox attribute. It reads
 // the type bits and the permission bits in one pass, without the reflection and
-// allocation an os.FileInfo costs. See TheoryOfBaseFdAccess.
+// allocation an os.FileInfo costs. The seconds and nanoseconds are converted
+// explicitly: on the 32-bit targets this file builds for, a Timespec holds
+// int32 fields, and time.Unix takes int64. See TheoryOfBaseFdAccess.
 func attrOfStatT(st *unix.Stat_t) Attr {
 	kind := KindRegular
 	switch st.Mode & unix.S_IFMT {
@@ -83,7 +87,7 @@ func attrOfStatT(st *unix.Stat_t) Attr {
 		Kind:    kind,
 		Mode:    os.FileMode(st.Mode & 0o777),
 		Size:    int64(st.Size),
-		ModTime: time.Unix(st.Mtim.Sec, st.Mtim.Nsec),
+		ModTime: time.Unix(int64(st.Mtim.Sec), int64(st.Mtim.Nsec)),
 	}
 }
 

@@ -88,3 +88,36 @@ func TestWriteFileExplicitPermSetsTheMode(t *testing.T) {
 		})
 	}
 }
+
+// TestTruncateFileWritesAnAuditRow protects TheoryOfSandboxFilesystem: every
+// mutation writes an audit row, and a truncation is a mutation. Without the row
+// a review cannot see that the session shortened a file it never wrote.
+func TestTruncateFileWritesAnAuditRow(t *testing.T) {
+	store, _ := newTestStore(t)
+	if err := store.WriteFile("/f", []byte("abcdef"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.TruncateFile("/f", 2, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ops, err := store.Ops()
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, op := range ops {
+		if op.Op != "truncate" {
+			continue
+		}
+		found = true
+		if op.Path != "/f" {
+			t.Errorf("truncate row names %s, want /f", op.Path)
+		}
+		if op.Detail != "2 bytes" {
+			t.Errorf("truncate detail %q, want %q", op.Detail, "2 bytes")
+		}
+	}
+	if !found {
+		t.Fatalf("no truncate row in %+v", ops)
+	}
+}

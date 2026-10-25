@@ -3,6 +3,7 @@
 package sandboxfs
 
 import (
+	"bytes"
 	"encoding/binary"
 	"testing"
 
@@ -112,5 +113,114 @@ func TestFuseServerMalformedBodyReportsEINVAL(t *testing.T) {
 	// answers.
 	if errno, _ := c.request(t, fuseOpStatfs, fuseRootID, nil); errno != 0 {
 		t.Errorf("statfs after the malformed requests: errno %d, want 0", errno)
+	}
+}
+
+// TestFuseServerSymlinkWithAnEmptyTargetReportsENOENT protects
+// TheoryOfCompletePOSIX: a body whose name and target are both terminated but
+// whose target is empty is not malformed — it names no target, which POSIX
+// refuses with ENOENT through the store. A body with no target field at all
+// stays malformed and reports EINVAL.
+func TestFuseServerSymlinkWithAnEmptyTargetReportsENOENT(t *testing.T) {
+	store, _ := newTestStore(t)
+	c := newFuseClient(t, store)
+	// link name, NUL, empty target, NUL.
+	if errno, _ := c.request(t, fuseOpSymlink, fuseRootID, []byte("empty\x00\x00")); errno != -int32(unix.ENOENT) {
+		t.Errorf("symlink with an empty target: errno %d, want ENOENT", errno)
+	}
+	if _, err := store.Stat("/empty"); err == nil {
+		t.Error("the refused link left a node")
+	}
+	// No target field: the body ends after the name's terminator.
+	if errno, _ := c.request(t, fuseOpSymlink, fuseRootID, []byte("empty\x00")); errno != -int32(unix.EINVAL) {
+		t.Errorf("symlink with no target field: errno %d, want EINVAL", errno)
+	}
+}
+
+// TestFuseServerRejectsUnterminatedNames protects TheoryOfFuseMount: a name
+// with no terminator is malformed, so every handler that reads a name reports
+// EINVAL instead of acting on the bytes it happened to find. An empty LOOKUP
+// body names nothing at all and stays ENOENT.
+func TestFuseServerRejectsUnterminatedNames(t *testing.T) {
+	store, _ := newTestStore(t)
+	c := newFuseClient(t, store)
+	cases := []struct {
+		name   string
+		opcode uint32
+		body   []byte
+	}{
+		{"lookup", fuseOpLookup, []byte("a.txt")},
+		{"unlink", fuseOpUnlink, []byte("a.txt")},
+		{"rmdir", fuseOpRmdir, []byte("d")},
+		{"create", fuseOpCreate, append(encodeStruct(&fuseCreateIn{}), []byte("a.txt")...)},
+		{"mkdir", fuseOpMkdir, append(encodeStruct(&fuseMkdirIn{}), []byte("d")...)},
+		{"mknod", fuseOpMknod, append(encodeStruct(&fuseMknodIn{Mode: uint32(unix.S_IFIFO)}), []byte("p")...)},
+		{"link", fuseOpLink, append(encodeStruct(&fuseLinkIn{Oldnodeid: fuseRootID}), []byte("a.txt")...)},
+		{"rename destination", fuseOpRename, append(encodeStruct(&fuseRenameIn{Newdir: fuseRootID}), []byte("a.txt\x00b.txt")...)},
+		{"symlink target", fuseOpSymlink, []byte("link\x00target")},
+	}
+	for _, tc := range cases {
+		errno, _ := c.request(t, tc.opcode, fuseRootID, tc.body)
+		if errno != -int32(unix.EINVAL) {
+			t.Errorf("%s: errno %d, want EINVAL", tc.name, errno)
+		}
+	}
+	// Nothing a malformed request named reached the store.
+	for _, p := range []string{"/a.txt", "/d", "/p", "/link", "/b.txt"} {
+		if _, err := store.Stat(p); err == nil {
+			t.Errorf("a malformed request created %s", p)
+		}
+	}
+	// A terminated name still answers: the check rejects the malformed body,
+	// not the opcode.
+	if errno, _ := c.request(t, fuseOpCreate, fuseRootID,
+		c.bodyWithNames(encodeStruct(&fuseCreateIn{Flags: uint32(unix.O_WRONLY | unix.O_CREAT)}), "ok.txt")); errno != 0 {
+		t.Errorf("create with a terminated name: errno %d, want success", errno)
+	}
+	if _, err := store.Stat("/ok.txt"); err != nil {
+		t.Errorf("the terminated create did not reach the store: %v", err)
+	}
+}
+
+// TestFuseServerRejectsNamesOutsideTheParent protects TheoryOfFuseMount: a
+// name that carries a path separator or names ".." cannot name one directory
+// entry, and joining it would walk out of the parent the request names. The
+// kernel never sends such a name, so a request that does reports EINVAL and
+// the path outside the parent stays untouched.
+func TestFuseServerRejectsNamesOutsideTheParent(t *testing.T) {
+	store, base := newTestStore(t)
+	writeHost(t, base, "d/x", "x")
+	writeHost(t, base, "outside", "o")
+	c := newFuseClient(t, store)
+	errno, resp := c.request(t, fuseOpLookup, fuseRootID, c.bodyWithNames(nil, "d"))
+	if errno != 0 {
+		t.Fatalf("lookup of /d: errno %d", errno)
+	}
+	var entry fuseEntryOut
+	if err := binary.Read(bytes.NewReader(resp), binary.LittleEndian, &entry); err != nil {
+		t.Fatal(err)
+	}
+	dNode := entry.Nodeid
+	for _, name := range []string{"../outside", "x/../../outside", "/outside"} {
+		if errno, _ := c.request(t, fuseOpLookup, dNode, c.bodyWithNames(nil, name)); errno != -int32(unix.EINVAL) {
+			t.Errorf("lookup of %q: errno %d, want EINVAL", name, errno)
+		}
+		if errno, _ := c.request(t, fuseOpUnlink, dNode, c.bodyWithNames(nil, name)); errno != -int32(unix.EINVAL) {
+			t.Errorf("unlink of %q: errno %d, want EINVAL", name, errno)
+		}
+	}
+	// The names ".." and "." name no entry at all, so a LOOKUP answers ENOENT.
+	for _, name := range []string{"..", "."} {
+		if errno, _ := c.request(t, fuseOpLookup, dNode, c.bodyWithNames(nil, name)); errno != -int32(unix.ENOENT) {
+			t.Errorf("lookup of %q: errno %d, want ENOENT", name, errno)
+		}
+	}
+	// The file outside the parent is still where the base put it.
+	if got, err := store.ReadFile("/outside"); err != nil || string(got) != "o" {
+		t.Errorf("the file outside the parent changed: %q %v", got, err)
+	}
+	// A request that names one entry of the same parent still answers.
+	if errno, _ := c.request(t, fuseOpLookup, dNode, c.bodyWithNames(nil, "x")); errno != 0 {
+		t.Errorf("lookup of /d/x: errno %d, want success", errno)
 	}
 }

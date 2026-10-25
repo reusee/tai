@@ -53,9 +53,10 @@ func TestApplyPreservesTheRecordedMode(t *testing.T) {
 	}
 }
 
-// TestApplyKeepsTheModeOfAModifiedBaseFile pins the other path: a base file
-// holds its own mode, the session changes the content only, and the store's
-// stat and the applied host file both carry the base mode.
+// TestApplyKeepsTheModeOfAModifiedBaseFile pins the content-only path: a base
+// file holds its own mode, the session changes the content and passes the base
+// mode the way a caller that means to keep it does, and the store's stat and
+// the applied host file both carry the base mode. See TheoryOfCompletePOSIX.
 func TestApplyKeepsTheModeOfAModifiedBaseFile(t *testing.T) {
 	s, base := newTestStore(t)
 	host := filepath.Join(base, "a.txt")
@@ -65,7 +66,7 @@ func TestApplyKeepsTheModeOfAModifiedBaseFile(t *testing.T) {
 	if err := os.Chmod(host, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.WriteFile("/a.txt", []byte("new"), 0); err != nil {
+	if err := s.WriteFile("/a.txt", []byte("new"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	a, err := s.Stat("/a.txt")

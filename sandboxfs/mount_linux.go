@@ -200,18 +200,6 @@ func privateBaseView(base string) (dir string, cleanup func(), err error) {
 	return dir, detach, nil
 }
 
-// bindPassthrough mounts each host directory onto its place inside the FUSE
-// view before any pivot. The source is the host path; the target is inside
-// the mountpoint, so after the pivot the path reaches the host directory
-// directly. The kernel filesystems bind recursively, because their submounts
-// are part of them; the rest bind one directory, so a directory holding the
-// mountpoint itself is never copied back into the mount. /tmp is the
-// exception: a bind of the container's /tmp would expose the mountpoint this
-// filesystem sits on, so /tmp gets a fresh tmpfs of its own — same local,
-// unreviewed character, no loop. A passthrough whose source is missing
-// between resolve and mount is skipped, because the mount is best-effort:
-// the design's writable set may shift while the process boots.
-// See TheoryOfPassthrough.
 func (m *MountedFS) bindPassthrough(paths []string) error {
 	seen := make(map[string]bool)
 	for _, p := range paths {
@@ -224,18 +212,25 @@ func (m *MountedFS) bindPassthrough(paths []string) error {
 		}
 		seen[p] = true
 		target := filepath.Join(m.Mountpoint, p)
-		if err := os.MkdirAll(target, 0o755); err != nil {
-			return fmt.Errorf("sandboxfs: create passthrough %s: %w", p, err)
-		}
 		if p == "/tmp" {
+			if err := os.MkdirAll(target, 0o755); err != nil {
+				return fmt.Errorf("sandboxfs: create passthrough %s: %w", p, err)
+			}
 			if err := unix.Mount("tmpfs", target, "tmpfs",
 				unix.MS_NOSUID|unix.MS_NODEV, ""); err != nil {
 				return fmt.Errorf("sandboxfs: mount /tmp tmpfs: %w", err)
 			}
 			continue
 		}
+		// The source is resolved before its target is created: the mount is
+		// best-effort, and a directory created for a mount that never happens
+		// would enter the store as a change the session never made.
+		// See TheoryOfPassthrough.
 		if _, err := os.Stat(p); err != nil {
 			continue
+		}
+		if err := os.MkdirAll(target, 0o755); err != nil {
+			return fmt.Errorf("sandboxfs: create passthrough %s: %w", p, err)
 		}
 		flags := uintptr(unix.MS_BIND)
 		if recursivePassthrough[p] {

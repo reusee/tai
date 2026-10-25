@@ -435,6 +435,39 @@ func TestFuseServerCreateOnDirectoryReportsEISDIR(t *testing.T) {
 	}
 }
 
+// TestFuseServerCreateKeepsReadOnlyPathOutsidePolicy protects TheoryOfWritePolicy
+// and TheoryOfCompletePOSIX: a create-open that finds the path already there and
+// carries no O_TRUNC mutates nothing, so the write policy has no say, exactly as
+// for a plain read-only open. Only a write-mode create-open asks the policy.
+func TestFuseServerCreateKeepsReadOnlyPathOutsidePolicy(t *testing.T) {
+	base := t.TempDir()
+	writeHost(t, base, "kept.txt", "k")
+	store, err := OpenWithPolicy(filepath.Join(t.TempDir(), "sandbox.db"), base,
+		func(p string) error { return fmt.Errorf("%w: %s", os.ErrPermission, p) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	c := newFuseClient(t, store)
+
+	// A read-only create-open of an existing file passes: nothing is mutated.
+	createIn := fuseCreateIn{Flags: uint32(unix.O_RDONLY | unix.O_CREAT), Mode: 0o644}
+	if errno, _ := c.request(t, fuseOpCreate, fuseRootID,
+		c.bodyWithNames(encodeStruct(&createIn), "kept.txt")); errno != 0 {
+		t.Fatalf("read-only create-open outside policy: errno %d, want success", errno)
+	}
+	if got, err := store.ReadFile("/kept.txt"); err != nil || string(got) != "k" {
+		t.Fatalf("the read-only create-open changed the file: %q %v", got, err)
+	}
+
+	// A write-mode create-open still reports EACCES at open time.
+	createIn = fuseCreateIn{Flags: uint32(unix.O_WRONLY | unix.O_CREAT), Mode: 0o644}
+	if errno, _ := c.request(t, fuseOpCreate, fuseRootID,
+		c.bodyWithNames(encodeStruct(&createIn), "kept.txt")); errno != -int32(syscall.EACCES) {
+		t.Fatalf("write-mode create-open outside policy: want EACCES, got %d", errno)
+	}
+}
+
 func TestFuseServerUnlinkRespectsType(t *testing.T) {
 	store, base := newTestStore(t)
 	writeHost(t, base, "d/a.txt", "x")
@@ -467,12 +500,23 @@ func TestFuseServerUnlinkRespectsType(t *testing.T) {
 	}
 
 	// RMDIR of a file's directory entry leaves the entry alone; UNLINK of
-	// the file followed by RMDIR of the now-empty directory succeeds.
-	errno, _ = c.request(t, fuseOpUnlink, 1, c.bodyWithNames(nil, "d/a.txt"))
+	// the file followed by RMDIR of the now-empty directory succeeds. A name
+	// is one entry of the parent the request names, so the directory comes
+	// from a LOOKUP first: the kernel never puts a separator in a name.
+	// See TheoryOfFuseMount.
+	errno, resp := c.request(t, fuseOpLookup, fuseRootID, c.bodyWithNames(nil, "d"))
 	if errno != 0 {
-		t.Fatalf("unlink d/a.txt errno %d", errno)
+		t.Fatalf("lookup of /d: errno %d", errno)
 	}
-	errno, _ = c.request(t, fuseOpRmdir, 1, c.bodyWithNames(nil, "d"))
+	var entry fuseEntryOut
+	if err := binary.Read(bytes.NewReader(resp), binary.LittleEndian, &entry); err != nil {
+		t.Fatal(err)
+	}
+	errno, _ = c.request(t, fuseOpUnlink, entry.Nodeid, c.bodyWithNames(nil, "a.txt"))
+	if errno != 0 {
+		t.Fatalf("unlink of a.txt from /d: errno %d", errno)
+	}
+	errno, _ = c.request(t, fuseOpRmdir, fuseRootID, c.bodyWithNames(nil, "d"))
 	if errno != 0 {
 		t.Fatalf("rmdir of an empty directory errno %d", errno)
 	}
@@ -503,6 +547,132 @@ func TestFuseServerSymlinkWireOrder(t *testing.T) {
 	}
 	if _, err := store.Stat("/target.txt"); err == nil {
 		t.Fatal("symlink created a node at the target path")
+	}
+}
+
+// TestReaddirRefreshesAfterAMountMutation protects TheoryOfReadPath: the
+// kernel cannot see a change this mount makes, so a read that follows a
+// mutation through the same directory handle would report the state before
+// the session's own entry unless the server clears the snapshot its handler
+// mutated. The test drives the mutation through the wire, because that is the
+// path the server serves.
+func TestReaddirRefreshesAfterAMountMutation(t *testing.T) {
+	store, _ := newTestStore(t)
+	if err := store.WriteFile("/a", []byte("a"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c := newFuseClient(t, store)
+	errno, resp := c.request(t, fuseOpOpendir, fuseRootID, encodeStruct(&fuseOpenIn{}))
+	if errno != 0 {
+		t.Fatalf("opendir errno %d", errno)
+	}
+	var openOut fuseOpenOut
+	if err := binary.Read(bytes.NewReader(resp), binary.LittleEndian, &openOut); err != nil {
+		t.Fatal(err)
+	}
+	readAll := func() []string {
+		t.Helper()
+		errno, resp := c.request(t, fuseOpReaddir, fuseRootID, encodeStruct(&fuseReadIn{
+			Fh: openOut.Fh, Offset: 0, Size: 4096,
+		}))
+		if errno != 0 {
+			t.Fatalf("readdir errno %d", errno)
+		}
+		return parseDirentNames(t, resp)
+	}
+	if names := readAll(); !contains(names, "a") {
+		t.Fatalf("first listing %v, want a", names)
+	}
+	createIn := fuseCreateIn{Flags: uint32(unix.O_WRONLY | unix.O_CREAT), Mode: 0o644}
+	if errno, _ := c.request(t, fuseOpCreate, fuseRootID,
+		c.bodyWithNames(encodeStruct(&createIn), "b")); errno != 0 {
+		t.Fatalf("create errno %d", errno)
+	}
+	if names := readAll(); !contains(names, "b") {
+		t.Fatalf("listing after the create %v, want b", names)
+	}
+	if errno, _ := c.request(t, fuseOpUnlink, fuseRootID, c.bodyWithNames(nil, "a")); errno != 0 {
+		t.Fatalf("unlink errno %d", errno)
+	}
+	if names := readAll(); contains(names, "a") {
+		t.Fatalf("listing after the delete %v, must not hold a", names)
+	}
+}
+
+// TestFuseServerAccessFollowsThePolicy protects TheoryOfWritePolicy: an access
+// probe answers W_OK from the write policy, so a caller that asks whether it may
+// write learns the same answer its first write would give. A read-only probe
+// stays admitted, and the reply body stays empty as the kernel requires.
+func TestFuseServerAccessFollowsThePolicy(t *testing.T) {
+	base := t.TempDir()
+	writeHost(t, base, "f", "x")
+	store, err := OpenWithPolicy(filepath.Join(t.TempDir(), "sandbox.db"), base,
+		func(p string) error { return fmt.Errorf("%w: %s", os.ErrPermission, p) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	c := newFuseClient(t, store)
+	errno, resp := c.request(t, fuseOpLookup, fuseRootID, c.bodyWithNames(nil, "f"))
+	if errno != 0 {
+		t.Fatalf("lookup errno %d", errno)
+	}
+	var entry fuseEntryOut
+	if err := binary.Read(bytes.NewReader(resp), binary.LittleEndian, &entry); err != nil {
+		t.Fatal(err)
+	}
+	const (
+		wOK = 2
+		rOK = 4
+	)
+	if errno, resp := c.request(t, fuseOpAccess, entry.Nodeid, encodeStruct(&fuseAccessIn{Mask: rOK})); errno != 0 || len(resp) != 0 {
+		t.Fatalf("read-only access: errno %d, body %d bytes, want success with an empty body", errno, len(resp))
+	}
+	if errno, _ := c.request(t, fuseOpAccess, entry.Nodeid, encodeStruct(&fuseAccessIn{Mask: wOK})); errno != -int32(syscall.EACCES) {
+		t.Fatalf("write access outside policy: want EACCES, got %d", errno)
+	}
+}
+
+// TestSymlinkAttributeReportsMode0777 protects TheoryOfCompletePOSIX: Linux
+// reports every symbolic link with mode 0o777, because a link's permission
+// bits are not its own. The store's row for a link the session put where a
+// base file stood carries that file's bits, and the reply must not turn
+// lrwxrwxrwx into lrw-r--r--.
+func TestSymlinkAttributeReportsMode0777(t *testing.T) {
+	store, base := newTestStore(t)
+	if err := os.WriteFile(filepath.Join(base, "f"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(base, "f"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// The session replaces the base file with a symbolic link, so the row's
+	// mode is the base file's own.
+	if err := store.Remove("/f"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Symlink("target", "/f"); err != nil {
+		t.Fatal(err)
+	}
+	a, err := store.Stat("/f")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Kind != KindSymlink {
+		t.Fatalf("kind %v, want a symbolic link", a.Kind)
+	}
+	want := uint32(syscall.S_IFLNK | 0o777)
+	if got := attrOfFuse(1, a).Mode; got != want {
+		t.Errorf("symlink mode %#o, want %#o", got, want)
+	}
+	// A regular file still carries the mode its row recorded.
+	if err := store.WriteFile("/g", []byte("y"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if a, err := store.Stat("/g"); err != nil {
+		t.Fatal(err)
+	} else if got := attrOfFuse(1, a).Mode; got != uint32(syscall.S_IFREG|0o640) {
+		t.Errorf("regular mode %#o, want %#o", got, uint32(syscall.S_IFREG|0o640))
 	}
 }
 
@@ -661,6 +831,209 @@ func TestFuseServerOpenTruncates(t *testing.T) {
 	}
 	if got, err := store.ReadFile("/a.txt"); err != nil || string(got) != "new" {
 		t.Fatalf("post-truncate write: %q %v", got, err)
+	}
+}
+
+// TestFuseServerOpenTruncatesReadOnly protects TheoryOfCompletePOSIX and
+// TheoryOfOpenCaching: a truncating open empties the file whatever the access
+// mode, because POSIX gives O_TRUNC the same effect on a read-only open as on a
+// write-mode one. The truncation is a mutation, so it still passes the write
+// policy: a path the policy refuses reports EACCES at open instead of being
+// emptied. And the reply must not ask the kernel to keep the pages it held
+// before, because the content the request just stored would be shadowed.
+func TestFuseServerOpenTruncatesReadOnly(t *testing.T) {
+	store, base := newTestStore(t)
+	writeHost(t, base, "a.txt", "original")
+	c := newFuseClient(t, store)
+	errno, resp := c.request(t, fuseOpLookup, 1, c.bodyWithNames(nil, "a.txt"))
+	if errno != 0 {
+		t.Fatalf("lookup errno %d", errno)
+	}
+	var entry fuseEntryOut
+	if err := binary.Read(bytes.NewReader(resp), binary.LittleEndian, &entry); err != nil {
+		t.Fatal(err)
+	}
+	errno, resp = c.request(t, fuseOpOpen, entry.Nodeid, encodeStruct(&fuseOpenIn{
+		Flags: uint32(unix.O_RDONLY | unix.O_TRUNC),
+	}))
+	if errno != 0 {
+		t.Fatalf("read-only open O_TRUNC errno %d", errno)
+	}
+	if got, err := store.ReadFile("/a.txt"); err != nil || len(got) != 0 {
+		t.Fatalf("read-only open O_TRUNC left %q %v", got, err)
+	}
+	var openOut fuseOpenOut
+	if err := binary.Read(bytes.NewReader(resp), binary.LittleEndian, &openOut); err != nil {
+		t.Fatal(err)
+	}
+	if openOut.OpenFlags&fuseOpenKeepCache != 0 {
+		t.Errorf("a truncating open asks the kernel to keep the page cache (%#x)", openOut.OpenFlags)
+	}
+
+	// The same open outside the write policy is refused at open time, and the
+	// host content stays.
+	refused, err := OpenWithPolicy(filepath.Join(t.TempDir(), "sandbox.db"), base,
+		func(p string) error { return fmt.Errorf("%w: %s", os.ErrPermission, p) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = refused.Close() })
+	writeHost(t, base, "b.txt", "keep")
+	rc := newFuseClient(t, refused)
+	errno, resp = rc.request(t, fuseOpLookup, 1, rc.bodyWithNames(nil, "b.txt"))
+	if errno != 0 {
+		t.Fatalf("lookup errno %d", errno)
+	}
+	if err := binary.Read(bytes.NewReader(resp), binary.LittleEndian, &entry); err != nil {
+		t.Fatal(err)
+	}
+	if errno, _ := rc.request(t, fuseOpOpen, entry.Nodeid, encodeStruct(&fuseOpenIn{
+		Flags: uint32(unix.O_RDONLY | unix.O_TRUNC),
+	})); errno != -int32(syscall.EACCES) {
+		t.Fatalf("read-only open O_TRUNC outside policy: want EACCES, got %d", errno)
+	}
+	if got, err := refused.ReadFile("/b.txt"); err != nil || string(got) != "keep" {
+		t.Errorf("the refused open emptied the file: %q %v", got, err)
+	}
+}
+
+// TestFuseServerBoundsTheSizeField protects TheoryOfCompletePOSIX: a request's
+// size is bounded before it becomes a length or an allocation. A write whose
+// size, offset, or offset-plus-size passes the store's bound reports EFBIG, so
+// a malformed claim never slices a body or reserves memory. The order matters:
+// on a 32-bit build a size above 2^31 turns into a negative int, and a length
+// check that ran first would pass on a body the slice cannot hold. A read names
+// a handle first — a bad one is EBADF, as Linux answers — so the bound is
+// checked on an open handle.
+func TestFuseServerBoundsTheSizeField(t *testing.T) {
+	store, base := newTestStore(t)
+	writeHost(t, base, "f", "x")
+	c := newFuseClient(t, store)
+	errno, resp := c.request(t, fuseOpLookup, fuseRootID, c.bodyWithNames(nil, "f"))
+	if errno != 0 {
+		t.Fatalf("lookup of /f: errno %d", errno)
+	}
+	var entry fuseEntryOut
+	if err := binary.Read(bytes.NewReader(resp), binary.LittleEndian, &entry); err != nil {
+		t.Fatal(err)
+	}
+	errno, resp = c.request(t, fuseOpOpen, entry.Nodeid, encodeStruct(&fuseOpenIn{
+		Flags: uint32(unix.O_RDONLY),
+	}))
+	if errno != 0 {
+		t.Fatalf("open of /f: errno %d", errno)
+	}
+	var openOut fuseOpenOut
+	if err := binary.Read(bytes.NewReader(resp), binary.LittleEndian, &openOut); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name   string
+		opcode uint32
+		body   []byte
+	}{
+		{"write claims more than the bound", fuseOpWrite, encodeStruct(&fuseWriteIn{
+			Fh: openOut.Fh, Offset: 0, Size: uint32(maxFileSize) + 1,
+		})},
+		{"write past the bound", fuseOpWrite, encodeStruct(&fuseWriteIn{
+			Fh: openOut.Fh, Offset: uint64(maxFileSize) + 1, Size: 1,
+		})},
+		{"read claims more than the bound", fuseOpRead, encodeStruct(&fuseReadIn{
+			Fh: openOut.Fh, Offset: 0, Size: uint32(maxFileSize) + 1,
+		})},
+	}
+	for _, tc := range cases {
+		errno, _ := c.request(t, tc.opcode, entry.Nodeid, tc.body)
+		if errno != -int32(syscall.EFBIG) {
+			t.Errorf("%s: errno %d, want EFBIG", tc.name, errno)
+		}
+	}
+	// A write at the highest legal offset still lands.
+	if err := store.WriteFile("/g", nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	errno, resp = c.request(t, fuseOpLookup, fuseRootID, c.bodyWithNames(nil, "g"))
+	if errno != 0 {
+		t.Fatalf("lookup of /g: errno %d", errno)
+	}
+	if err := binary.Read(bytes.NewReader(resp), binary.LittleEndian, &entry); err != nil {
+		t.Fatal(err)
+	}
+	errno, resp = c.request(t, fuseOpOpen, entry.Nodeid, encodeStruct(&fuseOpenIn{
+		Flags: uint32(unix.O_WRONLY),
+	}))
+	if errno != 0 {
+		t.Fatalf("open of /g: errno %d", errno)
+	}
+	if err := binary.Read(bytes.NewReader(resp), binary.LittleEndian, &openOut); err != nil {
+		t.Fatal(err)
+	}
+	payload := []byte("x")
+	writeIn := fuseWriteIn{
+		Fh: openOut.Fh, Offset: uint64(maxFileSize) - 1, Size: uint32(len(payload)),
+	}
+	if errno, _ := c.request(t, fuseOpWrite, entry.Nodeid,
+		append(encodeStruct(&writeIn), payload...)); errno != 0 {
+		t.Fatalf("write at the highest legal offset: errno %d", errno)
+	}
+	a, err := store.Stat("/g")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Size != maxFileSize {
+		t.Errorf("size after the highest legal write: got %d, want %d", a.Size, maxFileSize)
+	}
+}
+
+// TestFuseServerAppliesTheUmask protects TheoryOfCompletePOSIX: a create,
+// mkdir, or mknod request carries the caller's umask beside its mode, and the
+// kernel hands both so the filesystem applies the mask, as every local
+// filesystem does. Ignoring the umask records a file created as 0666 under
+// umask 022 with bits the process withdrew, and the apply then widens the
+// host's permissions the same way.
+func TestFuseServerAppliesTheUmask(t *testing.T) {
+	store, _ := newTestStore(t)
+	c := newFuseClient(t, store)
+
+	createIn := fuseCreateIn{
+		Flags: uint32(unix.O_WRONLY | unix.O_CREAT), Mode: 0o666, Umask: 0o022,
+	}
+	if errno, _ := c.request(t, fuseOpCreate, fuseRootID,
+		c.bodyWithNames(encodeStruct(&createIn), "f")); errno != 0 {
+		t.Fatalf("create errno %d", errno)
+	}
+	if a, err := store.Stat("/f"); err != nil || a.Mode != 0o644 {
+		t.Errorf("create with umask 022: got mode %o (error %v), want 644", a.Mode, err)
+	}
+
+	mkdirIn := fuseMkdirIn{Mode: 0o777, Umask: 0o027}
+	if errno, _ := c.request(t, fuseOpMkdir, fuseRootID,
+		c.bodyWithNames(encodeStruct(&mkdirIn), "d")); errno != 0 {
+		t.Fatalf("mkdir errno %d", errno)
+	}
+	if a, err := store.Stat("/d"); err != nil || a.Mode != 0o750 {
+		t.Errorf("mkdir with umask 027: got mode %o (error %v), want 750", a.Mode, err)
+	}
+
+	mknodIn := fuseMknodIn{Mode: uint32(syscall.S_IFIFO | 0o666), Umask: 0o022}
+	if errno, _ := c.request(t, fuseOpMknod, fuseRootID,
+		c.bodyWithNames(encodeStruct(&mknodIn), "p")); errno != 0 {
+		t.Fatalf("mknod errno %d", errno)
+	}
+	if a, err := store.Stat("/p"); err != nil || a.Mode != 0o644 {
+		t.Errorf("mknod with umask 022: got mode %o (error %v), want 644", a.Mode, err)
+	}
+
+	// A mode of no bits stays a choice below any mask.
+	createIn = fuseCreateIn{
+		Flags: uint32(unix.O_WRONLY | unix.O_CREAT), Mode: 0, Umask: 0o022,
+	}
+	if errno, _ := c.request(t, fuseOpCreate, fuseRootID,
+		c.bodyWithNames(encodeStruct(&createIn), "z")); errno != 0 {
+		t.Fatalf("create with mode 0 errno %d", errno)
+	}
+	if a, err := store.Stat("/z"); err != nil || a.Mode != 0 {
+		t.Errorf("create with mode 0 and umask 022: got mode %o (error %v), want 000", a.Mode, err)
 	}
 }
 

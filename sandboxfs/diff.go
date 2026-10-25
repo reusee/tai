@@ -1,6 +1,7 @@
 package sandboxfs
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -50,7 +51,9 @@ type Change struct {
 // leaves one query before any content is read, because the store holds a
 // single connection: a row set kept open while a content query runs would wait
 // for the connection it holds. A live regular row's content comes from the
-// chunk table, and a deletion's from nothing. The store's own database and its
+// chunk table, and a deletion's from nothing. A live path whose content and
+// kind still match the snapshot but whose recorded mode does not is a change
+// of mode alone, which the hash cannot see. The store's own database and its
 // SQLite siblings never enter the list: they are the review's record, not a
 // reviewable change. See TheoryOfSandboxFilesystem, TheoryOfApplyConflict, and
 // TheoryOfChunkedContent.
@@ -88,6 +91,9 @@ func (s *Store) Changes() ([]Change, error) {
 			}
 		}
 		c := netChange(r, content)
+		if c == nil {
+			c = s.modeOnlyChange(r, content)
+		}
 		if c == nil {
 			continue
 		}
@@ -170,6 +176,33 @@ func netChange(r fileRow, content []byte) *Change {
 	return &Change{Path: r.path, Kind: ChangeModified, Mode: r.mode, Current: content}
 }
 
+// modeOnlyChange reports a live path whose content and kind still match the
+// snapshot but whose recorded mode does not. A content hash cannot see a
+// permission bit, so the comparison reads the host's mode — the same place the
+// conflict check reads the host — and a session pays nothing for it until it
+// asks what changed. A symbolic link carries no mode of its own, so its
+// recorded bits never form a change. See TheoryOfApplyConflict and
+// TheoryOfSandboxFilesystem.
+func (s *Store) modeOnlyChange(r fileRow, content []byte) *Change {
+	if r.deleted || !r.originalExists || r.kind == KindSymlink {
+		return nil
+	}
+	info, err := s.baseRoot.Lstat(relPath(r.path))
+	if err != nil || kindOf(info) != r.kind || info.Mode().Perm() == r.mode.Perm() {
+		return nil
+	}
+	c := &Change{Path: r.path, Kind: ChangeModified, Mode: r.mode}
+	switch r.kind {
+	case KindDir:
+		c.Dir = true
+	case KindFIFO:
+		c.FIFO = true
+	default:
+		c.Current = content
+	}
+	return c
+}
+
 // detectConflict fills the change's conflict reason when applying it would
 // discard a host modification the session never saw, and fills its Original
 // with the host content the snapshot recorded. A pipe has no content to
@@ -239,6 +272,13 @@ func (s *Store) detectConflict(c *Change, r fileRow) {
 	}
 }
 
+// Apply writes the selected net changes to the host and drops their upper
+// rows, content chunks included, so a repeated apply is a no-op and the next
+// diff is exact. Conflicting changes are skipped; selected nil selects every
+// change. Deletions apply first, deepest first, then the added and modified
+// paths in path order, so a nested creation lands parent-first and a path the
+// session turned from a directory into a file meets an emptied host directory.
+// See TheoryOfApplyConflict and TheoryOfChunkedContent.
 func (s *Store) Apply(selected func(Change) bool) (applied []Change, err error) {
 	applied, _, err = s.applyChanges(selected)
 	return applied, err
@@ -252,6 +292,9 @@ func (s *Store) Apply(selected func(Change) bool) (applied []Change, err error) 
 // session turned from a directory into a file meets an emptied host directory.
 // See TheoryOfApplyConflict and TheoryOfChunkedContent.
 
+// applyChanges is Apply with the conflicting changes reported beside the
+// applied ones, so ApplyAll can tell its caller what still awaits the user's
+// decision. See TheoryOfApplyConflict.
 func (s *Store) applyChanges(selected func(Change) bool) (applied, conflicts []Change, err error) {
 	changes, err := s.Changes()
 	if err != nil {
@@ -308,8 +351,10 @@ func (s *Store) applyOne(c Change) error {
 		return fmt.Errorf("%w: refusing to apply a change to the session database: %s", os.ErrPermission, c.Path)
 	}
 	rel := relPath(c.Path)
-	// A change that carries a mode applies it; a zero mode keeps the store's
-	// default, which is what a change from an older store carries.
+	// The mode the row recorded is authoritative, including 000: a session
+	// that took every bit away meant exactly that, and a default here would
+	// hand the host a mode the session never chose.
+	// See TheoryOfCompletePOSIX.
 	perm := c.Mode.Perm()
 	switch c.Kind {
 	case ChangeAdded, ChangeModified:
@@ -318,37 +363,29 @@ func (s *Store) applyOne(c Change) error {
 		// existing host file keeps the old bits. Both cases lose the mode the
 		// row recorded, so every creation below is followed by the explicit
 		// chmod. See TheoryOfSandboxFilesystem.
-		if c.Dir {
-			if info, err := s.baseRoot.Lstat(rel); err == nil && !info.IsDir() {
-				_ = s.baseRoot.Remove(rel)
-			}
-			if perm == 0 {
-				perm = 0o755
-			}
-			if err := s.baseRoot.Mkdir(rel, perm); err != nil {
-				return err
-			}
-			return chmodAt(s.baseRoot, rel, perm)
-		}
-		if c.FIFO {
-			_ = s.baseRoot.Remove(rel)
-			if perm == 0 {
-				perm = 0o644
-			}
-			if err := mkfifoAt(s.baseRoot, rel, perm); err != nil {
-				return err
-			}
-			return chmodAt(s.baseRoot, rel, perm)
-		}
-		if c.Symlink {
+		switch {
+		case c.Dir:
+			return s.applyDir(rel, perm)
+		case c.FIFO:
+			return s.applyFIFO(rel, perm)
+		case c.Symlink:
 			_ = s.baseRoot.Remove(rel)
 			return s.baseRoot.Symlink(string(c.Current), rel)
 		}
+		// A change whose host node is a regular file holding the session's own
+		// bytes is a change of mode alone: writing those bytes again would
+		// replace the node, break the links to it, and reset its times for a
+		// permission bit. The host kind is checked here, not only the bytes: a
+		// base symbolic link whose target string spells the session's content
+		// compares equal by bytes and is still a change of kind.
+		// See TheoryOfApplyConflict.
+		if c.Kind == ChangeModified && c.Original != nil && bytes.Equal(c.Original, c.Current) {
+			if info, err := s.baseRoot.Lstat(rel); err == nil && info.Mode().IsRegular() {
+				return chmodAt(s.baseRoot, rel, perm)
+			}
+		}
 		if info, err := s.baseRoot.Lstat(rel); err == nil && !info.Mode().IsRegular() {
 			_ = s.baseRoot.Remove(rel)
-		}
-		if perm == 0 {
-			perm = 0o644
 		}
 		if err := s.baseRoot.WriteFile(rel, c.Current, perm); err != nil {
 			return err
@@ -362,6 +399,60 @@ func (s *Store) applyOne(c Change) error {
 		return err
 	}
 	return fmt.Errorf("sandboxfs: unknown change kind %q", c.Kind)
+}
+
+// applyFIFO writes a named-pipe change: a host pipe keeps its node, so an open
+// end survives a mode-only change, and every other host kind is replaced. The
+// recorded mode is applied as recorded, 000 included.
+// See TheoryOfCompletePOSIX and TheoryOfApplyConflict.
+func (s *Store) applyFIFO(rel string, perm os.FileMode) error {
+	info, err := s.baseRoot.Lstat(rel)
+	switch {
+	case err == nil && kindOf(info) == KindFIFO:
+		// The host already holds the pipe: only the bits are left.
+	case err == nil:
+		if err := s.baseRoot.Remove(rel); err != nil {
+			return err
+		}
+		if err := mkfifoAt(s.baseRoot, rel, perm); err != nil {
+			return err
+		}
+	case errors.Is(err, os.ErrNotExist):
+		if err := mkfifoAt(s.baseRoot, rel, perm); err != nil {
+			return err
+		}
+	default:
+		return err
+	}
+	return chmodAt(s.baseRoot, rel, perm)
+}
+
+// applyDir writes a directory change: a host path that already holds the
+// directory keeps its node, because a mode-only change carries no content and
+// only the bits are left to set, and every other host kind is replaced. The
+// recorded mode is set explicitly either way, because the kernel masks a
+// creation's mode with the daemon's umask, and the mode is applied as recorded,
+// 000 included. See TheoryOfApplyConflict and TheoryOfSandboxFilesystem.
+func (s *Store) applyDir(rel string, perm os.FileMode) error {
+	info, err := s.baseRoot.Lstat(rel)
+	switch {
+	case err == nil && info.IsDir():
+		// The host already holds the directory: only the bits are left.
+	case err == nil:
+		if err := s.baseRoot.Remove(rel); err != nil {
+			return err
+		}
+		if err := s.baseRoot.Mkdir(rel, perm); err != nil {
+			return err
+		}
+	case errors.Is(err, os.ErrNotExist):
+		if err := s.baseRoot.Mkdir(rel, perm); err != nil {
+			return err
+		}
+	default:
+		return err
+	}
+	return chmodAt(s.baseRoot, rel, perm)
 }
 
 // removeAppliedRow drops one applied path's upper row and its content chunks in

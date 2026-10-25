@@ -111,6 +111,31 @@ func TestReadRangeReadsUpperLayerWindow(t *testing.T) {
 	}
 }
 
+// TestReadRangeBoundsTheWindow protects TheoryOfCompletePOSIX: a window size is
+// bounded before it becomes an allocation, so a caller cannot make the store
+// reserve memory for bytes that cannot exist. Both layers are covered, because
+// the bound is checked before either one is consulted.
+func TestReadRangeBoundsTheWindow(t *testing.T) {
+	store, base := newTestStore(t)
+	writeHost(t, base, "f", "0123456789")
+	if _, err := store.ReadRange("/f", 0, maxFileSize+1); !errors.Is(err, syscall.EFBIG) {
+		t.Errorf("base window above the bound: got %v, want EFBIG", err)
+	}
+	if err := store.WriteFile("/g", []byte("0123456789"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ReadRange("/g", 0, maxFileSize+1); !errors.Is(err, syscall.EFBIG) {
+		t.Errorf("upper window above the bound: got %v, want EFBIG", err)
+	}
+	got, err := store.ReadRange("/g", 2, 4)
+	if err != nil || string(got) != "2345" {
+		t.Errorf("window at the bound: %q %v, want 2345", got, err)
+	}
+	if got, err := store.ReadRange("/f", 2, 4); err != nil || string(got) != "2345" {
+		t.Errorf("base window at the bound: %q %v, want 2345", got, err)
+	}
+}
+
 // TestStatReportsSizeWithoutLoadingContent protects TheoryOfReadPath and
 // TheoryOfChunkedContent: a metadata read carries no content. Stat reports a
 // large file's size from the row's size column, and the mutation path's row
@@ -422,6 +447,36 @@ func TestRenameMovesContent(t *testing.T) {
 	}
 }
 
+// TestRenameSamePathReportsMissingSource protects TheoryOfCompletePOSIX:
+// rename(2) resolves the source before it treats the no-op, so renaming a
+// missing path to itself reports ENOENT whatever the two names share. An
+// existing path renamed to itself stays a successful no-op.
+func TestRenameSamePathReportsMissingSource(t *testing.T) {
+	s, base := newTestStore(t)
+	writeHost(t, base, "a.txt", "x")
+	if err := s.Rename("/missing", "/missing"); !errors.Is(err, ErrNotExist) {
+		t.Errorf("rename of a missing source to itself: got %v, want ENOENT", err)
+	}
+	if err := s.Rename("/a.txt", "/a.txt"); err != nil {
+		t.Errorf("rename of a base source to itself: got %v, want success", err)
+	}
+	if err := s.WriteFile("/new", []byte("y"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Rename("/new", "/new"); err != nil {
+		t.Errorf("rename of an upper source to itself: got %v, want success", err)
+	}
+	if _, err := s.Stat("/missing"); !errors.Is(err, ErrNotExist) {
+		t.Errorf("the refused rename left a row: %v", err)
+	}
+	if got, err := s.ReadFile("/a.txt"); err != nil || string(got) != "x" {
+		t.Errorf("the no-op rename changed the source: %q %v", got, err)
+	}
+	if got, err := s.ReadFile("/new"); err != nil || string(got) != "y" {
+		t.Errorf("the upper no-op rename changed the source: %q %v", got, err)
+	}
+}
+
 func TestSymlinkRoundTrip(t *testing.T) {
 	s, _ := newTestStore(t)
 	if err := s.Symlink("target.txt", "/link"); err != nil {
@@ -440,6 +495,26 @@ func TestSymlinkRoundTrip(t *testing.T) {
 	}
 	if a.Kind != KindSymlink {
 		t.Fatalf("kind %v", a.Kind)
+	}
+}
+
+// TestSymlinkRefusesAnEmptyTarget protects TheoryOfCompletePOSIX: a link names
+// a target, and an empty target names nothing. Linux refuses symlink(2) with
+// ENOENT, and a store that recorded the empty link would hand the apply a
+// change the host can never carry out.
+func TestSymlinkRefusesAnEmptyTarget(t *testing.T) {
+	s, _ := newTestStore(t)
+	if err := s.Symlink("", "/link"); !errors.Is(err, syscall.ENOENT) {
+		t.Errorf("symlink with an empty target: got %v, want ENOENT", err)
+	}
+	if _, err := s.Stat("/link"); !errors.Is(err, ErrNotExist) {
+		t.Errorf("the refused link left a node: %v", err)
+	}
+	if err := s.Symlink("target", "/link"); err != nil {
+		t.Fatalf("a link with a target must succeed: %v", err)
+	}
+	if got, err := s.Readlink("/link"); err != nil || got != "target" {
+		t.Errorf("link target %q (error %v), want target", got, err)
 	}
 }
 

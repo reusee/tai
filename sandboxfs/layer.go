@@ -118,16 +118,21 @@ func (s *Store) ReadFile(p string) ([]byte, error) {
 // ReadRange returns the content window [off, off+size) of one path without
 // materialising the whole file: the upper layer's window is one indexed query
 // over the chunks covering it, and a base file is read with ReadAt. A window
-// past the end yields an empty slice, never an error. The upper layer's kind
-// and deletion state come back in the row query whose stored size clamps the
-// window. The base descriptor serves the window with one fstatat, one openat,
-// and one pread; a store without the descriptor falls back to the os.Root walk
-// unchanged. See TheoryOfCompletePOSIX, TheoryOfReadPath and
-// TheoryOfBaseFdAccess.
+// past the end yields an empty slice, never an error. A window above the
+// store's bound cannot describe content the store holds, and the buffer it
+// would become is the allocation the bound exists to prevent, so it reports
+// EFBIG before anything is reserved. The upper layer's kind and deletion state
+// come back in the row query whose stored size clamps the window. The base
+// descriptor serves the window with one fstatat, one openat, and one pread; a
+// store without the descriptor falls back to the os.Root walk unchanged. See
+// TheoryOfCompletePOSIX, TheoryOfReadPath and TheoryOfBaseFdAccess.
 func (s *Store) ReadRange(p string, off int64, size int) ([]byte, error) {
 	p = Canonical(p)
 	if off < 0 || size < 0 {
 		return nil, syscall.EINVAL
+	}
+	if size > maxFileSize {
+		return nil, syscall.EFBIG
 	}
 	chunk, kind, found, err := s.readUpperRange(p, off, size)
 	if err != nil {
@@ -355,15 +360,10 @@ func (s *Store) WriteFile(p string, content []byte, perm os.FileMode) error {
 	}
 	// perm names the mode the write gives the file, whichever branch above
 	// supplied the row: a rename gives its destination the source's mode even
-	// when an earlier whiteout already left a row there. A zero perm keeps
-	// the mode the path already has — the base file's own, or the store's
-	// default — so a content change never rewrites the permission bits by
-	// omission. See TheoryOfCompletePOSIX.
-	if perm != 0 {
-		r.mode = perm
-	} else if r.mode == 0 {
-		r.mode = 0o644
-	}
+	// when an earlier whiteout already left a row there. The mode is applied
+	// as given, 000 included, so no layer substitutes a default for what the
+	// caller chose. See TheoryOfCompletePOSIX.
+	r.mode = perm
 	r.path = p
 	r.kind = KindRegular
 	r.deleted = false
@@ -403,9 +403,10 @@ func (s *Store) Mkdir(p string, perm os.FileMode) error {
 			return ErrExist
 		}
 	}
-	if perm == 0 {
-		perm = 0o755
-	}
+	// The mode is applied as given, 000 included: a caller that means to
+	// create a directory with no access bits chose exactly that, and a default
+	// here would hand the store bits the caller never asked for. See
+	// TheoryOfCompletePOSIX.
 	r.path = p
 	r.kind = KindDir
 	r.deleted = false
@@ -425,6 +426,13 @@ func (s *Store) Mkdir(p string, perm os.FileMode) error {
 
 func (s *Store) Symlink(target, p string) error {
 	p = Canonical(p)
+	// A link names a target, and an empty target names nothing: POSIX refuses
+	// symlink(2) with ENOENT, and a store that recorded the empty link would
+	// hand the apply a change the host can never carry out.
+	// See TheoryOfCompletePOSIX.
+	if target == "" {
+		return syscall.ENOENT
+	}
 	if err := s.checkWrite(p); err != nil {
 		return err
 	}
@@ -485,9 +493,8 @@ func (s *Store) Mkfifo(p string, mode os.FileMode) error {
 			return err
 		}
 	}
-	if mode == 0 {
-		mode = 0o644
-	}
+	// The mode is applied as given, 000 included: a pipe with no access bits
+	// is a choice, not an absent mode. See TheoryOfCompletePOSIX.
 	r.path = p
 	r.kind = KindFIFO
 	r.deleted = false
@@ -568,13 +575,6 @@ func (s *Store) Remove(p string) error {
 	return nil
 }
 
-// Rename moves a file, symbolic link, or directory. Both endpoints pass the
-// write policy before either row changes, so a refused destination never
-// leaves the source deleted. A directory materializes its whole tree at the
-// destination and whiteouts the source, because the store is path-addressed
-// and has no directory node to move; see renameDir. A regular file's content
-// travels as chunks: the destination's content is replaced and the source's
-// chunks drop with its whiteout. See TheoryOfChunkedContent.
 func (s *Store) Rename(oldPath, newPath string) error {
 	oldPath = Canonical(oldPath)
 	newPath = Canonical(newPath)
@@ -582,6 +582,13 @@ func (s *Store) Rename(oldPath, newPath string) error {
 		return syscall.EBUSY
 	}
 	if oldPath == newPath {
+		// rename(2) resolves the source before it treats the no-op, so a
+		// missing source reports ENOENT whatever the two names share. An
+		// existing path renamed to itself stays a successful no-op.
+		// See TheoryOfCompletePOSIX.
+		if _, err := s.Stat(oldPath); err != nil {
+			return err
+		}
 		return nil
 	}
 	if err := s.checkWrite(oldPath); err != nil {
@@ -595,6 +602,7 @@ func (s *Store) Rename(oldPath, newPath string) error {
 	}
 	var kind Kind
 	var mode os.FileMode
+	var mtime time.Time
 	var content []byte
 	var target string
 	src, ok, err := s.row(oldPath)
@@ -605,7 +613,7 @@ func (s *Store) Rename(oldPath, newPath string) error {
 		if src.deleted {
 			return ErrNotExist
 		}
-		kind, mode, target = src.kind, src.mode, src.target
+		kind, mode, target, mtime = src.kind, src.mode, src.target, src.mtime
 		if kind == KindRegular {
 			content, err = s.readContent(oldPath, src.size)
 			if err != nil {
@@ -619,6 +627,7 @@ func (s *Store) Rename(oldPath, newPath string) error {
 		}
 		kind = kindOf(info)
 		mode = info.Mode().Perm()
+		mtime = info.ModTime()
 		switch kind {
 		case KindRegular:
 			content, err = s.baseRoot.ReadFile(relPath(oldPath))
@@ -657,7 +666,10 @@ func (s *Store) Rename(oldPath, newPath string) error {
 	dst.mode = mode
 	dst.deleted = false
 	dst.target = target
-	dst.mtime = time.Now()
+	// Rename moves the node, so the file's recorded time moves with it:
+	// POSIX gives rename no mtime effect, and a toolchain that renames a
+	// file must not see its staleness jump. See TheoryOfCompletePOSIX.
+	dst.mtime = mtime
 	if err := s.putContent(dst, content); err != nil {
 		return err
 	}
@@ -786,6 +798,12 @@ func (s *Store) renameDir(oldPath, newPath string) error {
 				return err
 			}
 		}
+		// The move keeps the node's time: POSIX gives rename no mtime
+		// effect, and the creations above stamp the session's clock.
+		// See TheoryOfCompletePOSIX.
+		if err := s.SetTimes(target, e.attr.ModTime); err != nil {
+			return err
+		}
 	}
 	// Whiteout the source deepest-first, so each Remove sees an empty
 	// directory.
@@ -820,7 +838,10 @@ func (s *Store) SetMode(p string, mode os.FileMode) error {
 			return ErrNotExist
 		}
 		if r.kind == KindRegular {
-			r, err = s.materializeContent(p, -1, 0)
+			// The materialisation keeps the base file's mode, so the mode-only
+			// change below starts from the bits the path already carried.
+			// See TheoryOfCompletePOSIX.
+			r, err = s.materializeContent(p, -1, r.mode)
 			if err != nil {
 				return err
 			}
@@ -829,8 +850,11 @@ func (s *Store) SetMode(p string, mode os.FileMode) error {
 	if r.deleted {
 		return ErrNotExist
 	}
+	// A mode change is not a content change: it records the bits and leaves
+	// the stored mtime as the base recorded it, because POSIX gives chmod no
+	// mtime effect and a toolchain reads mtime to judge staleness. See
+	// TheoryOfCompletePOSIX.
 	r.mode = mode.Perm()
-	r.mtime = time.Now()
 	if err := s.put(r); err != nil {
 		return err
 	}
@@ -903,7 +927,10 @@ func (s *Store) Link(oldPath, newPath string) error {
 	r.mode = a.Mode
 	r.deleted = false
 	r.target = target
-	r.mtime = time.Now()
+	// A hard link shares the node, so the new name reports the source's own
+	// time: POSIX gives link no mtime effect on the file.
+	// See TheoryOfCompletePOSIX.
+	r.mtime = a.ModTime
 	if err := s.putContent(r, content); err != nil {
 		return err
 	}
@@ -933,7 +960,7 @@ func (s *Store) SetTimes(p string, mtime time.Time) error {
 			return ErrNotExist
 		}
 		if r.kind == KindRegular {
-			r, err = s.materializeContent(p, -1, 0)
+			r, err = s.materializeContent(p, -1, r.mode)
 			if err != nil {
 				return err
 			}

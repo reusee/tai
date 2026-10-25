@@ -89,12 +89,11 @@ minor is capped the same way: a newer kernel is answered at the last field
 definition this server knows.
 
 BIG_WRITES dominates the write path. Without it the kernel caps one WRITE at a
-single page, so a toolchain writing a multi-megabyte file sends hundreds of
-requests, and the store materializes the whole content on every one of them: the
-same bytes are copied and stored again per page, which makes the write path
-quadratic in the request count. MAX_PAGES raises the announced window to the
-1 MiB the kernel caps max_write at, so the same write costs one request and one
-sqlite store.
+single page, so a toolchain writing a multi-megabyte file sends one request per
+page, and each request pays its own sqlite transaction and commit: the chunked
+store keeps the bytes linear, but the per-request cost is what multiplies.
+MAX_PAGES raises the announced window to the 1 MiB the kernel caps max_write
+at, so the same write costs one request, one transaction, and one commit.
 
 READDIRPLUS carries a fuse_entry_out per directory entry, so the kernel needs no
 LOOKUP after a listing: a directory walk — the toolchain's dominant pattern —
@@ -152,7 +151,8 @@ stops paying one request per page.
 
 A write-mode open does not ask for the page cache. Its content is the
 session's to change, and a page kept from before the write would shadow the
-bytes the write just stored.
+bytes the write just stored. A truncating open is a content change whatever
+its access mode, so it declines the page cache on the same ground.
 `
 
 // fuseCacheTimeoutSec is the kernel's attribute and entry cache lifetime in
@@ -183,7 +183,9 @@ The passthrough list is resolved before the root pivot, because after the
 pivot a path refers to the sandbox view the store serves and no longer
 reaches the host. Each entry is mounted onto its place inside the FUSE
 mount before the pivot; after the pivot the path reaches the host directory
-directly.
+directly. A passthrough whose host directory is absent is skipped before its
+target is created, so a skip leaves no directory behind for the session to
+review.
 
 The store's sqlite database is the one file that must not transit FUSE: the
 FUSE daemon serves the store, so a store read that reached the daemon would
@@ -421,6 +423,13 @@ type fuseReadIn struct {
 	LockOwner uint64
 	Flags     uint32
 	Pad       uint32
+}
+
+// fuseAccessIn mirrors struct fuse_access_in: the access mask the kernel asks
+// about. The reply carries no body; only the error code answers.
+type fuseAccessIn struct {
+	Mask uint32
+	Pad  uint32
 }
 
 // fuseWriteIn mirrors struct fuse_write_in; the payload follows the header.
@@ -789,7 +798,7 @@ func (s *fuseServer) dispatch(buf []byte) {
 		// the kernel's reply-length check, aborts the connection with
 		// ENODEV, and every later filesystem call — the chdir into the
 		// mount root first — returns EIO. See TheoryOfFuseMount.
-		respBody, err = nil, nil
+		respBody, err = s.handleAccess(h.Nodeid, body)
 	case fuseOpForget, fuseOpBatchForget, fuseOpInterrupt:
 		// No reply is expected for FORGET, BATCH_FORGET, or INTERRUPT.
 		return
@@ -945,21 +954,26 @@ const (
 
 // attrOfFuse renders one store attribute on the wire. A named pipe reports
 // S_IFIFO so the kernel routes pipe opens to the pipe layer, never back to the
-// filesystem. The process identity arrives from the once-resolved values, so a
-// render costs no syscall. See TheoryOfCompletePOSIX and TheoryOfAttrCaching.
+// filesystem. A symbolic link reports mode 0o777 whatever its row records,
+// because a link's permission bits are not its own and the row may carry the
+// bits of a node the link replaced. The process identity arrives from the
+// once-resolved values, so a render costs no syscall. See
+// TheoryOfCompletePOSIX and TheoryOfAttrCaching.
 func attrOfFuse(ino uint64, a Attr) fuseAttr {
 	var mode uint32
 	switch a.Kind {
 	case KindDir:
-		mode = syscall.S_IFDIR
+		mode = syscall.S_IFDIR | uint32(a.Mode.Perm())
 	case KindSymlink:
-		mode = syscall.S_IFLNK
+		// Linux reports every symbolic link with mode 0o777: a link's
+		// permission bits are not its own, and the store's row may carry the
+		// bits of a node the link replaced. See TheoryOfCompletePOSIX.
+		mode = syscall.S_IFLNK | 0o777
 	case KindFIFO:
-		mode = syscall.S_IFIFO
+		mode = syscall.S_IFIFO | uint32(a.Mode.Perm())
 	default:
-		mode = syscall.S_IFREG
+		mode = syscall.S_IFREG | uint32(a.Mode.Perm())
 	}
-	mode |= uint32(a.Mode.Perm())
 	nlink := uint32(1)
 	if a.Kind == KindDir {
 		nlink = 2
@@ -1033,9 +1047,24 @@ func (s *fuseServer) handleLookup(parent uint64, body []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	name := cstring(body)
-	if name == "" || name == "." || name == ".." {
+	// A body that carries no name at all names nothing, so the answer is
+	// ENOENT; a body whose name runs to the end without a terminator is
+	// malformed and reports EINVAL. See TheoryOfFuseMount.
+	if len(body) == 0 {
 		return nil, syscall.ENOENT
+	}
+	name, ok := nameOf(body)
+	if !ok {
+		return nil, syscall.EINVAL
+	}
+	// A name that carries a separator cannot name one entry of the parent:
+	// joining it would walk out of that parent. A name of "." or ".." names no
+	// entry at all. See TheoryOfFuseMount.
+	if !validEntryName(name) {
+		if name == "" || name == "." || name == ".." {
+			return nil, syscall.ENOENT
+		}
+		return nil, syscall.EINVAL
 	}
 	p := path.Join(parentPath, name)
 	a, err := s.store.Stat(p)
@@ -1082,10 +1111,12 @@ func (s *fuseServer) handleSetattr(nodeid uint64, body []byte) ([]byte, error) {
 		if in.Size > maxFileSize {
 			return nil, syscall.EFBIG
 		}
-		// Truncation touches the chunks beyond the new length and the chunk
-		// the length ends inside; no content passes through this handler.
-		// See TheoryOfChunkedContent.
-		if err := s.store.TruncateFile(p, int64(in.Size), filePerm(cur.Mode)); err != nil {
+		// The file's own mode travels beside the length: a materialised base
+		// file keeps the bits it had, and a recorded 000 is a mode, not an
+		// absent one. Truncation touches the chunks beyond the new length and
+		// the chunk the length ends inside; no content passes through this
+		// handler. See TheoryOfChunkedContent.
+		if err := s.store.TruncateFile(p, int64(in.Size), cur.Mode); err != nil {
 			return nil, err
 		}
 		s.invalidateHandles(p)
@@ -1141,6 +1172,24 @@ func (s *fuseServer) invalidateOtherHandles(p string, self uint64) {
 	}
 }
 
+// invalidateDirListings clears the cached entries of every open handle of a
+// directory, so a read that follows a mutation fills the handle with the
+// entries the store holds now. The kernel cannot see a change this mount makes
+// on its own: FOPEN_CACHE_DIR keeps the listing it read, and no notify call
+// tells it otherwise, so the server clears the snapshot its own handler
+// mutated. A continued read keeps the one snapshot its offsets name, so the
+// rebuild happens only after a mutation, never in the middle of a listing.
+// See TheoryOfOpenCaching and TheoryOfReadPath.
+func (s *fuseServer) invalidateDirListings(p string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, h := range s.handles {
+		if h.isDir && h.path == p {
+			h.entries = nil
+		}
+	}
+}
+
 func (s *fuseServer) handleOpen(nodeid uint64, body []byte) ([]byte, error) {
 	var in fuseOpenIn
 	decodeStruct(&in, body)
@@ -1149,7 +1198,14 @@ func (s *fuseServer) handleOpen(nodeid uint64, body []byte) ([]byte, error) {
 		return nil, err
 	}
 	writeMode := in.Flags&(uint32(unix.O_WRONLY)|uint32(unix.O_RDWR)) != 0
-	if writeMode {
+	// O_TRUNC truncates whatever the access mode: POSIX gives the flag the same
+	// effect on a read-only open as on a write-mode one. The truncate is a
+	// mutation, so it passes the write policy even when the open itself is
+	// read-only, and a refused path sees EACCES at open rather than a file
+	// emptied behind the policy's back. See TheoryOfCompletePOSIX and
+	// TheoryOfWritePolicy.
+	truncate := in.Flags&uint32(unix.O_TRUNC) != 0
+	if writeMode || truncate {
 		if err := s.store.CanWrite(p); err != nil {
 			return nil, err
 		}
@@ -1161,12 +1217,12 @@ func (s *fuseServer) handleOpen(nodeid uint64, body []byte) ([]byte, error) {
 	if a.Kind == KindDir {
 		return nil, syscall.EISDIR
 	}
-	if writeMode &&
-		in.Flags&uint32(unix.O_TRUNC) != 0 &&
-		a.Kind == KindRegular {
-		// A truncating open drops the content chunks; it never writes the
-		// file back. See TheoryOfChunkedContent.
-		if err := s.store.TruncateFile(p, 0, filePerm(a.Mode)); err != nil {
+	if truncate && a.Kind == KindRegular {
+		// The file's own mode travels beside the length: a materialised base
+		// file keeps the bits it had, and a recorded 000 is a mode, not an
+		// absent one. A truncating open drops the content chunks; it never
+		// writes the file back. See TheoryOfChunkedContent.
+		if err := s.store.TruncateFile(p, 0, a.Mode); err != nil {
 			return nil, err
 		}
 		s.invalidateHandles(p)
@@ -1178,10 +1234,11 @@ func (s *fuseServer) handleOpen(nodeid uint64, body []byte) ([]byte, error) {
 	fh := s.registerHandle(&fuseHandle{path: p, mode: a.Mode})
 	// A read-only open lets the kernel keep the file's pages across opens, so
 	// a repeated read of an unchanged dependency never reaches the store. A
-	// write-mode open must not: its content is the session's to change.
-	// See TheoryOfOpenCaching.
+	// write-mode or truncating open must not: its content is the session's to
+	// change, and a page kept from before would shadow the bytes the request
+	// just stored. See TheoryOfOpenCaching.
 	out := fuseOpenOut{Fh: fh}
-	if !writeMode {
+	if !writeMode && !truncate {
 		out.OpenFlags = fuseOpenKeepCache
 	}
 	return encodeStruct(&out), nil
@@ -1232,14 +1289,17 @@ func (s *fuseServer) baseHandleFile(h *fuseHandle) (*os.File, error) {
 	return f, nil
 }
 
-// readFrom serves one window of a read handle. The upper layer answers
-// first: a window the session wrote, or a whiteout it recorded, is the
-// current content and no cached reader may shadow it. A base-layer regular
-// file answers from the handle's cached reader into the handle's reused
-// window buffer. See TheoryOfReadPath.
 func (s *fuseServer) readFrom(h *fuseHandle, off int64, size int) ([]byte, error) {
 	if off < 0 || size < 0 {
 		return nil, syscall.EINVAL
+	}
+	// A size above the store's bound is a claim no kernel makes: it sends a
+	// read in windows no larger than the announced request ceiling, so a larger
+	// value is malformed and must not become an allocation. The bound also
+	// keeps the int conversion of a huge 32-bit size from reaching the window
+	// buffer. See TheoryOfCompletePOSIX.
+	if size > maxFileSize {
+		return nil, syscall.EFBIG
 	}
 	chunk, kind, found, err := s.store.readUpperRange(h.path, off, size)
 	if err != nil {
@@ -1283,22 +1343,26 @@ func (s *fuseServer) readFrom(h *fuseHandle, off int64, size int) ([]byte, error
 func (s *fuseServer) handleWrite(body []byte) ([]byte, error) {
 	var in fuseWriteIn
 	decodeStruct(&in, body)
-	hdrSize := binary.Size(in)
-	if len(body) < hdrSize+int(in.Size) {
-		return nil, syscall.EINVAL
-	}
 	// A zero-byte write is a no-op, matching Linux: write(2) with nbyte=0
 	// transfers nothing and does not extend the file, even when the offset
 	// sits past the end. See TheoryOfCompletePOSIX.
 	if in.Size == 0 {
 		return encodeStruct(&fuseWriteOut{Size: 0}), nil
 	}
-	// A malicious or buggy kernel could send an offset that overflows
-	// the int conversion; refuse before allocating. The window is
-	// bounded by maxFileSize for the same reason the truncate path is.
+	// The offset, the size, and their sum are bounded before the body length
+	// is computed, so a malformed claim never slices a body or reserves memory
+	// for bytes that cannot exist: on a 32-bit build a size above 2^31 turns
+	// into a negative int, and a length check that ran first would pass on a
+	// body the slice below cannot hold. Each operand of the sum is bounded, so
+	// the sum itself cannot wrap. See TheoryOfCompletePOSIX.
 	if in.Offset > uint64(maxFileSize) ||
+		uint64(in.Size) > uint64(maxFileSize) ||
 		in.Offset+uint64(in.Size) > uint64(maxFileSize) {
 		return nil, syscall.EFBIG
+	}
+	hdrSize := binary.Size(in)
+	if len(body) < hdrSize+int(in.Size) {
+		return nil, syscall.EINVAL
 	}
 	data := body[hdrSize : hdrSize+int(in.Size)]
 	s.mu.Lock()
@@ -1308,10 +1372,12 @@ func (s *fuseServer) handleWrite(body []byte) ([]byte, error) {
 		return nil, syscall.EBADF
 	}
 	// The mode comes from the open that handed the handle back, so the write
-	// path pays no metadata lookup. The delta goes straight into the stored
-	// chunks, so the store copies the payload rather than the file and the
-	// handle holds no copy at all. See TheoryOfWriteSplice.
-	if err := s.store.SpliceFile(h.path, int64(in.Offset), data, filePerm(h.mode)); err != nil {
+	// path pays no metadata lookup, and it travels as given, 000 included: a
+	// materialised file with no access bits is a choice, not an absent mode.
+	// The delta goes straight into the stored chunks, so the store copies the
+	// payload rather than the file and the handle holds no copy at all.
+	// See TheoryOfWriteSplice and TheoryOfCompletePOSIX.
+	if err := s.store.SpliceFile(h.path, int64(in.Offset), data, h.mode); err != nil {
 		return nil, err
 	}
 	// The store now holds this write, so the handle's cached base reader can
@@ -1342,6 +1408,22 @@ func (s *fuseServer) handleOpendir(nodeid uint64) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	all, err := s.listEntries(p)
+	if err != nil {
+		return nil, err
+	}
+	fh := s.registerHandle(&fuseHandle{path: p, isDir: true, entries: all})
+	// The kernel keeps the listing across opens, so a repeated walk costs no
+	// request; a mutation through this mount clears the snapshot, and the
+	// next read rebuilds it. See TheoryOfOpenCaching and TheoryOfReadPath.
+	return encodeStruct(&fuseOpenOut{Fh: fh, OpenFlags: fuseOpenCacheDir}), nil
+}
+
+// listEntries returns the directory's entries with "." and "..": the listing a
+// READDIR reply carries. The store merges the two layers, and the parent comes
+// from the store so a sandbox path's ".." reports the sandbox's own attributes.
+// See TheoryOfReadPath.
+func (s *fuseServer) listEntries(p string) ([]DirEntry, error) {
 	entries, err := s.store.ReadDir(p)
 	if err != nil {
 		return nil, err
@@ -1353,12 +1435,7 @@ func (s *fuseServer) handleOpendir(nodeid uint64) ([]byte, error) {
 	if parent, err := s.store.Stat(path.Dir(p)); err == nil {
 		all = append(all, DirEntry{Name: "..", Attr: parent})
 	}
-	all = append(all, entries...)
-	fh := s.registerHandle(&fuseHandle{path: p, isDir: true, entries: all})
-	// The kernel keeps the listing across opens, so a repeated walk costs no
-	// request; any mutation through the mount invalidates it.
-	// See TheoryOfOpenCaching.
-	return encodeStruct(&fuseOpenOut{Fh: fh, OpenFlags: fuseOpenCacheDir}), nil
+	return append(all, entries...), nil
 }
 
 func (s *fuseServer) handleReaddir(body []byte) ([]byte, error) {
@@ -1369,6 +1446,17 @@ func (s *fuseServer) handleReaddir(body []byte) ([]byte, error) {
 	s.mu.Unlock()
 	if h == nil || !h.isDir {
 		return nil, syscall.ENOTDIR
+	}
+	if h.entries == nil {
+		// A mutation through this mount cleared the snapshot: the kernel
+		// cannot see such a change, so the server rebuilds it from the store,
+		// the one source of the directory's current entries.
+		// See TheoryOfReadPath.
+		all, err := s.listEntries(h.path)
+		if err != nil {
+			return nil, err
+		}
+		h.entries = all
 	}
 	start := int(in.Offset)
 	if start < 0 || start > len(h.entries) {
@@ -1429,6 +1517,16 @@ func (s *fuseServer) handleReaddirPlus(body []byte) ([]byte, error) {
 	if h == nil || !h.isDir {
 		return nil, syscall.ENOTDIR
 	}
+	if h.entries == nil {
+		// The listing was cleared by a mutation through this mount: the
+		// server rebuilds it from the store, the one source of the
+		// directory's current entries. See TheoryOfReadPath.
+		all, err := s.listEntries(h.path)
+		if err != nil {
+			return nil, err
+		}
+		h.entries = all
+	}
 	start := int(in.Offset)
 	if start < 0 || start > len(h.entries) {
 		return []byte{}, nil
@@ -1480,6 +1578,29 @@ func (s *fuseServer) handleReaddirPlus(body []byte) ([]byte, error) {
 	return out, nil
 }
 
+// handleAccess answers FUSE_ACCESS. The reply carries no body; only the error
+// code speaks. The path's existence comes first, so a probe of a path the
+// session deleted reports ENOENT, and a W_OK probe asks the write policy, so a
+// caller learns at access time what its first write would report.
+// See TheoryOfWritePolicy.
+func (s *fuseServer) handleAccess(nodeid uint64, body []byte) ([]byte, error) {
+	p, err := s.pathOf(nodeid)
+	if err != nil {
+		return nil, err
+	}
+	var in fuseAccessIn
+	decodeStruct(&in, body)
+	if _, err := s.store.Stat(p); err != nil {
+		return nil, err
+	}
+	if in.Mask&unix.W_OK != 0 {
+		if err := s.store.CanWrite(p); err != nil {
+			return nil, err
+		}
+	}
+	return nil, nil
+}
+
 func direntType(k Kind) uint32 {
 	switch k {
 	case KindDir:
@@ -1491,16 +1612,6 @@ func direntType(k Kind) uint32 {
 	default:
 		return uint32(syscall.S_IFREG >> 12)
 	}
-}
-
-// filePerm is the permission bits a mutation gives a path: the recorded mode
-// when the path carries one, and the store's default otherwise. Every handler
-// that hands a mode to the store runs it, so no handler carries its own copy.
-func filePerm(m os.FileMode) os.FileMode {
-	if m == 0 {
-		return 0o644
-	}
-	return m
 }
 
 // registerHandle files one handle under a fresh handle number. Every handler
@@ -1526,13 +1637,19 @@ func (s *fuseServer) handleCreate(parent uint64, body []byte) ([]byte, error) {
 	if !ok {
 		return nil, syscall.EINVAL
 	}
-	name := cstring(rest)
-	if name == "" || name == "." || name == ".." {
+	name, ok := entryName(rest)
+	if !ok {
 		return nil, syscall.EINVAL
 	}
 	p := path.Join(parentPath, name)
-	perm := filePerm(os.FileMode(in.Mode & 0o777))
+	// The mode the create request carries is masked by the umask it also
+	// carries: the kernel hands the filesystem both, and a filesystem that
+	// ignores the mask hands the caller bits the process's umask withdrew. A
+	// mode of no bits stays a choice below the mask.
+	// See TheoryOfCompletePOSIX.
+	perm := os.FileMode(in.Mode&0o777) &^ os.FileMode(in.Umask&0o777)
 	cur, statErr := s.store.Stat(p)
+	created := false
 	switch {
 	case statErr == nil:
 		if in.Flags&uint32(unix.O_EXCL) != 0 {
@@ -1543,13 +1660,10 @@ func (s *fuseServer) handleCreate(parent uint64, body []byte) ([]byte, error) {
 		}
 		if in.Flags&uint32(unix.O_TRUNC) != 0 {
 			// The create's mode describes a file that does not exist yet; an
-			// existing file keeps the mode it already has, and the create
-			// changes nothing but the length. See TheoryOfCompletePOSIX.
-			mode := cur.Mode
-			if mode == 0 {
-				mode = perm
-			}
-			if err := s.store.TruncateFile(p, 0, mode); err != nil {
+			// existing file keeps the mode it already has — a recorded 000 is
+			// a mode, not an absent one — and the create changes nothing but
+			// the length. See TheoryOfCompletePOSIX.
+			if err := s.store.TruncateFile(p, 0, cur.Mode); err != nil {
 				return nil, err
 			}
 			// A truncation drops every cached base reader of the path, the
@@ -1557,15 +1671,27 @@ func (s *fuseServer) handleCreate(parent uint64, body []byte) ([]byte, error) {
 			// file earlier must serve the store's new content, not the
 			// descriptor that fixes the old view. See TheoryOfReadPath.
 			s.invalidateHandles(p)
-		} else if err := s.store.CanWrite(p); err != nil {
-			return nil, err
+		} else if in.Flags&(uint32(unix.O_WRONLY)|uint32(unix.O_RDWR)) != 0 {
+			// A create-open that finds the path already there and carries no
+			// O_TRUNC mutates nothing by itself, so only a write-mode request
+			// asks the policy — the same rule a plain OPEN follows. A
+			// read-only create-open therefore reaches an existing file the
+			// sandbox may not write. See TheoryOfWritePolicy and
+			// TheoryOfCompletePOSIX.
+			if err := s.store.CanWrite(p); err != nil {
+				return nil, err
+			}
 		}
 	case errors.Is(statErr, ErrNotExist):
 		if err := s.store.WriteFile(p, nil, perm); err != nil {
 			return nil, err
 		}
+		created = true
 	default:
 		return nil, statErr
+	}
+	if created {
+		s.invalidateDirListings(parentPath)
 	}
 	a, err := s.store.Stat(p)
 	if err != nil {
@@ -1600,18 +1726,19 @@ func (s *fuseServer) handleMkdir(parent uint64, body []byte) ([]byte, error) {
 	if !ok {
 		return nil, syscall.EINVAL
 	}
-	name := cstring(rest)
-	if name == "" || name == "." || name == ".." {
+	name, ok := entryName(rest)
+	if !ok {
 		return nil, syscall.EINVAL
 	}
 	p := path.Join(parentPath, name)
-	perm := os.FileMode(in.Mode & 0o777)
-	if perm == 0 {
-		perm = 0o755
-	}
+	// The mode is masked by the request's umask, the same mask a local
+	// filesystem applies, and a mode of no bits stays a choice below it.
+	// See TheoryOfCompletePOSIX.
+	perm := os.FileMode(in.Mode&0o777) &^ os.FileMode(in.Umask&0o777)
 	if err := s.store.Mkdir(p, perm); err != nil {
 		return nil, err
 	}
+	s.invalidateDirListings(parentPath)
 	a, err := s.store.Stat(p)
 	if err != nil {
 		return nil, err
@@ -1635,21 +1762,22 @@ func (s *fuseServer) handleMknod(parent uint64, body []byte) ([]byte, error) {
 	if !ok {
 		return nil, syscall.EINVAL
 	}
-	name := cstring(rest)
-	if name == "" || name == "." || name == ".." {
+	name, ok := entryName(rest)
+	if !ok {
 		return nil, syscall.EINVAL
 	}
 	if in.Mode&uint32(syscall.S_IFMT) != uint32(syscall.S_IFIFO) {
 		return nil, syscall.EPERM
 	}
 	p := path.Join(parentPath, name)
-	perm := os.FileMode(in.Mode & 0o777)
-	if perm == 0 {
-		perm = 0o644
-	}
+	// The mode is masked by the request's umask, the same mask a local
+	// filesystem applies, and a mode of no bits stays a choice below it.
+	// See TheoryOfCompletePOSIX.
+	perm := os.FileMode(in.Mode&0o777) &^ os.FileMode(in.Umask&0o777)
 	if err := s.store.Mkfifo(p, perm); err != nil {
 		return nil, err
 	}
+	s.invalidateDirListings(parentPath)
 	a, err := s.store.Stat(p)
 	if err != nil {
 		return nil, err
@@ -1665,14 +1793,16 @@ func (s *fuseServer) handleMknod(parent uint64, body []byte) ([]byte, error) {
 // handleUnlink serves UNLINK and RMDIR with POSIX type checks: UNLINK of a
 // directory is EISDIR and RMDIR of a regular file is ENOTDIR, so a caller's
 // unlink-or-rmdir fallback sees the same errors a local filesystem reports.
-// See TheoryOfCompletePOSIX.
+// A name with no terminator, or one that cannot name a single entry, reports
+// EINVAL, and a successful removal clears the parent's cached listings.
+// See TheoryOfCompletePOSIX and TheoryOfFuseMount.
 func (s *fuseServer) handleUnlink(parent uint64, body []byte, isDir bool) ([]byte, error) {
 	parentPath, err := s.pathOf(parent)
 	if err != nil {
 		return nil, err
 	}
-	name := cstring(body)
-	if name == "" || name == "." || name == ".." {
+	name, ok := entryName(body)
+	if !ok {
 		return nil, syscall.EINVAL
 	}
 	p := path.Join(parentPath, name)
@@ -1686,20 +1816,13 @@ func (s *fuseServer) handleUnlink(parent uint64, body []byte, isDir bool) ([]byt
 	case !isDir && a.Kind == KindDir:
 		return nil, syscall.EISDIR
 	}
-	return nil, s.store.Remove(p)
+	if err := s.store.Remove(p); err != nil {
+		return nil, err
+	}
+	s.invalidateDirListings(parentPath)
+	return nil, nil
 }
 
-// handleRename serves RENAME and RENAME2. RENAME2's flags select the
-// semantic: RENAME_NOREPLACE refuses an existing destination with EEXIST,
-// and RENAME_EXCHANGE and RENAME_WHITEOUT need an atomic inode swap the
-// path-addressed store cannot provide, so they are refused with ENOSYS and the
-// caller falls back to the plain form. The three flag bits mirror linux/fs.h;
-// the wire protocol carries them as a uint32. A body whose first name carries
-// no terminator cannot name the second, so the reply is EINVAL.
-// The kernel resolves the source before it tests RENAME_NOREPLACE, so a
-// missing source reports ENOENT whatever the destination holds; only an
-// existing source with an existing destination reports EEXIST.
-// See TheoryOfCompletePOSIX and TheoryOfFuseMount.
 func (s *fuseServer) handleRename(parent uint64, body []byte, two bool) ([]byte, error) {
 	parentPath, err := s.pathOf(parent)
 	if err != nil {
@@ -1733,11 +1856,15 @@ func (s *fuseServer) handleRename(parent uint64, body []byte, two bool) ([]byte,
 		return nil, err
 	}
 	oldNameB, rest, ok := splitName(rest)
-	if !ok || len(oldNameB) == 0 {
+	if !ok || !validEntryName(string(oldNameB)) {
 		return nil, syscall.EINVAL
 	}
-	newName := cstring(rest)
-	if newName == "" {
+	// The destination name needs its terminator and the same single-entry
+	// rule as the source: a name that runs to the end of the body cannot be
+	// told from one the sender truncated, and a name with a separator would
+	// walk out of the destination parent.
+	newName, ok := entryName(rest)
+	if !ok {
 		return nil, syscall.EINVAL
 	}
 	oldPath := path.Join(parentPath, string(oldNameB))
@@ -1760,14 +1887,26 @@ func (s *fuseServer) handleRename(parent uint64, body []byte, two bool) ([]byte,
 			return nil, ErrExist
 		}
 	}
-	return nil, s.store.Rename(oldPath, newPath)
+	if err := s.store.Rename(oldPath, newPath); err != nil {
+		return nil, err
+	}
+	// Both directories lost and gained an entry, so both listings rebuild.
+	// A rename inside one directory asks the same path twice, which the loop
+	// walks without harm. See TheoryOfReadPath.
+	s.invalidateDirListings(parentPath)
+	s.invalidateDirListings(newParent)
+	return nil, nil
 }
 
 // handleSymlink creates a symbolic link. The kernel wire form is
 // link_name\0link_target\0 — the name first, matching FUSE_SYMLINK's
-// documented fields — so the two strings decode in that order. A body whose
-// name carries no terminator cannot name a target, so the reply is EINVAL.
-// See TheoryOfCompletePOSIX and TheoryOfFuseMount.
+// documented fields — so the two strings decode in that order. The name must
+// name a single entry, while the target may hold any string: a link target is
+// not a name and is resolved by the kernel later. A body whose name carries no
+// terminator cannot name a target, and a target with no terminator is
+// malformed too, so both report EINVAL. A terminated but empty target is not
+// malformed: it names no target, which POSIX refuses with ENOENT through the
+// store. See TheoryOfCompletePOSIX and TheoryOfFuseMount.
 func (s *fuseServer) handleSymlink(parent uint64, body []byte) ([]byte, error) {
 	parentPath, err := s.pathOf(parent)
 	if err != nil {
@@ -1778,17 +1917,21 @@ func (s *fuseServer) handleSymlink(parent uint64, body []byte) ([]byte, error) {
 		return nil, syscall.EINVAL
 	}
 	name := string(nameB)
-	if name == "" || name == "." || name == ".." {
+	if !validEntryName(name) {
 		return nil, syscall.EINVAL
 	}
-	target := cstring(rest)
-	if target == "" {
+	// An empty target passes through: the store answers the ENOENT that
+	// symlink(2) reports, and the wire layer keeps only the malformed body
+	// for itself.
+	target, ok := nameOf(rest)
+	if !ok {
 		return nil, syscall.EINVAL
 	}
 	p := path.Join(parentPath, name)
 	if err := s.store.Symlink(target, p); err != nil {
 		return nil, err
 	}
+	s.invalidateDirListings(parentPath)
 	a, err := s.store.Stat(p)
 	if err != nil {
 		return nil, err
@@ -1831,14 +1974,15 @@ func (s *fuseServer) handleLink(parent uint64, body []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	name := cstring(rest)
-	if name == "" || name == "." || name == ".." {
+	name, ok := entryName(rest)
+	if !ok {
 		return nil, syscall.EINVAL
 	}
 	newPath := path.Join(parentPath, name)
 	if err := s.store.Link(oldPath, newPath); err != nil {
 		return nil, err
 	}
+	s.invalidateDirListings(parentPath)
 	a, err := s.store.Stat(newPath)
 	if err != nil {
 		return nil, err
@@ -1851,14 +1995,44 @@ func (s *fuseServer) handleLink(parent uint64, body []byte) ([]byte, error) {
 	return encodeStruct(&entry), nil
 }
 
-// cstring reads a NUL-terminated name from a request body.
-func cstring(b []byte) string {
-	for i := 0; i < len(b); i++ {
-		if b[i] == 0 {
-			return string(b[:i])
+// nameOf reads one NUL-terminated name from a request body. ok is false when
+// the body holds no terminator: a name the sender never ended is malformed, and
+// acting on the bytes that happen to follow would answer a request the kernel
+// could not have sent. See TheoryOfFuseMount.
+func nameOf(b []byte) (name string, ok bool) {
+	n, _, ok := splitName(b)
+	if !ok {
+		return "", false
+	}
+	return string(n), true
+}
+
+// validEntryName reports whether name can name one directory entry: non-empty,
+// not "." or "..", and free of the path separator. Joining any other name would
+// walk out of the parent the request names, so the handlers refuse it.
+// See TheoryOfFuseMount.
+func validEntryName(name string) bool {
+	if name == "" || name == "." || name == ".." {
+		return false
+	}
+	for i := 0; i < len(name); i++ {
+		if name[i] == '/' {
+			return false
 		}
 	}
-	return string(b)
+	return true
+}
+
+// entryName reads one NUL-terminated name that must name a single directory
+// entry. ok is false for a name with no terminator, an empty name, "." or "..",
+// or a name carrying the path separator. See TheoryOfFuseMount.
+func entryName(b []byte) (name string, ok bool) {
+	n, _, ok := splitName(b)
+	if !ok {
+		return "", false
+	}
+	name = string(n)
+	return name, validEntryName(name)
 }
 
 // decodeStruct decodes one fixed request body into dst, zero-padding a body
