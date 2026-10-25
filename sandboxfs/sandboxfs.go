@@ -248,6 +248,12 @@ deliberately closed, and a default substituted anywhere on the way — at the
 create, the materialisation, the truncate, or the apply — hands the host or
 the reader bits the session never chose. A caller that means to keep an
 existing mode reads it first, so no layer carries a default to substitute.
+The mode also rules what the store can read: a base file whose bits refuse
+the process is refused to the first mutation that captures its original,
+because that record is the file's whole content hash. Where a local
+filesystem changes the name or the bits without reading the bytes, the
+store reports the base read's permission error instead, and keeps its
+snapshot exact.
 
 Open flags are honoured where the kernel routes them to the filesystem.
 CREATE carries O_CREAT, O_EXCL, and O_TRUNC: an existing path is refused

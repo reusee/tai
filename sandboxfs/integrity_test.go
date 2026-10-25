@@ -403,7 +403,10 @@ func TestApplyReplacesASymlinkWithAFileOfTheSameBytes(t *testing.T) {
 // TheoryOfApplyConflict: the recorded mode is authoritative, 000 included. A
 // chmod that takes every bit away is a change the session made, and a diff or
 // an apply that reads zero as "no mode" hands the host bits the session never
-// chose. A truncation of a mode-000 file keeps the mode too.
+// chose. A truncation records the mode it was handed, 000 included, and its
+// materialisation substitutes no default of its own. The base file of that
+// truncation stays readable, because the bytes a mode denies are bytes the
+// store cannot copy.
 func TestModeOfNoBitsReachesTheHost(t *testing.T) {
 	dir := t.TempDir()
 	base := filepath.Join(dir, "base")
@@ -446,8 +449,9 @@ func TestModeOfNoBitsReachesTheHost(t *testing.T) {
 		t.Errorf("applied mode %o, want 000", got)
 	}
 	// Restore a readable mode so the cleanup can inspect the tree, then check
-	// the truncation path: a mode-000 base file keeps its bits when the
-	// session shortens it.
+	// the truncation path: a truncation records the mode it was handed, 000
+	// included, and the materialisation that keeps a prefix must not put a
+	// default in its place.
 	if err := os.Chmod(host, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -455,13 +459,21 @@ func TestModeOfNoBitsReachesTheHost(t *testing.T) {
 	if err := os.WriteFile(other, []byte("abcdef"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(other, 0); err != nil {
-		t.Fatal(err)
-	}
 	if err := store.TruncateFile("/g", 2, 0); err != nil {
 		t.Fatal(err)
 	}
-	if a, err := store.Stat("/g"); err != nil || a.Mode != 0 {
-		t.Errorf("truncation of a mode-000 file: got mode %o (error %v), want 000", a.Mode, err)
+	if a, err := store.Stat("/g"); err != nil || a.Mode != 0 || a.Size != 2 {
+		t.Errorf("truncation to a mode of no bits: got mode %o size %d (error %v), want mode 000 size 2", a.Mode, a.Size, err)
+	}
+	// The same holds when the row already exists: the truncate shapes the
+	// stored content and leaves the recorded bits alone.
+	if err := store.WriteFile("/h", []byte("abcdef"), 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.TruncateFile("/h", 2, 0); err != nil {
+		t.Fatal(err)
+	}
+	if a, err := store.Stat("/h"); err != nil || a.Mode != 0 || a.Size != 2 {
+		t.Errorf("truncation of an upper row of no bits: got mode %o size %d (error %v), want mode 000 size 2", a.Mode, a.Size, err)
 	}
 }
