@@ -1727,8 +1727,9 @@ func (s *fuseServer) handleOpendir(nodeid uint64) ([]byte, error) {
 	// Opening a listing reads the directory's own attributes, the upper layer's
 	// rows for it, and one handle on the base directory. It enumerates nothing:
 	// a request that walked the directory would make its duration grow with the
-	// directory's entry count and hold the server's one goroutine for the whole
-	// walk. See TheoryOfDirectoryStream.
+	// directory's entry count, and a request that runs long holds one worker of
+	// the request pool for its whole duration. See TheoryOfDirectoryStream and
+	// TheoryOfFuseConcurrency.
 	h := &fuseHandle{path: p, isDir: true}
 	if err := s.seedListing(h); err != nil {
 		h.closeDir()
