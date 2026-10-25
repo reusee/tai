@@ -40,71 +40,51 @@ func TestTruncateFileReportsNotExistAndEINVAL(t *testing.T) {
 	}
 }
 
-// TestWriteFileExplicitPermSetsTheMode pins the other half of WriteFile's
-// contract: an explicit perm names the resulting mode, which is what a
-// directory rename needs to give every materialized entry its source's mode.
-// See TheoryOfCompletePOSIX.
+// TestWriteFileExplicitPermSetsTheMode pins WriteFile's perm contract with an
+// explicit perm: the perm names the resulting mode whether the path is fresh or
+// carries a whiteout row from an earlier session deletion. A directory rename
+// relies on it, because every materialized entry takes its source's mode and a
+// destination may already carry such a row. See TheoryOfCompletePOSIX.
 func TestWriteFileExplicitPermSetsTheMode(t *testing.T) {
-	dir := t.TempDir()
-	base := filepath.Join(dir, "base")
-	if err := os.MkdirAll(base, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	host := filepath.Join(base, "f")
-	if err := os.WriteFile(host, []byte("old"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	store, err := Open(filepath.Join(dir, "upper.db"), base)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	if err := store.WriteFile("/f", []byte("new"), 0o640); err != nil {
-		t.Fatal(err)
-	}
-	a, err := store.Stat("/f")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if a.Mode != 0o640 {
-		t.Errorf("explicit perm: got mode %o, want 640", a.Mode)
-	}
-}
-
-// TestWriteFileExplicitPermOverAWhiteout pins the other branch of WriteFile's
-// perm contract: a path whose row already exists — a session deletion left a
-// whiteout there — still takes the mode the write names. A directory rename
-// relies on it, because its destination may carry such a row.
-// See TheoryOfCompletePOSIX.
-func TestWriteFileExplicitPermOverAWhiteout(t *testing.T) {
-	dir := t.TempDir()
-	base := filepath.Join(dir, "base")
-	if err := os.MkdirAll(base, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	host := filepath.Join(base, "f")
-	if err := os.WriteFile(host, []byte("old"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	store, err := Open(filepath.Join(dir, "upper.db"), base)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	if err := store.Remove("/f"); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.WriteFile("/f", []byte("new"), 0o640); err != nil {
-		t.Fatal(err)
-	}
-	a, err := store.Stat("/f")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if a.Mode != 0o640 {
-		t.Errorf("explicit perm over a whiteout: got mode %o, want 640", a.Mode)
-	}
-	if content, err := store.ReadFile("/f"); err != nil || string(content) != "new" {
-		t.Errorf("content after the write: %q %v, want new", content, err)
+	for _, tc := range []struct {
+		name   string
+		remove bool
+	}{
+		{name: "fresh path"},
+		{name: "over whiteout", remove: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			base := filepath.Join(dir, "base")
+			if err := os.MkdirAll(base, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(base, "f"), []byte("old"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			store, err := Open(filepath.Join(dir, "upper.db"), base)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			if tc.remove {
+				if err := store.Remove("/f"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := store.WriteFile("/f", []byte("new"), 0o640); err != nil {
+				t.Fatal(err)
+			}
+			a, err := store.Stat("/f")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if a.Mode != 0o640 {
+				t.Errorf("explicit perm: got mode %o, want 640", a.Mode)
+			}
+			if content, err := store.ReadFile("/f"); err != nil || string(content) != "new" {
+				t.Errorf("content after the write: %q %v, want new", content, err)
+			}
+		})
 	}
 }

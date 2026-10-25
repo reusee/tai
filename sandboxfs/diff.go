@@ -239,21 +239,19 @@ func (s *Store) detectConflict(c *Change, r fileRow) {
 	}
 }
 
-// Apply writes the selected net changes to the host and drops their upper
-// rows, content chunks included, so a repeated apply is a no-op and the next
-// diff is exact. Conflicting changes are skipped; selected nil selects every
-// change. Created directories apply first, files next, and deletions deepest
-// first, so a nested creation or deletion lands in an order the host accepts.
-// See TheoryOfApplyConflict and TheoryOfChunkedContent.
 func (s *Store) Apply(selected func(Change) bool) (applied []Change, err error) {
 	applied, _, err = s.applyChanges(selected)
 	return applied, err
 }
 
-// applyChanges is the shared core of Apply and ApplyAll: it reads the net
-// changes, collects the ones a conflict keeps back, sorts the rest into an
-// order the host accepts, and applies them one by one. See
-// TheoryOfApplyConflict.
+// Apply writes the selected net changes to the host and drops their upper
+// rows, content chunks included, so a repeated apply is a no-op and the next
+// diff is exact. Conflicting changes are skipped; selected nil selects every
+// change. Deletions apply first, deepest first, then the added and modified
+// paths in path order, so a nested creation lands parent-first and a path the
+// session turned from a directory into a file meets an emptied host directory.
+// See TheoryOfApplyConflict and TheoryOfChunkedContent.
+
 func (s *Store) applyChanges(selected func(Change) bool) (applied, conflicts []Change, err error) {
 	changes, err := s.Changes()
 	if err != nil {
@@ -275,10 +273,7 @@ func (s *Store) applyChanges(selected func(Change) bool) (applied, conflicts []C
 		if pi != pj {
 			return pi < pj
 		}
-		switch pi {
-		case 0:
-			return len(pending[i].Path) < len(pending[j].Path)
-		case 2:
+		if pi == 0 {
 			return len(pending[i].Path) > len(pending[j].Path)
 		}
 		return pending[i].Path < pending[j].Path
@@ -297,27 +292,17 @@ func (s *Store) applyChanges(selected func(Change) bool) (applied, conflicts []C
 }
 
 func applyPhase(c Change) int {
-	if c.Kind == ChangeAdded && c.Dir {
+	// Deletions run first, deepest first: a path the session turned from a
+	// directory into a file finds the host directory empty when its own
+	// change runs, because the session's whiteouts of the directory's
+	// entries have already removed the host entries. The path order below
+	// keeps a nested creation parent-first. See TheoryOfApplyConflict.
+	if c.Kind == ChangeDeleted {
 		return 0
 	}
-	if c.Kind != ChangeDeleted {
-		return 1
-	}
-	return 2
+	return 1
 }
 
-// applyOne writes one selected change to the host. A path whose host entry
-// is not the kind the change creates is removed first, so a regular write
-// never lands on a pipe, a link, or a directory, and a directory never lands
-// on a file, a link, or a pipe. The mode the session recorded is reproduced
-// beside the content, so an apply never replaces a chosen permission with a
-// default. The removal succeeds only where the host entry is empty; a
-// populated directory the session did not expect is a conflict, so it never
-// reaches this call. The store's own database is a hard refusal even if a
-// stale row somehow reached this call: writing it would corrupt the record
-// the review depends on. A delete of a host path that is already gone is a
-// no-op, matching detectConflict's agreement case.
-// See TheoryOfCompletePOSIX and TheoryOfSandboxFilesystem.
 func (s *Store) applyOne(c Change) error {
 	if s.isOwnDBPath(c.Path) {
 		return fmt.Errorf("%w: refusing to apply a change to the session database: %s", os.ErrPermission, c.Path)
@@ -328,6 +313,11 @@ func (s *Store) applyOne(c Change) error {
 	perm := c.Mode.Perm()
 	switch c.Kind {
 	case ChangeAdded, ChangeModified:
+		// A create takes the mode for a fresh node, and the kernel masks that
+		// argument with the daemon's umask; a truncating write into an
+		// existing host file keeps the old bits. Both cases lose the mode the
+		// row recorded, so every creation below is followed by the explicit
+		// chmod. See TheoryOfSandboxFilesystem.
 		if c.Dir {
 			if info, err := s.baseRoot.Lstat(rel); err == nil && !info.IsDir() {
 				_ = s.baseRoot.Remove(rel)
@@ -335,14 +325,20 @@ func (s *Store) applyOne(c Change) error {
 			if perm == 0 {
 				perm = 0o755
 			}
-			return s.baseRoot.Mkdir(rel, perm)
+			if err := s.baseRoot.Mkdir(rel, perm); err != nil {
+				return err
+			}
+			return chmodAt(s.baseRoot, rel, perm)
 		}
 		if c.FIFO {
 			_ = s.baseRoot.Remove(rel)
 			if perm == 0 {
 				perm = 0o644
 			}
-			return mkfifoAt(s.baseRoot, rel, perm)
+			if err := mkfifoAt(s.baseRoot, rel, perm); err != nil {
+				return err
+			}
+			return chmodAt(s.baseRoot, rel, perm)
 		}
 		if c.Symlink {
 			_ = s.baseRoot.Remove(rel)
@@ -354,7 +350,10 @@ func (s *Store) applyOne(c Change) error {
 		if perm == 0 {
 			perm = 0o644
 		}
-		return s.baseRoot.WriteFile(rel, c.Current, perm)
+		if err := s.baseRoot.WriteFile(rel, c.Current, perm); err != nil {
+			return err
+		}
+		return chmodAt(s.baseRoot, rel, perm)
 	case ChangeDeleted:
 		err := s.baseRoot.Remove(rel)
 		if errors.Is(err, os.ErrNotExist) {
@@ -394,4 +393,20 @@ func mkfifoAt(root *os.Root, rel string, mode os.FileMode) error {
 	defer f.Close()
 	return unix.Mknodat(int(f.Fd()), path.Base(rel),
 		uint32(syscall.S_IFIFO)|uint32(mode.Perm()), 0)
+}
+
+// chmodAt sets one path's permission bits beneath root without opening the
+// target: a named pipe would block an open, and a mode with no read bit
+// refuses an open of its own file. The parent directory is opened through
+// root, so the fchmodat stays contained, and the final component is a node
+// the caller just created, never a symbolic link the call could follow.
+// See TheoryOfSandboxFilesystem.
+func chmodAt(root *os.Root, rel string, mode os.FileMode) error {
+	dir := path.Dir(rel)
+	f, err := root.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return unix.Fchmodat(int(f.Fd()), path.Base(rel), uint32(mode.Perm()), 0)
 }

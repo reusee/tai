@@ -13,13 +13,10 @@ const TheoryOfChunkedContent = `
 Content lives in fixed-size chunks, one row per contentChunkSize bytes, so a
 change costs the bytes it changes. The files table carries metadata only —
 kind, mode, mtime, deleted, size, link target, and the recorded original — and
-the chunks table carries the bytes. A write rewrites the chunks its payload
-covers and the two chunks it begins and ends inside; a write past the stored
-end inserts no zeros, because an absent chunk reads as zeros; a truncation
-drops the chunks beyond the new length and trims the boundary chunk. A single
-blob column instead rewrote the whole file per window, which made the write
-traffic quadratic in the window count — the defect the execution trace and the
-profile both pointed at.
+the chunks table carries the bytes; the splice that writes them is
+TheoryOfWriteSplice's subject. A single blob column instead rewrote the whole
+file per window, which made the write traffic quadratic in the window count —
+the defect the execution trace and the profile both pointed at.
 
 The chunk's size is the balance between two measured costs. A partial write
 rewrites the chunk it lands inside, so the traffic a small edit costs is the
@@ -31,16 +28,6 @@ inserts. The store's concurrency lives below the mount, and small edits dominate
 the write traffic, so the chosen size favours the partial write: a small edit
 stays near the transaction's own cost, and a bulk window pays its own bytes
 plus one row per chunk of payload.
-
-The write path's parse count does not grow with the window either. One
-statement guards the row and records the new size, so the delta's
-admissibility costs no separate lookup, and one prepared statement carries
-each covered chunk, executed once per chunk without a fresh parse. A
-multi-row INSERT whose VALUES the window builds instead pays a parse of a
-statement whose length grows with the window; the benchmark put the two
-shapes within noise of each other, because the prepared form's own
-per-execute cost stands close to the parse it saves, so the loop shape is
-kept for its simpler code.
 
 The row is the identity; the chunks are the content. A chunk exists only for a
 live regular row: a whiteout, a directory, a link, and a pipe drop their
@@ -56,13 +43,8 @@ path materialises the base content into chunks, the cold path taken once per
 file; a truncation materialises only the prefix it keeps.
 `
 
-// contentChunkSize is the length of one stored chunk. It bounds the bytes a
-// partly covered window rewrites and the bytes one read query returns per row.
-// Every chunk is one row, so the value trades two measured costs: a partial
-// write rewrites the chunk it lands inside, and a bulk write pays one b-tree
-// insert per chunk. The store's concurrency lives below the mount, and small
-// edits dominate the write traffic, so the value favours the partial write.
-// See TheoryOfChunkedContent.
+// contentChunkSize is the length of one stored chunk. See
+// TheoryOfChunkedContent.
 const contentChunkSize = 4 << 10
 
 // errNoLiveRegularRow reports that the upper layer holds no live regular row
@@ -134,17 +116,11 @@ func (s *Store) readChunk(ex dbExecer, p string, idx int64) ([]byte, error) {
 }
 
 // putChunks writes a run of chunks by executing the prepared single-chunk
-// upsert once per chunk. The prepared form reaches the insert directly; a
-// multi-row INSERT whose VALUES the window builds instead pays a parse of a
-// statement whose length grows with the window. The two shapes measured
-// within noise of each other — a prepared form's per-execute cost stands
-// close to the parse it saves — so the loop is kept for its simpler code and
-// one execution path. A single-chunk window, the hot shape of a partial
-// write, pays exactly one execute. See TheoryOfChunkedContent and
-// TheoryOfPreparedStatements.
+// upsert once per chunk, so a single-chunk window — the hot shape of a partial
+// write — pays exactly one execute. See TheoryOfPreparedStatements.
 func (s *Store) putChunks(ex dbExecer, p string, first int64, chunks [][]byte) error {
-	for i, data := range chunks {
-		if _, err := runStmt(ex, s.stmts.putChunk, queryPutChunk, p, first+int64(i), data); err != nil {
+	for i, chunk := range chunks {
+		if _, err := runStmt(ex, s.stmts.putChunk, queryPutChunk, p, first+int64(i), chunk); err != nil {
 			return err
 		}
 	}
@@ -324,7 +300,7 @@ func (s *Store) materializeContent(p string, copySize int64, perm os.FileMode) (
 	if err := s.checkParent(p); err != nil {
 		return fileRow{}, err
 	}
-	r, ok, err := s.metaRow(p)
+	r, ok, err := s.row(p)
 	if err != nil {
 		return fileRow{}, err
 	}

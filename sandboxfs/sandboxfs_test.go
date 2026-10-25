@@ -111,9 +111,14 @@ func TestReadRangeReadsUpperLayerWindow(t *testing.T) {
 	}
 }
 
+// TestStatReportsSizeWithoutLoadingContent protects TheoryOfReadPath and
+// TheoryOfChunkedContent: a metadata read carries no content. Stat reports a
+// large file's size from the row's size column, and the mutation path's row
+// read returns the same metadata without assembling the chunks the write is
+// about to replace.
 func TestStatReportsSizeWithoutLoadingContent(t *testing.T) {
 	store, _ := newTestStore(t)
-	content := make([]byte, 4096)
+	content := make([]byte, 1<<16)
 	for i := range content {
 		content[i] = 'x'
 	}
@@ -126,6 +131,13 @@ func TestStatReportsSizeWithoutLoadingContent(t *testing.T) {
 	}
 	if a.Size != int64(len(content)) {
 		t.Fatalf("size = %d, want %d", a.Size, len(content))
+	}
+	r, ok, err := store.row("/big.txt")
+	if err != nil || !ok {
+		t.Fatalf("row: ok = %v, err = %v", ok, err)
+	}
+	if r.size != int64(len(content)) || r.kind != KindRegular || r.mode != 0o644 {
+		t.Fatalf("row = %+v, want the recorded metadata", r)
 	}
 	if err := store.Symlink("target-name", "/link"); err != nil {
 		t.Fatal(err)
@@ -323,44 +335,55 @@ func TestCreateThenDeleteLeavesNoChange(t *testing.T) {
 }
 
 func TestApplyRejectsExternalChange(t *testing.T) {
-	s, base := newTestStore(t)
-	writeHost(t, base, "a.txt", "old")
-	if err := s.WriteFile("/a.txt", []byte("new"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	writeHost(t, base, "a.txt", "outside")
-	changes, err := s.Changes()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if findChange(t, changes, "/a.txt").Conflict == "" {
-		t.Fatal("want a conflict")
-	}
-	applied, err := s.Apply(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(applied) != 0 {
-		t.Fatalf("applied %+v", applied)
-	}
-	if hostContent(t, base, "a.txt") != "outside" {
-		t.Fatal("a conflicting apply must not touch the host")
-	}
-}
-
-func TestApplyRejectsExternalCreate(t *testing.T) {
-	s, base := newTestStore(t)
-	if err := s.WriteFile("/new.txt", []byte("mine"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	writeHost(t, base, "new.txt", "outside")
-	changes, err := s.Changes()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if findChange(t, changes, "/new.txt").Conflict == "" {
-		t.Fatal("want a conflict")
-	}
+	t.Run("external overwrite", func(t *testing.T) {
+		s, base := newTestStore(t)
+		writeHost(t, base, "a.txt", "old")
+		if err := s.WriteFile("/a.txt", []byte("new"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		writeHost(t, base, "a.txt", "outside")
+		changes, err := s.Changes()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if findChange(t, changes, "/a.txt").Conflict == "" {
+			t.Fatal("want a conflict")
+		}
+		applied, err := s.Apply(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(applied) != 0 {
+			t.Fatalf("applied %+v", applied)
+		}
+		if hostContent(t, base, "a.txt") != "outside" {
+			t.Fatal("a conflicting apply must not touch the host")
+		}
+	})
+	t.Run("external create", func(t *testing.T) {
+		s, base := newTestStore(t)
+		if err := s.WriteFile("/new.txt", []byte("mine"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		writeHost(t, base, "new.txt", "outside")
+		changes, err := s.Changes()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if findChange(t, changes, "/new.txt").Conflict == "" {
+			t.Fatal("want a conflict")
+		}
+		applied, err := s.Apply(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(applied) != 0 {
+			t.Fatalf("applied %+v", applied)
+		}
+		if hostContent(t, base, "new.txt") != "outside" {
+			t.Fatal("a conflicting apply must not touch the host")
+		}
+	})
 }
 
 func TestRemoveNonEmptyDir(t *testing.T) {
@@ -517,32 +540,44 @@ func TestRenameDirectoryReplacesEmptyDestination(t *testing.T) {
 	}
 }
 
-func TestRenameDirectoryOntoPopulatedDestination(t *testing.T) {
-	s, base := newTestStore(t)
-	writeHost(t, base, "src/a.txt", "a")
-	writeHost(t, base, "dst/b.txt", "b")
-	err := s.Rename("/src", "/dst")
-	if !errors.Is(err, ErrNotEmpty) {
-		t.Fatalf("rename onto a non-empty directory: want ENOTEMPTY, got %v", err)
-	}
-}
-
-func TestRenameDirectoryOntoFileReportsENOTDIR(t *testing.T) {
-	s, base := newTestStore(t)
-	writeHost(t, base, "src/a.txt", "a")
-	writeHost(t, base, "dst.txt", "f")
-	err := s.Rename("/src", "/dst.txt")
-	if !errors.Is(err, syscall.ENOTDIR) {
-		t.Fatalf("rename a directory onto a file: want ENOTDIR, got %v", err)
-	}
-}
-
-func TestRenameDirectoryIntoItselfReportsEINVAL(t *testing.T) {
-	s, base := newTestStore(t)
-	writeHost(t, base, "src/a.txt", "a")
-	err := s.Rename("/src", "/src/inner")
-	if !errors.Is(err, syscall.EINVAL) {
-		t.Fatalf("rename a directory into itself: want EINVAL, got %v", err)
+func TestRenameDirectoryReportsPOSIXErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(t *testing.T, s *Store, base string) string
+		want  error
+	}{
+		{
+			name: "onto a populated destination",
+			setup: func(t *testing.T, s *Store, base string) string {
+				writeHost(t, base, "dst/b.txt", "b")
+				return "/dst"
+			},
+			want: ErrNotEmpty,
+		},
+		{
+			name: "onto a file",
+			setup: func(t *testing.T, s *Store, base string) string {
+				writeHost(t, base, "dst.txt", "f")
+				return "/dst.txt"
+			},
+			want: syscall.ENOTDIR,
+		},
+		{
+			name: "into itself",
+			setup: func(t *testing.T, s *Store, base string) string {
+				return "/src/inner"
+			},
+			want: syscall.EINVAL,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, base := newTestStore(t)
+			writeHost(t, base, "src/a.txt", "a")
+			dst := tc.setup(t, s, base)
+			if err := s.Rename("/src", dst); !errors.Is(err, tc.want) {
+				t.Fatalf("rename /src to %s: want %v, got %v", dst, tc.want, err)
+			}
+		})
 	}
 }
 

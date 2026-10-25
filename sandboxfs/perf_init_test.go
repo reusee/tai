@@ -20,65 +20,46 @@ func newInitTestServer(t *testing.T) *fuseServer {
 	return newFuseServer(store, -1)
 }
 
-// TestInitNegotiatesFastPath checks the INIT reply that carries the fast path:
-// the kernel's offered capabilities are echoed, and MAX_PAGES raises the request
-// window to fuseMaxWriteMax. See TheoryOfInitNegotiation.
+// TestInitNegotiatesFastPath checks the INIT reply: the kernel's offered
+// capabilities are echoed, MAX_PAGES raises the request window to
+// fuseMaxWriteMax, and a kernel that offers no MAX_PAGES keeps the conservative
+// window. See TheoryOfInitNegotiation.
 func TestInitNegotiatesFastPath(t *testing.T) {
-	s := newInitTestServer(t)
-	reply, err := s.handleInit(encodeStruct(&fuseInitIn{
-		Major:        7,
-		Minor:        fuseProtocolMinor,
-		MaxReadahead: 1 << 17,
-		Flags:        fuseInitWanted,
-	}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var out fuseInitOut
-	decodeStruct(&out, reply)
-	if out.MaxWrite != fuseMaxWriteMax {
-		t.Fatalf("max_write = %d, want %d", out.MaxWrite, fuseMaxWriteMax)
-	}
-	if out.MaxPages != fuseMaxPages {
-		t.Fatalf("max_pages = %d, want %d", out.MaxPages, fuseMaxPages)
-	}
-	if out.Flags != fuseInitWanted {
-		t.Fatalf("flags = %#x, want %#x", out.Flags, fuseInitWanted)
-	}
-	if out.Flags&fuseInitBigWrites == 0 {
-		t.Fatal("BIG_WRITES not negotiated")
-	}
-	if out.Minor != fuseProtocolMinor {
-		t.Fatalf("minor = %d, want %d", out.Minor, fuseProtocolMinor)
-	}
-}
-
-// TestInitKeepsConservativeWindow checks the fallback: a kernel that offers no
-// MAX_PAGES keeps the one-page write ceiling out of the negotiation, so the
-// announced window stays fuseMaxWrite.
-func TestInitKeepsConservativeWindow(t *testing.T) {
-	s := newInitTestServer(t)
-	reply, err := s.handleInit(encodeStruct(&fuseInitIn{
-		Major: 7,
-		Minor: fuseProtocolMinor,
-		Flags: fuseInitBigWrites,
-	}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var out fuseInitOut
-	decodeStruct(&out, reply)
-	if out.MaxWrite != fuseMaxWrite {
-		t.Fatalf("max_write = %d, want %d", out.MaxWrite, fuseMaxWrite)
-	}
-	if out.MaxPages != 0 {
-		t.Fatalf("max_pages = %d, want 0", out.MaxPages)
-	}
-	if out.Flags&fuseInitMaxPages != 0 {
-		t.Fatal("MAX_PAGES echoed although the kernel did not offer it")
-	}
-	if out.Flags&fuseInitBigWrites == 0 {
-		t.Fatal("BIG_WRITES not echoed although the kernel offered it")
+	for _, tc := range []struct {
+		name     string
+		flags    uint32
+		maxWrite uint32
+		maxPages uint16
+	}{
+		{name: "max pages", flags: fuseInitWanted, maxWrite: fuseMaxWriteMax, maxPages: fuseMaxPages},
+		{name: "conservative", flags: fuseInitBigWrites, maxWrite: fuseMaxWrite, maxPages: 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newInitTestServer(t)
+			reply, err := s.handleInit(encodeStruct(&fuseInitIn{
+				Major:        7,
+				Minor:        fuseProtocolMinor,
+				MaxReadahead: 1 << 17,
+				Flags:        tc.flags,
+			}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var out fuseInitOut
+			decodeStruct(&out, reply)
+			if out.MaxWrite != tc.maxWrite {
+				t.Fatalf("max_write = %d, want %d", out.MaxWrite, tc.maxWrite)
+			}
+			if out.MaxPages != tc.maxPages {
+				t.Fatalf("max_pages = %d, want %d", out.MaxPages, tc.maxPages)
+			}
+			if out.Flags != tc.flags {
+				t.Fatalf("flags = %#x, want the offered %#x", out.Flags, tc.flags)
+			}
+			if out.Minor != fuseProtocolMinor {
+				t.Fatalf("minor = %d, want %d", out.Minor, fuseProtocolMinor)
+			}
+		})
 	}
 }
 

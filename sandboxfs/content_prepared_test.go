@@ -7,9 +7,11 @@ import (
 )
 
 // TestSpliceFileUsesPreparedWrites checks the prepared write path: the store
-// opens with its write statements prepared, the first content write lands, and
-// a refused write leaves no transaction open, so the next write still succeeds.
-// See TheoryOfPreparedStatements.
+// opens with its write statements prepared, the first content write lands, a
+// refused write leaves no transaction open, and a window crossing a chunk
+// boundary stores every byte it covers — the prepared single-chunk upsert runs
+// once per covered chunk, so the loop shape never truncates the window at its
+// first chunk. See TheoryOfPreparedStatements and TheoryOfChunkedContent.
 func TestSpliceFileUsesPreparedWrites(t *testing.T) {
 	store, err := Open(filepath.Join(t.TempDir(), "prepared.db"), t.TempDir())
 	if err != nil {
@@ -42,6 +44,17 @@ func TestSpliceFileUsesPreparedWrites(t *testing.T) {
 	if size, err := store.Stat("/b.bin"); err != nil || size.Size != 16 {
 		t.Fatalf("second write stored %d bytes (err %v), want 16", size.Size, err)
 	}
+	multi := bytes.Repeat([]byte("m"), 3*contentChunkSize/2)
+	if err := store.SpliceFile("/big.bin", 0, multi, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err = store.ReadRange("/big.bin", 0, len(multi))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, multi) {
+		t.Fatalf("multi-chunk window stored %d bytes, want %d", len(got), len(multi))
+	}
 }
 
 // TestOpenPreparesTheRequestPath checks the statement set the store opens with:
@@ -72,28 +85,5 @@ func TestOpenPreparesTheRequestPath(t *testing.T) {
 		if !prepared {
 			t.Errorf("statement %q was not prepared", name)
 		}
-	}
-}
-
-// TestPreparedWriteKeepsMultiChunkWindow checks that a window crossing a chunk
-// boundary stores every byte it covers: the prepared single-chunk upsert runs
-// once per covered chunk, so the loop shape never truncates the window at its
-// first chunk. See TheoryOfPreparedStatements.
-func TestPreparedWriteKeepsMultiChunkWindow(t *testing.T) {
-	store, err := Open(filepath.Join(t.TempDir(), "prepared.db"), t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	data := bytes.Repeat([]byte("m"), 3*contentChunkSize/2)
-	if err := store.SpliceFile("/big.bin", 0, data, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	got, err := store.ReadRange("/big.bin", 0, len(data))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(got, data) {
-		t.Fatalf("multi-chunk window stored %d bytes, want %d", len(got), len(data))
 	}
 }

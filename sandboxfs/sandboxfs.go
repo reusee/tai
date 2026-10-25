@@ -90,8 +90,8 @@ and size; the row's metadata is the whole answer, and the content lives in the
 chunk table. The size therefore comes from the row's stored size column, so a
 getattr or lookup on a large file costs one small row, not a heap copy of the
 file. A read of a written path is two prepared round trips: the row's kind,
-deletion state, and stored size, then one indexed query over the chunks
-covering the window, never one query per chunk.
+deletion state, and stored size, then the chunk window TheoryOfChunkedContent
+describes.
 
 A read handle opens the base file once. The kernel streams a file in
 windows; reopening and re-checking the host file per window spends a stat
@@ -133,11 +133,9 @@ the audit keeps one record per path, not one per read.
 
 const TheoryOfWriteSplice = `
 The write path grows with the payload, never with the file. A kernel WRITE
-carries at most one negotiated request window of bytes. The store writes that
-window's bytes into the chunks the payload covers, so a window costs its own
-bytes and the two chunks it begins and ends inside; it inserts no zeros for a
-gap, because an absent chunk reads as zeros, so a write past the stored end
-costs its size update and its payload. A ten-megabyte file written in
+carries at most one negotiated request window of bytes, and the store writes
+that window into the chunks the payload covers; the chunk layout and its cost
+are TheoryOfChunkedContent's subject. A ten-megabyte file written in
 one-megabyte windows therefore moves ten megabytes, never the growing prefix
 an in-place whole-blob rewrite would copy once per window.
 
@@ -151,11 +149,10 @@ store for the content the last write left there.
 
 The splice runs in one transaction whose first statement both guards the row
 and extends its size, so the delta's admissibility and its length cost one
-statement, and one prepared statement executes once per covered chunk. A path
-the upper layer holds no live regular row for refuses the splice, the caller
-materialises it, and the splice runs once more; the hot path therefore costs
-one commit and never a second lookup of the content this write exists to avoid
-copying.
+statement. A path the upper layer holds no live regular row for refuses the
+splice, the caller materialises it, and the splice runs once more; the hot path
+therefore costs one commit and never a second lookup of the content this write
+exists to avoid copying. The statement shapes are TheoryOfPreparedStatements'.
 `
 
 const TheoryOfApplyConflict = `
@@ -171,11 +168,11 @@ end state, so applying the deletion is a no-op. A deletion whose host path
 still matches the snapshot carries the deleted bytes as Original, the same
 content a modification reports, so a review shows what the session removed.
 
-A change of kind is a conflict too, and the recorded hash is what detects it.
-A base directory carries no content hash, and a base pipe carries a sentinel,
-so the hash of the path the session replaced tells what the snapshot held:
-a host path that now holds a directory where the snapshot held a file, a
-link, or a pipe changed outside the session exactly as a rewritten file did.
+A change of kind is a conflict too: the recorded original tells what the
+snapshot held, so a host path that now holds a directory where the snapshot
+held a file, a link, or a pipe changed outside the session exactly as a
+rewritten file did. The tagging that distinguishes the kinds is
+TheoryOfSandboxFilesystem's subject.
 
 Detection reads the host, so it belongs to the review step, not to every
 read: a session pays nothing for it until it asks what changed or applies.
@@ -213,17 +210,12 @@ whether or not the file is created — and a write-mode OPEN is checked
 against the write policy first, so a caller sees EACCES from open rather
 than from its first write.
 
-The read path streams: a read serves the requested window from the chunks
-covering it, or from the base file's own ReadAt, so a large dependency costs
-one sized response rather than a whole-file allocation. The write path
-splices: a window rewrites the chunks its payload covers, so it costs bytes
-proportional to its payload and no handle holds a copy of the file (see
-TheoryOfWriteSplice). A zero-byte write transfers nothing and does not extend
-the file, matching Linux. Truncation drops the chunks beyond the new length
-and keeps the boundary chunk's prefix, and a grow raises the length alone
-because an absent chunk reads as zeros; a grow past the size bound is refused
-with EFBIG rather than allocating a file the sandbox cannot hold, and the same
-bound refuses a write whose offset would overflow. See TheoryOfFuseMount.
+Reads and writes cost their own window, never the whole file; the mechanisms
+live in TheoryOfReadPath and TheoryOfWriteSplice. A zero-byte write transfers
+nothing and does not extend the file, matching Linux. A grow past the size
+bound is refused with EFBIG rather than allocating a file the sandbox cannot
+hold, and the same bound refuses a write whose offset would overflow. See
+TheoryOfFuseMount.
 
 Durability: FSYNC and FSYNCDIR succeed without doing anything, because the
 store's writes are sqlite transactions that persist as they complete. A
@@ -274,9 +266,6 @@ environment never allowed — the same set the mount layer binds read-write —
 and the review step's job is to let the user choose.
 `
 
-// TheoryOfAuditBatching explains how the audit trail trades a little
-// durability for one commit per batch: audit buffers a row and writes the
-// buffer when it fills, and Ops and Close flush the tail.
 const TheoryOfAuditBatching = `
 The audit trail records what a session did to which path. Its rows are
 buffered and written in batches: audit appends a row and writes the buffer in
@@ -376,36 +365,25 @@ type Store struct {
 	dbPath   string
 	policy   func(string) error
 
-	// baseFd is the read-through base's directory descriptor: the base stat
-	// and read fast paths answer through it with one syscall, and a negative
-	// value means the platform offers no such path, so the store keeps walking
-	// os.Root. See TheoryOfBaseFdAccess.
+	// baseFd is the read-through base's directory descriptor; a negative value
+	// means the platform offers no such path. See TheoryOfBaseFdAccess.
 	baseFd int
 
-	// absent caches the paths the upper layer is known not to hold, so the
-	// hot read and stat paths answer a path the session never wrote without
-	// a sqlite round trip. Any write of the path clears its entry. It is a
-	// sync.Map so a lookup takes no lock: the read path consults it on every
-	// request, and a shared mutex would serialize every reader against the
-	// first-read audit. See TheoryOfUpperAbsentCache.
+	// absent caches the paths the upper layer is known not to hold. A write of
+	// the path clears its entry. See TheoryOfUpperAbsentCache.
 	absent sync.Map // p string -> bool
 
 	// read records the paths the session already audited a read of, so the
-	// trail keeps one record per path instead of one per read. It is a
-	// sync.Map for the same reason as absent: a repeated read is the common
-	// case and pays one lock-free Load.
+	// trail keeps one record per path. See TheoryOfAuditBatching.
 	read sync.Map // p string -> bool
 
-	// mu guards pending, the audit rows not yet written; the rows share one
-	// commit per batch (see TheoryOfAuditBatching). The read caches above stay
-	// outside this lock, so an audit flush never waits on a read.
+	// mu guards pending, the audit rows not yet written.
 	mu      sync.Mutex
 	pending []Op
 
-	// stmts is the statement set the request path executes. It is a value, not
-	// a pointer, so a Store built without preparation holds nil statements and
-	// every helper falls back to its SQL text instead of dereferencing nothing.
-	// See TheoryOfPreparedStatements.
+	// stmts is the statement set the request path executes. It is a value, so a
+	// Store built without preparation holds nil statements and every helper
+	// falls back to its SQL text. See TheoryOfPreparedStatements.
 	stmts preparedStatements
 }
 
@@ -536,15 +514,7 @@ func OpenWithPolicy(dbPath, base string, policy func(string) error) (*Store, err
 }
 
 // isOwnDBPath reports whether p names the store's own database or one of its
-// SQLite siblings. The review session holds the database open for its whole
-// life, so a sandbox mutation of that path — or of its -wal and -shm files —
-// would corrupt the record the review itself depends on. The comparison is
-// textual first, because a sandbox path that equals the recorded database path
-// names the file with no resolution at all. A base that holds the database
-// gives the file a second name, the path relative to the base, and that name
-// is compared by file identity through the store's own base root: a mounted
-// store detaches the base view, so the recorded base path no longer resolves
-// while the root still holds the tree. See TheoryOfSandboxFilesystem.
+// SQLite siblings. See TheoryOfSandboxFilesystem.
 func (s *Store) isOwnDBPath(p string) bool {
 	if s.dbPath == "" {
 		return false
@@ -620,23 +590,15 @@ func contentHash(b []byte) string {
 }
 
 // fifoOriginalHash is the recorded-original sentinel of a base named pipe.
-// A pipe carries no content, so its identity is its kind; the sentinel is
-// not a hex digest, so it never collides with a file's content hash.
-// See TheoryOfCompletePOSIX.
+// See TheoryOfSandboxFilesystem and TheoryOfCompletePOSIX.
 const fifoOriginalHash = "fifo"
 
 // symlinkOriginalPrefix tags the recorded-original of a base symbolic link.
-// Its hash is the hash of the link's target string, and a plain hash would
-// equal the hash of a regular file whose bytes spell that target: the session
-// replaced a link with a file and the diff would report nothing. The prefix is
-// not a hex digest, so it never collides with a file's content hash.
 // See TheoryOfSandboxFilesystem.
 const symlinkOriginalPrefix = "symlink:"
 
-// auditBatchSize bounds the audit rows one transaction carries: a batch this
-// size pays one commit for its rows and keeps the buffer small enough that a
-// process killed outside a close loses at most one batch.
-// See TheoryOfAuditBatching.
+// auditBatchSize bounds the audit rows one transaction carries. See
+// TheoryOfAuditBatching.
 const auditBatchSize = 64
 
 // maxFileSize bounds one stored file, so a malformed or malicious request never
@@ -686,7 +648,10 @@ func scanFileRow(rs rowScanner) (fileRow, error) {
 }
 
 // row reads one path's full row from the prepared row statement, so a
-// mutation's lookup pays no SQL parse. See TheoryOfPreparedStatements.
+// mutation's lookup pays no SQL parse. The scan reads metadata only: content
+// lives in the chunk table, and a write already holds the bytes it is about to
+// store, so a read that assembled content would copy a file the write is about
+// to discard. See TheoryOfChunkedContent and TheoryOfPreparedStatements.
 func (s *Store) row(p string) (fileRow, bool, error) {
 	if s.upperAbsent(p) {
 		return fileRow{}, false, nil
@@ -702,40 +667,8 @@ func (s *Store) row(p string) (fileRow, bool, error) {
 	return r, true, nil
 }
 
-// metaRow reads one path's row: metadata only, because the content lives in the
-// chunk table and a write already holds the bytes it is about to store, so a
-// read that loaded content would copy a file the write is about to discard. It
-// shares the prepared row statement with row, because the column list is the
-// same. See TheoryOfChunkedContent and TheoryOfPreparedStatements.
-func (s *Store) metaRow(p string) (fileRow, bool, error) {
-	if s.upperAbsent(p) {
-		return fileRow{}, false, nil
-	}
-	var r fileRow
-	var kind, deleted, originalExists int
-	var mode, mtime int64
-	err := queryRowStmt(s.db, s.stmts.selectRow, querySelectRow, p).Scan(&r.path, &kind, &mode, &mtime, &deleted, &r.size,
-		&r.target, &originalExists, &r.originalHash)
-	if errors.Is(err, sql.ErrNoRows) {
-		s.rememberAbsent(p)
-		return fileRow{}, false, nil
-	}
-	if err != nil {
-		return fileRow{}, false, err
-	}
-	r.kind = Kind(kind)
-	r.mode = os.FileMode(mode)
-	r.mtime = time.Unix(0, mtime)
-	r.deleted = deleted != 0
-	r.originalExists = originalExists != 0
-	return r, true, nil
-}
-
-// readUpperRange reads one window of a path the upper layer holds. One
-// indexed query returns the row's metadata — kind, deletion state, and stored
-// size — and a second returns the chunk window; the window clamps to the
-// stored size, so the size column is the authority on length. See
-// TheoryOfReadPath and TheoryOfPreparedStatements.
+// readUpperRange reads one window of a path the upper layer holds, clamped to
+// the stored size. See TheoryOfReadPath and TheoryOfPreparedStatements.
 func (s *Store) readUpperRange(p string, off int64, size int) (chunk []byte, kind Kind, found bool, err error) {
 	if s.upperAbsent(p) {
 		return nil, 0, false, nil
@@ -855,10 +788,8 @@ func (s *Store) SpliceFile(p string, off int64, data []byte, perm os.FileMode) e
 	return nil
 }
 
-// audit records one audit-trail row. Rows accumulate and leave in batches, so
-// a burst of mutations shares one commit; Ops and Close flush the tail, so a
-// finished session's trail is complete. Audit writes are best-effort: they
-// never fail an operation, and a batch that cannot be written is dropped.
+// audit records one audit-trail row. Audit writes are best-effort: they never
+// fail an operation, and a batch that cannot be written is dropped.
 // See TheoryOfAuditBatching.
 func (s *Store) audit(op, p, detail string) {
 	s.mu.Lock()
@@ -878,11 +809,8 @@ func (s *Store) audit(op, p, detail string) {
 	_ = s.writeOps(batch)
 }
 
-// writeOps writes one batch of audit rows in a single transaction: the rows
-// share one commit, which is what makes batching worth its buffer. The rows
-// keep the buffer's order, so a batch's own chronology survives. The insert
-// runs the prepared form, so a batch pays one parse, not one per row.
-// See TheoryOfAuditBatching and TheoryOfPreparedStatements.
+// writeOps writes one batch of audit rows in a single transaction, keeping the
+// buffer's order. See TheoryOfAuditBatching and TheoryOfPreparedStatements.
 func (s *Store) writeOps(ops []Op) error {
 	if len(ops) == 0 {
 		return nil
@@ -904,11 +832,8 @@ func (s *Store) writeOps(ops []Op) error {
 }
 
 // checkWrite asks the store's write policy about one path, and refuses the
-// store's own database up front. The policy must be pure: the FUSE server
-// answers requests on one goroutine, so a policy that performed filesystem
-// I/O through the mount would wait for the server it is running on. The
-// database refusal lives here, on every mutation's common entry, so a stale
-// row can never reach a write that skips the capture that used to refuse it.
+// store's own database up front, so a stale row can never reach a write that
+// skips the capture that also refuses it.
 // See TheoryOfWritePolicy and TheoryOfSandboxFilesystem.
 func (s *Store) checkWrite(p string) error {
 	if s.isOwnDBPath(p) {
@@ -920,11 +845,9 @@ func (s *Store) checkWrite(p string) error {
 	return s.policy(p)
 }
 
-// auditRead records the first read of a path in the session. The audit
-// question is which files a session touched, so repeated reads add nothing:
-// the common read pays one lock-free Load, and only the first read of a path
-// reaches the batch that carries the audit row. See TheoryOfUpperAbsentCache
-// and TheoryOfAuditBatching.
+// auditRead records the first read of a path in the session, so the trail keeps
+// one record per path instead of one per read.
+// See TheoryOfAuditBatching.
 func (s *Store) auditRead(p string) {
 	if _, ok := s.read.Load(p); ok {
 		return

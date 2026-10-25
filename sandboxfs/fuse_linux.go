@@ -63,52 +63,19 @@ sqlite file.
 
 Write-back happens on WRITE, not on flush: the store is a sqlite file, so
 an open file's content lives in the store and a kernel WRITE persists the
-new content immediately. Each request costs only its own window and one
-sqlite transaction, and no handle holds a copy of the file; the read and
+new content immediately. A killed process therefore leaves a consistent
+store, and the review step sees every byte the session wrote. The read and
 write paths own the mechanism (see TheoryOfReadPath and
-TheoryOfWriteSplice). Correctness first: a killed process leaves a
-consistent store, and the review step sees every byte the session wrote.
-See TheoryOfCompletePOSIX.
+TheoryOfWriteSplice); the POSIX-visible rules are in TheoryOfCompletePOSIX.
 
 A request buffer is sized for the largest request the kernel may send: the
 announced MaxWrite payload after the header and the write body. Sizing the
 buffer at MaxWrite exactly truncates the payload of a maximal WRITE, which
 is the shape a toolchain emits for every full block of a large file.
 
-Passthrough directories bypass FUSE entirely. The design excludes /tmp, the
-Go caches, and the user config directory from audit and review: their
-content is machine-managed state whose interception would add cost without
-adding review value. /proc, /sys, and /dev must be real kernel filesystems
-because a read-through proxy cannot emulate them. They are bind-mounted
-over the FUSE view before the pivot, so processes reach them directly.
-See TheoryOfPassthrough.
+Passthrough directories bypass FUSE entirely. See TheoryOfPassthrough.
 `
 
-// TheoryOfInitNegotiation explains why the INIT handshake is the first and
-// cheapest performance lever: it sets the per-request ceiling every later file
-// operation runs under, before a single byte moves.
-//
-// BIG_WRITES dominates the write path. Without it the kernel caps one WRITE at a
-// single page, so a toolchain writing a multi-megabyte file sends hundreds of
-// requests, and the store materializes the whole content on every one of them:
-// the same bytes are copied and stored again per page, which makes the write
-// path quadratic in the request count. MAX_PAGES raises the announced window to
-// the 1 MiB the kernel caps max_write at, so the same write costs one request
-// and one sqlite store.
-//
-// READDIRPLUS carries a fuse_entry_out per directory entry, so the kernel needs
-// no LOOKUP after a listing: a directory walk — the toolchain's dominant
-// pattern — becomes one request instead of one plus one per entry.
-//
-// The remaining bits cost one round trip each: ATOMIC_O_TRUNC folds the
-// truncating open's SETATTR into the OPEN the caller already issues, ASYNC_READ
-// keeps several reads in flight, and PARALLEL_DIROPS lifts the kernel's
-// serialization of independent directory operations. Writeback caching is
-// deliberately absent: it would defer writes past the open that checks the
-// write policy.
-//
-// Every bit is echoed only when the kernel offers it, so an older kernel keeps
-// the conservative window this server announced before the negotiation existed.
 const TheoryOfInitNegotiation = `
 The FUSE INIT handshake is the first and cheapest performance lever: it sets the
 per-request ceiling every later file operation runs under, before a single byte
@@ -174,18 +141,14 @@ turns a hundred-entry listing into two hundred syscalls paid for a constant.
 
 const TheoryOfOpenCaching = `
 The kernel caches file pages and directory entries per open, and an open reply
-can ask it to keep them across opens. Both flags matter here because the base
-layer is a snapshot the session works from: the content of a dependency does
-not change under the session, so a page the kernel keeps is still the page the
-store would serve, and a directory's entries are invalidated by any request
-that creates, removes, renames, or writes through the mount, so the session's
-own mutations never hide behind the cache.
+can ask it to keep them across opens. Both flags matter here for the reason
+TheoryOfAttrCaching gives: the base layer is a snapshot the session works
+from, so a page the kernel keeps is still the page the store would serve, and
+the session's own mutations invalidate what they touch.
 
 Keeping the page cache turns a repeated read of an unchanged dependency into a
 kernel memory copy: the request never reaches the store, and the read path
-stops paying one request per page. Keeping a directory's entries does the same
-for a repeated walk, folding into the entry timeout's savings rather than
-duplicating them.
+stops paying one request per page.
 
 A write-mode open does not ask for the page cache. Its content is the
 session's to change, and a page kept from before the write would shadow the
@@ -193,11 +156,7 @@ bytes the write just stored.
 `
 
 // fuseCacheTimeoutSec is the kernel's attribute and entry cache lifetime in
-// seconds: long enough that a repeated stat or lookup is answered without a
-// request, and bounded so a session's own writes are observed promptly. The
-// kernel invalidates the entries of any path a request changes, so the bound
-// governs host changes and the session's own metadata never goes stale behind
-// it. See TheoryOfAttrCaching.
+// seconds. See TheoryOfAttrCaching.
 const fuseCacheTimeoutSec = 60
 
 const TheoryOfPassthrough = `
@@ -244,9 +203,8 @@ const (
 	fuseProtocolMinor = 31
 )
 
-// fuseProtocolMajor is the kernel protocol major this server speaks. The
-// handshake echoes it when the kernel names a newer major, so the kernel
-// reopens the negotiation at that version. See TheoryOfInitNegotiation.
+// fuseProtocolMajor is the kernel protocol major this server speaks.
+// See TheoryOfInitNegotiation.
 const fuseProtocolMajor = 7
 
 // Linux FUSE opcodes, matching include/uapi/linux/fuse.h.
@@ -282,13 +240,12 @@ const (
 	fuseOpRename2     = 45
 )
 
-// fuseOpFsyncdir is FUSE_FSYNCDIR. Tools commonly fsync a directory after
-// creating or renaming entries to force the entry metadata to disk. The
-// sandbox's directory metadata lives in sqlite, which persists writes at
-// every WRITE and CREATE, so FSYNCDIR is a no-op — but answering it as
-// successful instead of ENOSYS keeps the toolchain's durability path
-// working. See TheoryOfCompletePOSIX.
-const fuseOpFsyncdir = 32
+// fuseOpFsyncdir is FUSE_FSYNCDIR, the directory counterpart of FSYNC that
+// tooling issues after creating or renaming entries: opcode 30, between
+// FUSE_RELEASEDIR 29 and FUSE_GETLK 31. The neighbouring 32 is FUSE_SETLK, a
+// byte-range lock this store does not implement and answers as ENOSYS.
+// See TheoryOfCompletePOSIX.
+const fuseOpFsyncdir = 30
 
 // FUSE INIT capability bits, from include/uapi/linux/fuse.h. The server echoes
 // only the bits the kernel offers. See TheoryOfInitNegotiation.
@@ -875,7 +832,9 @@ func (s *fuseServer) respond(unique uint64, err error, body []byte) {
 // response header. A syscall.Errno carries its own code and wins over the
 // sentinel checks: syscall.EPERM also satisfies errors.Is(err, os.ErrPermission),
 // so testing the sentinels first would report EACCES where the operation
-// reported EPERM — mknod of a device node is the case that surfaced it.
+// reported EPERM — mknod of a device node is the case that surfaced it. The
+// two sentinels that are not errno values are fs.ErrNotExist and fs.ErrExist;
+// every other code reaches the kernel through the value the error carries.
 func fuseErrno(err error) int32 {
 	var e syscall.Errno
 	if errors.As(err, &e) {
@@ -886,9 +845,6 @@ func fuseErrno(err error) int32 {
 	}
 	if errors.Is(err, ErrExist) {
 		return -int32(syscall.EEXIST)
-	}
-	if errors.Is(err, ErrUnsupported) {
-		return -int32(syscall.ENOSYS)
 	}
 	if errors.Is(err, os.ErrPermission) {
 		return -int32(syscall.EACCES)
@@ -978,10 +934,12 @@ var (
 )
 
 // FUSE open-reply flags, from include/uapi/linux/fuse.h: an open reply asks the
-// kernel to keep a file's pages or a directory's entries across opens.
+// kernel to keep a file's pages or a directory's entries across opens. Bit 0 of
+// the field is FOPEN_DIRECT_IO, which the server never sets: it would bypass the
+// page cache and refuse mmap.
 // See TheoryOfOpenCaching.
 const (
-	fuseOpenKeepCache = 1 << 0
+	fuseOpenKeepCache = 1 << 1
 	fuseOpenCacheDir  = 1 << 3
 )
 
@@ -1127,11 +1085,7 @@ func (s *fuseServer) handleSetattr(nodeid uint64, body []byte) ([]byte, error) {
 		// Truncation touches the chunks beyond the new length and the chunk
 		// the length ends inside; no content passes through this handler.
 		// See TheoryOfChunkedContent.
-		perm := cur.Mode
-		if perm == 0 {
-			perm = 0o644
-		}
-		if err := s.store.TruncateFile(p, int64(in.Size), perm); err != nil {
+		if err := s.store.TruncateFile(p, int64(in.Size), filePerm(cur.Mode)); err != nil {
 			return nil, err
 		}
 		s.invalidateHandles(p)
@@ -1163,22 +1117,19 @@ func (s *fuseServer) handleSetattr(nodeid uint64, body []byte) ([]byte, error) {
 // invalidateHandles drops the cached base reader of every open handle of p, so
 // a read that follows a truncation serves the store's new content instead of a
 // descriptor that fixes the old view. The store is the only copy of the
-// content, so no other state needs dropping. See TheoryOfReadPath.
+// content, so no other state needs dropping, and handle numbers start at 1, so
+// a self of 0 names no handle and the loop reaches all of them.
+// See TheoryOfReadPath.
 func (s *fuseServer) invalidateHandles(p string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for _, h := range s.handles {
-		if h.path == p {
-			h.closeBase()
-		}
-	}
+	s.invalidateOtherHandles(p, 0)
 }
 
 // invalidateOtherHandles drops the cached base reader of every open handle of p
 // except the writing one, so their next read serves the store's now-current
 // content. Handles hold no buffer, so a write through one handle cannot be
-// overwritten by another handle's stale bytes; only the base view must go.
-// See TheoryOfWriteSplice and TheoryOfReadPath.
+// overwritten by another handle's stale bytes; only the base view must go. A
+// self of 0 names no handle, so the truncation path reuses this loop through
+// invalidateHandles. See TheoryOfWriteSplice and TheoryOfReadPath.
 func (s *fuseServer) invalidateOtherHandles(p string, self uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1213,13 +1164,9 @@ func (s *fuseServer) handleOpen(nodeid uint64, body []byte) ([]byte, error) {
 	if writeMode &&
 		in.Flags&uint32(unix.O_TRUNC) != 0 &&
 		a.Kind == KindRegular {
-		perm := a.Mode
-		if perm == 0 {
-			perm = 0o644
-		}
 		// A truncating open drops the content chunks; it never writes the
 		// file back. See TheoryOfChunkedContent.
-		if err := s.store.TruncateFile(p, 0, perm); err != nil {
+		if err := s.store.TruncateFile(p, 0, filePerm(a.Mode)); err != nil {
 			return nil, err
 		}
 		s.invalidateHandles(p)
@@ -1228,12 +1175,7 @@ func (s *fuseServer) handleOpen(nodeid uint64, body []byte) ([]byte, error) {
 	// the write path needs no lookup of its own. The store keeps the content
 	// in its chunk table, so a truncating open leaves nothing for the handle
 	// to remember. See TheoryOfWriteSplice.
-	h := &fuseHandle{path: p, mode: a.Mode}
-	s.mu.Lock()
-	fh := s.nextFh
-	s.nextFh++
-	s.handles[fh] = h
-	s.mu.Unlock()
+	fh := s.registerHandle(&fuseHandle{path: p, mode: a.Mode})
 	// A read-only open lets the kernel keep the file's pages across opens, so
 	// a repeated read of an unchanged dependency never reaches the store. A
 	// write-mode open must not: its content is the session's to change.
@@ -1369,11 +1311,7 @@ func (s *fuseServer) handleWrite(body []byte) ([]byte, error) {
 	// path pays no metadata lookup. The delta goes straight into the stored
 	// chunks, so the store copies the payload rather than the file and the
 	// handle holds no copy at all. See TheoryOfWriteSplice.
-	perm := h.mode
-	if perm == 0 {
-		perm = 0o644
-	}
-	if err := s.store.SpliceFile(h.path, int64(in.Offset), data, perm); err != nil {
+	if err := s.store.SpliceFile(h.path, int64(in.Offset), data, filePerm(h.mode)); err != nil {
 		return nil, err
 	}
 	// The store now holds this write, so the handle's cached base reader can
@@ -1416,11 +1354,7 @@ func (s *fuseServer) handleOpendir(nodeid uint64) ([]byte, error) {
 		all = append(all, DirEntry{Name: "..", Attr: parent})
 	}
 	all = append(all, entries...)
-	s.mu.Lock()
-	fh := s.nextFh
-	s.nextFh++
-	s.handles[fh] = &fuseHandle{path: p, isDir: true, entries: all}
-	s.mu.Unlock()
+	fh := s.registerHandle(&fuseHandle{path: p, isDir: true, entries: all})
 	// The kernel keeps the listing across opens, so a repeated walk costs no
 	// request; any mutation through the mount invalidates it.
 	// See TheoryOfOpenCaching.
@@ -1559,6 +1493,28 @@ func direntType(k Kind) uint32 {
 	}
 }
 
+// filePerm is the permission bits a mutation gives a path: the recorded mode
+// when the path carries one, and the store's default otherwise. Every handler
+// that hands a mode to the store runs it, so no handler carries its own copy.
+func filePerm(m os.FileMode) os.FileMode {
+	if m == 0 {
+		return 0o644
+	}
+	return m
+}
+
+// registerHandle files one handle under a fresh handle number. Every handler
+// that hands a handle to the kernel runs it, so no handler carries its own copy
+// of the counter and the map write.
+func (s *fuseServer) registerHandle(h *fuseHandle) uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	fh := s.nextFh
+	s.nextFh++
+	s.handles[fh] = h
+	return fh
+}
+
 func (s *fuseServer) handleCreate(parent uint64, body []byte) ([]byte, error) {
 	parentPath, err := s.pathOf(parent)
 	if err != nil {
@@ -1575,10 +1531,7 @@ func (s *fuseServer) handleCreate(parent uint64, body []byte) ([]byte, error) {
 		return nil, syscall.EINVAL
 	}
 	p := path.Join(parentPath, name)
-	perm := os.FileMode(in.Mode & 0o777)
-	if perm == 0 {
-		perm = 0o644
-	}
+	perm := filePerm(os.FileMode(in.Mode & 0o777))
 	cur, statErr := s.store.Stat(p)
 	switch {
 	case statErr == nil:
@@ -1629,12 +1582,7 @@ func (s *fuseServer) handleCreate(parent uint64, body []byte) ([]byte, error) {
 	// mode and the write path needs no lookup of its own. The store keeps the
 	// content in its chunk table, so nothing about the create state belongs to
 	// the handle. See TheoryOfWriteSplice.
-	h := &fuseHandle{path: p, mode: a.Mode}
-	s.mu.Lock()
-	fh := s.nextFh
-	s.nextFh++
-	s.handles[fh] = h
-	s.mu.Unlock()
+	fh := s.registerHandle(&fuseHandle{path: p, mode: a.Mode})
 	return encodeStruct(&fuseCreateOut{
 		Entry: s.entryOut(id, a),
 		Open:  fuseOpenOut{Fh: fh},
@@ -1748,6 +1696,9 @@ func (s *fuseServer) handleUnlink(parent uint64, body []byte, isDir bool) ([]byt
 // caller falls back to the plain form. The three flag bits mirror linux/fs.h;
 // the wire protocol carries them as a uint32. A body whose first name carries
 // no terminator cannot name the second, so the reply is EINVAL.
+// The kernel resolves the source before it tests RENAME_NOREPLACE, so a
+// missing source reports ENOENT whatever the destination holds; only an
+// existing source with an existing destination reports EEXIST.
 // See TheoryOfCompletePOSIX and TheoryOfFuseMount.
 func (s *fuseServer) handleRename(parent uint64, body []byte, two bool) ([]byte, error) {
 	parentPath, err := s.pathOf(parent)
@@ -1800,6 +1751,11 @@ func (s *fuseServer) handleRename(parent uint64, body []byte, two bool) ([]byte,
 		return nil, syscall.ENOSYS
 	}
 	if flags&renameNoReplace != 0 {
+		// The source lookup runs first, matching renameat2: a missing
+		// source reports ENOENT even when the destination exists.
+		if _, err := s.store.Stat(oldPath); err != nil {
+			return nil, err
+		}
 		if _, err := s.store.Stat(newPath); err == nil {
 			return nil, ErrExist
 		}

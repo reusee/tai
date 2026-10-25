@@ -12,19 +12,14 @@ import (
 	"time"
 )
 
-// TheoryOfOperationTiming states the measurement's model: what a report
-// costs, what it covers, and what it leaves out. The flight recorder shares
-// the request loop and the lock that guards the aggregate; its own model
-// lives in TheoryOfFlightRecorder.
 const TheoryOfOperationTiming = `
 Operation timing theory:
 - The filesystem's cost is the sum of its requests' costs, so the measurement
   attributes one request's duration and count to the request's opcode: one
-  start stamp and one record per request in the server's read loop, one map
-  entry per opcode, and one array store into the flight ring. Nothing is
-  sampled, and nothing is recorded per byte or per cell, so the numbers
-  answer which operation a workload spends its time in without changing what
-  the workload does.
+  start stamp and one record per request in the server's read loop and one map
+  entry per opcode. Nothing is sampled, and nothing is recorded per byte or per
+  cell, so the numbers answer which operation a workload spends its time in
+  without changing what the workload does.
 - The table and the flight window answer different questions from one
   measurement: the table names the operation that costs the most over a run,
   the window names the requests that led to the slowest one. They share the
@@ -37,12 +32,10 @@ Operation timing theory:
   scheduling between them are invisible here. A run whose kernel hit rate is
   high therefore shows a small measured total, and the per-opcode average is
   the number to read: it is the cost each additional request would pay.
-- Recording is always on because it is one clock pair, one map update, and
-  one array store per request, negligible against the sqlite round trip and
-  the syscall that produced the request; a measurement that needed a flag
-  would be missing exactly when nobody thought to enable it. Reporting is
-  gated, because a report writes to a stream the session does not otherwise
-  touch.
+- Recording is always on because a flag would be missing exactly when nobody
+  thought to enable it; the cost is negligible against the sqlite round trip
+  and the syscall that produced the request. Reporting is gated, because a
+  report writes to a stream the session does not otherwise touch.
 - A report is a snapshot: entries are copied under one lock, so a report never
   blocks a request for longer than a map scan, and the reporter runs beside
   the server without synchronizing with it. Entries are ordered by

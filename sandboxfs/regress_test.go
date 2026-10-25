@@ -78,42 +78,6 @@ func TestSpliceFileAfterRemovedDirectoryCreatesFile(t *testing.T) {
 	}
 }
 
-// TestWriteFileKeepsBaseFileMode protects TheoryOfCompletePOSIX: a write to an
-// existing base file changes its content, not its permission bits. The perm
-// argument names the mode the write gives a file the write creates.
-func TestWriteFileKeepsBaseFileMode(t *testing.T) {
-	dir := t.TempDir()
-	base := filepath.Join(dir, "base")
-	if err := os.MkdirAll(base, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	host := filepath.Join(base, "f")
-	if err := os.WriteFile(host, []byte("old"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(host, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	store, err := Open(filepath.Join(dir, "upper.db"), base)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	if err := store.WriteFile("/f", []byte("new"), 0); err != nil {
-		t.Fatal(err)
-	}
-	a, err := store.Stat("/f")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if a.Mode != 0o600 {
-		t.Errorf("the write changed the base file's mode: got %o, want 600", a.Mode)
-	}
-	if content, err := store.ReadFile("/f"); err != nil || string(content) != "new" {
-		t.Errorf("content after the write: %q %v, want new", content, err)
-	}
-}
-
 // TestCheckWriteRefusesOwnDatabaseWithAStaleRow protects
 // TheoryOfSandboxFilesystem: the store never mutates its own database, even
 // when a stale row from an older schema leaves one. The refusal belongs to

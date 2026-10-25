@@ -543,6 +543,28 @@ func TestFuseServerRenameRespectsNoReplace(t *testing.T) {
 	}
 }
 
+// TestFuseServerRenameNoReplaceReportsMissingSource protects
+// TheoryOfCompletePOSIX: renameat2 with RENAME_NOREPLACE resolves the source
+// before it tests the flag, so a missing source reports ENOENT whatever the
+// destination holds. Testing the destination first reports EEXIST, and a
+// caller that reads EEXIST as another writer's claim gives up on a rename its
+// own missing source caused.
+func TestFuseServerRenameNoReplaceReportsMissingSource(t *testing.T) {
+	store, base := newTestStore(t)
+	writeHost(t, base, "b.txt", "b")
+	c := newFuseClient(t, store)
+
+	renameIn := fuseRename2In{Newdir: 1, Flags: 1}
+	body := c.bodyWithNames(encodeStruct(&renameIn), "missing.txt", "b.txt")
+	errno, _ := c.request(t, fuseOpRename2, 1, body)
+	if errno != -int32(syscall.ENOENT) {
+		t.Fatalf("rename_noreplace with a missing source: got %d, want ENOENT", errno)
+	}
+	if got, err := store.ReadFile("/b.txt"); err != nil || string(got) != "b" {
+		t.Fatalf("the destination changed on the refused rename: %q %v", got, err)
+	}
+}
+
 func TestFuseServerFsyncdirSucceeds(t *testing.T) {
 	store, _ := newTestStore(t)
 	c := newFuseClient(t, store)
@@ -566,6 +588,27 @@ func TestFuseServerFsyncdirSucceeds(t *testing.T) {
 	// the durability guarantee is already satisfied.
 	if errno, _ := c.request(t, fuseOpFsyncdir, entry.Nodeid, encodeStruct(&fuseFsyncIn{})); errno != 0 {
 		t.Fatalf("fsyncdir: want success, got %d", errno)
+	}
+}
+
+// TestFsyncdirUsesTheKernelOpcode protects TheoryOfCompletePOSIX: FSYNC and
+// FSYNCDIR succeed without doing anything, and the request the kernel sends for
+// a directory sync is FUSE_FSYNCDIR, opcode 30. A table that names another
+// number leaves the kernel's directory sync unanswered — it reports ENOSYS and
+// logs the gap once — and answers whatever request does carry the declared
+// number, which here is FUSE_SETLK, a byte-range lock this store refuses.
+func TestFsyncdirUsesTheKernelOpcode(t *testing.T) {
+	if fuseOpFsyncdir != 30 {
+		t.Fatalf("FUSE_FSYNCDIR is opcode 30; the server declares %d", fuseOpFsyncdir)
+	}
+	store, _ := newTestStore(t)
+	c := newFuseClient(t, store)
+	body := encodeStruct(&fuseFsyncIn{})
+	if errno, _ := c.request(t, 30, uint64(fuseRootID), body); errno != 0 {
+		t.Errorf("FSYNCDIR at the kernel's opcode: errno %d, want success", errno)
+	}
+	if errno, _ := c.request(t, 32, uint64(fuseRootID), body); errno != -int32(syscall.ENOSYS) {
+		t.Errorf("opcode 32 is FUSE_SETLK, which the store does not implement: errno %d, want ENOSYS", errno)
 	}
 }
 
@@ -657,6 +700,41 @@ func TestFuseServerOpenRefusesWriteOutsidePolicy(t *testing.T) {
 		Flags: uint32(unix.O_WRONLY),
 	})); errno != -int32(syscall.EACCES) {
 		t.Fatalf("write-mode open outside policy: want EACCES, got %d", errno)
+	}
+}
+
+// TestOpenReplyKeepsThePageCache protects TheoryOfOpenCaching: the open-reply
+// bit that asks the kernel to keep a file's pages across opens is
+// FOPEN_KEEP_CACHE, bit 1 of the open flags. Bit 0 is FOPEN_DIRECT_IO, which
+// does the opposite: it bypasses the page cache, disables readahead, and makes
+// mmap of the file fail, so a read-only open that sets it turns every repeated
+// read into a request and breaks a toolchain that maps its input.
+func TestOpenReplyKeepsThePageCache(t *testing.T) {
+	const (
+		fopenDirectIO  = 1 << 0
+		fopenKeepCache = 1 << 1
+	)
+	if fuseOpenKeepCache != fopenKeepCache {
+		t.Fatalf("FOPEN_KEEP_CACHE is bit 1; the server declares %#x", fuseOpenKeepCache)
+	}
+	store, base := newTestStore(t)
+	writeHost(t, base, "a.txt", "hello")
+	s := newFuseServer(store, -1)
+	id, err := s.nodeOf("/a.txt", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reply, err := s.handleOpen(id, encodeStruct(&fuseOpenIn{Flags: uint32(unix.O_RDONLY)}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out fuseOpenOut
+	decodeStruct(&out, reply)
+	if out.OpenFlags&fopenDirectIO != 0 {
+		t.Errorf("a read-only open asks for direct I/O (%#x): the page cache is bypassed", out.OpenFlags)
+	}
+	if out.OpenFlags&fopenKeepCache == 0 {
+		t.Errorf("a read-only open does not ask to keep the page cache (%#x)", out.OpenFlags)
 	}
 }
 

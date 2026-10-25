@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"golang.org/x/sys/unix"
 )
 
 // TestApplyPreservesTheRecordedMode protects TheoryOfSandboxFilesystem: the
@@ -52,8 +54,8 @@ func TestApplyPreservesTheRecordedMode(t *testing.T) {
 }
 
 // TestApplyKeepsTheModeOfAModifiedBaseFile pins the other path: a base file
-// holds its own mode, the session changes the content only, and the apply
-// reproduces the mode the base had.
+// holds its own mode, the session changes the content only, and the store's
+// stat and the applied host file both carry the base mode.
 func TestApplyKeepsTheModeOfAModifiedBaseFile(t *testing.T) {
 	s, base := newTestStore(t)
 	host := filepath.Join(base, "a.txt")
@@ -65,6 +67,13 @@ func TestApplyKeepsTheModeOfAModifiedBaseFile(t *testing.T) {
 	}
 	if err := s.WriteFile("/a.txt", []byte("new"), 0); err != nil {
 		t.Fatal(err)
+	}
+	a, err := s.Stat("/a.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Mode != 0o600 {
+		t.Errorf("stat after the write: got mode %o, want the base file's 600", a.Mode)
 	}
 	if _, err := s.Apply(nil); err != nil {
 		t.Fatal(err)
@@ -82,5 +91,64 @@ func TestApplyKeepsTheModeOfAModifiedBaseFile(t *testing.T) {
 	}
 	if string(content) != "new" {
 		t.Errorf("applied content %q, want new", content)
+	}
+}
+
+// TestApplySetsTheModeOfAModifiedFile protects TheoryOfSandboxFilesystem:
+// the mode the row records accompanies the content. A truncating write into
+// an existing host file keeps that file's old permission bits, so the apply
+// must set the recorded ones explicitly instead of trusting the create.
+func TestApplySetsTheModeOfAModifiedFile(t *testing.T) {
+	s, base := newTestStore(t)
+	host := filepath.Join(base, "a.txt")
+	if err := os.WriteFile(host, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(host, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WriteFile("/a.txt", []byte("new"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Apply(nil); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Lstat(host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Errorf("applied mode %o, want the session's 600", got)
+	}
+	content, err := os.ReadFile(host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "new" {
+		t.Errorf("applied content %q, want new", content)
+	}
+}
+
+// TestApplyPreservesTheModePastTheUmask protects TheoryOfSandboxFilesystem:
+// the mode the row records is the mode the host receives, even when the
+// daemon's umask would mask the argument a create hands the kernel. The FUSE
+// request already carries the caller's umask applied, so masking the mode a
+// second time rewrites bits the session chose.
+func TestApplyPreservesTheModePastTheUmask(t *testing.T) {
+	old := unix.Umask(0o022)
+	t.Cleanup(func() { unix.Umask(old) })
+	s, base := newTestStore(t)
+	if err := s.WriteFile("/w", []byte("x"), 0o666); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Apply(nil); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Lstat(filepath.Join(base, "w"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o666 {
+		t.Errorf("applied mode %o, want the recorded 666", got)
 	}
 }

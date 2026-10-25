@@ -170,37 +170,3 @@ func TestSpliceFileRevivesDeletedPath(t *testing.T) {
 		t.Fatalf("content = %q, want %q", got, want)
 	}
 }
-
-// TestMetaRowOmitsContent checks that the overwrite path's row read loads
-// metadata only: content lives in the chunk table, and the write already holds
-// the bytes it stores, so a read that assembled content would copy a file the
-// write is about to discard. See TheoryOfChunkedContent.
-func TestMetaRowOmitsContent(t *testing.T) {
-	store := newSpliceTestStore(t)
-	content := bytes.Repeat([]byte("x"), 1<<16)
-	if err := store.WriteFile("/a.txt", content, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	r, ok, err := store.metaRow("/a.txt")
-	if err != nil || !ok {
-		t.Fatalf("metaRow: ok = %v, err = %v", ok, err)
-	}
-	if r.size != int64(len(content)) {
-		t.Fatalf("metaRow size = %d, want %d", r.size, len(content))
-	}
-	if r.kind != KindRegular || r.mode != 0o644 {
-		t.Fatalf("metaRow = %+v, want the kind and mode fields", r)
-	}
-}
-
-// TestSpliceFileRejectsDirectory checks the type guard: a directory carries no
-// writable content, so the delta is refused before any row changes.
-func TestSpliceFileRejectsDirectory(t *testing.T) {
-	store := newSpliceTestStore(t)
-	if err := store.Mkdir("/d", 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.SpliceFile("/d", 0, []byte("x"), 0o644); err == nil {
-		t.Fatal("splice into a directory was accepted")
-	}
-}

@@ -9,12 +9,9 @@ import (
 	"time"
 )
 
-// TheoryOfFlightRecorder states what the recorder keeps, when it copies it,
-// and what a record costs.
 const TheoryOfFlightRecorder = `
 Flight recorder theory:
-- The table answers which operation costs the most over a whole run. It
-  cannot answer what happened around one slow request: the table keeps a
+- The table cannot answer what happened around one slow request: it keeps a
   count and a maximum per opcode and discards the order, so the sequence that
   led to a hundred-millisecond request is gone by the time anyone reads it.
 - The recorder keeps that sequence. A bounded ring holds the most recent
