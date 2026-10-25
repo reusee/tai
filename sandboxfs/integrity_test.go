@@ -459,6 +459,13 @@ func TestModeOfNoBitsReachesTheHost(t *testing.T) {
 	if err := os.WriteFile(other, []byte("abcdef"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// The truncation's capture reads the whole base file, and a fresh
+	// write's effective mode can lack the owner's read bit, taken by the
+	// umask or by the filesystem's own access rules. The bits are set
+	// after the write, the same guard the host file above carries.
+	if err := os.Chmod(other, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if err := store.TruncateFile("/g", 2, 0); err != nil {
 		t.Fatal(err)
 	}
