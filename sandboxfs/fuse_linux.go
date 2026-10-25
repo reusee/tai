@@ -1613,8 +1613,10 @@ func (s *fuseServer) handleOpendir(nodeid uint64) ([]byte, error) {
 	}
 	fh := s.registerHandle(h)
 	// The kernel keeps the listing across opens, so a repeated walk costs no
-	// request; a mutation through this mount clears the entries, and the next
-	// read reopens them. See TheoryOfOpenCaching and TheoryOfReadPath.
+	// request. A mutation through this mount marks the listing stale, and the
+	// next read from the first entry reseeds it from the store, while a
+	// continued read keeps the stream it started with.
+	// See TheoryOfOpenCaching, TheoryOfReadPath and TheoryOfDirectoryStream.
 	return encodeStruct(&fuseOpenOut{Fh: fh, OpenFlags: fuseOpenCacheDir}), nil
 }
 
