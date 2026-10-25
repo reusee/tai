@@ -377,10 +377,11 @@ leaves no trace; the resulting error carries os.ErrPermission, which the
 FUSE layer maps to EACCES.
 
 The policy is a function of the path alone. It must not read the filesystem
-it serves: the FUSE server answers every request on one goroutine, so a
-policy that opened a path through the mount would block on the request its
-own call is answering. The writable set is therefore resolved once before
-the mount and matched by path prefix, not by resolving symlinks per write.
+it serves: a policy that opened a path through the mount would wait on the
+request it is itself answering, so the worker serving that request could
+never finish (see TheoryOfFuseConcurrency). The writable set is therefore
+resolved once before the mount and matched by path prefix, not by resolving
+symlinks per write.
 
 The access check is the policy's second reader: a probe for W_OK answers
 from the policy, so a caller learns at access time what its first write

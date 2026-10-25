@@ -21,10 +21,11 @@ for the mechanism and sandboxfs.TheoryOfSandboxFilesystem for the store.
 The existing mount policy stays the authority on what may be written. The
 store's write policy admits exactly WritableDirs() — the set the mount layer
 already makes writable — so the sandbox changes where a write lands, not
-whether it is allowed. The policy must stay pure: the FUSE server answers
-requests on one goroutine, so a policy that performed filesystem I/O
-through the mount would wait for the server it is running on. The writable
-set is resolved once, before the pivot, and matched by path prefix.
+whether it is allowed. The policy must stay pure: a policy that performed
+filesystem I/O through the mount would wait on the request it is itself
+answering, so the worker serving that request could never finish. The
+writable set is resolved once, before the pivot, and matched by path prefix.
+See sandboxfs.TheoryOfFuseConcurrency and sandboxfs.TheoryOfWritePolicy.
 
 Passthrough directories bypass the store: the kernel filesystems (/dev,
 /proc, /sys), /tmp (a fresh tmpfs, not a bind of the container's /tmp, so
