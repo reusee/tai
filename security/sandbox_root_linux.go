@@ -45,6 +45,14 @@ path after the pivot: the working directory and every passthrough qualify;
 /tmp does not, because the sandbox mounts a fresh tmpfs there and the
 original /tmp is hidden.
 
+Each goal loop's changes go back to the host when the loop ends: the store
+that served the pivot is recorded as the process's active store, and the
+goal runner applies that loop's recorded changes before the next loop reads
+the filesystem, so a run's work is durable as it proceeds. A change a host
+modification conflicts with stays in the store — the apply skips it and the
+runner reports it — so the review command remains the place where the user
+resolves what the loops kept back. See pipeline.TheoryOfLoopChangeApply.
+
 The review command is exempt: the sandbox command applies recorded changes
 to the host, so a review running inside the sandbox root would write into
 the store it reviews instead of the host. The whole environment setup is
@@ -53,9 +61,8 @@ which is the set the review may write.
 
 The layer is best-effort like the mount hardening: a kernel without
 unprivileged FUSE, a missing /dev/fuse, or a failed pivot leaves the
-process with the mount policy alone and the session continues. Applying
-the recorded changes back to the host stays the user's decision; see
-sandboxfs.TheoryOfApplyConflict.
+process with the mount policy alone and the session continues, with no
+active store and therefore no per-loop apply.
 `
 
 // disableSandboxRootEnv skips the sandbox filesystem, leaving the mount
@@ -85,8 +92,10 @@ func isSandboxReview(args []string) bool {
 const sandboxDBEnv = "CAI_SANDBOX_DB"
 
 // setupSandboxRoot mounts the sandbox filesystem and pivots the process
-// root to it. It runs after the container filesystem hardening, so the
-// passthrough sources are the hardened mounts. See TheoryOfSandboxRoot.
+// root to it, then records the store that served the pivot as the process's
+// active store, so the goal runner applies every loop's changes to the host.
+// It runs after the container filesystem hardening, so the passthrough sources
+// are the hardened mounts. See TheoryOfSandboxRoot.
 func setupSandboxRoot(cwd string) error {
 	if os.Getenv(disableSandboxRootEnv) != "" {
 		return nil
@@ -112,7 +121,7 @@ func setupSandboxRoot(cwd string) error {
 		passthrough = append(passthrough, configDir)
 	}
 	mountpoint := filepath.Join(os.TempDir(), "tai-sandbox-root")
-	_, err = sandboxfs.Mount(sandboxfs.MountOptions{
+	mounted, err := sandboxfs.Mount(sandboxfs.MountOptions{
 		Base:        "/",
 		DBPath:      absDB,
 		Mountpoint:  mountpoint,
@@ -120,7 +129,15 @@ func setupSandboxRoot(cwd string) error {
 		WritePolicy: sandboxWritePolicy(WritableDirs()),
 		Pivot:       true,
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	// The store that served the pivot is the process's filesystem
+	// environment, so the goal runner applies every loop's changes through
+	// it. See sandboxfs.TheoryOfActiveStore and
+	// pipeline.TheoryOfLoopChangeApply.
+	sandboxfs.SetActiveStore(mounted.Store)
+	return nil
 }
 
 // sandboxWritePolicy returns the store's write confinement over the given

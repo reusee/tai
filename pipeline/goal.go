@@ -254,6 +254,33 @@ Redo the assessment from scratch: re-read the relevant files against the origina
 // maxGoalIterations bounds the number of goal loops.
 const maxGoalIterations = 20
 
+const TheoryOfLoopChangeApply = `
+Loop change apply theory:
+- A goal loop ends with its changes recorded in the sandbox store, not on the
+  host. The runner applies them before the next loop starts: the next loop
+  assembles its context from the filesystem, so a change the host never
+  received would be read back from the store, and the run would drift from the
+  state it reports.
+- The apply is a store operation, not a change-block operation. Change blocks
+  land in the in-memory store during streaming and flush as the session's
+  filesystem state; the per-loop apply moves that state to the host and drops
+  the sandbox rows, so the next diff is exact. See
+  sandboxfs.TheoryOfApplyConflict.
+- The runner owns the reporting; the hook owns the filesystem. The hook
+  receives the 1-based loop number and returns the applied count, the conflicts
+  a host modification kept back, and its own failure — plain values, so the
+  pipeline never depends on the sandbox. The runner records each outcome as a
+  goal structure node, which is where a live consumer and the command-line user
+  see it.
+- Nothing here is fatal. A conflict and a failed apply both leave the change in
+  the store, where the review command applies it later, so the run reports the
+  outcome and continues. Stopping would discard a loop that otherwise advanced
+  the goal, and the store still holds the work.
+- The hook is dscope-provided and defaults to nil: a run outside the sandbox —
+  plain command-line mode, tests, a kernel without FUSE — applies nothing and
+  pays nothing. tai's composition root binds the process's active store to it.
+`
+
 // maxConsecutiveGoalErrors bounds the number of consecutive goal loops that
 // fail with the same error before the run stops early. In unattended
 // operation, a persistent failure (e.g., a missing API key or a consistently
@@ -335,6 +362,14 @@ func (Module) GoalTreeObserver() GoalTreeObserver {
 	return nil
 }
 
+// LoopChangeApply applies one goal loop's recorded filesystem changes to the
+// host: it receives the 1-based loop number and returns the number of changes
+// written, the conflicts a host modification kept back, and its own failure.
+// The pipeline carries plain values so it never depends on the sandbox that
+// produces them; tai's composition root binds the process's active store to
+// it. See TheoryOfLoopChangeApply.
+type LoopChangeApply func(loop int) (applied int, conflicts []string, err error)
+
 type GoalOptions struct {
 	// Output receives verdicts and failure notes when no GoalTree
 	// observer is set. Generation and review output do not go here:
@@ -362,6 +397,13 @@ type GoalOptions struct {
 	// empty, post-done loops keep the default model. See
 	// TheoryOfGoalReviewModel.
 	ReviewModels []string
+	// ApplyChanges applies the loop's recorded filesystem changes to
+	// the host when the loop ends, before the next loop reads the
+	// filesystem. A returned conflict or failure is reported and
+	// leaves the change in the store for the review command, so
+	// neither stops the run. Nil applies nothing, which is what a run
+	// outside the sandbox gets. See TheoryOfLoopChangeApply.
+	ApplyChanges LoopChangeApply
 	// Recorder records the whole run as one session: the recorder's sink
 	// is attached to the run's session tree before the first loop, so
 	// every loop's operations join one session's operation stream, and
@@ -500,6 +542,13 @@ type goalLoopState struct {
 // sides share one source of truth. See TheoryOfGoalMode.
 func goalLoopNodeName(loop int) string {
 	return fmt.Sprintf("loop-%d", loop)
+}
+
+// LoopChangeApply provides the default: no per-loop apply. The composition
+// root forks the process's sandbox apply over it, so a run outside the sandbox
+// applies nothing and pays nothing. See TheoryOfLoopChangeApply.
+func (Module) LoopChangeApply() LoopChangeApply {
+	return nil
 }
 
 // applyLoopResult folds one loop's outcome into the runner state and
@@ -847,6 +896,11 @@ func RunGoal(ctx context.Context, opts GoalOptions) GoalResult {
 		if result.SessionTree != nil {
 			runTree = result.SessionTree
 		}
+		// The loop's recorded changes go back to the host before the next
+		// loop reads the filesystem: the next loop assembles its context
+		// from that state, so a change still only in the store would make
+		// the run drift from what it reports. See TheoryOfLoopChangeApply.
+		applyLoopChanges(loopsRun, opts.ApplyChanges, reporter)
 		// A loop error is the run's terminal candidate: the session ends
 		// with it unless a later loop achieves the goal. See
 		// TheoryOfGoalMode.
@@ -900,6 +954,31 @@ func RunGoal(ctx context.Context, opts GoalOptions) GoalResult {
 		LoopsRun: loopsRun,
 		Stats:    allStats,
 		Tree:     runTree,
+	}
+}
+
+// applyLoopChanges reports one loop's host apply: the change count, the
+// conflicts a host modification kept back, and the failure of the apply
+// itself. A conflict and a failure leave the changes in the sandbox store for
+// the review command, so neither stops the run. See TheoryOfLoopChangeApply.
+func applyLoopChanges(loop int, apply LoopChangeApply, reporter goalReporter) {
+	if apply == nil {
+		return
+	}
+	applied, conflicts, err := apply(loop)
+	if err != nil {
+		reporter.failure(fmt.Sprintf(
+			"Goal loop %d: applying the loop's changes to the host failed: %v\n",
+			loop, err))
+	}
+	if applied > 0 {
+		reporter.message(fmt.Sprintf(
+			"[Applied %d change(s) of goal loop %d to the host]\n", applied, loop))
+	}
+	for _, conflict := range conflicts {
+		reporter.failure(fmt.Sprintf(
+			"Goal loop %d: a host modification kept one change back: %s\n",
+			loop, conflict))
 	}
 }
 
@@ -995,13 +1074,17 @@ func makeGoalLoopGenerator(reset dscope.Reset, decision TaskDecision) GoalLoopGe
 // whole run is one recorded session — the recorder's sink attached to the
 // run's tree and the session ended after the last loop — so every loop's
 // operations join one session's stream. The post-done verification loops
-// run on the review-model rotation (see TheoryOfGoalReviewModel).
+// run on the review-model rotation (see TheoryOfGoalReviewModel). The
+// per-loop change apply is resolved from the scope as well, so a session
+// inside the sandbox filesystem applies each loop's changes to the host (see
+// TheoryOfLoopChangeApply).
 func (Module) GoalRun(
 	reset dscope.Reset,
 	runReview RunReview,
 	observeGoal GoalTreeObserver,
 	reviewModels ReviewModels,
 	recorder *records.Recorder,
+	applyChanges LoopChangeApply,
 ) GoalRun {
 	models := make([]string, 0, len(reviewModels))
 	for _, model := range reviewModels {
@@ -1025,6 +1108,7 @@ func (Module) GoalRun(
 			ReviewModels: models,
 			Recorder:     recorder,
 			TaskDecision: scope.Get[*TaskDecisionSink]().Drain(),
+			ApplyChanges: applyChanges,
 		})
 	}
 }

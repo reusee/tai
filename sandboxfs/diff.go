@@ -100,6 +100,15 @@ func (s *Store) Changes() ([]Change, error) {
 	return changes, nil
 }
 
+// ApplyAll writes every net change to the host and reports the changes a
+// conflict kept back, so a caller that applies as a session proceeds — the
+// goal runner's per-loop apply — can report what still awaits the user's
+// decision. See TheoryOfApplyConflict, TheoryOfChunkedContent and
+// pipeline.TheoryOfLoopChangeApply.
+func (s *Store) ApplyAll() (applied, conflicts []Change, err error) {
+	return s.applyChanges(nil)
+}
+
 func netChange(r fileRow, content []byte) *Change {
 	if r.kind == KindDir {
 		switch {
@@ -232,15 +241,23 @@ func (s *Store) detectConflict(c *Change, r fileRow) {
 
 // Apply writes the selected net changes to the host and drops their upper
 // rows, content chunks included, so a repeated apply is a no-op and the next
-// diff is exact. Conflicting changes are skipped and reported alongside the
-// applied ones; selected nil selects every change. Created directories apply
-// first, files next, and deletions deepest first, so a nested creation or
-// deletion lands in an order the host accepts. See TheoryOfApplyConflict and
-// TheoryOfChunkedContent.
+// diff is exact. Conflicting changes are skipped; selected nil selects every
+// change. Created directories apply first, files next, and deletions deepest
+// first, so a nested creation or deletion lands in an order the host accepts.
+// See TheoryOfApplyConflict and TheoryOfChunkedContent.
 func (s *Store) Apply(selected func(Change) bool) (applied []Change, err error) {
+	applied, _, err = s.applyChanges(selected)
+	return applied, err
+}
+
+// applyChanges is the shared core of Apply and ApplyAll: it reads the net
+// changes, collects the ones a conflict keeps back, sorts the rest into an
+// order the host accepts, and applies them one by one. See
+// TheoryOfApplyConflict.
+func (s *Store) applyChanges(selected func(Change) bool) (applied, conflicts []Change, err error) {
 	changes, err := s.Changes()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var pending []Change
 	for _, c := range changes {
@@ -248,6 +265,7 @@ func (s *Store) Apply(selected func(Change) bool) (applied []Change, err error) 
 			continue
 		}
 		if c.Conflict != "" {
+			conflicts = append(conflicts, c)
 			continue
 		}
 		pending = append(pending, c)
@@ -267,15 +285,15 @@ func (s *Store) Apply(selected func(Change) bool) (applied []Change, err error) 
 	})
 	for _, c := range pending {
 		if err := s.applyOne(c); err != nil {
-			return applied, err
+			return applied, conflicts, err
 		}
 		if err := s.removeAppliedRow(c.Path); err != nil {
-			return applied, err
+			return applied, conflicts, err
 		}
 		s.audit("apply", c.Path, string(c.Kind))
 		applied = append(applied, c)
 	}
-	return applied, nil
+	return applied, conflicts, nil
 }
 
 func applyPhase(c Change) int {
