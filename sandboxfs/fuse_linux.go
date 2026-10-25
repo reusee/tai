@@ -93,6 +93,12 @@ Request concurrency theory:
   first write materialising a base file, a directory rename walking a
   subtree, a hash of an untouched file — stops every filesystem operation of
   the process until it finishes. The pool removes that single point.
+- A session that touches many paths meets those long requests often: every
+  walk over a large tree, every first write of a large file, and every
+  subtree rename is one chance to land behind one. The same workload on a
+  small tree meets few, which is why a large project stalls and a directory
+  of a few files seldom does. The pool turns each meeting into one worker's
+  cost instead of the process's.
 - The pool is bounded by its buffers. The reader takes a buffer from the free
   set before it reads, so the number of requests in flight bounds itself,
   memory stays fixed whatever the workload asks for, and a wedged request
