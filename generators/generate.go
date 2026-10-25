@@ -2,18 +2,22 @@ package generators
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/reusee/tai/logs"
 )
 
 const TheoryOfGenerateRetry = `
-The generate phase retries on ErrRetryable errors, with a retry count bounded
-to 3 attempts to prevent infinite output loops. Generators that need finer-
-grained retry control (e.g., Gemini's Retrier.Do with exponential backoff)
-handle their own internal retries; the BuildGenerate bound acts as an outer
-safety net.
+The generate phase retries an attempt whose error the shared classification
+calls retryable — ErrRetryable, a provider rate-limit or server status, or a
+transport fault (see TheoryOfTransientTransportErrors) — with a retry count
+bounded to 3 attempts to prevent infinite output loops. Classification, not
+the ErrRetryable marker alone, decides the retry: an OpenAI-protocol request
+sends no internal retry, so this bound is its only retry, and a marker-only
+test would end the run on the first dropped connection. Generators that need
+finer-grained retry control (e.g., Gemini's Retrier.Do with exponential
+backoff) handle their own internal retries; the BuildGenerate bound acts as an
+outer safety net.
 
 When an error occurs (either non-retryable or after exhausting retries), the
 phase returns the input state so that callers like pipeline.Run can pass a valid
@@ -65,10 +69,15 @@ func (Module) BuildGenerate(logger logs.Logger) BuildGenerate {
 						logger.WarnContext(ctx, "generate attempt failed",
 							"model", spec.Model,
 							"attempt", attempt+1,
-							"retryable", errors.Is(err, ErrRetryable),
+							"retryable", isRetryable(err),
 							"error", err,
 						)
-						if errors.Is(err, ErrRetryable) {
+						// The shared classification decides the retry, not
+						// the ErrRetryable marker alone: an OpenAI-protocol
+						// request has no internal retry, so a transport fault
+						// must be retried here or the run ends on the first
+						// dropped connection. See TheoryOfGenerateRetry.
+						if isRetryable(err) {
 							continue
 						}
 						// If the generator produced partial output before the

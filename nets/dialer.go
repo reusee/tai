@@ -14,7 +14,7 @@ func (Module) Dialer(
 	getProxyDialer GetProxyDialer,
 	isLocalAddr IsLocalAddr,
 ) Dialer {
-	var direct net.Dialer
+	direct := newDirectDialer()
 	return DialerFunc(func(ctx context.Context, network, addr string) (ret net.Conn, err error) {
 		if isLocal, err := isLocalAddr(addr); err != nil {
 			return nil, err

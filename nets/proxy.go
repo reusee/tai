@@ -1,7 +1,6 @@
 package nets
 
 import (
-	"net"
 	"net/url"
 	"os"
 	"sync"
@@ -83,7 +82,8 @@ type GetProxyDialer func() (Dialer, error)
 func (Module) GetProxyDialer(
 	getURL GetProxyURL,
 ) GetProxyDialer {
-	direct := any(&net.Dialer{}).(Dialer)
+	forward := newDirectDialer()
+	direct := Dialer(&forward)
 	return sync.OnceValues(func() (Dialer, error) {
 		u, err := getURL()
 		if err != nil {

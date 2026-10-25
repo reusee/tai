@@ -13,9 +13,7 @@ func (Module) HTTPClient(
 ) HTTPClient {
 	return HTTPClient{
 		Client: &http.Client{
-			Transport: &http.Transport{
-				DialContext: dialer.DialContext,
-			},
+			Transport: newHTTPTransport(dialer),
 		},
 	}
 }

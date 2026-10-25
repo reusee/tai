@@ -557,12 +557,13 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 }
 
 const TheoryOfRetry = `
-Retry with exponential backoff handles transient API failures (rate limits
-and server errors) by waiting progressively longer between attempts. After
-exhausting all retries, ErrRetryable is stripped from the returned error to
-break outer retry loops that would otherwise re-trigger indefinitely. The
-initial backoff duration is parameterized so tests can run without real-time
-delays while production callers use a meaningful delay.
+Retry with exponential backoff handles transient API failures — rate limits,
+server errors, and transport faults (see TheoryOfTransientTransportErrors) —
+by waiting progressively longer between attempts. After exhausting all
+retries, ErrRetryable is stripped from the returned error to break outer retry
+loops that would otherwise re-trigger indefinitely. The initial backoff
+duration is parameterized so tests can run without real-time delays while
+production callers use a meaningful delay.
 
 Retrier carries this logic as a Go 1.27 generic method: Do is generic over
 the result type, so one dscope-provided value serves every caller, and
@@ -683,6 +684,9 @@ func isRetryable(err error) bool {
 		if apiErr.Code == 429 || apiErr.Code == 503 || apiErr.Code == 500 {
 			return true
 		}
+	}
+	if isTransientTransportError(err) {
+		return true
 	}
 	return false
 }
