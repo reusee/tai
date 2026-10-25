@@ -91,7 +91,7 @@ const (
 	queryPutChunk = `INSERT INTO chunks (path, idx, data) VALUES (?, ?, ?)
 			 ON CONFLICT(path, idx) DO UPDATE SET data = excluded.data`
 	queryGuardWrite = `UPDATE files SET size = max(size, ?), mtime = ?
-		 WHERE path = ? AND kind = ? AND deleted = 0`
+		 WHERE path = ? AND kind = ? AND deleted = 0 AND size >= 0`
 	querySetSize    = `UPDATE files SET size = ?, mtime = ? WHERE path = ?`
 	queryDropChunks = `DELETE FROM chunks WHERE path = ?`
 	queryDropFrom   = `DELETE FROM chunks WHERE path = ? AND idx >= ?`

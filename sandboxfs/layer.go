@@ -13,6 +13,41 @@ import (
 	"time"
 )
 
+const TheoryOfBaseCapture = `
+A path's first mutation records the base state it started from: existence,
+kind, mode, and — for a regular file or a symbolic link — the content hash
+the apply step compares the host against. That record costs the request path
+work proportional to the file's size, and one reader serves every request, so
+the work is the whole filesystem's pause. Three rules keep the pause small.
+
+The hash streams through one fixed buffer and stops at maxFileSize. Memory
+stays the buffer's, and a path above that bound costs the prefix the store
+could hold, never a sequential read of the whole file. The digest is the one
+contentHash produces for the same bytes, and the apply reads the host through
+the same bound, so both sides of the comparison cover one prefix.
+
+The content bytes and the metadata stay separate. A captured row records the
+metadata alone and carries the size sentinel, so a chmod, a utimes, or a
+deletion of a file of any size never reads its bytes: Stat asks the base for
+the length with one Lstat, and a read falls through to the base. A write
+replaces the sentinel with the stored length and the row becomes
+content-authoritative; a partial write first materialises the base content, so
+the two never disagree on what the row's chunk set means.
+
+The materialised content does not stream past the bound either. A first write
+materialises the base bytes into chunks, and a rename or a hard link copies
+them into a stored row: the destination is a row the store must hold whole, so
+a base file above maxFileSize is refused with EFBIG at the bound. A truncation
+captures only the prefix it keeps. A deletion and a permission or time change
+record metadata and a hash only, so they stay available on a file of any size,
+compared on its prefix alone.
+
+Without the three rules the pause grows with whatever the session touches —
+an image, an archive, a database — and every other process's file I/O waits
+behind it. A network client that loads its certificate bundle during a
+handshake then pays that pause against a deadline it never set.
+`
+
 // Stat returns the attributes of one sandbox path. It never follows a
 // symbolic link: a link reports itself, and the kernel resolves it by
 // reading the target and looking up that path, as a filesystem must.
@@ -67,15 +102,23 @@ func kindOf(info os.FileInfo) Kind {
 }
 
 // ReadFile returns the content of a regular file: the upper layer's content
-// when the session wrote the path, the base's content otherwise. A pipe and
-// a symbolic link cannot be read as content and report EINVAL, and a
-// directory reports EISDIR, matching the kernel's own answers. A base entry
-// is kind-checked before it is opened, so a pipe path never blocks on open.
-// The base descriptor answers the open and the read with one fstatat and one
-// openat, the same pair a read window pays; a store without the descriptor
-// falls back to the os.Root walk unchanged. The upper layer's content lives in
-// the chunk table, assembled by the stored size. See TheoryOfChunkedContent and
-// TheoryOfBaseFdAccess.
+// when the session wrote the path, the base's content otherwise. A pipe and a
+// symbolic link cannot be read as content and report EINVAL, and a directory
+// reports EISDIR, matching the kernel's own answers. A metadata-only row
+// reports its content from the base and its size from one Lstat, so a
+// chmod-touched path of any size reads without a materialisation. A base
+// entry is kind-checked before it is opened, so a pipe path never blocks on
+// open. The whole content is bounded by the store's own limit: the callers
+// that turn the bytes into a stored row — the hard link and the directory
+// rename among them — must meet the bound the store enforces, so a base file
+// above maxFileSize reports EFBIG instead of an allocation the store could
+// never hold. A reader that wants a window of a large file takes ReadRange,
+// which moves only the window it names. The base descriptor answers the open
+// and the read with one fstatat and one openat, the same pair a read window
+// pays; a store without the descriptor falls back to the os.Root walk
+// unchanged. The upper layer's content lives in the chunk table, assembled by
+// the stored size. See TheoryOfChunkedContent, TheoryOfBaseFdAccess and
+// TheoryOfBaseCapture.
 func (s *Store) ReadFile(p string) ([]byte, error) {
 	p = Canonical(p)
 	r, ok, err := s.row(p)
@@ -92,12 +135,16 @@ func (s *Store) ReadFile(p string) ([]byte, error) {
 		case KindSymlink, KindFIFO:
 			return nil, syscall.EINVAL
 		}
-		content, err := s.readContent(p, r.size)
-		if err != nil {
-			return nil, err
+		if r.size >= 0 {
+			content, err := s.readContent(p, r.size)
+			if err != nil {
+				return nil, err
+			}
+			s.auditRead(p)
+			return content, nil
 		}
-		s.auditRead(p)
-		return content, nil
+		// The row records metadata only; the base holds the content, and the
+		// base path below serves it. See TheoryOfBaseCapture.
 	}
 	rel := canonicalRel(p)
 	if b, fast, readErr := baseReadFile(s.baseFd, rel); fast {
@@ -117,6 +164,9 @@ func (s *Store) ReadFile(p string) ([]byte, error) {
 	if !info.Mode().IsRegular() {
 		return nil, syscall.EINVAL
 	}
+	if info.Size() > maxFileSize {
+		return nil, syscall.EFBIG
+	}
 	b, err := s.baseRoot.ReadFile(rel)
 	if err != nil {
 		return nil, err
@@ -127,9 +177,10 @@ func (s *Store) ReadFile(p string) ([]byte, error) {
 
 // upperEntries overlays the upper layer's rows onto one listing: a deleted row
 // hides its name, and a live row replaces the base's attribute, so a listing
-// and a stat never disagree on one path. The listing is one request, so the
-// select runs its prepared form. See TheoryOfSandboxFilesystem and
-// TheoryOfPreparedStatements.
+// and a stat never disagree on one path. A metadata-only row contributes the
+// base's own length rather than a stored one, so the listing reports the size
+// the stat reports. The listing is one request, so the select runs its
+// prepared form. See TheoryOfBaseCapture and TheoryOfPreparedStatements.
 func (s *Store) upperEntries(p string, entries map[string]Attr) error {
 	prefix := p
 	if !strings.HasSuffix(prefix, "/") {
@@ -165,10 +216,15 @@ func (s *Store) upperEntries(p string, entries map[string]Attr) error {
 		// The size column names content, and only a regular file carries it:
 		// a link carries its target's length, and a directory or a pipe
 		// carries nothing, matching the same choice in Stat so a listing and
-		// a stat never disagree on one path. See TheoryOfChunkedContent.
+		// a stat never disagree on one path. A metadata-only row keeps the
+		// base's own length. See TheoryOfBaseCapture.
 		switch at.Kind {
 		case KindRegular:
-			at.Size = size.Int64
+			if size.Int64 >= 0 {
+				at.Size = size.Int64
+			} else if base, has := entries[rest]; has {
+				at.Size = base.Size
+			}
 		case KindSymlink:
 			at.Size = targetSize.Int64
 		}
@@ -348,13 +404,17 @@ func (s *Store) baseEntries(p string) ([]DirEntry, error) {
 // captureOriginal records the base state of a path the upper layer is about
 // to touch for the first time: whether the base holds the path, its kind and
 // mode, and — for a regular file or a symbolic link — the content hash the
-// apply step compares the host against. A symbolic link's hash carries a tag,
-// so replacing a link with a byte-identical regular file stays a change of
-// kind. A named pipe has no content, so its kind is recorded as a sentinel the
-// net-change comparison recognises. A path that names the store's own database
-// is refused before the read, so a stray write or delete never drags the
-// record through captureOriginal's whole-file hash.
-// See TheoryOfApplyConflict and TheoryOfCompletePOSIX.
+// apply step compares the host against. The hash streams, so a path of any
+// size costs one sequential read of at most the store's bound and never an
+// allocation of the file's size. A regular file's row carries the metadata
+// sentinel rather than a content length, so a later metadata change touches
+// no bytes; a write replaces the sentinel with the stored length. A symbolic
+// link's hash carries a tag, so replacing a link with a byte-identical
+// regular file stays a change of kind. A named pipe has no content, so its
+// kind is recorded as a sentinel the net-change comparison recognises. A path
+// that names the store's own database is refused before the read, so a stray
+// write or delete never drags the record through the hash. See
+// TheoryOfApplyConflict, TheoryOfBaseCapture and TheoryOfCompletePOSIX.
 func (s *Store) captureOriginal(p string) (fileRow, error) {
 	if s.isOwnDBPath(p) {
 		return fileRow{}, fmt.Errorf("%w: the sandbox database is never a sandbox target: %s", os.ErrPermission, p)
@@ -373,11 +433,14 @@ func (s *Store) captureOriginal(p string) (fileRow, error) {
 	r.originalExists = true
 	switch r.kind {
 	case KindRegular:
-		content, err := s.baseRoot.ReadFile(relPath(p))
+		sum, err := hashBaseFile(s.baseRoot, relPath(p))
 		if err != nil {
 			return fileRow{}, err
 		}
-		r.originalHash = contentHash(content)
+		r.originalHash = sum
+		// The row is metadata-only: the sentinel says the content still
+		// lives in the base. See TheoryOfBaseCapture.
+		r.size = -1
 	case KindSymlink:
 		target, err := s.baseRoot.Readlink(relPath(p))
 		if err != nil {
@@ -691,7 +754,14 @@ func (s *Store) Rename(oldPath, newPath string) error {
 		}
 		kind, mode, target, mtime = src.kind, src.mode, src.target, src.mtime
 		if kind == KindRegular {
-			content, err = s.readContent(oldPath, src.size)
+			if src.size >= 0 {
+				content, err = s.readContent(oldPath, src.size)
+			} else {
+				// A metadata-only source still lives in the base: the rename
+				// copies the base's content into the destination's row, which
+				// meets the store's own bound. See TheoryOfBaseCapture.
+				content, err = s.readBaseContent(oldPath, -1)
+			}
 			if err != nil {
 				return err
 			}
@@ -706,7 +776,10 @@ func (s *Store) Rename(oldPath, newPath string) error {
 		mtime = info.ModTime()
 		switch kind {
 		case KindRegular:
-			content, err = s.baseRoot.ReadFile(relPath(oldPath))
+			// The rename copies the content into the destination's row, so the
+			// source meets the store's bound here, the same way a direct write
+			// does. See TheoryOfBaseCapture.
+			content, err = s.readBaseContent(oldPath, -1)
 			if err != nil {
 				return err
 			}
@@ -913,23 +986,15 @@ func (s *Store) SetMode(p string, mode os.FileMode) error {
 		if !r.originalExists {
 			return ErrNotExist
 		}
-		if r.kind == KindRegular {
-			// The materialisation keeps the base file's mode, so the mode-only
-			// change below starts from the bits the path already carried.
-			// See TheoryOfCompletePOSIX.
-			r, err = s.materializeContent(p, -1, r.mode)
-			if err != nil {
-				return err
-			}
-		}
 	}
 	if r.deleted {
 		return ErrNotExist
 	}
-	// A mode change is not a content change: it records the bits and leaves
-	// the stored mtime as the base recorded it, because POSIX gives chmod no
-	// mtime effect and a toolchain reads mtime to judge staleness. See
-	// TheoryOfCompletePOSIX.
+	// A mode change is not a content change: the row records the bits and a
+	// regular file's content stays in the base, so a chmod of a file above
+	// the store's bound costs one Lstat and nothing else. POSIX gives chmod
+	// no length limit, and a materialisation here would impose one.
+	// See TheoryOfBaseCapture.
 	r.mode = mode.Perm()
 	if err := s.put(r); err != nil {
 		return err
@@ -1029,22 +1094,19 @@ func (s *Store) SetTimes(p string, mtime time.Time) error {
 			return err
 		}
 		// A time change names a path that must exist; see SetMode for why
-		// originalExists carries that answer. The materialisation keeps the
-		// base's mode, because a time-only change must not rewrite the
-		// permission bits. See TheoryOfCompletePOSIX.
+		// originalExists carries that answer.
+		// See TheoryOfCompletePOSIX.
 		if !r.originalExists {
 			return ErrNotExist
-		}
-		if r.kind == KindRegular {
-			r, err = s.materializeContent(p, -1, r.mode)
-			if err != nil {
-				return err
-			}
 		}
 	}
 	if r.deleted {
 		return ErrNotExist
 	}
+	// A time change is metadata only: the row records the stamp and a regular
+	// file's content stays in the base, so a utimes of a file above the
+	// store's bound costs one Lstat and nothing else.
+	// See TheoryOfBaseCapture.
 	r.mtime = mtime
 	if err := s.put(r); err != nil {
 		return err

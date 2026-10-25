@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"syscall"
 	"testing"
+	"time"
 )
 
 func newTestStore(t *testing.T) (*Store, string) {
@@ -21,6 +22,33 @@ func newTestStore(t *testing.T) (*Store, string) {
 		}
 	})
 	return s, base
+}
+
+// TestHashBaseFileMatchesContentHash protects TheoryOfBaseCapture: the
+// streaming digest and the in-memory digest must agree, because the apply
+// step compares the host's whole-file hash with the recorded original. Two
+// shapes of one hash would report every unchanged file as a conflict.
+func TestHashBaseFileMatchesContentHash(t *testing.T) {
+	base := t.TempDir()
+	content := make([]byte, 300<<10)
+	for i := range content {
+		content[i] = byte(i*7 + i/251)
+	}
+	if err := os.WriteFile(filepath.Join(base, "f.bin"), content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	root, err := os.OpenRoot(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	got, err := hashBaseFile(root, "f.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := contentHash(content); got != want {
+		t.Fatalf("streaming digest %s, in-memory digest %s", got, want)
+	}
 }
 
 func TestFuseReadCachesBaseReaderAcrossWindows(t *testing.T) {
@@ -184,6 +212,219 @@ func writeHost(t *testing.T, base, name, content string) {
 	}
 	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestBaseCaptureIsBounded protects TheoryOfBaseCapture: a base file above the
+// store's bound cannot become a stored row, so its first write reports EFBIG
+// instead of materialising bytes the store must refuse. The refusal is the
+// point: an unbounded materialisation holds the store's one connection and the
+// server's one goroutine for as long as the file is large, and every other
+// process's file I/O — a network client's certificate read among them — waits
+// behind it past its own deadline.
+func TestBaseCaptureIsBounded(t *testing.T) {
+	store, base := newTestStore(t)
+	p := filepath.Join(base, "big.bin")
+	f, err := os.Create(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Truncate(maxFileSize + 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SpliceFile("/big.bin", 0, []byte("x"), 0o644); !errors.Is(err, syscall.EFBIG) {
+		t.Fatalf("first write into an oversized base file: err %v, want EFBIG", err)
+	}
+	// The refusal is a refusal to store, not a refusal to serve: the path stays
+	// readable at its own size.
+	a, err := store.Stat("/big.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Size != maxFileSize+1 {
+		t.Fatalf("size %d, want %d", a.Size, maxFileSize+1)
+	}
+}
+
+// TestBaseCaptureOfAnOversizedFile protects TheoryOfBaseCapture: the capture
+// hashes at most the store's bound, so a request never spends a file's size in
+// hash time however large the file is. The apply reads the host through the
+// same bound, so a deletion still applies without a conflict.
+func TestBaseCaptureOfAnOversizedFile(t *testing.T) {
+	store, base := newTestStore(t)
+	p := filepath.Join(base, "big.bin")
+	f, err := os.Create(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write([]byte("head")); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Truncate(maxFileSize + 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Remove("/big.bin"); err != nil {
+		t.Fatalf("remove an oversized base file: %v", err)
+	}
+	r, ok, err := store.row("/big.bin")
+	if err != nil || !ok {
+		t.Fatalf("row after the remove: ok=%v err=%v", ok, err)
+	}
+	prefix := make([]byte, maxFileSize)
+	copy(prefix, "head")
+	if r.originalHash != contentHash(prefix) {
+		t.Fatal("the capture did not stop at the store's bound")
+	}
+	changes, err := store.Changes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != 1 || changes[0].Kind != ChangeDeleted || changes[0].Conflict != "" {
+		t.Fatalf("changes %+v, want one conflict-free deletion", changes)
+	}
+	if _, err := store.Apply(func(Change) bool { return true }); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if _, err := os.Stat(p); !os.IsNotExist(err) {
+		t.Fatalf("the deletion did not reach the host: %v", err)
+	}
+}
+
+// TestMetadataChangeOnALargeBaseFileStaysMetadataOnly protects
+// TheoryOfBaseCapture: a chmod of a base file above the store's bound is a
+// metadata change, so it costs one Lstat and never the file's content. Before
+// the split the chmod materialised the whole file into chunks, an allocation
+// the store could never hold, and answered EFBIG for a permission bit.
+func TestMetadataChangeOnALargeBaseFileStaysMetadataOnly(t *testing.T) {
+	store, base := newTestStore(t)
+	p := filepath.Join(base, "big.bin")
+	f, err := os.Create(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Truncate(maxFileSize + 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetMode("/big.bin", 0o600); err != nil {
+		t.Fatalf("chmod an oversized base file: %v", err)
+	}
+	a, err := store.Stat("/big.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Size != maxFileSize+1 {
+		t.Errorf("size %d, want %d", a.Size, maxFileSize+1)
+	}
+	if a.Mode.Perm() != 0o600 {
+		t.Errorf("mode %o, want 600", a.Mode.Perm())
+	}
+	r, ok, err := store.row("/big.bin")
+	if err != nil || !ok {
+		t.Fatalf("row after the chmod: ok=%v err=%v", ok, err)
+	}
+	if r.size >= 0 {
+		t.Errorf("row size %d, want the metadata-only sentinel", r.size)
+	}
+	entries, err := store.ReadDir("/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.Name == "big.bin" && e.Attr.Size != maxFileSize+1 {
+			t.Errorf("listing size %d, want %d", e.Attr.Size, maxFileSize+1)
+		}
+	}
+	changes, err := store.Changes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != 1 || changes[0].Kind != ChangeModified || changes[0].Conflict != "" {
+		t.Fatalf("changes %+v, want one conflict-free mode-only change", changes)
+	}
+	if _, err := store.Apply(func(Change) bool { return true }); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	info, err := os.Stat(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Errorf("host mode %o, want 600", info.Mode().Perm())
+	}
+	if info.Size() != maxFileSize+1 {
+		t.Errorf("host size %d, want %d", info.Size(), maxFileSize+1)
+	}
+}
+
+// TestSpliceOnAMetadataOnlyRowMaterialisesTheBaseContent protects
+// TheoryOfBaseCapture: a partial write into a metadata-only row first
+// materialises the base's bytes, so the row's chunk set is the whole content
+// and the payload never overwrites an empty file. A metadata change of any
+// other kind keeps the row metadata-only, and the read falls through to the
+// base.
+func TestSpliceOnAMetadataOnlyRowMaterialisesTheBaseContent(t *testing.T) {
+	store, base := newTestStore(t)
+	writeHost(t, base, "f", "hello")
+	if err := store.SetMode("/f", 0o600); err != nil {
+		t.Fatal(err)
+	}
+	want := time.Unix(1_000_000_000, 0)
+	if err := store.SetTimes("/f", want); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.ReadFile("/f")
+	if err != nil || string(got) != "hello" {
+		t.Fatalf("read after a metadata change: %q %v", got, err)
+	}
+	if a, err := store.Stat("/f"); err != nil {
+		t.Fatal(err)
+	} else if a.Size != 5 || a.Mode.Perm() != 0o600 || !a.ModTime.Equal(want) {
+		t.Fatalf("attr after a metadata change: size %d mode %o mtime %v", a.Size, a.Mode.Perm(), a.ModTime)
+	}
+	if err := store.SpliceFile("/f", 0, []byte("HE"), 0o600); err != nil {
+		t.Fatalf("splice into a metadata-only row: %v", err)
+	}
+	got, err = store.ReadFile("/f")
+	if err != nil || string(got) != "HEllo" {
+		t.Fatalf("read after the splice: %q %v", got, err)
+	}
+}
+
+// TestChangesOnAMetadataOnlyRowWhoseHostFileVanished protects
+// TheoryOfBaseCapture and TheoryOfApplyConflict: a metadata-only row keeps its
+// content in the base, so a host file deleted after the capture leaves nothing
+// to read. The difference must surface as a conflict the user resolves, never
+// as an error that fails the whole review, and the apply must skip it.
+func TestChangesOnAMetadataOnlyRowWhoseHostFileVanished(t *testing.T) {
+	store, base := newTestStore(t)
+	writeHost(t, base, "f", "hello")
+	if err := store.SetMode("/f", 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(base, "f")); err != nil {
+		t.Fatal(err)
+	}
+	changes, err := store.Changes()
+	if err != nil {
+		t.Fatalf("changes after the host file vanished: %v", err)
+	}
+	if len(changes) != 1 {
+		t.Fatalf("changes %+v, want one change", changes)
+	}
+	if changes[0].Conflict == "" {
+		t.Fatalf("change %+v carries no conflict", changes[0])
+	}
+	if applied, err := store.Apply(func(Change) bool { return true }); err != nil || len(applied) != 0 {
+		t.Fatalf("apply: applied %d, err %v; a conflicted change must be skipped", len(applied), err)
 	}
 }
 

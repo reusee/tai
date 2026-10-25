@@ -1,7 +1,9 @@
 package sandboxfs
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -32,10 +34,13 @@ plus one row per chunk of payload.
 
 The row is the identity; the chunks are the content. A chunk exists only for a
 live regular row: a whiteout, a directory, a link, and a pipe drop their
-chunks, and a metadata write keeps them. A mutation that changes content
-writes the metadata and the chunks in one transaction, so a reader never sees a
-size and a chunk set that disagree, and reads clamp to the stored size, so the
-size column is the authority on length.
+chunks. A live regular row holds one of two shapes, and the size column states
+which: a stored length means the chunks are the whole content, while the
+metadata sentinel means the row records the metadata alone and the content
+still lives in the base (see TheoryOfBaseCapture). A mutation that changes
+content writes the metadata and the chunks in one transaction, so a reader
+never sees a size and a chunk set that disagree, and reads clamp to the stored
+size.
 
 Reading a window is one indexed query over the chunks covering it, assembled
 with zeros for absent chunks: the round-trip count a substr over the blob cost,
@@ -43,6 +48,11 @@ without the whole-column rewrite on the write side. The first change to a base
 path materialises the base content into chunks, the cold path taken once per
 file; a truncation materialises only the prefix it keeps.
 `
+
+// captureHashBufferSize is the one buffer a base capture streams through, so
+// the recorded original costs this much memory whatever the file's size.
+// See TheoryOfBaseCapture.
+const captureHashBufferSize = 64 << 10
 
 // contentChunkSize is the length of one stored chunk. See
 // TheoryOfChunkedContent.
@@ -281,7 +291,10 @@ func (s *Store) truncateChunks(ex dbExecer, p string, size int64) error {
 
 // readBaseContent reads a base file's content, bounded by limit when limit is
 // non-negative: a truncating first change keeps only the prefix it keeps, so
-// it never reads bytes it is about to drop.
+// it never reads bytes it is about to drop. A whole-file capture is bounded by
+// the store's own limit instead, because the bytes it reads become a stored
+// row: a base file above maxFileSize reports EFBIG before a byte reaches
+// memory. See TheoryOfBaseCapture.
 func (s *Store) readBaseContent(p string, limit int64) ([]byte, error) {
 	f, err := s.baseRoot.Open(relPath(p))
 	if err != nil {
@@ -291,10 +304,59 @@ func (s *Store) readBaseContent(p string, limit int64) ([]byte, error) {
 		return nil, err
 	}
 	defer f.Close()
-	if limit < 0 {
-		return io.ReadAll(f)
+	if limit >= 0 {
+		return io.ReadAll(io.LimitReader(f, min(limit, maxFileSize)))
 	}
-	return io.ReadAll(io.LimitReader(f, min(limit, maxFileSize)))
+	buf, err := io.ReadAll(io.LimitReader(f, maxFileSize+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(buf)) > maxFileSize {
+		return nil, syscall.EFBIG
+	}
+	return buf, nil
+}
+
+// hashBaseFile returns the recorded-original digest of one base file without
+// holding its content: the file streams through one fixed buffer, and the
+// digest covers at most the store's bound. Memory stays the buffer's, and a
+// path above maxFileSize costs the prefix the store could hold, never a
+// sequential read of the whole file, so the request path stays bounded in
+// time as well as in memory. The digest is the one contentHash produces for
+// the same bytes, and the apply reads the host through the same bound, so
+// both sides of the comparison cover one prefix. See TheoryOfBaseCapture.
+func hashBaseFile(root *os.Root, rel string) (string, error) {
+	f, err := root.Open(rel)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.CopyBuffer(h, io.LimitReader(f, maxFileSize),
+		make([]byte, captureHashBufferSize)); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// readBasePrefix returns at most maxFileSize bytes of one base file: the
+// apply step reads the host this way, so both sides of the hash comparison
+// cover the prefix the capture recorded. A host file above the bound costs the
+// same bounded read the capture paid. A file the host no longer holds reports
+// no content rather than an error, the same answer readBaseContent gives: the
+// conflict check names the vanished host path, and a review that stopped at
+// the read would lose every other change beside it. See TheoryOfBaseCapture
+// and TheoryOfApplyConflict.
+func readBasePrefix(root *os.Root, rel string) ([]byte, error) {
+	f, err := root.Open(rel)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer f.Close()
+	return io.ReadAll(io.LimitReader(f, maxFileSize))
 }
 
 // materializeContent gives one path a live regular row holding its content.
@@ -353,9 +415,11 @@ func (s *Store) materializeContent(p string, copySize int64, perm os.FileMode) (
 
 // TruncateFile shapes one regular file to size. The chunks beyond the length
 // drop and the chunk the length ends inside keeps its prefix, so the work grows
-// with the length, never with the file. A truncation is a mutation, so it writes
-// an audit row like every other one. See TheoryOfChunkedContent and
-// TheoryOfSandboxFilesystem.
+// with the length, never with the file. A metadata-only row materialises the
+// prefix the truncation keeps, so the row becomes content-authoritative without
+// ever reading the bytes the truncation drops. A truncation is a mutation, so
+// it writes an audit row like every other one. See TheoryOfChunkedContent,
+// TheoryOfBaseCapture and TheoryOfSandboxFilesystem.
 func (s *Store) TruncateFile(p string, size int64, perm os.FileMode) error {
 	p = Canonical(p)
 	if p == "/" {
@@ -388,6 +452,14 @@ func (s *Store) TruncateFile(p string, size int64, perm os.FileMode) error {
 		if !orig.originalExists {
 			return ErrNotExist
 		}
+		r, err = s.materializeContent(p, size, perm)
+		if err != nil {
+			return err
+		}
+	} else if r.kind == KindRegular && !r.deleted && r.size < 0 {
+		// The row records metadata only: the content is still in the base, and
+		// the truncation materialises only the prefix it keeps.
+		// See TheoryOfBaseCapture.
 		r, err = s.materializeContent(p, size, perm)
 		if err != nil {
 			return err

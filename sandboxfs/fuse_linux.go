@@ -34,8 +34,11 @@ response. The kernel does not serialize requests — it sends them as its
 callers ask, and the background ones, the readahead among them, queue up to
 the depth the INIT reply announces (see TheoryOfInitNegotiation) — but a
 single reader is enough: each reply names the request it answers, so no
-worker pool is needed, and a slow handler delays later requests but not
-correctness.
+worker pool is needed. Delaying later requests is the price of one reader,
+and it is affordable only while every request stays short: the request path
+is bounded in the bytes it moves and the rows it writes, so a request's
+duration never grows with the size of a file or a directory the session
+happens to touch (see TheoryOfBaseCapture).
 
 The read loop separates the errors that do not end the daemon from the ones
 that do. EINTR says a signal arrived. ENOENT says the caller interrupted its

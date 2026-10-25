@@ -51,12 +51,15 @@ type Change struct {
 // leaves one query before any content is read, because the store holds a
 // single connection: a row set kept open while a content query runs would wait
 // for the connection it holds. A live regular row's content comes from the
-// chunk table, and a deletion's from nothing. A live path whose content and
-// kind still match the snapshot but whose recorded mode does not is a change
-// of mode alone, which the hash cannot see. The store's own database and its
-// SQLite siblings never enter the list: they are the review's record, not a
-// reviewable change. See TheoryOfSandboxFilesystem, TheoryOfApplyConflict, and
-// TheoryOfChunkedContent.
+// chunk table, and a deletion's from nothing; a metadata-only row's content
+// comes from the base's own prefix, the same bound the capture hashed, so a
+// permission or time change of a file of any size costs that bounded read
+// rather than the file's own length. A live path whose content and kind still
+// match the snapshot but whose recorded mode does not is a change of mode
+// alone, which the hash cannot see. The store's own database and its SQLite
+// siblings never enter the list: they are the review's record, not a
+// reviewable change. See TheoryOfSandboxFilesystem, TheoryOfApplyConflict,
+// TheoryOfBaseCapture and TheoryOfChunkedContent.
 func (s *Store) Changes() ([]Change, error) {
 	rows, err := s.db.Query(
 		`SELECT path, kind, mode, mtime, deleted, size, target, original_exists, original_hash
@@ -85,7 +88,13 @@ func (s *Store) Changes() ([]Change, error) {
 		}
 		var content []byte
 		if r.kind == KindRegular && !r.deleted {
-			content, err = s.readContent(r.path, r.size)
+			if r.size >= 0 {
+				content, err = s.readContent(r.path, r.size)
+			} else {
+				// The row records metadata only: the compare uses the base's
+				// own prefix. See TheoryOfBaseCapture.
+				content, err = readBasePrefix(s.baseRoot, relPath(r.path))
+			}
 			if err != nil {
 				return nil, err
 			}
@@ -213,7 +222,11 @@ func (s *Store) modeOnlyChange(r fileRow, content []byte) *Change {
 // host path is already gone is not a conflict: the two sides agree on the end
 // state, so the apply is a no-op. A deletion whose host path still matches
 // the snapshot carries the deleted bytes as Original, matching a
-// modification. See TheoryOfApplyConflict and TheoryOfCompletePOSIX.
+// modification. A regular file's host read stops at the store's bound, the
+// same bound the capture hashed, so a host file above maxFileSize costs the
+// bounded read rather than an allocation of the file's own size; the two
+// sides compare one prefix. See TheoryOfApplyConflict and
+// TheoryOfBaseCapture.
 func (s *Store) detectConflict(c *Change, r fileRow) {
 	if !r.originalExists {
 		if _, err := s.baseRoot.Lstat(relPath(r.path)); err == nil {
@@ -236,7 +249,7 @@ func (s *Store) detectConflict(c *Change, r fileRow) {
 	}
 	switch kindOf(info) {
 	case KindRegular:
-		content, err := s.baseRoot.ReadFile(relPath(r.path))
+		content, err := readBasePrefix(s.baseRoot, relPath(r.path))
 		if err != nil {
 			c.Conflict = err.Error()
 			return

@@ -104,11 +104,12 @@ directory the same request already stat'ed.
 
 A metadata lookup never loads content. Stat needs the kind, mode, mtime,
 and size; the row's metadata is the whole answer, and the content lives in the
-chunk table. The size therefore comes from the row's stored size column, so a
-getattr or lookup on a large file costs one small row, not a heap copy of the
-file. A read of a written path is two prepared round trips: the row's kind,
-deletion state, and stored size, then the chunk window TheoryOfChunkedContent
-describes.
+chunk table or, for a metadata-only row, in the base. The size therefore comes
+from the row's stored size column or, when that column carries the metadata
+sentinel, from one Lstat of the base path, so a getattr or lookup on a large
+file costs one small row and never a heap copy of the file. A read of a
+written path is two prepared round trips: the row's kind, deletion state, and
+stored size, then the chunk window TheoryOfChunkedContent describes.
 
 A read handle opens the base file once. The kernel streams a file in
 windows; reopening and re-checking the host file per window spends a stat
@@ -825,7 +826,10 @@ func (s *Store) row(p string) (fileRow, bool, error) {
 }
 
 // readUpperRange reads one window of a path the upper layer holds, clamped to
-// the stored size. See TheoryOfReadPath and TheoryOfPreparedStatements.
+// the stored size. A metadata-only row — the size sentinel saying the content
+// still lives in the base — reports found false, so the caller serves the
+// window from the base. See TheoryOfBaseCapture and
+// TheoryOfPreparedStatements.
 func (s *Store) readUpperRange(p string, off int64, size int) (chunk []byte, kind Kind, found bool, err error) {
 	if s.upperAbsent(p) {
 		return nil, 0, false, nil
@@ -846,6 +850,11 @@ func (s *Store) readUpperRange(p string, off int64, size int) (chunk []byte, kin
 	if Kind(k) != KindRegular {
 		return nil, Kind(k), true, nil
 	}
+	if stored < 0 {
+		// The row records metadata only: its content still lives in the base.
+		// See TheoryOfBaseCapture.
+		return nil, 0, false, nil
+	}
 	end := min(off+int64(size), stored)
 	if off >= end {
 		return []byte{}, Kind(k), true, nil
@@ -858,7 +867,9 @@ func (s *Store) readUpperRange(p string, off int64, size int) (chunk []byte, kin
 }
 
 // statRow reads one path's metadata for a stat, from the prepared stat
-// statement, so a stat pays no SQL parse. See TheoryOfPreparedStatements.
+// statement, so a stat pays no SQL parse. A metadata-only row reports the
+// base's own length, which costs one Lstat and never the file's content. See
+// TheoryOfBaseCapture and TheoryOfPreparedStatements.
 func (s *Store) statRow(p string) (a Attr, found bool, err error) {
 	if s.upperAbsent(p) {
 		return Attr{}, false, nil
@@ -884,7 +895,13 @@ func (s *Store) statRow(p string) (a Attr, found bool, err error) {
 	}
 	switch a.Kind {
 	case KindRegular:
-		a.Size = size
+		if size >= 0 {
+			a.Size = size
+		} else if info, statErr := s.baseRoot.Lstat(relPath(p)); statErr == nil {
+			// The row records metadata only, so the base holds the length.
+			// See TheoryOfBaseCapture.
+			a.Size = info.Size()
+		}
 	case KindSymlink:
 		a.Size = targetSize.Int64
 	}

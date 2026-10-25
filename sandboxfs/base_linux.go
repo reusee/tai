@@ -223,15 +223,24 @@ func baseOpenFile(fd int, rel string) (f *os.File, ok bool, err error) {
 // descriptor: the same kind check and the same single open the window read
 // pays, so the store's read API costs no component-by-component walk either,
 // and a directory or a link reports the error the API answers instead of being
-// opened. ok reports whether the fast path handled the read; a false result
-// sends the caller back to the os.Root walk unchanged.
-// See TheoryOfBaseFdAccess.
+// opened. The read is bounded by the store's own limit, because the whole-file
+// callers — the rename and the hard link among them — turn the bytes into a
+// stored row: a file above maxFileSize reports EFBIG rather than an allocation
+// the store could never hold. ok reports whether the fast path handled the
+// read; a false result sends the caller back to the os.Root walk unchanged.
+// See TheoryOfBaseFdAccess and TheoryOfBaseCapture.
 func baseReadFile(fd int, rel string) (data []byte, ok bool, err error) {
 	f, ok, err := baseOpenFile(fd, rel)
 	if !ok || err != nil {
 		return nil, ok, err
 	}
 	defer f.Close()
-	data, err = io.ReadAll(f)
-	return data, true, err
+	data, err = io.ReadAll(io.LimitReader(f, maxFileSize+1))
+	if err != nil {
+		return nil, true, err
+	}
+	if int64(len(data)) > maxFileSize {
+		return nil, true, syscall.EFBIG
+	}
+	return data, true, nil
 }
