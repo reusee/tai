@@ -253,8 +253,6 @@ const (
 // See TheoryOfCompletePOSIX.
 const fuseOpFsyncdir = 30
 
-// FUSE INIT capability bits, from include/uapi/linux/fuse.h. The server echoes
-// only the bits the kernel offers. See TheoryOfInitNegotiation.
 const (
 	fuseInitAsyncRead       = 1 << 0  // several reads in flight
 	fuseInitAtomicOTrunc    = 1 << 3  // OPEN honours O_TRUNC
@@ -285,6 +283,16 @@ const (
 
 	// fuseMaxPages is the page count covering fuseMaxWriteMax.
 	fuseMaxPages = fuseMaxWriteMax / fusePageSize
+
+	// fuseMaxBackground and fuseCongestionThreshold size the kernel's
+	// background request queue. Every readahead read is a background request,
+	// so the negotiated window reaches the server only while the queue holds
+	// the readahead the kernel issues for a streamed file. The depth sits far
+	// above the server's own concurrency on purpose: the server drains one
+	// request at a time, and the queue exists to keep that one goroutine
+	// supplied, never to parallelize it. See TheoryOfInitNegotiation.
+	fuseMaxBackground       = 256
+	fuseCongestionThreshold = 192
 
 	// fuseInHeaderSize and fuseOutHeaderSize are the fixed wire sizes of the
 	// request and response headers, read directly so the hot path pays no
@@ -919,13 +927,15 @@ func splitName(b []byte) (name, rest []byte, ok bool) {
 // entry, and the parent is already clean and absolute. "." and ".." resolve to
 // the parent itself and its own parent, the values path.Join gives, so a listing
 // and a later LOOKUP of the same name reach one node id and the kernel sees one
-// number for the entry's d_ino and the path's st_ino. See TheoryOfFuseMount.
+// number for the entry's d_ino and the path's st_ino. The ".." case reads the
+// parent's prefix rather than building the same string again. See
+// TheoryOfFuseMount.
 func childPath(parent, name string) string {
 	switch name {
 	case ".":
 		return parent
 	case "..":
-		return path.Dir(parent)
+		return parentOf(parent)
 	}
 	if parent == "/" {
 		return "/" + name
@@ -1045,10 +1055,13 @@ func (s *fuseServer) entryOut(id uint64, a Attr) fuseEntryOut {
 // handleInit answers the kernel's INIT with the capability set the server
 // supports and the request ceiling those capabilities buy: BIG_WRITES lifts
 // the one-page write limit, and MAX_PAGES raises the announced window to
-// fuseMaxWriteMax. Only bits the kernel offers are echoed, so an older kernel
-// keeps the conservative window. The handshake also fixes the protocol
+// fuseMaxWriteMax. Only bits the kernel offers are echoed, so an older
+// kernel keeps the conservative window. The handshake also fixes the protocol
 // version: a newer kernel is told to fall back to fuseProtocolMajor, and an
-// older one fails with EPROTO. See TheoryOfInitNegotiation.
+// older one fails with EPROTO. The announced queue depth keeps the readahead
+// the echoed window promises: every readahead read is a background request,
+// and a shallow queue would throttle them before the server is ever busy.
+// See TheoryOfInitNegotiation.
 func (s *fuseServer) handleInit(body []byte) ([]byte, error) {
 	var in fuseInitIn
 	decodeStruct(&in, body)
@@ -1070,8 +1083,8 @@ func (s *fuseServer) handleInit(body []byte) ([]byte, error) {
 		Minor:               minor,
 		MaxReadahead:        in.MaxReadahead,
 		Flags:               flags,
-		MaxBackground:       12,
-		CongestionThreshold: 9,
+		MaxBackground:       fuseMaxBackground,
+		CongestionThreshold: fuseCongestionThreshold,
 		MaxWrite:            fuseMaxWrite,
 		TimeGran:            1,
 	}
@@ -1106,7 +1119,10 @@ func (s *fuseServer) handleLookup(parent uint64, body []byte) ([]byte, error) {
 		}
 		return nil, syscall.EINVAL
 	}
-	p := path.Join(parentPath, name)
+	// childPath builds the entry's path without the cleaning path.Join
+	// performs, and it is the same join a listing uses, so a LOOKUP and a
+	// listing reach one node id for one name. See TheoryOfFuseMount.
+	p := childPath(parentPath, name)
 	a, err := s.store.Stat(p)
 	if err != nil {
 		return nil, err
@@ -1479,17 +1495,18 @@ func (s *fuseServer) handleOpendir(nodeid uint64) ([]byte, error) {
 // listEntries returns the directory's entries with "." and "..": the listing a
 // READDIR reply carries. The store merges the two layers, and the parent comes
 // from the store so a sandbox path's ".." reports the sandbox's own attributes.
-// See TheoryOfReadPath.
+// The directory's own attribute arrives from readDir, which reads it for the
+// kind check anyway, so one directory costs one stat of itself, one of its
+// parent, and the base's own walk. The parent's name is a prefix of the
+// directory's path, so naming it allocates nothing. See TheoryOfReadPath.
 func (s *fuseServer) listEntries(p string) ([]DirEntry, error) {
-	entries, err := s.store.ReadDir(p)
+	self, entries, err := s.store.readDir(p)
 	if err != nil {
 		return nil, err
 	}
 	all := make([]DirEntry, 0, len(entries)+2)
-	if self, err := s.store.Stat(p); err == nil {
-		all = append(all, DirEntry{Name: ".", Attr: self})
-	}
-	if parent, err := s.store.Stat(path.Dir(p)); err == nil {
+	all = append(all, DirEntry{Name: ".", Attr: self})
+	if parent, err := s.store.Stat(parentOf(p)); err == nil {
 		all = append(all, DirEntry{Name: "..", Attr: parent})
 	}
 	return append(all, entries...), nil

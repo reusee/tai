@@ -22,9 +22,14 @@ func newInitTestServer(t *testing.T) *fuseServer {
 
 // TestInitNegotiatesFastPath checks the INIT reply: the kernel's offered
 // capabilities are echoed, MAX_PAGES raises the request window to
-// fuseMaxWriteMax, and a kernel that offers no MAX_PAGES keeps the conservative
-// window. See TheoryOfInitNegotiation.
+// fuseMaxWriteMax, a kernel that offers no MAX_PAGES keeps the conservative
+// window, and the announced queue depth and readahead window carry the
+// values the read path depends on. A shallow queue throttles the kernel's
+// background reads, so the readahead window would promise more than the
+// server ever receives; nothing else fails when that regresses.
+// See TheoryOfInitNegotiation.
 func TestInitNegotiatesFastPath(t *testing.T) {
+	const offeredReadahead = 1 << 17
 	for _, tc := range []struct {
 		name     string
 		flags    uint32
@@ -39,7 +44,7 @@ func TestInitNegotiatesFastPath(t *testing.T) {
 			reply, err := s.handleInit(encodeStruct(&fuseInitIn{
 				Major:        7,
 				Minor:        fuseProtocolMinor,
-				MaxReadahead: 1 << 17,
+				MaxReadahead: offeredReadahead,
 				Flags:        tc.flags,
 			}))
 			if err != nil {
@@ -58,6 +63,15 @@ func TestInitNegotiatesFastPath(t *testing.T) {
 			}
 			if out.Minor != fuseProtocolMinor {
 				t.Fatalf("minor = %d, want %d", out.Minor, fuseProtocolMinor)
+			}
+			if out.MaxReadahead != offeredReadahead {
+				t.Fatalf("max_readahead = %d, want the offered %d", out.MaxReadahead, offeredReadahead)
+			}
+			if out.MaxBackground != fuseMaxBackground {
+				t.Fatalf("max_background = %d, want %d", out.MaxBackground, fuseMaxBackground)
+			}
+			if out.CongestionThreshold != fuseCongestionThreshold {
+				t.Fatalf("congestion_threshold = %d, want %d", out.CongestionThreshold, fuseCongestionThreshold)
 			}
 		})
 	}

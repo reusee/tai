@@ -86,6 +86,22 @@ The read path is the hot path of a coding task: tooling stats, lists, and
 reads thousands of paths while a session writes a few dozen. Every
 optimization here leaves the write path untouched.
 
+A listing of a session that has written nothing costs no merge. The base is the
+only layer that holds an entry, so the listing is the base's own entries,
+sorted: no map, no name slice, and no second pass to overlay rows that cannot
+exist. A store that holds a row takes the merged path, so a listing and a stat
+still agree on one path. The base walk itself has one implementation, shared by
+both listings, so they can never disagree on which entries the base holds. See
+TheoryOfUpperAbsentCache.
+
+A listing carries "." and ".." from the store, and the directory's own
+attribute is not read twice to supply them: the kind check a listing already
+pays produces the attribute the "." entry reports, the parent's name is a prefix
+of the directory's own, and the parent's attributes cost one stat. A tree walk
+therefore pays per directory one stat of the directory, one of its parent, and
+the base's own openat, getdents, and per-entry stat — never a second stat of a
+directory the same request already stat'ed.
+
 A metadata lookup never loads content. Stat needs the kind, mode, mtime,
 and size; the row's metadata is the whole answer, and the content lives in the
 chunk table. The size therefore comes from the row's stored size column, so a
@@ -692,12 +708,37 @@ func Canonical(p string) string {
 	return path.Clean(p)
 }
 
+// relPath returns the base-relative form of an arbitrary sandbox path. The
+// hot paths clean their input once at entry and derive the relative form with
+// canonicalRel, so no request cleans the same path twice.
+// See TheoryOfBaseFdAccess.
 func relPath(p string) string {
-	r := strings.TrimPrefix(Canonical(p), "/")
+	return canonicalRel(Canonical(p))
+}
+
+// canonicalRel returns the base-relative form of a path that is already
+// canonical: a stat or a read cleans its input once at entry, and cleaning it
+// again for the base access would repeat the traversal on every request.
+func canonicalRel(p string) string {
+	r := strings.TrimPrefix(p, "/")
 	if r == "" {
 		return "."
 	}
 	return r
+}
+
+// parentOf returns the parent of a canonical absolute path. The parent's
+// bytes are a prefix of the path's own, so naming it costs no allocation:
+// a canonical path has no trailing slash except the root's, and the last
+// slash is the component separator. path.Dir would build the same string
+// from a fresh buffer on every listing and every ".." resolution.
+// See TheoryOfFuseMount.
+func parentOf(p string) string {
+	i := strings.LastIndexByte(p, '/')
+	if i <= 0 {
+		return "/"
+	}
+	return p[:i]
 }
 
 func contentHash(b []byte) string {

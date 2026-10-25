@@ -28,9 +28,9 @@ type MountOptions struct {
 	// Mountpoint is the directory the filesystem mounts at. Created when
 	// absent. The path is a host path, not a sandbox path.
 	Mountpoint string
-	// Passthrough lists host directories that bypass the store. The
-	// caller combines DefaultPassthrough with the Go caches and config
-	// directory when the design's defaults are wanted.
+	// Passthrough lists host directories that bypass the store.
+	// DefaultPassthrough carries the design's own set; a caller adds the
+	// directories its environment alone knows. See TheoryOfPassthrough.
 	Passthrough []string
 	// WritePolicy confines the store's mutations; a refused path returns
 	// an error wrapping os.ErrPermission. Nil admits every write.
@@ -44,10 +44,54 @@ type MountOptions struct {
 }
 
 // DefaultPassthrough returns the passthrough directories the design names
-// as valueless for review: the kernel filesystems and /tmp.
-// See TheoryOfPassthrough.
+// as valueless for review: the kernel filesystems, /tmp, the Go build and
+// module caches, and the user config directory. The caches are the largest
+// read volume of a Go task, and none of these trees holds content a review
+// can use, so leaving them behind the store charges the request path for
+// traffic no review can use. See TheoryOfPassthrough.
 func DefaultPassthrough() []string {
-	return []string{"/dev", "/proc", "/sys", "/tmp"}
+	paths := []string{"/dev", "/proc", "/sys", "/tmp"}
+	paths = append(paths, goCacheDirs()...)
+	if dir, err := os.UserConfigDir(); err == nil && filepath.IsAbs(dir) {
+		paths = append(paths, filepath.Clean(dir))
+	}
+	return paths
+}
+
+// goCacheDirs names the Go build and module caches of the current
+// environment. Each variable is resolved on its own, so an environment that
+// exports one keeps the other's standard location. A path the environment
+// does not name falls back to the layout the go command uses: the build cache
+// under the user cache directory and the module cache under the home
+// directory's GOPATH. A relative path — the go command's "off" for GOCACHE —
+// is skipped, and a path that does not exist is skipped by the mount.
+// See TheoryOfPassthrough.
+func goCacheDirs() []string {
+	var out []string
+	add := func(p string) {
+		if p == "" || !filepath.IsAbs(p) {
+			return
+		}
+		out = append(out, filepath.Clean(p))
+	}
+	gopaths := filepath.SplitList(os.Getenv("GOPATH"))
+	if len(gopaths) == 0 {
+		if dir, err := os.UserHomeDir(); err == nil {
+			gopaths = []string{filepath.Join(dir, "go")}
+		}
+	}
+	cache := os.Getenv("GOCACHE")
+	if cache == "" {
+		if dir, err := os.UserCacheDir(); err == nil {
+			cache = filepath.Join(dir, "go-build")
+		}
+	}
+	add(cache)
+	add(os.Getenv("GOMODCACHE"))
+	for _, gp := range gopaths {
+		add(filepath.Join(gp, "pkg"))
+	}
+	return out
 }
 
 // recursivePassthrough lists the host trees whose submounts must come with

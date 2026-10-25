@@ -7,7 +7,7 @@ import (
 	"io"
 	"os"
 	"path"
-	"sort"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -29,7 +29,7 @@ func (s *Store) Stat(p string) (Attr, error) {
 	if found {
 		return a, nil
 	}
-	rel := relPath(p)
+	rel := canonicalRel(p)
 	if ba, ok, statErr := baseStatAt(s.baseFd, rel); ok {
 		if statErr != nil {
 			return Attr{}, statErr
@@ -99,7 +99,7 @@ func (s *Store) ReadFile(p string) ([]byte, error) {
 		s.auditRead(p)
 		return content, nil
 	}
-	rel := relPath(p)
+	rel := canonicalRel(p)
 	if b, fast, readErr := baseReadFile(s.baseFd, rel); fast {
 		if readErr != nil {
 			return nil, readErr
@@ -210,7 +210,7 @@ func (s *Store) ReadRange(p string, off int64, size int) ([]byte, error) {
 		s.auditRead(p)
 		return chunk, nil
 	}
-	rel := relPath(p)
+	rel := canonicalRel(p)
 	if b, ok, readErr := baseReadAt(s.baseFd, rel, off, size); ok {
 		if readErr != nil {
 			return nil, readErr
@@ -242,86 +242,107 @@ func (s *Store) ReadRange(p string, off int64, size int) ([]byte, error) {
 	return buf[:n], nil
 }
 
-func (s *Store) ReadDir(p string) ([]DirEntry, error) {
+// readDir returns the directory's own attribute beside its entries: a listing
+// carries "." and "..", both of which come from the store, and a separate stat
+// of the directory would repeat the base lookup the kind check already paid.
+// The entries are in name order. See TheoryOfReadPath.
+func (s *Store) readDir(p string) (self Attr, entries []DirEntry, err error) {
 	p = Canonical(p)
-	a, err := s.Stat(p)
+	self, err = s.Stat(p)
 	if err != nil {
-		return nil, err
+		return Attr{}, nil, err
 	}
-	if a.Kind != KindDir {
-		return nil, syscall.ENOTDIR
+	if self.Kind != KindDir {
+		return Attr{}, nil, syscall.ENOTDIR
 	}
-	entries := make(map[string]Attr)
-	if err := s.baseEntries(p, entries); err != nil {
-		return nil, err
+	list, err := s.baseEntries(p)
+	if err != nil {
+		return Attr{}, nil, err
 	}
-	// An empty upper layer holds no row to overlay, and the select would be a
-	// round trip per directory of a walk that never wrote one.
-	// See TheoryOfUpperAbsentCache.
-	if !s.upperEmpty.Load() {
-		if err := s.upperEntries(p, entries); err != nil {
-			return nil, err
-		}
+	// An empty upper layer holds no row to overlay or hide, so the listing is
+	// the base's own and the merge below would cost a map and two slices for
+	// entries no row can change. See TheoryOfUpperAbsentCache.
+	if s.upperEmpty.Load() {
+		slices.SortFunc(list, func(a, b DirEntry) int {
+			return strings.Compare(a.Name, b.Name)
+		})
+		return self, list, nil
 	}
-	names := make([]string, 0, len(entries))
-	for name := range entries {
+	merged := make(map[string]Attr, len(list))
+	for _, e := range list {
+		merged[e.Name] = e.Attr
+	}
+	if err := s.upperEntries(p, merged); err != nil {
+		return Attr{}, nil, err
+	}
+	names := make([]string, 0, len(merged))
+	for name := range merged {
 		names = append(names, name)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	out := make([]DirEntry, 0, len(names))
 	for _, name := range names {
-		out = append(out, DirEntry{Name: name, Attr: entries[name]})
+		out = append(out, DirEntry{Name: name, Attr: merged[name]})
 	}
-	return out, nil
+	return self, out, nil
 }
 
-// baseEntries fills entries with the base layer's listing of p, when the base
-// holds a directory there. The base descriptor answers the whole listing with
-// one openat and one fstatat per entry, so a walk of a large tree pays no
+// ReadDir returns the entries of one sandbox directory in name order. The
+// directory's own attribute, which the listing's kind check already reads, is
+// not part of the answer: readDir returns both to the one caller that needs
+// them together. See TheoryOfReadPath.
+func (s *Store) ReadDir(p string) ([]DirEntry, error) {
+	_, entries, err := s.readDir(p)
+	return entries, err
+}
+
+// baseEntries returns the base layer's listing of one canonical directory, in
+// the order the base reported it. A path the base does not hold as a directory
+// contributes no entry: a missing path, a regular file, and a symbolic link are
+// the upper layer's to answer. The base descriptor answers the whole listing
+// with one openat and one fstatat per entry, so a walk of a large tree pays no
 // component-by-component guard per directory and no path-based stat per entry.
-// A path the base does not hold as a directory contributes nothing: a missing
-// path, a regular file, and a symbolic link are the upper layer's to answer. A
-// store without the descriptor falls back to the os.Root walk unchanged.
-// See TheoryOfBaseFdAccess and TheoryOfReadPath.
-func (s *Store) baseEntries(p string, entries map[string]Attr) error {
-	rel := relPath(p)
+// A store without the descriptor falls back to the os.Root walk unchanged.
+// Two callers share this one walk — the merged listing and the listing of a
+// session that wrote nothing — so the two can never disagree on which entries
+// the base holds. See TheoryOfBaseFdAccess and TheoryOfReadPath.
+func (s *Store) baseEntries(p string) ([]DirEntry, error) {
+	rel := canonicalRel(p)
 	list, fast, err := baseReadDir(s.baseFd, rel)
 	if fast {
 		switch {
 		case err == nil:
-			for _, e := range list {
-				entries[e.Name] = e.Attr
-			}
-			return nil
+			return list, nil
 		case errors.Is(err, syscall.ENOENT),
 			errors.Is(err, syscall.ENOTDIR),
 			errors.Is(err, syscall.ELOOP):
-			return nil
+			return nil, nil
 		default:
-			return err
+			return nil, err
 		}
 	}
 	info, err := s.baseRoot.Lstat(rel)
 	if err != nil || !info.IsDir() {
-		return nil
+		return nil, nil
 	}
 	f, err := s.baseRoot.Open(rel)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	des, err := f.ReadDir(-1)
 	f.Close()
 	if err != nil {
-		return err
+		return nil, err
 	}
+	out := make([]DirEntry, 0, len(des))
 	for _, de := range des {
 		info, err := de.Info()
 		if err != nil {
 			continue
 		}
-		entries[de.Name()] = attrOf(info)
+		out = append(out, DirEntry{Name: de.Name(), Attr: attrOf(info)})
 	}
-	return nil
+	return out, nil
 }
 
 // captureOriginal records the base state of a path the upper layer is about

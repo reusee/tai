@@ -244,6 +244,32 @@ func TestChildPathMatchesPathJoin(t *testing.T) {
 	}
 }
 
+// TestCanonicalRelMatchesRelPath checks that the canonical-form helper the
+// read path uses agrees with the general form on every canonical path, so the
+// one-clean rule never changes which base path a request reads.
+// See TheoryOfBaseFdAccess.
+func TestCanonicalRelMatchesRelPath(t *testing.T) {
+	for _, p := range []string{"/", "/a", "/a/b", "/a/b.c", "/deep/er/tree/leaf.go"} {
+		q := Canonical(p)
+		if got, want := canonicalRel(q), relPath(q); got != want {
+			t.Fatalf("canonicalRel(%q) = %q, want %q", q, got, want)
+		}
+	}
+}
+
+// TestParentOfMatchesPathDir checks that the allocation-free parent of a
+// canonical path agrees with path.Dir on every shape a sandbox path takes:
+// the root, a top-level entry, and a nested path — including the paths
+// childPath resolves for a listing's "..".
+// See TheoryOfFuseMount.
+func TestParentOfMatchesPathDir(t *testing.T) {
+	for _, p := range []string{"/", "/a", "/a/b", "/a/b/c", "/deep/path/to/leaf.go"} {
+		if got, want := parentOf(p), path.Dir(p); got != want {
+			t.Fatalf("parentOf(%q) = %q, want %q", p, got, want)
+		}
+	}
+}
+
 // TestReadRangeServesWrittenWindowAfterCachedAbsence checks the read path: a
 // window read recorded the absence, and the write that follows makes the upper
 // layer answer the same window.
