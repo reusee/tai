@@ -122,10 +122,13 @@ The cache never shadows the session. Every read asks the upper layer
 first — a session that has written nothing skips the question, because the
 layer holds nothing (see TheoryOfUpperAbsentCache) — so a written path serves
 its new content and a whiteout reports the deletion without any invalidation.
-A truncation — the truncating open or setattr's size change — drops every
-reader cached for the path, and a write drops its own handle's reader and
-every other handle's, because the content that was just written is the store
-content from then on. The cached descriptor fixes a base file's view at open,
+A truncation — the truncating open or setattr's size change — marks every
+reader cached for the path stale, and a write drops its own handle's reader
+and marks every other handle's, because the content that was just written is
+the store content from then on. The mark is an atomic flag the reader consumes
+before it serves a window, never a lock the invalidator waits on: the
+invalidator can be another handle's writer, and two writers waiting for each
+other would deadlock. The cached descriptor fixes a base file's view at open,
 the same snapshot the review step compares the host against when it reports a
 conflict.
 

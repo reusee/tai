@@ -89,9 +89,49 @@ func TestFuseReadCachesBaseReaderAcrossWindows(t *testing.T) {
 	if string(third) != "ABCD" {
 		t.Fatalf("window after write = %q", third)
 	}
+	// An invalidation marks the cached reader stale instead of closing it: the
+	// invalidator may be another handle's writer, and a writer that waited for
+	// this handle's lock would deadlock with a writer going the other way.
+	// See TheoryOfFuseConcurrency.
 	s.invalidateHandles("/f.txt")
-	if h.base != nil {
-		t.Fatal("cached base reader survived invalidation")
+	if !h.baseStale.Load() {
+		t.Fatal("the invalidation left no stale mark")
+	}
+	// The mark is consumed by the handle's next base read, which closes the
+	// descriptor that fixed the old view. The host path is deleted and made
+	// again so the new content lives in a fresh inode: overwriting the file
+	// would keep the same inode and the stale descriptor would read the new
+	// bytes, proving nothing.
+	if err := os.WriteFile(filepath.Join(base, "g.txt"), []byte("old!"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	g := &fuseHandle{path: "/g.txt"}
+	s.handles[2] = g
+	if _, err := s.readFrom(g, 0, 4); err != nil {
+		t.Fatal(err)
+	}
+	if g.base == nil {
+		t.Fatal("base reader not cached")
+	}
+	if err := os.Remove(filepath.Join(base, "g.txt")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(base, "g.txt"), []byte("new!"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s.invalidateHandles("/g.txt")
+	if !g.baseStale.Load() {
+		t.Fatal("the invalidation left no stale mark")
+	}
+	fresh, err := s.readFrom(g, 0, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(fresh) != "new!" {
+		t.Fatalf("window after invalidation = %q, want the host's current bytes", fresh)
+	}
+	if g.baseStale.Load() {
+		t.Fatal("the stale mark survived the read that consumed it")
 	}
 	// Non-regular base paths are refused without being opened.
 	if err := os.Symlink("target", filepath.Join(base, "link")); err != nil {

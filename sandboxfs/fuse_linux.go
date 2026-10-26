@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -108,20 +109,31 @@ Request concurrency theory:
   body, and the request's unique id names the reply it answers, so workers
   answer out of order without corruption.
 - Handle-scoped requests — read, write, both listings, and release — share
-  the per-handle state: the read window buffer, the listing window and the
-  entries already delivered, the cached base reader, and the stale mark. One
-  lock serializes them and holds through the reply write, because the reply
-  payload aliases that state: releasing it sooner would let the next request
-  on the handle overwrite bytes the kernel is about to read. Path-scoped
-  requests — lookup, getattr, setattr, open, create, mkdir, unlink, rename,
-  link, symlink, readlink, access, statfs, init — hold no handle state and
-  run concurrently with each other and with a slow handle request.
-- Invalidation is the one path-scoped step that reaches into handles. A
-  mutation closes the cached base reader of every open handle of its path and
-  marks their listings stale, and a handle-scoped request may be using those
-  fields at that moment, so the step takes the handle lock. The order is
-  always the handle lock first and the node table second, the order dispatch
-  takes, so the two never nest the other way.
+  one handle's state: the read window buffer, the listing window and the
+  entries already delivered, the cached base reader, and the stale marks. One
+  lock per handle serializes them and holds through the reply write, because
+  the reply payload aliases that state: releasing it sooner would let the next
+  request on the handle overwrite bytes the kernel is about to read.
+- The lock is per handle, never per server. A server-wide lock makes one
+  file's request every other file's wait, and the long requests are exactly
+  the hot ones: a first write to a base file hashes the file's whole prefix
+  and materialises it into chunks before it stores a byte of the delta, and
+  behind that one request every read of every unrelated source file would
+  queue. A large project issues thousands of reads per write, which is why it
+  meets the stall and a directory of a few files seldom does. Per handle, the
+  same write costs the readers of one file.
+- Path-scoped requests — lookup, getattr, setattr, open, create, mkdir,
+  unlink, rename, link, symlink, readlink, access, statfs, init, mknod —
+  hold no handle state and run concurrently with each other and with a slow
+  handle request.
+- Invalidation is the one step that reaches into handles it does not hold. A
+  mutation marks an open listing stale under that directory handle's own
+  lock, taken one handle at a time with the node table released first, so the
+  two locks never nest. A cached base reader is marked stale through an
+  atomic flag instead, and the reader consumes the flag under its own lock
+  before it serves a window: the writer that invalidates must never wait for
+  another handle's lock, because two writers to one path would then each wait
+  for the other.
 - The store is safe for concurrent use: sqlite's handle is, the statement set
   is, the audit buffer and the absence cache and the node table carry their
   own locks. Paths stay addressable, so two workers naming one path agree on
@@ -644,13 +656,12 @@ type fuseDirent struct {
 	Type    uint32
 }
 
-// fuseHandle is one open file or directory. A file's content lives only
-// in the store: a write splices its delta there, so the handle holds no
-// copy of the file and a large open file costs no memory. A read handle
-// caches the base-layer file it opened, so streaming one base file costs
-// one open and one type check per handle instead of one of each per window.
-// See TheoryOfWriteSplice and TheoryOfReadPath.
 type fuseHandle struct {
+	// mu serializes this handle's requests through their reply write. The lock
+	// is per handle, never per server: a slow request on one file must not
+	// stall a request on another. See TheoryOfFuseConcurrency.
+	mu sync.Mutex
+
 	path  string
 	isDir bool
 
@@ -696,6 +707,14 @@ type fuseHandle struct {
 	// first read the upper layer does not answer, closed on release or
 	// invalidation. See TheoryOfReadPath.
 	base *os.File
+
+	// baseStale marks base stale after a write or a truncation of the path.
+	// The mark is atomic because the invalidator may be another handle's
+	// writer or a path-scoped request, and it must never wait for this
+	// handle's lock: two writers to one path would deadlock if each waited for
+	// the other. Only the request holding mu consumes the mark, before it
+	// serves a window. See TheoryOfFuseConcurrency and TheoryOfReadPath.
+	baseStale atomic.Bool
 }
 
 // closeDir releases the handle's listing cursor, if any.
@@ -707,9 +726,14 @@ func (h *fuseHandle) closeDir() {
 	}
 }
 
-// closeBase releases the handle's cached base-layer reader, if any. The
-// handle's requests are serialized through their reply write, so no read is
-// in flight while it runs. See TheoryOfReadPath and TheoryOfFuseConcurrency.
+// closeBase releases the handle's cached base-layer reader, if any. It leaves
+// the stale mark alone: the mark belongs to whoever set it, and a reader that
+// cleared it here would wipe a mark a concurrent writer set in the gap between
+// its Swap and this call, leaving the handle on a descriptor that fixes a view
+// the store has replaced. Only the reader consumes the mark, with Swap, and
+// only release drops the handle that carried it. The handle's requests are
+// serialized through their reply write, so no read is in flight while it runs.
+// See TheoryOfReadPath and TheoryOfFuseConcurrency.
 func (h *fuseHandle) closeBase() {
 	if h.base != nil {
 		_ = h.base.Close()
@@ -732,17 +756,19 @@ type fuseServer struct {
 	// the other workers keep answering. See TheoryOfFuseConcurrency.
 	beforeDispatch func(opcode uint32)
 
+	// afterLock runs once a handle-scoped request holds its own handle's lock,
+	// before the handler touches that handle's state. It is a field so a test
+	// can hold one file's request open and prove that another file's request
+	// still answers; a server-wide lock would make the second wait for the
+	// first. See TheoryOfFuseConcurrency.
+	afterLock func(opcode uint32, nodeid uint64)
+
 	mu      sync.Mutex
 	nodes   map[uint64]string
 	byPath  map[string]uint64
 	handles map[uint64]*fuseHandle
 	nextID  uint64
 	nextFh  uint64
-
-	// handleMu serializes the handle-scoped requests through their reply
-	// write: they share the per-handle state, and their reply payload aliases
-	// it. Path-scoped requests never take it. See TheoryOfFuseConcurrency.
-	handleMu sync.Mutex
 
 	// timings aggregates the measured cost of every answered request, so a
 	// session can report which operation its workload spends its time in.
@@ -876,16 +902,25 @@ func (s *fuseServer) dispatch(buf []byte) {
 		}
 		end = int(h.Len)
 	}
-	// Handle-scoped requests share the per-handle state and their reply
-	// payload aliases it, so one lock serializes them through the reply
-	// write. Path-scoped requests hold no handle state and run concurrently,
-	// so a long operation never becomes the process's stall.
-	// See TheoryOfFuseConcurrency.
-	if isHandleScoped(h.Opcode) {
-		s.handleMu.Lock()
-		defer s.handleMu.Unlock()
-	}
 	body := buf[fuseInHeaderSize:end]
+	// Every handle-scoped request names its handle in the first field of its
+	// body — READ and READDIR, WRITE, and both releases put the handle number
+	// at offset zero — so the dispatch takes that one handle's lock and holds
+	// it through the reply write, whose payload aliases the handle's state.
+	// The lock is per handle: a server-wide one would make one file's slow
+	// request every other file's wait. See TheoryOfFuseConcurrency.
+	if isHandleScoped(h.Opcode) && len(body) >= 8 {
+		s.mu.Lock()
+		held := s.handles[binary.LittleEndian.Uint64(body[0:8])]
+		s.mu.Unlock()
+		if held != nil {
+			held.mu.Lock()
+			defer held.mu.Unlock()
+			if s.afterLock != nil {
+				s.afterLock(h.Opcode, h.Nodeid)
+			}
+		}
+	}
 	var respBody []byte
 	var err error
 	switch h.Opcode {
@@ -1364,33 +1399,37 @@ func (s *fuseServer) handleSetattr(nodeid uint64, body []byte) ([]byte, error) {
 	}), nil
 }
 
-// invalidateHandles drops the cached base reader of every open handle of p, so
-// a read that follows a truncation serves the store's new content instead of a
-// descriptor that fixes the old view. The store is the only copy of the
-// content, so no other state needs dropping. It takes the handle lock: a
-// handle-scoped request may be using a reader at this moment, and those
-// requests hold the same lock, so the two never interleave.
-// See TheoryOfReadPath and TheoryOfFuseConcurrency.
+// invalidateHandles marks every open handle of p stale, so a read that follows
+// a truncation serves the store's new content instead of a descriptor that
+// fixes the old view. The store is the only copy of the content, so no other
+// state needs dropping. A self of 0 names no handle, so every handle of the
+// path is marked. See TheoryOfReadPath and TheoryOfFuseConcurrency.
 func (s *fuseServer) invalidateHandles(p string) {
-	s.handleMu.Lock()
-	defer s.handleMu.Unlock()
 	s.invalidateOtherHandles(p, 0)
 }
 
-// invalidateOtherHandles drops the cached base reader of every open handle of p
-// except the writing one, so their next read serves the store's now-current
-// content. Handles hold no buffer, so a write through one handle cannot be
-// overwritten by another handle's stale bytes; only the base view must go. A
-// self of 0 names no handle, so the truncation path reuses this loop through
-// invalidateHandles. See TheoryOfWriteSplice and TheoryOfReadPath.
+// invalidateOtherHandles marks the cached base reader of every open handle of p
+// except the writing one stale, so their next read serves the store's
+// now-current content. Handles hold no buffer, so a write through one handle
+// cannot be overwritten by another handle's stale bytes; only the base view
+// must go. The mark is an atomic flag, never a wait on the other handle's
+// lock: this call runs under the writer's own lock, and a writer that blocked
+// on another handle would deadlock with the second writer blocking on the
+// first. The node table's lock is released before the flags are set, so no
+// lock is held across the mark. See TheoryOfWriteSplice and
+// TheoryOfFuseConcurrency.
 func (s *fuseServer) invalidateOtherHandles(p string, self uint64) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	held := make([]*fuseHandle, 0, 2)
 	for fh, h := range s.handles {
 		if fh == self || h.path != p {
 			continue
 		}
-		h.closeBase()
+		held = append(held, h)
+	}
+	s.mu.Unlock()
+	for _, h := range held {
+		h.baseStale.Store(true)
 	}
 }
 
@@ -1401,21 +1440,25 @@ func (s *fuseServer) invalidateOtherHandles(p string, self uint64) {
 // directory, and a walk that a create or a delete interrupted would lose every
 // entry past the mutation. The kernel cannot see a change this mount makes on
 // its own, and FOPEN_CACHE_DIR keeps the listing it read, so the stale mark is
-// the server's own notice. It takes the handle lock before the node table's:
-// a listing request may be using the handle at this moment, and the
-// handle-scoped requests hold the handle lock, so the two never interleave —
-// and the order is the one dispatch takes, so the two locks never nest the
-// other way. See TheoryOfOpenCaching, TheoryOfReadPath,
-// TheoryOfDirectoryStream and TheoryOfFuseConcurrency.
+// the server's own notice. The matching handles are collected under the node
+// table's lock and marked under their own, one at a time: a listing request may
+// be using its handle at this moment, and holding the node table across that
+// wait would nest the two locks in the order a listing takes them the other way
+// round. See TheoryOfOpenCaching, TheoryOfReadPath, TheoryOfDirectoryStream
+// and TheoryOfFuseConcurrency.
 func (s *fuseServer) invalidateDirListings(p string) {
-	s.handleMu.Lock()
-	defer s.handleMu.Unlock()
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	held := make([]*fuseHandle, 0, 2)
 	for _, h := range s.handles {
 		if h.isDir && h.path == p {
-			h.dirStale = true
+			held = append(held, h)
 		}
+	}
+	s.mu.Unlock()
+	for _, h := range held {
+		h.mu.Lock()
+		h.dirStale = true
+		h.mu.Unlock()
 	}
 }
 
@@ -1562,6 +1605,14 @@ func (s *fuseServer) handleRead(body []byte) ([]byte, error) {
 }
 
 func (s *fuseServer) baseHandleFile(h *fuseHandle) (*os.File, error) {
+	// A write or a truncation of the path, possibly through another handle,
+	// marked the cached reader stale. The mark is consumed here, under this
+	// handle's own lock, so a descriptor that fixes a view the store has since
+	// replaced never answers a window. See TheoryOfFuseConcurrency and
+	// TheoryOfReadPath.
+	if h.baseStale.Swap(false) {
+		h.closeBase()
+	}
 	if h.base != nil {
 		return h.base, nil
 	}
@@ -1570,9 +1621,9 @@ func (s *fuseServer) baseHandleFile(h *fuseHandle) (*os.File, error) {
 	if !fast {
 		// The platform offers no base descriptor, so the kind check and the
 		// open run through the portable walk. The check must precede the open:
-		// an open of a pipe blocks the server's one goroutine for every later
-		// request, and an open of a link would serve its target's bytes.
-		// See TheoryOfBaseFdAccess.
+		// an open of a pipe blocks one worker of the request pool until a peer
+		// appears, and four such waits stop the whole mount, while an open of
+		// a link would serve its target's bytes. See TheoryOfBaseFdAccess.
 		a, statErr := s.store.Stat(h.path)
 		if statErr != nil {
 			return nil, statErr
