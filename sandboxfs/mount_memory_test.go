@@ -21,9 +21,9 @@ func TestValidateMountOptionsMemoryModeDoesNotRequireDBPath(t *testing.T) {
 }
 
 // TestValidateMountOptionsSQLiteModeRequiresDBPath protects the sqlite
-// default: a mount that selects the sqlite upper layer must name its
-// database, because the record's path is the caller's declaration of where
-// the session lives. See TheoryOfUpperLayer and TheoryOfSqliteUpper.
+// default: a mount that selects the sqlite dialect must name its record,
+// because the record's path is the caller's declaration of where the session
+// lives. See TheoryOfUpperLayer and TheoryOfSqlUpper.
 func TestValidateMountOptionsSQLiteModeRequiresDBPath(t *testing.T) {
 	err := validateMountOptions(MountOptions{Mountpoint: "/tmp/mnt"})
 	if err == nil || !strings.Contains(err.Error(), "empty database path") {

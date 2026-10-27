@@ -21,7 +21,7 @@ const TheoryOfFuseMount = `
 The sandbox is mounted as a FUSE filesystem, not emulated in-process. FUSE
 is the only mechanism that routes every file operation of every process —
 the toolchain, shell commands, the change-block applier — through one
-userspace handler, so the store's audit and its sqlite upper layer cover
+userspace handler, so the store's audit and its durable upper layer cover
 all I/O without each consumer knowing they exist. A userspace-only
 abstraction would cover only the code paths that opt into it, which
 defeats the design.
@@ -68,9 +68,9 @@ toolchain's dominant pattern and a lock and a path cleaning per entry are
 the costs that pattern repeats for a large tree. FORGET is accepted without a
 reply and ignored: paths stay addressable for the session's life, matching
 the store, which keeps every touched path in the audit trail and the
-sqlite file.
+record file.
 
-Write-back happens on WRITE, not on flush: the store is a sqlite file, so
+Write-back happens on WRITE, not on flush: the store is a record file, so
 an open file's content lives in the store and a kernel WRITE persists the
 new content immediately. A killed process therefore leaves a consistent
 store, and the review step sees every byte the session wrote. The read and

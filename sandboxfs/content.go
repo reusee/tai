@@ -24,7 +24,7 @@ the defect the execution trace and the profile both pointed at.
 The chunk's size is the balance between two measured costs. A partial write
 rewrites the chunk it lands inside, so the traffic a small edit costs is the
 chunk's size, not the edit's. A bulk window pays one b-tree insert per chunk
-it covers in the sqlite layer, so a window of many chunks pays a row count
+it covers in the SQL layer, so a window of many chunks pays a row count
 that grows as the chunk shrinks. Neither extreme wins: a 64 KiB chunk charged
 a 4 KiB edit for 128 KiB of traffic, and a one-page chunk made a 1 MiB bulk
 window pay 256 row inserts. The store's concurrency lives below the mount, and
@@ -41,7 +41,7 @@ in the base (see TheoryOfBaseCapture). A mutation that changes content writes
 the metadata and the chunks in one atomic step, so a reader never sees a size
 and a chunk set that disagree, and reads clamp to the stored size.
 
-Reading a window is one indexed query over the chunks covering it in the sqlite
+Reading a window is one indexed query over the chunks covering it in the SQL
 layer, and one pass over the stored chunks in the memory layer, assembled with
 zeros for absent chunks: neither pays the round-trip count a substr over a blob
 cost, and neither rewrites a whole column on the write side. The first change

@@ -18,22 +18,31 @@ type MountOptions struct {
 	// Base is the read-through base directory. Empty means the host
 	// root: every path a process reads falls through to the host.
 	Base string
-	// DBPath is the sqlite upper-layer database file. The mount opens it
-	// before any pivot and holds one connection for the session's life,
-	// so the file may sit inside the filesystem this mount serves. Its
-	// directory must remain visible at the same path after the pivot: the
-	// working directory is, /tmp is not, because the mount replaces /tmp
-	// with a fresh tmpfs. It is required unless Memory is set. See
-	// TheoryOfFuseMount, TheoryOfPassthrough and TheoryOfUpperLayer.
+	// DBPath is the durable SQL upper layer's record file: a sqlite
+	// database by default, a DuckDB database when DuckDB is set. The mount
+	// opens it before any pivot and holds one connection for the session's
+	// life, so the file may sit inside the filesystem this mount serves.
+	// Its directory must remain visible at the same path after the pivot:
+	// the working directory is, /tmp is not, because the mount replaces
+	// /tmp with a fresh tmpfs. It is required unless Memory is set. See
+	// TheoryOfFuseMount, TheoryOfPassthrough, TheoryOfUpperLayer and
+	// TheoryOfSqlDialects.
 	DBPath string
 	// Memory selects the ephemeral memory upper layer instead of the
-	// sqlite one: the session's mutations live in process memory, the
+	// durable SQL one: the session's mutations live in process memory, the
 	// mount leaves no database file behind, and the goal runner's
 	// per-loop apply is the only path that reaches the host. DBPath is
 	// ignored. The trade-off is that an abandoned run keeps nothing to
 	// review, because the changes it never applied never left the
 	// process. See TheoryOfUpperLayer.
 	Memory bool
+	// DuckDB selects the DuckDB dialect of the durable SQL upper layer
+	// instead of sqlite's. DBPath names the DuckDB record, and the binary
+	// must import a DuckDB driver: none is linked here, so a binary
+	// without one reports the open error and names the dialect. Memory
+	// and DuckDB select different upper layers and cannot be combined.
+	// See TheoryOfSqlDialects.
+	DuckDB bool
 	// Mountpoint is the directory the filesystem mounts at. Created when
 	// absent. The path is a host path, not a sandbox path.
 	Mountpoint string
@@ -133,9 +142,10 @@ func passthroughPaths(caller []string) []string {
 
 // MountedFS is one mounted sandbox filesystem.
 type MountedFS struct {
-	// Store is the upper layer serving the mount: the sqlite record when
-	// the mount opened a database, process memory when it selected the
-	// memory backend. See TheoryOfUpperLayer.
+	// Store is the upper layer serving the mount: the SQL record when the
+	// mount opened a database — sqlite's dialect or DuckDB's — and process
+	// memory when it selected the memory backend. See TheoryOfUpperLayer and
+	// TheoryOfSqlDialects.
 	Store *Store
 	// Mountpoint is the directory the filesystem mounted at, as the host
 	// sees it before a pivot.
@@ -152,13 +162,20 @@ type MountedFS struct {
 }
 
 // validateMountOptions checks the mount's required fields before any kernel
-// call. It exists so a test can exercise the options the two upper layers
-// require without mounting: a real mount binds the kernel filesystems into
-// the mountpoint, and a test that mounted would leave directories its
-// temporary tree cannot remove. See TheoryOfUpperLayer.
+// call. It exists so a test can exercise the options the upper layers require
+// without mounting: a real mount binds the kernel filesystems into the
+// mountpoint, and a test that mounted would leave directories its temporary
+// tree cannot remove. See TheoryOfUpperLayer and TheoryOfSqlDialects.
 func validateMountOptions(opts MountOptions) error {
 	if opts.Mountpoint == "" {
 		return fmt.Errorf("sandboxfs: empty mountpoint")
+	}
+	if opts.Memory && opts.DuckDB {
+		// The memory layer stores no SQL, so it has no dialect to select: a
+		// caller that asks for both named two different upper layers, and
+		// serving either one would hide the mistake.
+		// See TheoryOfSqlDialects.
+		return fmt.Errorf("sandboxfs: Memory and DuckDB select different upper layers")
 	}
 	if !opts.Memory && opts.DBPath == "" {
 		return fmt.Errorf("sandboxfs: empty database path")
@@ -167,9 +184,10 @@ func validateMountOptions(opts MountOptions) error {
 }
 
 // Mount mounts the sandbox filesystem and, when requested, pivots the process
-// root to it. The upper layer behind it is the sqlite record by default and
-// process memory when Memory is set. See TheoryOfFuseMount,
-// TheoryOfPassthrough and TheoryOfUpperLayer.
+// root to it. The upper layer behind it is a SQL record by default — sqlite's
+// dialect, or DuckDB's when DuckDB is set — and process memory when Memory is
+// set. See TheoryOfFuseMount, TheoryOfPassthrough, TheoryOfUpperLayer and
+// TheoryOfSqlDialects.
 func Mount(opts MountOptions) (*MountedFS, error) {
 	if err := validateMountOptions(opts); err != nil {
 		return nil, err
@@ -192,31 +210,14 @@ func Mount(opts MountOptions) (*MountedFS, error) {
 	if err != nil {
 		return nil, err
 	}
-	var store *Store
-	if opts.Memory {
-		// The ephemeral upper layer: the session's mutations live in
-		// process memory, so the mount leaves no database file and the
-		// goal runner's per-loop apply is the only path that reaches the
-		// host. See TheoryOfUpperLayer.
-		store, err = OpenMemoryWithPolicy(viewDir, opts.WritePolicy)
-		if err != nil {
-			detachView()
-			return nil, err
-		}
-	} else {
-		var absDB string
-		absDB, err = filepath.Abs(opts.DBPath)
-		if err != nil {
-			detachView()
-			return nil, err
-		}
-		store, err = OpenWithPolicy(absDB, viewDir, opts.WritePolicy)
-		if err != nil {
-			detachView()
-			return nil, err
-		}
+	store, absDB, err := openMountStore(opts, viewDir)
+	if err != nil {
+		detachView()
+		return nil, err
+	}
+	if absDB != "" {
 		// The store's base is the private view, not the host base the
-		// database was opened with. A database inside the base reaches the
+		// database was opened with. A record inside the base reaches the
 		// sandbox as the path relative to the base, so the two names are
 		// recorded by identity through the view; without this the store
 		// would compare the sandbox path with a host path they do not share
@@ -267,6 +268,32 @@ func Mount(opts MountOptions) (*MountedFS, error) {
 		}
 	}
 	return mfs, nil
+}
+
+// openMountStore opens the upper layer the mount selects: process memory when
+// Memory is set, otherwise the durable SQL layer of the chosen dialect — the
+// DuckDB dialect when DuckDB is set, sqlite's by default — at the record path
+// it returns. The path is empty for the memory layer, which records itself in
+// no file. See TheoryOfUpperLayer and TheoryOfSqlDialects.
+func openMountStore(opts MountOptions, base string) (store *Store, absDB string, err error) {
+	if opts.Memory {
+		// The ephemeral upper layer: the session's mutations live in
+		// process memory, so the mount leaves no database file and the
+		// goal runner's per-loop apply is the only path that reaches the
+		// host. See TheoryOfUpperLayer.
+		store, err = OpenMemoryWithPolicy(base, opts.WritePolicy)
+		return store, "", err
+	}
+	absDB, err = filepath.Abs(opts.DBPath)
+	if err != nil {
+		return nil, "", err
+	}
+	if opts.DuckDB {
+		store, err = OpenDuckDBWithPolicy(absDB, base, opts.WritePolicy)
+		return store, absDB, err
+	}
+	store, err = OpenWithPolicy(absDB, base, opts.WritePolicy)
+	return store, absDB, err
 }
 
 // Timings returns the mount's operation-timing aggregate, or nil when the

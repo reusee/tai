@@ -8,8 +8,10 @@ union logic — capture of the base state, kind checks, the size sentinel,
 whiteouts, conflict detection, apply — is written once against it. A session's
 semantics therefore do not depend on where its mutations live.
 
-The sqlite layer is durable: one database file records the session, outlives
-the process, and the review command browses and applies it later. The memory
+The SQL layer is durable: one database file records the session, outlives the
+process, and the review command browses and applies it later. Its dialect
+decides the engine that holds the file — sqlite by default, DuckDB when the
+binary that selects it links a driver (see TheoryOfSqlDialects). The memory
 layer is ephemeral: the same rows and chunks live in maps, the session leaves
 no file behind, and nothing survives the process. A session that needs no
 durable record — a run whose changes reach the host as it proceeds, a test, a
@@ -24,14 +26,14 @@ reused request buffer, and the layer must own the bytes it answers with.
 The contract speaks rows and content windows, never SQL. A row is metadata
 alone. The composite operations — write one row, write one row with its whole
 content, create with content, splice, truncate, drop — are atomic inside the
-layer: the sqlite implementation reaches atomicity through a transaction on
-its one connection, the memory implementation through its mutex. Atomicity is
-the layer's own business because only the layer knows where a row and its
-chunks both live.
+layer: the SQL implementation reaches atomicity through a transaction on its
+one connection, the memory implementation through its mutex. Atomicity is the
+layer's own business because only the layer knows where a row and its chunks
+both live.
 
-The negative-lookup cache and the prepared statement set are the sqlite
-layer's own: a map lookup needs no absence cache, and the memory layer
-executes no SQL. A caller of the contract sees neither.
+The negative-lookup cache and the prepared statement set are the SQL layer's
+own: a map lookup needs no absence cache, and the memory layer executes no
+SQL. A caller of the contract sees neither.
 `
 
 // upperStore is the sandbox's mutable layer: the rows and content the session

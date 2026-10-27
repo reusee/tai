@@ -38,7 +38,7 @@ Operation timing theory:
   duration that grew with the queue would name the wrong bottleneck. See
   TheoryOfFuseConcurrency.
 - Recording is always on because a flag would be missing exactly when nobody
-  thought to enable it; the cost is negligible against the sqlite round trip
+  thought to enable it; the cost is negligible against the database round trip
   and the syscall that produced the request. Reporting is gated, because a
   report writes to a stream the session does not otherwise touch.
 - A report is a snapshot: entries are copied under one lock, so a report never

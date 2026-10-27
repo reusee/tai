@@ -36,11 +36,15 @@ cannot emulate the kernel filesystems at all. The mountpoint lives on the
 container's /tmp, so the mount moves with the pivot and leaves no directory
 in the project.
 
-The sqlite file lies at sandboxfs.DefaultDBPath of the working directory:
+The record file lies at sandboxfs.DefaultDBPath of the working directory:
 one hidden file beside the project, browsable and appliable after the
-session by the sandbox command. The store opens it before the pivot and
-holds one connection for the session's life, because a connection opened
-later would resolve its own path through the mount the store answers. The
+session by the sandbox command. CAI_SANDBOX_DUCKDB selects the DuckDB
+dialect of that record instead of sqlite's, and the binary must then link a
+DuckDB driver: none is linked here, so a session that selects it without
+one fails the mount, and the best-effort rule below leaves the mount policy
+as the only layer. The store opens the record before the pivot and holds
+one connection for the session's life, because a connection opened later
+would resolve its own path through the mount the store answers. The
 CAI_SANDBOX_DB override must name a directory still visible at the same
 path after the pivot: the working directory and every passthrough qualify;
 /tmp does not, because the sandbox mounts a fresh tmpfs there and the
@@ -54,6 +58,7 @@ explicit: an abandoned run keeps nothing to review, because the changes it
 never applied never left the process, and the sandbox command has no file
 to read in this mode. The durable record exists to preserve work for later
 review, so a session that chose memory declared it needs no such record.
+The memory layer stores no SQL, so the dialect variable stays unread then.
 See sandboxfs.TheoryOfUpperLayer.
 
 Each goal loop's changes go back to the host when the loop ends: the store
@@ -82,6 +87,12 @@ active store and therefore no per-loop apply.
 // that reaches the host. See TheoryOfSandboxRoot and
 // sandboxfs.TheoryOfUpperLayer.
 const sandboxMemoryEnv = "CAI_SANDBOX_MEMORY"
+
+// sandboxDuckDBEnv selects the DuckDB dialect of the durable SQL layer for the
+// session record. The binary must link a DuckDB driver; without one the mount
+// fails, and the best-effort rule leaves the session on the mount policy alone
+// (see sandboxfs.TheoryOfSqlDialects).
+const sandboxDuckDBEnv = "CAI_SANDBOX_DUCKDB"
 
 // disableSandboxRootEnv skips the sandbox filesystem, leaving the mount
 // policy as the only layer. See TheoryOfSandboxRoot.
@@ -113,8 +124,9 @@ const sandboxDBEnv = "CAI_SANDBOX_DB"
 // to it, then records the store that served the pivot as the process's active
 // store, so the goal runner applies every loop's changes to the host. It runs
 // after the container filesystem hardening, so the passthrough sources are the
-// hardened mounts. CAI_SANDBOX_MEMORY selects the memory upper layer instead
-// of the sqlite one. See TheoryOfSandboxRoot.
+// hardened mounts. CAI_SANDBOX_MEMORY selects the memory upper layer instead of
+// the durable one, and CAI_SANDBOX_DUCKDB selects the DuckDB dialect of the
+// durable record. See TheoryOfSandboxRoot and sandboxfs.TheoryOfSqlDialects.
 func setupSandboxRoot(cwd string) error {
 	if os.Getenv(disableSandboxRootEnv) != "" {
 		return nil
@@ -123,6 +135,10 @@ func setupSandboxRoot(cwd string) error {
 		return nil
 	}
 	memory := os.Getenv(sandboxMemoryEnv) != ""
+	// The memory layer stores no SQL, so it has no dialect to select: the
+	// dialect variable then stays unread instead of forming the combination
+	// the mount refuses. See sandboxfs.TheoryOfSqlDialects.
+	duckdb := !memory && os.Getenv(sandboxDuckDBEnv) != ""
 	var absDB string
 	if !memory {
 		dbPath := os.Getenv(sandboxDBEnv)
@@ -149,6 +165,7 @@ func setupSandboxRoot(cwd string) error {
 		Base:        "/",
 		DBPath:      absDB,
 		Memory:      memory,
+		DuckDB:      duckdb,
 		Mountpoint:  mountpoint,
 		Passthrough: passthrough,
 		WritePolicy: sandboxWritePolicy(WritableDirs()),

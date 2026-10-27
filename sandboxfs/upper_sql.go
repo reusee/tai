@@ -3,25 +3,56 @@ package sandboxfs
 import (
 	"database/sql"
 	"errors"
-	"net/url"
+	"fmt"
 	"os"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	// The sqlite driver is linked here because the default constructor opens
+	// it. A DuckDB driver is the application's own import: this package names
+	// the driver and links none, so an environment that never selects the
+	// DuckDB dialect pays no cgo and no native library.
+	// See TheoryOfSqlDialects.
 	_ "modernc.org/sqlite"
 )
+
+const TheoryOfSqlUpper = `
+The SQL layer is the durable upper layer: one database file holds the rows, the
+content chunks, and the audit trail, so a session's filesystem state is one
+portable file the review command browses and applies later. Its dialect decides
+the engine that holds the file — sqlite by default, DuckDB on request — and
+supplies the driver, the schema, and the two statements whose syntax differs
+(see TheoryOfSqlDialects). Its connection, its prepared statement set, and its
+negative-lookup cache live here, beside the row and content operations they
+serve (see TheoryOfUpperLayer). The layers' shared cost model is
+TheoryOfChunkedContent's.
+
+The connection is opened once, for the process lifetime. The database file may
+sit inside the filesystem the mount serves, and a connection opened later would
+resolve its own path through that filesystem — a deadlock with the server
+answering the open. The schema commit also creates the record's sibling files
+(SQLite's -wal and -shm, DuckDB's .wal) while they are still reachable. See
+TheoryOfFuseMount.
+
+Every write statement the request path runs is prepared at open, so no request
+pays a SQL parse (see TheoryOfPreparedStatements), and a fresh session answers
+every lookup from the base without asking this layer at all (see
+TheoryOfUpperAbsentCache). A dialect's driver must serve prepared statements:
+one that refuses them fails the open, which is the honest report, because the
+layer would otherwise pay a parse per statement silently.
+`
 
 const TheoryOfUpperAbsentCache = `
 The read path is the hot path, and most of its paths never enter the upper
 layer: a dependency the session only reads is answered by the base. An
-uncached negative lookup pays a sqlite round trip for every one of them, and
+uncached negative lookup pays a database round trip for every one of them, and
 that round trip dominates a read request which otherwise costs one base read.
 
 A fresh session starts with an empty table, so the per-path record is not the
 cheapest statement of that fact: one flag says the whole layer holds no row,
-and a lookup that reads it answers from the base without touching sqlite. The
-flag is set once, when the layer opens and finds the files table empty, and
+and a lookup that reads it answers from the base without touching the database.
+The flag is set once, when the layer opens and finds the files table empty, and
 the first metadata write clears it, because the metadata upsert is the only
 statement that ever inserts a row. A directory listing reads the same flag and
 skips its select, which saves a query per directory of a walk that never wrote
@@ -58,26 +89,6 @@ under its own mutex, so a miss already costs nothing a cache could remove.
 See TheoryOfUpperLayer.
 `
 
-const TheoryOfSqliteUpper = `
-The sqlite layer is the durable upper layer: one database file holds the rows,
-the content chunks, and the audit trail, so a session's filesystem state is one
-portable file the review command browses and applies later. Its connection, its
-prepared statement set, and its negative-lookup cache live here, beside the row
-and content operations they serve (see TheoryOfUpperLayer). The layers' shared
-cost model is TheoryOfChunkedContent's.
-
-The connection is opened once, for the process lifetime. The database file may
-sit inside the filesystem the mount serves, and a connection opened later would
-resolve its own path through that filesystem — a deadlock with the server
-answering the open. The schema commit also creates the WAL and shared-memory
-files while they are still reachable. See TheoryOfFuseMount.
-
-Every write statement the request path runs is prepared at open, so no request
-pays a SQL parse (see TheoryOfPreparedStatements), and a fresh session answers
-every lookup from the base without asking this layer at all (see
-TheoryOfUpperAbsentCache).
-`
-
 // queryAllRows runs once per diff and queryAuditRows once per trail read, so
 // both keep their SQL text instead of a prepared form: a statement prepared
 // for a single call pays the parse it would have paid anyway. Likewise
@@ -96,12 +107,14 @@ type selfBackedUpper interface {
 	backingPath() string
 }
 
-// sqliteUpper is the durable upper layer: one sqlite database file records the
-// session's rows, content chunks, and audit trail. See TheoryOfUpperLayer and
-// TheoryOfSqliteUpper.
-type sqliteUpper struct {
-	db     *sql.DB
-	dbPath string
+// sqlUpper is the durable upper layer: one SQL database file records the
+// session's rows, content chunks, and audit trail, and the layer's dialect
+// decides the engine that holds it. See TheoryOfUpperLayer and
+// TheoryOfSqlUpper.
+type sqlUpper struct {
+	db      *sql.DB
+	dbPath  string
+	dialect sqlDialect
 
 	// absent caches the paths the layer is known not to hold. A write of the
 	// path clears its entry. See TheoryOfUpperAbsentCache.
@@ -120,7 +133,7 @@ type sqliteUpper struct {
 	epoch atomic.Uint64
 
 	// empty reports that the layer holds no row at all, so every lookup is
-	// answered by the base without a sqlite round trip.
+	// answered by the base without a database round trip.
 	// See TheoryOfUpperAbsentCache.
 	empty atomic.Bool
 
@@ -130,45 +143,39 @@ type sqliteUpper struct {
 	stmts preparedStatements
 }
 
-var _ upperStore = (*sqliteUpper)(nil)
+var _ upperStore = (*sqlUpper)(nil)
 
-func (u *sqliteUpper) backingPath() string {
+func (u *sqlUpper) backingPath() string {
 	return u.dbPath
 }
 
-// openSQLiteUpper opens the durable upper layer at dbPath, creating the
-// database file when absent. See TheoryOfSqliteUpper.
-func openSQLiteUpper(dbPath string) (*sqliteUpper, error) {
-	dsn := "file:" + url.PathEscape(dbPath) +
-		"?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)" +
-		// synchronous(NORMAL) keeps every commit durable across an application
-		// crash and drops the per-commit fsync a machine crash would need. The
-		// sandbox is a session record, reviewed while the session runs: losing
-		// the last commits of a machine crash costs nothing a review can use,
-		// while an fsync per write and per audit row costs the write path a
-		// disk round trip each time.
-		"&_pragma=synchronous(NORMAL)" +
-		// cache_size(-32000) lifts sqlite's page cache to 32 MiB, so the
-		// layer's own pages and the audit trail's stay resident instead of
-		// being re-read from the database per request.
-		"&_pragma=cache_size(-32000)"
-	db, err := sql.Open("sqlite", dsn)
+// openSQLUpper opens the durable upper layer at dbPath with the given dialect:
+// the dialect names the driver, builds the DSN, creates the schema, and
+// supplies the two statements whose syntax the engines spell differently. See
+// TheoryOfSqlUpper and TheoryOfSqlDialects.
+func openSQLUpper(dialect sqlDialect, dbPath string) (*sqlUpper, error) {
+	db, err := sql.Open(dialect.driver, dialect.dsn(dbPath))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("sandboxfs: open %s record: %w", dialect.name, err)
 	}
-	// One connection for the process lifetime. See TheoryOfSqliteUpper.
+	// One connection for the process lifetime. See TheoryOfSqlUpper.
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
 	db.SetConnMaxLifetime(0)
 	if err := db.Ping(); err != nil {
 		db.Close()
-		return nil, err
+		return nil, fmt.Errorf("sandboxfs: open %s record: %w", dialect.name, err)
 	}
-	if _, err := db.Exec(schema); err != nil {
-		db.Close()
-		return nil, err
+	// The schema runs one statement at a time, so a driver that refuses a
+	// multi-statement Exec is still served, and a dialect's sequence is
+	// created before the table whose insert names it. See TheoryOfSqlDialects.
+	for _, stmt := range dialect.schema {
+		if _, err := db.Exec(stmt); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("sandboxfs: %s schema: %w", dialect.name, err)
+		}
 	}
-	u := &sqliteUpper{db: db, dbPath: dbPath}
+	u := &sqlUpper{db: db, dbPath: dbPath, dialect: dialect}
 	// The statement set is prepared before the layer serves a request, so no
 	// request pays a parse or waits for a preparation.
 	// See TheoryOfPreparedStatements.
@@ -186,11 +193,24 @@ func openSQLiteUpper(dbPath string) (*sqliteUpper, error) {
 	return u, nil
 }
 
+// openSQLiteUpper opens the durable upper layer with the sqlite dialect, the
+// default record. See TheoryOfSqlDialects.
+func openSQLiteUpper(dbPath string) (*sqlUpper, error) {
+	return openSQLUpper(sqliteDialect, dbPath)
+}
+
+// openDuckDBUpper opens the durable upper layer with the DuckDB dialect. The
+// binary must have imported a DuckDB driver; without one the open reports the
+// unknown driver and names the dialect. See TheoryOfSqlDialects.
+func openDuckDBUpper(dbPath string) (*sqlUpper, error) {
+	return openSQLUpper(duckDBDialect, dbPath)
+}
+
 // upperAbsent reports whether the layer is known not to hold p. A missing
 // entry says nothing: the caller must ask the database. An empty layer answers
 // for every path at once, so a fresh session reaches the base without a query.
 // See TheoryOfUpperAbsentCache.
-func (u *sqliteUpper) upperAbsent(p string) bool {
+func (u *sqlUpper) upperAbsent(p string) bool {
 	if u.empty.Load() {
 		return true
 	}
@@ -199,11 +219,11 @@ func (u *sqliteUpper) upperAbsent(p string) bool {
 }
 
 // detectEmpty records whether the layer holds no row, so every lookup of a
-// fresh session costs no sqlite round trip. It runs once, from the open path,
-// before the layer serves a request. A database that already holds rows takes
-// the per-path cache instead, so a resumed session reads exactly as it did
-// before. See TheoryOfUpperAbsentCache.
-func (u *sqliteUpper) detectEmpty() error {
+// fresh session costs no database round trip. It runs once, from the open
+// path, before the layer serves a request. A database that already holds rows
+// takes the per-path cache instead, so a resumed session reads exactly as it
+// did before. See TheoryOfUpperAbsentCache.
+func (u *sqlUpper) detectEmpty() error {
 	var one int
 	err := u.db.QueryRow(`SELECT 1 FROM files LIMIT 1`).Scan(&one)
 	switch {
@@ -217,11 +237,11 @@ func (u *sqliteUpper) detectEmpty() error {
 }
 
 // rememberAbsent records that the layer does not hold p, so the next lookup of
-// the path costs no sqlite round trip. A write of the path clears the entry,
+// the path costs no database round trip. A write of the path clears the entry,
 // and a write that committed after epoch was read keeps the entry from being
 // recorded at all: that write's row is what the lookup must serve.
 // See TheoryOfUpperAbsentCache.
-func (u *sqliteUpper) rememberAbsent(p string, epoch uint64) {
+func (u *sqlUpper) rememberAbsent(p string, epoch uint64) {
 	u.absentMu.Lock()
 	defer u.absentMu.Unlock()
 	if u.epoch.Load() != epoch {
@@ -237,7 +257,7 @@ func (u *sqliteUpper) rememberAbsent(p string, epoch uint64) {
 // with the other. The call runs before the transaction commits, so no later
 // lookup can pass the stamp check in the interval between the commit and the
 // invalidation. See TheoryOfUpperAbsentCache.
-func (u *sqliteUpper) markWritten(p string) {
+func (u *sqlUpper) markWritten(p string) {
 	u.absentMu.Lock()
 	defer u.absentMu.Unlock()
 	u.epoch.Add(1)
@@ -251,7 +271,7 @@ func (u *sqliteUpper) markWritten(p string) {
 // store, so a read that assembled content would copy a file the write is about
 // to discard. See TheoryOfChunkedContent, TheoryOfPreparedStatements and
 // TheoryOfUpperAbsentCache.
-func (u *sqliteUpper) row(p string) (fileRow, bool, error) {
+func (u *sqlUpper) row(p string) (fileRow, bool, error) {
 	if u.upperAbsent(p) {
 		return fileRow{}, false, nil
 	}
@@ -275,7 +295,7 @@ func (u *sqliteUpper) row(p string) (fileRow, bool, error) {
 // in the base — reports found false, so the caller serves the window from the
 // base. See TheoryOfBaseCapture, TheoryOfPreparedStatements and
 // TheoryOfUpperAbsentCache.
-func (u *sqliteUpper) window(p string, off int64, size int) ([]byte, Kind, bool, error) {
+func (u *sqlUpper) window(p string, off int64, size int) ([]byte, Kind, bool, error) {
 	if u.upperAbsent(p) {
 		return nil, 0, false, nil
 	}
@@ -318,7 +338,7 @@ func (u *sqliteUpper) window(p string, off int64, size int) ([]byte, Kind, bool,
 // content returns one live regular row's stored content window. The caller
 // holds the row, so the layer needs no second metadata lookup.
 // See TheoryOfChunkedContent.
-func (u *sqliteUpper) content(p string, off int64, size int) ([]byte, error) {
+func (u *sqlUpper) content(p string, off int64, size int) ([]byte, error) {
 	return u.readChunks(u.db, p, off, size)
 }
 
@@ -327,7 +347,7 @@ func (u *sqliteUpper) content(p string, off int64, size int) ([]byte, error) {
 // query. The scan reads the fields a listing entry reports; the recorded
 // originals stay out because only the diff reads them.
 // See TheoryOfDirectoryStream and TheoryOfUpperAbsentCache.
-func (u *sqliteUpper) rowsUnder(dir string) ([]fileRow, error) {
+func (u *sqlUpper) rowsUnder(dir string) ([]fileRow, error) {
 	if u.empty.Load() {
 		return nil, nil
 	}
@@ -362,7 +382,7 @@ func (u *sqliteUpper) rowsUnder(dir string) ([]fileRow, error) {
 // whole set before it reads any content, because the layer holds a single
 // connection: a row set kept open while a content query runs would wait for
 // the connection it holds. See TheoryOfChunkedContent.
-func (u *sqliteUpper) allRows() ([]fileRow, error) {
+func (u *sqlUpper) allRows() ([]fileRow, error) {
 	rows, err := u.db.Query(queryAllRows)
 	if err != nil {
 		return nil, err
@@ -383,7 +403,7 @@ func (u *sqliteUpper) allRows() ([]fileRow, error) {
 // that changes content writes it through replaceContent or splice, while a row
 // that stops being a live regular file drops its chunks here.
 // See TheoryOfChunkedContent.
-func (u *sqliteUpper) putRow(r fileRow) error {
+func (u *sqlUpper) putRow(r fileRow) error {
 	tx, err := u.db.Begin()
 	if err != nil {
 		return err
@@ -395,7 +415,7 @@ func (u *sqliteUpper) putRow(r fileRow) error {
 	return tx.Commit()
 }
 
-func (u *sqliteUpper) putMetaTx(tx *sql.Tx, r fileRow) error {
+func (u *sqlUpper) putMetaTx(tx *sql.Tx, r fileRow) error {
 	// A row exists from this write on, so no lookup may keep the path cached as
 	// absent: the write epoch moves and the entry clears under one lock, and a
 	// lookup whose stamp predates this write records nothing. The call runs
@@ -426,7 +446,7 @@ func (u *sqliteUpper) putMetaTx(tx *sql.Tx, r fileRow) error {
 
 // replaceContent stores one row's metadata and replaces its content in one
 // transaction, so a reader never sees a size and a chunk set that disagree.
-func (u *sqliteUpper) replaceContent(r fileRow, content []byte) error {
+func (u *sqlUpper) replaceContent(r fileRow, content []byte) error {
 	tx, err := u.db.Begin()
 	if err != nil {
 		return err
@@ -450,7 +470,7 @@ func (u *sqliteUpper) replaceContent(r fileRow, content []byte) error {
 // created reports whether this call wrote the row. The guard and the write
 // share one transaction, so the row that decided the outcome is the row the
 // write replaces. See TheoryOfWriteSplice and TheoryOfBaseCapture.
-func (u *sqliteUpper) createContent(r fileRow, content []byte) (created bool, err error) {
+func (u *sqlUpper) createContent(r fileRow, content []byte) (created bool, err error) {
 	tx, err := u.db.Begin()
 	if err != nil {
 		return false, err
@@ -488,7 +508,7 @@ func (u *sqliteUpper) createContent(r fileRow, content []byte) (created bool, er
 // errNoLiveRegularRow, so the caller materialises the row and retries.
 // See TheoryOfChunkedContent, TheoryOfWriteSplice and
 // TheoryOfPreparedStatements.
-func (u *sqliteUpper) splice(p string, off int64, data []byte, mtime time.Time) error {
+func (u *sqlUpper) splice(p string, off int64, data []byte, mtime time.Time) error {
 	tx, err := u.db.Begin()
 	if err != nil {
 		return err
@@ -496,8 +516,9 @@ func (u *sqliteUpper) splice(p string, off int64, data []byte, mtime time.Time) 
 	defer func() { _ = tx.Rollback() }()
 	// The guard and the size update are one statement: a matched row is a live
 	// regular row, and the new end is the window's end when the window extends
-	// the stored content. See TheoryOfChunkedContent.
-	res, err := runStmt(tx, u.stmts.guardWrite, queryGuardWrite,
+	// the stored content. The scalar maximum is the dialect's spelling.
+	// See TheoryOfChunkedContent and TheoryOfSqlDialects.
+	res, err := runStmt(tx, u.stmts.guardWrite, u.dialect.guardWrite,
 		off+int64(len(data)), mtime.UnixNano(), p, int(KindRegular),
 	)
 	if err != nil {
@@ -525,7 +546,7 @@ func (u *sqliteUpper) splice(p string, off int64, data []byte, mtime time.Time) 
 // stored end inserts no zeros, because an absent chunk reads as zeros, and
 // every covered chunk leaves through the prepared upsert, executed once per
 // chunk. See TheoryOfChunkedContent and TheoryOfPreparedStatements.
-func (u *sqliteUpper) spliceRange(ex dbExecer, p string, off int64, data []byte) error {
+func (u *sqlUpper) spliceRange(ex dbExecer, p string, off int64, data []byte) error {
 	end := off + int64(len(data))
 	first := off / contentChunkSize
 	last := (end - 1) / contentChunkSize
@@ -557,7 +578,7 @@ func (u *sqliteUpper) spliceRange(ex dbExecer, p string, off int64, data []byte)
 
 // readChunk returns one chunk, or nil when the chunk is absent, from the
 // prepared chunk select. See TheoryOfPreparedStatements.
-func (u *sqliteUpper) readChunk(ex dbExecer, p string, idx int64) ([]byte, error) {
+func (u *sqlUpper) readChunk(ex dbExecer, p string, idx int64) ([]byte, error) {
 	var data []byte
 	err := queryRowStmt(ex, u.stmts.selectChunk, querySelectChunk, p, idx).Scan(&data)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -569,7 +590,7 @@ func (u *sqliteUpper) readChunk(ex dbExecer, p string, idx int64) ([]byte, error
 // putChunks writes a run of chunks by executing the prepared single-chunk
 // upsert once per chunk, so a single-chunk window — the hot shape of a partial
 // write — pays exactly one execute. See TheoryOfPreparedStatements.
-func (u *sqliteUpper) putChunks(ex dbExecer, p string, first int64, chunks [][]byte) error {
+func (u *sqlUpper) putChunks(ex dbExecer, p string, first int64, chunks [][]byte) error {
 	for i, chunk := range chunks {
 		if _, err := runStmt(ex, u.stmts.putChunk, queryPutChunk, p, first+int64(i), chunk); err != nil {
 			return err
@@ -585,7 +606,7 @@ func (u *sqliteUpper) putChunks(ex dbExecer, p string, first int64, chunks [][]b
 // nothing. The drop and each upsert run their prepared forms through the
 // caller's transaction. See TheoryOfChunkedContent and
 // TheoryOfPreparedStatements.
-func (u *sqliteUpper) replaceChunks(ex dbExecer, p string, content []byte) error {
+func (u *sqlUpper) replaceChunks(ex dbExecer, p string, content []byte) error {
 	if _, err := runStmt(ex, u.stmts.dropChunks, queryDropChunks, p); err != nil {
 		return err
 	}
@@ -603,7 +624,7 @@ func (u *sqliteUpper) replaceChunks(ex dbExecer, p string, content []byte) error
 // indexed query over the chunks covering it, padding absent chunks with zeros.
 // The caller clamps the window to the stored size. The query runs its prepared
 // form, so a windowed read pays no SQL parse. See TheoryOfPreparedStatements.
-func (u *sqliteUpper) readChunks(ex dbExecer, p string, off int64, size int) ([]byte, error) {
+func (u *sqlUpper) readChunks(ex dbExecer, p string, off int64, size int) ([]byte, error) {
 	if size <= 0 {
 		return nil, nil
 	}
@@ -635,7 +656,7 @@ func (u *sqliteUpper) readChunks(ex dbExecer, p string, off int64, size int) ([]
 
 // truncate shapes the stored chunks to a new length and records the length and
 // mtime, in one transaction. See TheoryOfChunkedContent.
-func (u *sqliteUpper) truncate(p string, size int64, mtime time.Time) error {
+func (u *sqlUpper) truncate(p string, size int64, mtime time.Time) error {
 	tx, err := u.db.Begin()
 	if err != nil {
 		return err
@@ -657,7 +678,7 @@ func (u *sqliteUpper) truncate(p string, size int64, mtime time.Time) error {
 // Growing writes nothing, because an absent chunk reads as zeros. Both
 // statements run their prepared forms. See TheoryOfChunkedContent and
 // TheoryOfPreparedStatements.
-func (u *sqliteUpper) truncateChunks(ex dbExecer, p string, size int64) error {
+func (u *sqlUpper) truncateChunks(ex dbExecer, p string, size int64) error {
 	keep := (size + contentChunkSize - 1) / contentChunkSize
 	if _, err := runStmt(ex, u.stmts.dropFrom, queryDropFrom, p, keep); err != nil {
 		return err
@@ -673,7 +694,7 @@ func (u *sqliteUpper) truncateChunks(ex dbExecer, p string, size int64) error {
 // drop removes one path's row and its content chunks in one transaction, so the
 // next diff is exact. The row delete runs as text because an apply is not a hot
 // path. See TheoryOfChunkedContent and TheoryOfPreparedStatements.
-func (u *sqliteUpper) drop(p string) error {
+func (u *sqlUpper) drop(p string) error {
 	tx, err := u.db.Begin()
 	if err != nil {
 		return err
@@ -692,9 +713,11 @@ func (u *sqliteUpper) drop(p string) error {
 // the buffer's order. The batch takes one transaction view of the insert and
 // executes it per row: database/sql caches a transaction's view of a prepared
 // statement from the first Tx.Stmt call on, so a row that asked for its own
-// view paid a lookup and a lock per row. See TheoryOfAuditBatching and
-// TheoryOfPreparedStatements.
-func (u *sqliteUpper) writeAudit(ops []Op) error {
+// view paid a lookup and a lock per row. The insert's text is the dialect's,
+// because a dialect without an auto-increment column names its id.
+// See TheoryOfAuditBatching, TheoryOfPreparedStatements and
+// TheoryOfSqlDialects.
+func (u *sqlUpper) writeAudit(ops []Op) error {
 	if len(ops) == 0 {
 		return nil
 	}
@@ -706,7 +729,7 @@ func (u *sqliteUpper) writeAudit(ops []Op) error {
 	var exec func(args ...any) (sql.Result, error)
 	if u.stmts.putOp == nil {
 		exec = func(args ...any) (sql.Result, error) {
-			return tx.Exec(queryPutOp, args...)
+			return tx.Exec(u.dialect.insertOp, args...)
 		}
 	} else {
 		exec = tx.Stmt(u.stmts.putOp).Exec
@@ -721,7 +744,7 @@ func (u *sqliteUpper) writeAudit(ops []Op) error {
 
 // auditRows returns the audit trail in insertion order.
 // See TheoryOfAuditBatching.
-func (u *sqliteUpper) auditRows() ([]Op, error) {
+func (u *sqlUpper) auditRows() ([]Op, error) {
 	rows, err := u.db.Query(queryAuditRows)
 	if err != nil {
 		return nil, err
@@ -741,7 +764,7 @@ func (u *sqliteUpper) auditRows() ([]Op, error) {
 
 // close releases the database's one connection, which frees the statements the
 // connection prepared. See TheoryOfPreparedStatements.
-func (u *sqliteUpper) close() error {
+func (u *sqlUpper) close() error {
 	if u.db == nil {
 		return nil
 	}
@@ -753,8 +776,10 @@ func (u *sqliteUpper) close() error {
 // prepareStatements fills the layer's statement set. It runs once, from the
 // open path, on the layer's single connection, so no request ever waits for a
 // preparation. A failure leaves the layer unopened rather than serving requests
-// that would pay the parse the set exists to remove. See TheoryOfPreparedStatements.
-func (u *sqliteUpper) prepareStatements() error {
+// that would pay the parse the set exists to remove. The guard and the audit
+// insert take their text from the layer's dialect.
+// See TheoryOfPreparedStatements and TheoryOfSqlDialects.
+func (u *sqlUpper) prepareStatements() error {
 	for _, target := range []struct {
 		stmt  **sql.Stmt
 		query string
@@ -765,9 +790,9 @@ func (u *sqliteUpper) prepareStatements() error {
 		{&u.stmts.selectChunks, querySelectChunks},
 		{&u.stmts.selectChunk, querySelectChunk},
 		{&u.stmts.putMeta, queryPutMeta},
-		{&u.stmts.putOp, queryPutOp},
+		{&u.stmts.putOp, u.dialect.insertOp},
 		{&u.stmts.putChunk, queryPutChunk},
-		{&u.stmts.guardWrite, queryGuardWrite},
+		{&u.stmts.guardWrite, u.dialect.guardWrite},
 		{&u.stmts.setSize, querySetSize},
 		{&u.stmts.dropChunks, queryDropChunks},
 		{&u.stmts.dropFrom, queryDropFrom},
@@ -775,7 +800,7 @@ func (u *sqliteUpper) prepareStatements() error {
 	} {
 		stmt, err := u.db.Prepare(target.query)
 		if err != nil {
-			return err
+			return fmt.Errorf("sandboxfs: %s prepare: %w", u.dialect.name, err)
 		}
 		*target.stmt = stmt
 	}

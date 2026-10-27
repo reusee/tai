@@ -15,8 +15,12 @@ import (
 
 const TheoryOfSandboxCommand = `
 The sandbox command is the review half of the filesystem environment: the
-session records its writes in a sqlite file, and this command lists the net
-changes and the audit trail, then applies the changes the user names.
+session records its writes in a SQL record file, and this command lists the net
+changes and the audit trail, then applies the changes the user names. The
+record's engine is read from its header — sqlite by default, DuckDB when the
+session selected that dialect — so the command reviews whichever engine wrote
+the file, as long as the binary links the driver that engine needs
+(sandboxfs.TheoryOfSqlDialects).
 
 A listing is the default: the net changes — added, modified, and deleted
 paths, with directory, symbolic-link, and named-pipe kinds and any apply
@@ -39,8 +43,6 @@ file.
 
 const sandboxDBEnv = "CAI_SANDBOX_DB"
 
-// SandboxCommand reviews a recorded sandbox filesystem session and applies
-// the changes the user selects. See TheoryOfSandboxCommand.
 var SandboxCommand = apps.New("sandbox",
 	"Review and apply the session filesystem changes",
 	func(
@@ -58,7 +60,11 @@ var SandboxCommand = apps.New("sandbox",
 		if _, err := os.Stat(dbPath); err != nil {
 			return fmt.Errorf("sandbox: no recorded session at %s: %w", dbPath, err)
 		}
-		store, err := sandboxfs.Open(dbPath, "/")
+		// The record's engine is read from its header, so a session that
+		// selected the DuckDB dialect is reviewed as long as the binary links
+		// the driver, and a sqlite record needs nothing. See
+		// sandboxfs.TheoryOfSqlDialects.
+		store, err := sandboxfs.OpenAny(dbPath, "/")
 		if err != nil {
 			return err
 		}

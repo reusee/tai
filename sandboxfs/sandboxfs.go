@@ -26,9 +26,11 @@ base layer is the host filesystem, read through unchanged, so the model
 reads real data without copying it into the sandbox. The upper layer records
 every mutation: content, kind, mode, and the base state of the path as it
 stood when the session first touched it. The upper layer has two backends —
-a sqlite file whose record outlives the process and that the review command
+a SQL record file that outlives the process and that the review command
 browses and applies later, and process memory that leaves nothing behind.
-See TheoryOfUpperLayer and TheoryOfSqliteUpper.
+The record file is a sqlite database by default and a DuckDB database on
+request; see TheoryOfSqlDialects. See TheoryOfUpperLayer and
+TheoryOfSqlUpper.
 
 The boundary is the filesystem, not the tool's file abstraction. Change
 blocks keep applying atomically through changes.FileStore, and FileStore
@@ -54,14 +56,15 @@ is still a change. Applying a change writes the upper content to the host,
 with the mode the row recorded beside it, and drops the upper row, so the
 next diff is exact and a repeated apply is a no-op.
 
-The store never targets its own record. The review session holds the sqlite
-database open for its whole life, and its records are the review surface; a
-sandbox mutation of the database file — or of SQLite's -wal and -shm
-siblings — would corrupt the record the review depends on. The store
-refuses such a mutation before it reads the base and omits the path's net
-change, so the path never enters the reviewable set. A memory backend has no
-record to protect, so the check finds nothing. See TheoryOfCompletePOSIX for
-how the file's SQLite siblings arise.
+The store never targets its own record. The review session holds the record
+file open for its whole life, and its records are the review surface; a
+sandbox mutation of the database file — or of the record's sibling files,
+SQLite's -wal and -shm and DuckDB's .wal — would corrupt the record the
+review depends on. The store refuses such a mutation before it reads the
+base and omits the path's net change, so the path never enters the
+reviewable set. A memory backend has no record to protect, so the check
+finds nothing. See TheoryOfCompletePOSIX for how the record's siblings
+arise.
 
 The check matches by file identity, not by text alone. A direct store names
 the database and its base as host paths from one tree, so a relative path
@@ -115,7 +118,7 @@ descriptor it opened, and the host type is checked once, before the open,
 so a pipe is never opened and its read never blocks.
 
 The cache never shadows the session. Every read asks the upper layer
-first — a sqlite layer that holds no row answers without a query, a memory
+first — a SQL layer that holds no row answers without a query, a memory
 layer answers from its map — so a written path serves its new content and a
 whiteout reports the deletion without any invalidation. A truncation — the
 truncating open or setattr's size change — marks every reader cached for the
@@ -293,11 +296,11 @@ slices a body or reserves memory for bytes that cannot exist. See
 TheoryOfFuseMount.
 
 Durability: FSYNC and FSYNCDIR succeed without doing anything, and they mean
-exactly what the backend means: the sqlite layer's writes are transactions
-that persist as they complete, and the memory layer's writes live only in
-this process. A tool that fsyncs to force data to disk gets the answer it
-expects; with the sqlite layer the data has already reached the database by
-the time the call returns.
+exactly what the backend means: the SQL layer's writes are transactions that
+persist as they complete, whichever dialect holds the record, and the memory
+layer's writes live only in this process. A tool that fsyncs to force data to
+disk gets the answer it expects; with the SQL layer the data has already
+reached the database by the time the call returns.
 
 RENAME2's flags are honoured where the store can honour them: NOREPLACE
 refuses an existing destination with EEXIST. EXCHANGE and WHITEOUT need an
@@ -358,7 +361,7 @@ buffered by the store and handed to the upper layer in batches: audit appends
 a row and writes the buffer when it reaches auditBatchSize, and Ops and Close
 flush the tail, so one commit serves a whole batch.
 
-A commit dominates a small statement's cost in the sqlite layer, so a row
+A commit dominates a small statement's cost in the SQL layer, so a row
 written per commit charged every mutation and every path's first read a
 commit of its own beside the operation's own statement. Batching removes that
 second commit from the request path without changing what the trail records.
@@ -369,38 +372,10 @@ The trade-off is the tail: rows buffered when a process dies outside a close
 are lost, so the trail is complete for a session that ends normally and may be
 short for one that was killed. The audit is best-effort by design — it never
 fails an operation — and the review step reads changes from the content rows,
-which stay durable at every write in the sqlite layer. Rows keep their call
+which stay durable at every write in the SQL layer. Rows keep their call
 order within a batch; under concurrent mutation a later batch can commit
 before an earlier one, so the trail is ordered by insertion, and each batch
 keeps its own order.
-`
-
-const schema = `
-CREATE TABLE IF NOT EXISTS files (
-    path TEXT PRIMARY KEY,
-    kind INTEGER NOT NULL,
-    mode INTEGER NOT NULL,
-    mtime INTEGER NOT NULL,
-    deleted INTEGER NOT NULL DEFAULT 0,
-    size INTEGER NOT NULL DEFAULT 0,
-    target TEXT NOT NULL DEFAULT '',
-    original_exists INTEGER NOT NULL DEFAULT 0,
-    original_hash TEXT NOT NULL DEFAULT ''
-);
-CREATE TABLE IF NOT EXISTS chunks (
-    path TEXT NOT NULL,
-    idx INTEGER NOT NULL,
-    data BLOB NOT NULL,
-    PRIMARY KEY (path, idx)
-) WITHOUT ROWID;
-CREATE TABLE IF NOT EXISTS ops (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    time TEXT NOT NULL,
-    op TEXT NOT NULL,
-    path TEXT NOT NULL,
-    detail TEXT NOT NULL DEFAULT ''
-);
-CREATE INDEX IF NOT EXISTS idx_ops_path ON ops(path);
 `
 
 // Kind is the file type of a sandbox path.
@@ -470,18 +445,21 @@ type Store struct {
 }
 
 // Open opens the sandbox store at dbPath over the read-through base
-// directory, with the sqlite upper layer. The database file is created when
-// absent. It admits every write; see OpenWithPolicy for a store that
-// enforces a write policy. See TheoryOfSandboxFilesystem and
-// TheoryOfSqliteUpper.
+// directory, with the sqlite dialect of the SQL upper layer. The database
+// file is created when absent. It admits every write; see OpenWithPolicy for
+// a store that enforces a write policy, and OpenDuckDB for a record held by
+// another engine. See TheoryOfSandboxFilesystem, TheoryOfSqlUpper and
+// TheoryOfSqlDialects.
 func Open(dbPath, base string) (*Store, error) {
 	return OpenWithPolicy(dbPath, base, nil)
 }
 
-// DefaultDBPath returns the store path of a working directory: one sqlite
-// file inside it, so a session's filesystem environment stays with the
-// project it belongs to. The result is a filesystem path, so it joins with
-// the platform's separator even though the store itself speaks slash paths.
+// DefaultDBPath returns the store path of a working directory: one record
+// file inside it — a sqlite database by default, a DuckDB database when the
+// mount selects that dialect — so a session's filesystem environment stays
+// with the project it belongs to. The result is a filesystem path, so it joins
+// with the platform's separator even though the store itself speaks slash
+// paths. See TheoryOfSqlDialects.
 func DefaultDBPath(dir string) string {
 	return filepath.Join(dir, ".tai-sandbox.db")
 }
@@ -504,13 +482,21 @@ func (s *Store) Close() error {
 	return err
 }
 
-// OpenWithPolicy opens a sandbox store with the sqlite upper layer, whose
-// mutations are admitted by policy: every write, directory creation, link,
-// rename, mode change, and deletion asks policy about its path, and a non-nil
-// result refuses the operation before the store changes. A nil policy admits
-// every write, which is right for a review process and for tests. See
-// TheoryOfWritePolicy and TheoryOfSqliteUpper.
+// OpenWithPolicy opens a sandbox store with the sqlite dialect of the SQL upper
+// layer, whose mutations are admitted by policy: every write, directory
+// creation, link, rename, mode change, and deletion asks policy about its
+// path, and a non-nil result refuses the operation before the store changes. A
+// nil policy admits every write, which is right for a review process and for
+// tests. See TheoryOfWritePolicy and TheoryOfSqlUpper.
 func OpenWithPolicy(dbPath, base string, policy func(string) error) (*Store, error) {
+	return openDurable(dbPath, base, policy, openSQLiteUpper)
+}
+
+// openDurable assembles a sandbox store on the durable SQL upper layer a
+// constructor opens: the two dialects differ only in which open function the
+// caller passes, so the empty-path check, the absolute path, and the store
+// assembly live here once. See TheoryOfSqlDialects.
+func openDurable(dbPath, base string, policy func(string) error, open func(string) (*sqlUpper, error)) (*Store, error) {
 	if dbPath == "" {
 		return nil, fmt.Errorf("sandboxfs: empty database path")
 	}
@@ -518,11 +504,76 @@ func OpenWithPolicy(dbPath, base string, policy func(string) error) (*Store, err
 	if err != nil {
 		return nil, err
 	}
-	upper, err := openSQLiteUpper(absDB)
+	upper, err := open(absDB)
 	if err != nil {
 		return nil, err
 	}
 	return newStore(base, upper, policy)
+}
+
+// OpenDuckDB opens the sandbox store at dbPath over the read-through base
+// directory with the DuckDB dialect of the SQL upper layer. The binary must
+// import a DuckDB driver; this package links none, so a binary without one
+// reports the open error and names the dialect. It admits every write; see
+// OpenDuckDBWithPolicy for a store that enforces a write policy. See
+// TheoryOfSqlDialects.
+func OpenDuckDB(dbPath, base string) (*Store, error) {
+	return OpenDuckDBWithPolicy(dbPath, base, nil)
+}
+
+// OpenDuckDBWithPolicy opens a DuckDB-backed sandbox store whose mutations are
+// admitted by policy. See TheoryOfWritePolicy and OpenDuckDB.
+func OpenDuckDBWithPolicy(dbPath, base string, policy func(string) error) (*Store, error) {
+	return openDurable(dbPath, base, policy, openDuckDBUpper)
+}
+
+// OpenAny opens the sandbox store at dbPath by routing the record to the
+// dialect that wrote it: DuckDB opens when the file's header carries DuckDB's
+// magic, and sqlite opens for sqlite's header, for a path that does not exist
+// yet, and for any other shape, whose own error then names a file that is no
+// record. The review command takes this path, so a user never has to remember
+// which engine wrote the record. The DuckDB route needs the binary's driver
+// import, exactly as the mount does. See TheoryOfSqlDialects.
+func OpenAny(dbPath, base string) (*Store, error) {
+	if dbPath != "" {
+		engine, err := recordEngine(dbPath)
+		if err != nil {
+			return nil, err
+		}
+		if engine == duckDBDialect.name {
+			return OpenDuckDB(dbPath, base)
+		}
+	}
+	return Open(dbPath, base)
+}
+
+// recordEngine reads the engine name a record file declares by its header: the
+// magic a dialect names. An absent file, an unreadable header, or a header that
+// names neither engine returns sqlite, because the default record is a sqlite
+// database and an unrecognized file's own error is the honest report of a path
+// that is no sandbox record. See TheoryOfSqlDialects.
+func recordEngine(dbPath string) (string, error) {
+	f, err := os.Open(dbPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return sqliteDialect.name, nil
+		}
+		return "", err
+	}
+	defer f.Close()
+	var header [16]byte
+	n, _ := f.Read(header[:])
+	if n == 0 {
+		return sqliteDialect.name, nil
+	}
+	magic := string(header[:n])
+	switch {
+	case strings.HasPrefix(magic, duckDBDialect.magic):
+		return duckDBDialect.name, nil
+	case strings.HasPrefix(magic, sqliteDialect.magic):
+		return sqliteDialect.name, nil
+	}
+	return sqliteDialect.name, nil
 }
 
 // OpenMemory opens a sandbox store over the read-through base directory with
@@ -570,11 +621,12 @@ func newStore(base string, upper upperStore, policy func(string) error) (*Store,
 }
 
 // isOwnDBPath reports whether p names the upper layer's own record or one of
-// its SQLite siblings. A memory layer has no record, so every path is free.
-// The record's path is a filesystem path and a sandbox path is a slash path,
-// so the name comparison runs on slash form; the identity comparison below
-// then covers a mount whose base view renamed the file.
-// See TheoryOfSandboxFilesystem.
+// the backend's sibling files: sqlite keeps its -wal and -shm beside the
+// database, DuckDB keeps its .wal. A memory layer has no record, so every path
+// is free. The record's path is a filesystem path and a sandbox path is a slash
+// path, so the name comparison runs on slash form; the identity comparison
+// below then covers a mount whose base view renamed the file.
+// See TheoryOfSandboxFilesystem and TheoryOfSqlDialects.
 func (s *Store) isOwnDBPath(p string) bool {
 	if s.dbPath == "" {
 		return false
@@ -582,7 +634,7 @@ func (s *Store) isOwnDBPath(p string) bool {
 	cp := Canonical(p)
 	db := filepath.ToSlash(s.dbPath)
 	switch cp {
-	case db, db + "-wal", db + "-shm":
+	case db, db + "-wal", db + "-shm", db + ".wal":
 		return true
 	}
 	rel, err := filepath.Rel(s.base, s.dbPath)
@@ -591,7 +643,7 @@ func (s *Store) isOwnDBPath(p string) bool {
 		return false
 	}
 	var own []os.FileInfo
-	for _, name := range [3]string{rel, rel + "-wal", rel + "-shm"} {
+	for _, name := range [4]string{rel, rel + "-wal", rel + "-shm", rel + ".wal"} {
 		if fi, err := s.baseRoot.Stat(name); err == nil {
 			own = append(own, fi)
 		}
