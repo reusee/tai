@@ -13,10 +13,10 @@ import (
 )
 
 const TheoryOfChunkedContent = `
-Content lives in fixed-size chunks, one row per contentChunkSize bytes, so a
-change costs the bytes it changes. The files table carries metadata only —
+Content lives in fixed-size chunks, one chunk per contentChunkSize bytes, so a
+change costs the bytes it changes. The upper layer's rows carry metadata only —
 kind, mode, mtime, deleted, size, link target, and the recorded original — and
-the chunks table carries the bytes; the splice that writes them is
+its chunks carry the bytes; the splice that writes them is
 TheoryOfWriteSplice's subject. A single blob column instead rewrote the whole
 file per window, which made the write traffic quadratic in the window count —
 the defect the execution trace and the profile both pointed at.
@@ -24,29 +24,29 @@ the defect the execution trace and the profile both pointed at.
 The chunk's size is the balance between two measured costs. A partial write
 rewrites the chunk it lands inside, so the traffic a small edit costs is the
 chunk's size, not the edit's. A bulk window pays one b-tree insert per chunk
-it covers, so a window of many chunks pays a row count that grows as the
-chunk shrinks. Neither extreme wins: a 64 KiB chunk charged a 4 KiB edit for
-128 KiB of traffic, and a one-page chunk made a 1 MiB bulk window pay 256 row
-inserts. The store's concurrency lives below the mount, and small edits dominate
-the write traffic, so the chosen size favours the partial write: a small edit
-stays near the transaction's own cost, and a bulk window pays its own bytes
-plus one row per chunk of payload.
+it covers in the sqlite layer, so a window of many chunks pays a row count
+that grows as the chunk shrinks. Neither extreme wins: a 64 KiB chunk charged
+a 4 KiB edit for 128 KiB of traffic, and a one-page chunk made a 1 MiB bulk
+window pay 256 row inserts. The store's concurrency lives below the mount, and
+small edits dominate the write traffic, so the chosen size favours the partial
+write: a small edit stays near the transaction's own cost, and a bulk window
+pays its own bytes plus one row (or one map entry) per chunk of payload.
 
 The row is the identity; the chunks are the content. A chunk exists only for a
-live regular row: a whiteout, a directory, a link, and a pipe drop their
-chunks. A live regular row holds one of two shapes, and the size column states
-which: a stored length means the chunks are the whole content, while the
-metadata sentinel means the row records the metadata alone and the content
-still lives in the base (see TheoryOfBaseCapture). A mutation that changes
-content writes the metadata and the chunks in one transaction, so a reader
-never sees a size and a chunk set that disagree, and reads clamp to the stored
-size.
+live regular row: a whiteout, a directory, a link, and a pipe hold no content.
+A live regular row holds one of two shapes, and the size column states which: a
+stored length means the chunks are the whole content, while the metadata
+sentinel means the row records the metadata alone and the content still lives
+in the base (see TheoryOfBaseCapture). A mutation that changes content writes
+the metadata and the chunks in one atomic step, so a reader never sees a size
+and a chunk set that disagree, and reads clamp to the stored size.
 
-Reading a window is one indexed query over the chunks covering it, assembled
-with zeros for absent chunks: the round-trip count a substr over the blob cost,
-without the whole-column rewrite on the write side. The first change to a base
-path materialises the base content into chunks, the cold path taken once per
-file; a truncation materialises only the prefix it keeps.
+Reading a window is one indexed query over the chunks covering it in the sqlite
+layer, and one pass over the stored chunks in the memory layer, assembled with
+zeros for absent chunks: neither pays the round-trip count a substr over a blob
+cost, and neither rewrites a whole column on the write side. The first change
+to a base path materialises the base content into chunks, the cold path taken
+once per file; a truncation materialises only the prefix it keeps.
 `
 
 // captureHashBufferSize is the one buffer a base capture streams through, so
@@ -63,270 +63,16 @@ const contentChunkSize = 4 << 10
 var errNoLiveRegularRow = errors.New("sandboxfs: no live regular row")
 
 // dbExecer is the statement surface shared by *sql.DB and *sql.Tx, so a
-// content helper runs inside its caller's transaction.
+// content helper of the sqlite layer runs inside its caller's transaction.
 type dbExecer interface {
 	Exec(query string, args ...any) (sql.Result, error)
 	Query(query string, args ...any) (*sql.Rows, error)
 	QueryRow(query string, args ...any) *sql.Row
 }
 
-// putContent stores one row's metadata and replaces its content in one
-// transaction, so a reader never sees a size and a chunk set that disagree.
-func (s *Store) putContent(r fileRow, content []byte) error {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
-	if err := s.replaceChunks(tx, r.path, content); err != nil {
-		return err
-	}
-	r.size = int64(len(content))
-	if err := s.putMetaTx(tx, r); err != nil {
-		return err
-	}
-	return tx.Commit()
-}
-
-// putContentGuarded stores one row's metadata and its content, but only while
-// the path holds no live regular row that already carries content: such a row
-// is another writer's committed bytes, and replacing it would drop what that
-// writer stored. A metadata-only row is not that row — its size sentinel says
-// it records metadata alone, and materialising it is exactly this call's job.
-// created reports whether this call wrote the row. The guard and the write
-// share one transaction, so the row that decided the outcome is the row the
-// write replaces. See TheoryOfWriteSplice and TheoryOfBaseCapture.
-func (s *Store) putContentGuarded(r fileRow, content []byte) (created bool, err error) {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return false, err
-	}
-	defer func() { _ = tx.Rollback() }()
-	var kind, deleted int
-	var size int64
-	switch err := queryRowStmt(tx, s.stmts.selectUpper, querySelectUpper, r.path).
-		Scan(&kind, &deleted, &size); {
-	case err == nil:
-		// A committed metadata-only row carries the size sentinel: no content
-		// write produced it, so it is the state this call exists to replace.
-		// See TheoryOfBaseCapture.
-		if deleted == 0 && Kind(kind) == KindRegular && size >= 0 {
-			return false, nil
-		}
-	case !errors.Is(err, sql.ErrNoRows):
-		return false, err
-	}
-	r.size = int64(len(content))
-	if err := s.replaceChunks(tx, r.path, content); err != nil {
-		return false, err
-	}
-	if err := s.putMetaTx(tx, r); err != nil {
-		return false, err
-	}
-	return true, tx.Commit()
-}
-
-func (s *Store) putMetaTx(tx *sql.Tx, r fileRow) error {
-	// A row exists from this write on, so no lookup may keep the path cached as
-	// absent: the write epoch moves and the entry clears under one lock, and a
-	// lookup whose stamp predates this write records nothing. The call runs
-	// before the transaction commits, so a lookup that passes the stamp check
-	// still sees either the pre-write state or the committed row, never a
-	// stale absence on top of it. See TheoryOfUpperAbsentCache.
-	s.markUpperWritten(r.path)
-	var deleted, originalExists int
-	if r.deleted {
-		deleted = 1
-	}
-	if r.originalExists {
-		originalExists = 1
-	}
-	if _, err := runStmt(tx, s.stmts.putMeta, queryPutMeta,
-		r.path, int(r.kind), int64(r.mode), r.mtime.UnixNano(), deleted, r.size,
-		r.target, originalExists, r.originalHash,
-	); err != nil {
-		return err
-	}
-	if r.deleted || r.kind != KindRegular {
-		if _, err := runStmt(tx, s.stmts.dropChunks, queryDropChunks, r.path); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// readChunk returns one chunk, or nil when the chunk is absent, from the
-// prepared chunk select. See TheoryOfPreparedStatements.
-func (s *Store) readChunk(ex dbExecer, p string, idx int64) ([]byte, error) {
-	var data []byte
-	err := queryRowStmt(ex, s.stmts.selectChunk, querySelectChunk, p, idx).Scan(&data)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
-	return data, err
-}
-
-// putChunks writes a run of chunks by executing the prepared single-chunk
-// upsert once per chunk, so a single-chunk window — the hot shape of a partial
-// write — pays exactly one execute. See TheoryOfPreparedStatements.
-func (s *Store) putChunks(ex dbExecer, p string, first int64, chunks [][]byte) error {
-	for i, chunk := range chunks {
-		if _, err := runStmt(ex, s.stmts.putChunk, queryPutChunk, p, first+int64(i), chunk); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// replaceChunks replaces every chunk of p with content: one statement drops the
-// old run, and the new run's chunks leave through the prepared upsert, executed
-// once per chunk, so a whole-file write costs its own bytes and no SQL parse
-// per chunk. An empty content leaves no chunk at all, so an empty file stores
-// nothing. The drop and each upsert run their prepared forms through the
-// caller's transaction. See TheoryOfChunkedContent and TheoryOfPreparedStatements.
-func (s *Store) replaceChunks(ex dbExecer, p string, content []byte) error {
-	if _, err := runStmt(ex, s.stmts.dropChunks, queryDropChunks, p); err != nil {
-		return err
-	}
-	if len(content) == 0 {
-		return nil
-	}
-	chunks := make([][]byte, 0, (len(content)+contentChunkSize-1)/contentChunkSize)
-	for off := 0; off < len(content); off += contentChunkSize {
-		chunks = append(chunks, content[off:min(off+contentChunkSize, len(content))])
-	}
-	return s.putChunks(ex, p, 0, chunks)
-}
-
-// readChunks reads the window [off, off+size) of p's stored content in one
-// indexed query over the chunks covering it, padding absent chunks with zeros.
-// The caller clamps the window to the stored size. The query runs its prepared
-// form, so a windowed read pays no SQL parse. See TheoryOfPreparedStatements.
-func (s *Store) readChunks(ex dbExecer, p string, off int64, size int) ([]byte, error) {
-	if size <= 0 {
-		return nil, nil
-	}
-	end := off + int64(size)
-	out := make([]byte, size)
-	rows, err := queryStmt(ex, s.stmts.selectChunks, querySelectChunks,
-		p, off/contentChunkSize, (end-1)/contentChunkSize,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var idx int64
-		var data []byte
-		if err := rows.Scan(&idx, &data); err != nil {
-			return nil, err
-		}
-		base := idx * contentChunkSize
-		from := max(off, base)
-		to := min(end, base+int64(len(data)))
-		if to <= from {
-			continue
-		}
-		copy(out[from-off:to-off], data[from-base:to-base])
-	}
-	return out, rows.Err()
-}
-
 // readContent returns the whole stored content of a live regular path.
 func (s *Store) readContent(p string, size int64) ([]byte, error) {
-	return s.readChunks(s.db, p, 0, int(size))
-}
-
-// spliceChunks writes one payload into the stored content in one transaction.
-// One statement both guards the row and extends its size, so the delta's
-// admissibility costs no separate lookup, and the prepared chunk upsert
-// executes once per covered chunk, so a window pays one execute per chunk with
-// no SQL parse. A path without a live regular row refuses the splice with
-// errNoLiveRegularRow, so the caller materialises the row and retries.
-// See TheoryOfChunkedContent and TheoryOfPreparedStatements.
-func (s *Store) spliceChunks(p string, off int64, data []byte) error {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
-	// The guard and the size update are one statement: a matched row is a live
-	// regular row, and the new end is the window's end when the window extends
-	// the stored content. See TheoryOfChunkedContent.
-	res, err := runStmt(tx, s.stmts.guardWrite, queryGuardWrite,
-		off+int64(len(data)), time.Now().UnixNano(), p, int(KindRegular),
-	)
-	if err != nil {
-		return err
-	}
-	matched, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if matched == 0 {
-		return errNoLiveRegularRow
-	}
-	if len(data) > 0 {
-		if err := s.spliceChunkRange(tx, p, off, data); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
-}
-
-// spliceChunkRange writes the payload into the chunks it covers. A chunk the
-// payload covers whole stores the payload's own bytes — no read of the stored
-// chunk, no second copy of the payload — and a chunk the payload only partly
-// covers keeps its bytes outside the payload, read once for that purpose. A
-// write past the stored end inserts no zeros, because an absent chunk reads as
-// zeros, and every covered chunk leaves through the prepared upsert, executed
-// once per chunk. See TheoryOfChunkedContent and TheoryOfPreparedStatements.
-func (s *Store) spliceChunkRange(ex dbExecer, p string, off int64, data []byte) error {
-	end := off + int64(len(data))
-	first := off / contentChunkSize
-	last := (end - 1) / contentChunkSize
-	chunks := make([][]byte, 0, last-first+1)
-	for idx := first; idx <= last; idx++ {
-		base := idx * contentChunkSize
-		from := max(off, base)
-		to := min(end, base+contentChunkSize)
-		lo, hi := from-base, to-base
-		payload := data[from-off : to-off]
-		if lo == 0 && hi == contentChunkSize {
-			// The payload covers the chunk whole, so the payload's bytes are
-			// the stored bytes: no read, no copy. A toolchain's windows are
-			// multiples of the chunk, so this is the hot shape.
-			chunks = append(chunks, payload)
-			continue
-		}
-		existing, err := s.readChunk(ex, p, idx)
-		if err != nil {
-			return err
-		}
-		buf := make([]byte, max(int64(len(existing)), hi))
-		copy(buf, existing)
-		copy(buf[lo:hi], payload)
-		chunks = append(chunks, buf)
-	}
-	return s.putChunks(ex, p, first, chunks)
-}
-
-// truncateChunks shapes the stored chunks to a new length: the chunks beyond
-// the length drop, and the chunk the length ends inside keeps its prefix.
-// Growing writes nothing, because an absent chunk reads as zeros. Both
-// statements run their prepared forms. See TheoryOfChunkedContent and
-// TheoryOfPreparedStatements.
-func (s *Store) truncateChunks(ex dbExecer, p string, size int64) error {
-	keep := (size + contentChunkSize - 1) / contentChunkSize
-	if _, err := runStmt(ex, s.stmts.dropFrom, queryDropFrom, p, keep); err != nil {
-		return err
-	}
-	if rem := size % contentChunkSize; rem != 0 {
-		if _, err := runStmt(ex, s.stmts.trimChunk, queryTrimChunk, rem, p, keep-1); err != nil {
-			return err
-		}
-	}
-	return nil
+	return s.upper.content(p, 0, int(size))
 }
 
 // readBaseContent reads a base file's content, bounded by limit when limit is
@@ -372,9 +118,9 @@ func (s *Store) readBaseContent(p string, limit int64) ([]byte, error) {
 // digest covers at most the store's bound. Memory stays the buffer's, and a
 // path above maxFileSize costs the prefix the store could hold, never a
 // sequential read of the whole file, so the request path stays bounded in
-// time as well as in memory. The digest is the one contentHash produces for
-// the same bytes, and the apply reads the host through the same bound, so
-// both sides of the comparison cover one prefix. A base node that is not a
+// time as well as in memory. The digest is the one contentHash produces
+// for the same bytes, and the apply reads the host through the same bound,
+// so both sides of the comparison cover one prefix. A base node that is not a
 // regular file reports EINVAL before it is opened, so a character device
 // never holds a worker on its peer's data. See TheoryOfBaseCapture.
 func hashBaseFile(root *os.Root, rel string) (string, error) {
@@ -434,7 +180,7 @@ func readBasePrefix(root *os.Root, rel string) ([]byte, error) {
 // reads it first, so no layer substitutes a default. A live regular row another
 // writer created while this call ran is that writer's content, and the returned
 // row is the one the caller's delta lands on. See TheoryOfCompletePOSIX,
-// TheoryOfWriteSplice and TheoryOfUpperAbsentCache.
+// TheoryOfWriteSplice and TheoryOfUpperLayer.
 func (s *Store) materializeContent(p string, copySize int64, perm os.FileMode) (fileRow, error) {
 	if err := s.checkParent(p); err != nil {
 		return fileRow{}, err
@@ -475,7 +221,7 @@ func (s *Store) materializeContent(p string, copySize int64, perm os.FileMode) (
 	r.mode = perm
 	r.deleted = false
 	r.target = ""
-	created, err := s.putContentGuarded(r, content)
+	created, err := s.upper.createContent(r, content)
 	if err != nil {
 		return fileRow{}, err
 	}
@@ -564,20 +310,7 @@ func (s *Store) TruncateFile(p string, size int64, perm os.FileMode) error {
 	case KindFIFO, KindSymlink:
 		return syscall.EINVAL
 	}
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
-	if err := s.truncateChunks(tx, p, size); err != nil {
-		return err
-	}
-	if _, err := runStmt(tx, s.stmts.setSize, querySetSize,
-		size, time.Now().UnixNano(), p,
-	); err != nil {
-		return err
-	}
-	if err := tx.Commit(); err != nil {
+	if err := s.upper.truncate(p, size, time.Now()); err != nil {
 		return err
 	}
 	s.audit("truncate", p, fmt.Sprintf("%d bytes", size))

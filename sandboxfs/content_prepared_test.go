@@ -18,7 +18,8 @@ func TestSpliceFileUsesPreparedWrites(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	if store.stmts.guardWrite == nil || store.stmts.putChunk == nil {
+	u := sqliteOf(t, store)
+	if u.stmts.guardWrite == nil || u.stmts.putChunk == nil {
 		t.Fatal("the store prepared no write statements")
 	}
 	data := bytes.Repeat([]byte("p"), 4096)
@@ -67,19 +68,21 @@ func TestOpenPreparesTheRequestPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
+	u := sqliteOf(t, store)
 	all := map[string]bool{
-		"selectStat":   store.stmts.selectStat != nil,
-		"selectRow":    store.stmts.selectRow != nil,
-		"selectUpper":  store.stmts.selectUpper != nil,
-		"selectChunks": store.stmts.selectChunks != nil,
-		"selectChunk":  store.stmts.selectChunk != nil,
-		"putMeta":      store.stmts.putMeta != nil,
-		"putChunk":     store.stmts.putChunk != nil,
-		"guardWrite":   store.stmts.guardWrite != nil,
-		"setSize":      store.stmts.setSize != nil,
-		"dropChunks":   store.stmts.dropChunks != nil,
-		"dropFrom":     store.stmts.dropFrom != nil,
-		"trimChunk":    store.stmts.trimChunk != nil,
+		"selectRow":    u.stmts.selectRow != nil,
+		"selectUpper":  u.stmts.selectUpper != nil,
+		"selectDir":    u.stmts.selectDir != nil,
+		"selectChunks": u.stmts.selectChunks != nil,
+		"selectChunk":  u.stmts.selectChunk != nil,
+		"putMeta":      u.stmts.putMeta != nil,
+		"putOp":        u.stmts.putOp != nil,
+		"putChunk":     u.stmts.putChunk != nil,
+		"guardWrite":   u.stmts.guardWrite != nil,
+		"setSize":      u.stmts.setSize != nil,
+		"dropChunks":   u.stmts.dropChunks != nil,
+		"dropFrom":     u.stmts.dropFrom != nil,
+		"trimChunk":    u.stmts.trimChunk != nil,
 	}
 	for name, prepared := range all {
 		if !prepared {

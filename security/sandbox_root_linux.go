@@ -46,6 +46,16 @@ path after the pivot: the working directory and every passthrough qualify;
 /tmp does not, because the sandbox mounts a fresh tmpfs there and the
 original /tmp is hidden.
 
+CAI_SANDBOX_MEMORY selects the memory upper layer instead: the session's
+mutations live in process memory, the mount leaves no database behind, and
+the goal runner's per-loop apply is the only path that reaches the host.
+The layer pays no disk round trip per mutation, and the trade-off is
+explicit: an abandoned run keeps nothing to review, because the changes it
+never applied never left the process, and the sandbox command has no file
+to read in this mode. The durable record exists to preserve work for later
+review, so a session that chose memory declared it needs no such record.
+See sandboxfs.TheoryOfUpperLayer.
+
 Each goal loop's changes go back to the host when the loop ends: the store
 that served the pivot is recorded as the process's active store, and the
 goal runner applies that loop's recorded changes before the next loop reads
@@ -65,6 +75,13 @@ unprivileged FUSE, a missing /dev/fuse, or a failed pivot leaves the
 process with the mount policy alone and the session continues, with no
 active store and therefore no per-loop apply.
 `
+
+// sandboxMemoryEnv selects the memory upper layer instead of the sqlite
+// one: the session's mutations live in process memory, so the mount leaves
+// no database file, and the goal runner's per-loop apply is the only path
+// that reaches the host. See TheoryOfSandboxRoot and
+// sandboxfs.TheoryOfUpperLayer.
+const sandboxMemoryEnv = "CAI_SANDBOX_MEMORY"
 
 // disableSandboxRootEnv skips the sandbox filesystem, leaving the mount
 // policy as the only layer. See TheoryOfSandboxRoot.
@@ -92,11 +109,12 @@ func isSandboxReview(args []string) bool {
 // See TheoryOfSandboxRoot.
 const sandboxDBEnv = "CAI_SANDBOX_DB"
 
-// setupSandboxRoot mounts the sandbox filesystem and pivots the process
-// root to it, then records the store that served the pivot as the process's
-// active store, so the goal runner applies every loop's changes to the host.
-// It runs after the container filesystem hardening, so the passthrough sources
-// are the hardened mounts. See TheoryOfSandboxRoot.
+// setupSandboxRoot mounts the sandbox filesystem and pivots the process root
+// to it, then records the store that served the pivot as the process's active
+// store, so the goal runner applies every loop's changes to the host. It runs
+// after the container filesystem hardening, so the passthrough sources are the
+// hardened mounts. CAI_SANDBOX_MEMORY selects the memory upper layer instead
+// of the sqlite one. See TheoryOfSandboxRoot.
 func setupSandboxRoot(cwd string) error {
 	if os.Getenv(disableSandboxRootEnv) != "" {
 		return nil
@@ -104,13 +122,18 @@ func setupSandboxRoot(cwd string) error {
 	if isSandboxReview(os.Args) {
 		return nil
 	}
-	dbPath := os.Getenv(sandboxDBEnv)
-	if dbPath == "" {
-		dbPath = sandboxfs.DefaultDBPath(cwd)
-	}
-	absDB, err := filepath.Abs(dbPath)
-	if err != nil {
-		return err
+	memory := os.Getenv(sandboxMemoryEnv) != ""
+	var absDB string
+	if !memory {
+		dbPath := os.Getenv(sandboxDBEnv)
+		if dbPath == "" {
+			dbPath = sandboxfs.DefaultDBPath(cwd)
+		}
+		var err error
+		absDB, err = filepath.Abs(dbPath)
+		if err != nil {
+			return err
+		}
 	}
 	passthrough := sandboxfs.DefaultPassthrough()
 	for _, dir := range filepath.SplitList(os.Getenv(goWritableDirsEnv)) {
@@ -125,6 +148,7 @@ func setupSandboxRoot(cwd string) error {
 	mounted, err := sandboxfs.Mount(sandboxfs.MountOptions{
 		Base:        "/",
 		DBPath:      absDB,
+		Memory:      memory,
 		Mountpoint:  mountpoint,
 		Passthrough: passthrough,
 		WritePolicy: sandboxWritePolicy(WritableDirs()),

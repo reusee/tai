@@ -47,37 +47,21 @@ type Change struct {
 
 // Changes returns the net changes of the sandbox in path order. A change
 // that a conflict blocks still appears, with its reason: the review step
-// shows every change and lets the user decide. Every upper row's metadata
-// leaves one query before any content is read, because the store holds a
-// single connection: a row set kept open while a content query runs would wait
-// for the connection it holds. A live regular row's content comes from the
-// chunk table, and a deletion's from nothing; a metadata-only row's content
-// comes from the base's own prefix, the same bound the capture hashed, so a
-// permission or time change of a file of any size costs that bounded read
-// rather than the file's own length. A live path whose content and kind still
-// match the snapshot but whose recorded mode does not is a change of mode
-// alone, which the hash cannot see. The store's own database and its SQLite
-// siblings never enter the list: they are the review's record, not a
-// reviewable change. See TheoryOfSandboxFilesystem, TheoryOfApplyConflict,
+// shows every change and lets the user decide. The upper layer hands over
+// every row's metadata in one call before any content is read, because the
+// sqlite layer holds a single connection: a row set kept open while a content
+// query runs would wait for the connection it holds. A live regular row's
+// content comes from the layer's chunks, and a deletion's from nothing; a
+// metadata-only row's content comes from the base's own prefix, the same bound
+// the capture hashed, so a permission or time change of a file of any size
+// costs that bounded read rather than the file's own length. A live path whose
+// content and kind still match the snapshot but whose recorded mode does not is
+// a change of mode alone, which the hash cannot see. The upper layer's own
+// record never enters the list: it is the review's source, not a reviewable
+// change. See TheoryOfSandboxFilesystem, TheoryOfApplyConflict,
 // TheoryOfBaseCapture and TheoryOfChunkedContent.
 func (s *Store) Changes() ([]Change, error) {
-	rows, err := s.db.Query(
-		`SELECT path, kind, mode, mtime, deleted, size, target, original_exists, original_hash
-		 FROM files ORDER BY path`)
-	if err != nil {
-		return nil, err
-	}
-	var all []fileRow
-	for rows.Next() {
-		r, err := scanFileRow(rows)
-		if err != nil {
-			rows.Close()
-			return nil, err
-		}
-		all = append(all, r)
-	}
-	err = rows.Err()
-	rows.Close()
+	all, err := s.upper.allRows()
 	if err != nil {
 		return nil, err
 	}
@@ -468,21 +452,10 @@ func (s *Store) applyDir(rel string, perm os.FileMode) error {
 	return chmodAt(s.baseRoot, rel, perm)
 }
 
-// removeAppliedRow drops one applied path's upper row and its content chunks in
-// one transaction, so the next diff is exact. See TheoryOfChunkedContent.
+// removeAppliedRow drops one applied path's upper row and its content, so the
+// next diff is exact. See TheoryOfChunkedContent and TheoryOfUpperLayer.
 func (s *Store) removeAppliedRow(p string) error {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.Exec(`DELETE FROM files WHERE path = ?`, p); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(`DELETE FROM chunks WHERE path = ?`, p); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return s.upper.drop(p)
 }
 
 // mkfifoAt creates a named pipe beneath root. os.Root has no mkfifo, so the

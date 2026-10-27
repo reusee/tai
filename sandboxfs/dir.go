@@ -1,13 +1,11 @@
 package sandboxfs
 
 import (
-	"database/sql"
 	"errors"
 	"io"
 	"os"
 	"strings"
 	"syscall"
-	"time"
 )
 
 const TheoryOfDirectoryStream = `
@@ -146,61 +144,42 @@ func (s *Store) openDir(p string) (*dirCursor, error) {
 // a merged window costs no query. A fresh session holds no row and skips the
 // query. A row's attribute follows the rules the store's stat applies, so a
 // window and a stat never disagree on one path.
-// See TheoryOfDirectoryStream and TheoryOfUpperAbsentCache.
+// See TheoryOfDirectoryStream and TheoryOfUpperLayer.
 func (c *dirCursor) readUpper() error {
-	if c.store.upperEmpty.Load() {
+	rows, err := c.store.upper.rowsUnder(c.path)
+	if err != nil {
+		return err
+	}
+	if len(rows) == 0 {
 		return nil
 	}
 	prefix := c.path
 	if !strings.HasSuffix(prefix, "/") {
 		prefix += "/"
 	}
-	hi := prefix[:len(prefix)-1] + "0"
-	rows, err := queryStmt(c.store.db, c.store.stmts.selectDir, querySelectDir, prefix, hi)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	c.upper = make(map[string]dirUpperRow)
+	c.upper = make(map[string]dirUpperRow, len(rows))
 	c.deleted = make(map[string]bool)
-	for rows.Next() {
-		var rp string
-		var kind, deleted int
-		var mode, mtime int64
-		var size, targetSize sql.NullInt64
-		if err := rows.Scan(&rp, &kind, &mode, &mtime, &deleted, &size, &targetSize); err != nil {
-			return err
-		}
-		rest := strings.TrimPrefix(rp, prefix)
-		if rest == "" || strings.Contains(rest, "/") {
+	for _, r := range rows {
+		name := strings.TrimPrefix(r.path, prefix)
+		if name == "" || strings.Contains(name, "/") {
 			continue
 		}
-		if deleted != 0 {
-			c.deleted[rest] = true
+		if r.deleted {
+			c.deleted[name] = true
 			continue
 		}
-		row := dirUpperRow{attr: Attr{
-			Kind:    Kind(kind),
-			Mode:    os.FileMode(mode),
-			ModTime: time.Unix(0, mtime),
-		}}
+		row := dirUpperRow{attr: attrOfRow(r)}
 		// The size column names content, and only a regular file carries it: a
 		// link carries its target's length, and a directory or a pipe carries
 		// nothing. A metadata-only row keeps the base's own length, which the
 		// merging window supplies. See TheoryOfBaseCapture.
-		switch row.attr.Kind {
-		case KindRegular:
-			if size.Int64 >= 0 {
-				row.attr.Size = size.Int64
-			} else {
-				row.noSize = true
-			}
-		case KindSymlink:
-			row.attr.Size = targetSize.Int64
+		if row.attr.Kind == KindRegular && r.size < 0 {
+			row.attr.Size = 0
+			row.noSize = true
 		}
-		c.upper[rest] = row
+		c.upper[name] = row
 	}
-	return rows.Err()
+	return nil
 }
 
 // openBase opens the base directory once, so later windows resume the

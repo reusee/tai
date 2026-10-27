@@ -82,7 +82,8 @@ func TestSpliceFileAfterRemovedDirectoryCreatesFile(t *testing.T) {
 // TheoryOfSandboxFilesystem: the store never mutates its own database, even
 // when a stale row from an older schema leaves one. The refusal belongs to
 // the common mutation entry, so no path that skips captureOriginal can slip
-// through.
+// through. The row is injected through the sqlite layer's connection; a
+// memory layer carries no record to protect, so the test names the sqlite one.
 func TestCheckWriteRefusesOwnDatabaseWithAStaleRow(t *testing.T) {
 	dir := t.TempDir()
 	base := filepath.Join(dir, "base")
@@ -95,10 +96,11 @@ func TestCheckWriteRefusesOwnDatabaseWithAStaleRow(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
+	u := sqliteOf(t, store)
 	name := "/" + filepath.Base(dbPath)
 	// A row for the database path makes the mutation path skip
 	// captureOriginal, which was the older code's only refusal.
-	if _, err := store.db.Exec(
+	if _, err := u.db.Exec(
 		`INSERT INTO files (path, kind, mode, mtime, deleted, size, target, original_exists, original_hash)
 		 VALUES (?, 0, 420, 0, 0, 0, '', 0, '')`, name); err != nil {
 		t.Fatal(err)

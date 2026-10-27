@@ -1,37 +1,34 @@
 // Package sandboxfs gives a task its own filesystem environment: a
-// read-through union of the host filesystem and a sqlite-backed upper layer
-// that records every mutation, serves the session's reads, lists the net
-// changes, and applies selected changes back to the host.
-// See TheoryOfSandboxFilesystem.
+// read-through union of the host filesystem and an upper layer that records
+// every mutation, serves the session's reads, lists the net changes, and
+// applies selected changes back to the host. The upper layer is a sqlite file
+// or process memory; see TheoryOfUpperLayer. See TheoryOfSandboxFilesystem.
 package sandboxfs
 
 import (
 	"crypto/sha256"
-	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
-	"net/url"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
-
-	_ "modernc.org/sqlite"
 )
 
 const TheoryOfSandboxFilesystem = `
 A task runs inside one filesystem environment built from two layers. The
 base layer is the host filesystem, read through unchanged, so the model
-reads real data without copying it into the sandbox. The upper layer is a
-sqlite database file that records every mutation: content, kind, mode, and
-the base state of the path as it stood when the session first touched it.
-One session's filesystem state is therefore one portable, browsable file.
+reads real data without copying it into the sandbox. The upper layer records
+every mutation: content, kind, mode, and the base state of the path as it
+stood when the session first touched it. The upper layer has two backends —
+a sqlite file whose record outlives the process and that the review command
+browses and applies later, and process memory that leaves nothing behind.
+See TheoryOfUpperLayer and TheoryOfSqliteUpper.
 
 The boundary is the filesystem, not the tool's file abstraction. Change
 blocks keep applying atomically through changes.FileStore, and FileStore
@@ -57,13 +54,14 @@ is still a change. Applying a change writes the upper content to the host,
 with the mode the row recorded beside it, and drops the upper row, so the
 next diff is exact and a repeated apply is a no-op.
 
-The store never targets its own database. The review session holds the
+The store never targets its own record. The review session holds the sqlite
 database open for its whole life, and its records are the review surface; a
 sandbox mutation of the database file — or of SQLite's -wal and -shm
 siblings — would corrupt the record the review depends on. The store
 refuses such a mutation before it reads the base and omits the path's net
-change, so the path never enters the reviewable set. See
-TheoryOfCompletePOSIX for how the file's SQLite siblings arise.
+change, so the path never enters the reviewable set. A memory backend has no
+record to protect, so the check finds nothing. See TheoryOfCompletePOSIX for
+how the file's SQLite siblings arise.
 
 The check matches by file identity, not by text alone. A direct store names
 the database and its base as host paths from one tree, so a relative path
@@ -92,7 +90,7 @@ no map, no name slice, and no second pass to overlay rows that cannot exist.
 A store that holds a row takes the merged path, so a listing and a stat still
 agree on one path. The cursor is the one implementation of the walk and the
 merge, so the mount's windows and the store's own whole-listing API can never
-disagree on which entries exist. See TheoryOfUpperAbsentCache and
+disagree on which entries exist. See TheoryOfUpperLayer and
 TheoryOfDirectoryStream.
 
 A listing carries "." and ".." from the store, and the directory's own
@@ -105,12 +103,10 @@ request already stat'ed.
 
 A metadata lookup never loads content. Stat needs the kind, mode, mtime,
 and size; the row's metadata is the whole answer, and the content lives in the
-chunk table or, for a metadata-only row, in the base. The size therefore comes
+chunks or, for a metadata-only row, in the base. The size therefore comes
 from the row's stored size column or, when that column carries the metadata
 sentinel, from one Lstat of the base path, so a getattr or lookup on a large
-file costs one small row and never a heap copy of the file. A read of a
-written path is two prepared round trips: the row's kind, deletion state, and
-stored size, then the chunk window TheoryOfChunkedContent describes.
+file costs one small row and never a heap copy of the file.
 
 A read handle opens the base file once. The kernel streams a file in
 windows; reopening and re-checking the host file per window spends a stat
@@ -119,18 +115,17 @@ descriptor it opened, and the host type is checked once, before the open,
 so a pipe is never opened and its read never blocks.
 
 The cache never shadows the session. Every read asks the upper layer
-first — a session that has written nothing skips the question, because the
-layer holds nothing (see TheoryOfUpperAbsentCache) — so a written path serves
-its new content and a whiteout reports the deletion without any invalidation.
-A truncation — the truncating open or setattr's size change — marks every
-reader cached for the path stale, and a write drops its own handle's reader
-and marks every other handle's, because the content that was just written is
-the store content from then on. The mark is an atomic flag the reader consumes
-before it serves a window, never a lock the invalidator waits on: the
-invalidator can be another handle's writer, and two writers waiting for each
-other would deadlock. The cached descriptor fixes a base file's view at open,
-the same snapshot the review step compares the host against when it reports a
-conflict.
+first — a sqlite layer that holds no row answers without a query, a memory
+layer answers from its map — so a written path serves its new content and a
+whiteout reports the deletion without any invalidation. A truncation — the
+truncating open or setattr's size change — marks every reader cached for the
+path stale, and a write drops its own handle's reader and marks every other
+handle's, because the content that was just written is the store content from
+then on. The mark is an atomic flag the reader consumes before it serves a
+window, never a lock the invalidator waits on: the invalidator can be another
+handle's writer, and two writers waiting for each other would deadlock. The
+cached descriptor fixes a base file's view at open, the same snapshot the
+review step compares the host against when it reports a conflict.
 
 A directory handle carries the entries its replies already named and a cursor
 for the rest, so one reply pulls only the window it carries and a large
@@ -145,53 +140,11 @@ no notify call tells it otherwise — which is why the stale mark is the
 server's own notice.
 `
 
-const TheoryOfUpperAbsentCache = `
-The read path is the hot path, and most of its paths never enter the upper
-layer: a dependency the session only reads is answered by the base. An
-uncached negative lookup pays a sqlite round trip for every one of them, and
-that round trip dominates a read request which otherwise costs one base read.
-
-A fresh session starts with an empty table, so the per-path record is not the
-cheapest statement of that fact: one flag says the whole layer holds no row,
-and a lookup that reads it answers from the base without touching sqlite. The
-flag is set once, when Open finds the files table empty, and the first metadata
-write clears it, because the metadata upsert is the only statement that ever
-inserts a row. A directory listing reads the same flag and skips its select,
-which saves a query per directory of a walk that never wrote one. A resumed
-session finds rows and takes the per-path cache, so the flag changes nothing
-for a store that already holds work.
-
-The cache therefore records the paths a lookup found absent, and clears a
-path's entry whenever the store writes the path. put is the only writer of
-the table — a row appears or changes only through it — so a cleared entry is
-refreshed on the next lookup, and a cached absence states exactly what the
-table said when it was recorded. The apply step only removes rows, which can
-make an absence more true, never less.
-
-A lookup and the write that invalidates it run on different goroutines, so the
-record must lose to a write that intervened. The lookup stamps itself with the
-write epoch before it queries, and the write moves the epoch and clears the
-entry under one lock; a record whose stamp no longer holds writes nothing. The
-stamp alone would leave a window between the check and the store, so the two
-writers of the cache share a mutex — taken once per path, never on the lookup
-itself. Without that order a lookup that missed a row just before a concurrent
-write committed would hide that row for the rest of the session, because
-nothing else clears an entry.
-
-The cache is bounded by the paths a session touches, and the audit trail
-already spends one record per such path, so it adds no memory the session did
-not already spend. It is a sync.Map, so a lookup runs without a lock: the read
-path consults it on every request, and a shared mutex would serialize every
-reader against the first-read audit. The first-read record uses the same form
-— one lock-free Load per read, and a LoadOrStore only for the first — because
-the audit keeps one record per path, not one per read.
-`
-
 const TheoryOfWriteSplice = `
 The write path grows with the payload, never with the file. A kernel WRITE
-carries at most one negotiated request window of bytes, and the store writes
-that window into the chunks the payload covers; the chunk layout and its cost
-are TheoryOfChunkedContent's subject. A ten-megabyte file written in
+carries at most one negotiated request window of bytes, and the upper layer
+writes that window into the chunks the payload covers; the chunk layout and
+its cost are TheoryOfChunkedContent's subject. A ten-megabyte file written in
 one-megabyte windows therefore moves ten megabytes, never the growing prefix
 an in-place whole-blob rewrite would copy once per window.
 
@@ -204,13 +157,12 @@ buffer to overwrite another handle's bytes, and the kernel's next read asks the
 store for the content the last write left there.
 
 The materialisation is the one step two concurrent first writes can both
-reach, so it re-checks its own premise inside its transaction: the row is
-written only while the path holds no live regular row that already carries
-content. A row another writer created first is that writer's content, and
-replacing it would drop the bytes that writer already stored — the same
-divergence the no-buffer rule rules out for two handles. The loser leaves the
-winner's row alone and answers with it, so the caller's delta lands on the
-content that exists.
+reach, so the upper layer re-checks its own premise inside its own atomic
+step: the row is written only while the path holds no live regular row that
+already carries content. A row another writer created first is that writer's
+content, and replacing it would drop the bytes that writer already stored.
+The loser leaves the winner's row alone and answers with it, so the caller's
+delta lands on the content that exists.
 
 The size sentinel separates the two cases the guard must tell apart. A
 committed metadata-only row records a chmod, a utimes, or a revived whiteout:
@@ -220,7 +172,7 @@ into a path the session only touched by metadata. A committed row with a
 stored length is the competing writer; the sentinel means the guard's premise
 still holds.
 
-The splice runs in one transaction whose first statement both guards the row
+The splice runs in one atomic step whose first statement both guards the row
 and extends its size, so the delta's admissibility and its length cost one
 statement. A path the upper layer holds no live regular row for refuses the
 splice, the caller materialises it, and the splice runs once more; the hot path
@@ -340,10 +292,12 @@ allocation: a value above the bound is EFBIG, so a malformed claim never
 slices a body or reserves memory for bytes that cannot exist. See
 TheoryOfFuseMount.
 
-Durability: FSYNC and FSYNCDIR succeed without doing anything, because the
-store's writes are sqlite transactions that persist as they complete. A
-tool that fsyncs to force data to disk gets the answer it expects, and the
-data has already reached the sandbox database by the time the call returns.
+Durability: FSYNC and FSYNCDIR succeed without doing anything, and they mean
+exactly what the backend means: the sqlite layer's writes are transactions
+that persist as they complete, and the memory layer's writes live only in
+this process. A tool that fsyncs to force data to disk gets the answer it
+expects; with the sqlite layer the data has already reached the database by
+the time the call returns.
 
 RENAME2's flags are honoured where the store can honour them: NOREPLACE
 refuses an existing destination with EEXIST. EXCHANGE and WHITEOUT need an
@@ -400,22 +354,25 @@ and the review step's job is to let the user choose.
 
 const TheoryOfAuditBatching = `
 The audit trail records what a session did to which path. Its rows are
-buffered and written in batches: audit appends a row and writes the buffer in
-one transaction when it reaches auditBatchSize, and Ops and Close flush the
-tail, so one commit serves a whole batch.
+buffered by the store and handed to the upper layer in batches: audit appends
+a row and writes the buffer when it reaches auditBatchSize, and Ops and Close
+flush the tail, so one commit serves a whole batch.
 
-A commit dominates a small statement's cost in this store, so a row written
-per commit charged every mutation and every path's first read a commit of its
-own beside the operation's own statement. Batching removes that second commit
-from the request path without changing what the trail records.
+A commit dominates a small statement's cost in the sqlite layer, so a row
+written per commit charged every mutation and every path's first read a
+commit of its own beside the operation's own statement. Batching removes that
+second commit from the request path without changing what the trail records.
+The memory layer pays nothing per row and keeps the same shape, because the
+batch is the store's, not the backend's.
 
 The trade-off is the tail: rows buffered when a process dies outside a close
 are lost, so the trail is complete for a session that ends normally and may be
 short for one that was killed. The audit is best-effort by design — it never
 fails an operation — and the review step reads changes from the content rows,
-which stay durable at every write. Rows keep their call order within a batch;
-under concurrent mutation a later batch can commit before an earlier one, so
-Ops orders by insertion id and each batch keeps its own order.
+which stay durable at every write in the sqlite layer. Rows keep their call
+order within a batch; under concurrent mutation a later batch can commit
+before an earlier one, so the trail is ordered by insertion, and each batch
+keeps its own order.
 `
 
 const schema = `
@@ -488,8 +445,12 @@ type Op struct {
 	Detail string
 }
 
+// Store is one sandbox's filesystem state: the read-through base and the upper
+// layer that records the session's mutations. The union logic lives here and
+// is written once; the upper layer decides only where a row and its content
+// are kept. See TheoryOfSandboxFilesystem and TheoryOfUpperLayer.
 type Store struct {
-	db       *sql.DB
+	upper    upperStore
 	base     string
 	baseRoot *os.Root
 	dbPath   string
@@ -499,28 +460,6 @@ type Store struct {
 	// means the platform offers no such path. See TheoryOfBaseFdAccess.
 	baseFd int
 
-	// absent caches the paths the upper layer is known not to hold. A write of
-	// the path clears its entry. See TheoryOfUpperAbsentCache.
-	absent sync.Map // p string -> bool
-
-	// absentMu serialises the cache's two writers: the record a lookup makes
-	// and the invalidation a write makes. A lookup still reads the map without
-	// a lock; the lock is taken once per path, never once per request.
-	// See TheoryOfUpperAbsentCache.
-	absentMu sync.Mutex
-
-	// upperEpoch counts the metadata writes the upper layer received. A lookup
-	// stamps itself with the value before it queries and records an absence
-	// only while the stamp still holds, so an absence found before a concurrent
-	// write is never recorded after it. See TheoryOfUpperAbsentCache.
-	upperEpoch atomic.Uint64
-
-	// upperEmpty reports that the upper layer holds no row at all, so every
-	// lookup is answered by the base without a sqlite round trip. Open sets it
-	// when the table is empty, and the first metadata write clears it.
-	// See TheoryOfUpperAbsentCache.
-	upperEmpty atomic.Bool
-
 	// read records the paths the session already audited a read of, so the
 	// trail keeps one record per path. See TheoryOfAuditBatching.
 	read sync.Map // p string -> bool
@@ -528,54 +467,21 @@ type Store struct {
 	// mu guards pending, the audit rows not yet written.
 	mu      sync.Mutex
 	pending []Op
-
-	// stmts is the statement set the request path executes. It is a value, so a
-	// Store built without preparation holds nil statements and every helper
-	// falls back to its SQL text. See TheoryOfPreparedStatements.
-	stmts preparedStatements
-}
-
-// upperAbsent reports whether the upper layer is known not to hold p. A
-// missing entry says nothing: the caller must ask the database. An empty upper
-// layer answers for every path at once, so a fresh session reaches the base
-// without a query. See TheoryOfUpperAbsentCache.
-func (s *Store) upperAbsent(p string) bool {
-	if s.upperEmpty.Load() {
-		return true
-	}
-	_, ok := s.absent.Load(p)
-	return ok
-}
-
-// detectUpperEmpty records whether the upper layer holds no row, so every
-// lookup of a fresh session costs no sqlite round trip. It runs once, from the
-// open path, before the store serves a request. A database that already holds
-// rows takes the per-path cache instead, so a resumed session reads exactly as
-// it did before. See TheoryOfUpperAbsentCache.
-func (s *Store) detectUpperEmpty() error {
-	var one int
-	err := s.db.QueryRow(`SELECT 1 FROM files LIMIT 1`).Scan(&one)
-	switch {
-	case errors.Is(err, sql.ErrNoRows):
-		s.upperEmpty.Store(true)
-		return nil
-	case err != nil:
-		return err
-	}
-	return nil
 }
 
 // Open opens the sandbox store at dbPath over the read-through base
-// directory. The database file is created when absent. It admits every
-// write; see OpenWithPolicy for a store that enforces a write policy.
-// See TheoryOfSandboxFilesystem.
+// directory, with the sqlite upper layer. The database file is created when
+// absent. It admits every write; see OpenWithPolicy for a store that
+// enforces a write policy. See TheoryOfSandboxFilesystem and
+// TheoryOfSqliteUpper.
 func Open(dbPath, base string) (*Store, error) {
 	return OpenWithPolicy(dbPath, base, nil)
 }
 
 // DefaultDBPath returns the store path of a working directory: one sqlite
 // file inside it, so a session's filesystem environment stays with the
-// project it belongs to.
+// project it belongs to. The result is a filesystem path, so it joins with
+// the platform's separator even though the store itself speaks slash paths.
 func DefaultDBPath(dir string) string {
 	return filepath.Join(dir, ".tai-sandbox.db")
 }
@@ -585,25 +491,25 @@ func (s *Store) Base() string {
 	return s.base
 }
 
-// Close flushes the buffered audit rows, then releases the database and the
+// Close flushes the buffered audit rows, then releases the upper layer and the
 // base handles. See TheoryOfAuditBatching.
 func (s *Store) Close() error {
 	s.flushOps()
 	closeBaseDirFd(s.baseFd)
 	s.baseFd = -1
 	err := s.baseRoot.Close()
-	if dbErr := s.db.Close(); err == nil {
-		err = dbErr
+	if upperErr := s.upper.close(); err == nil {
+		err = upperErr
 	}
 	return err
 }
 
-// OpenWithPolicy opens a sandbox store whose mutations are admitted by
-// policy: every write, directory creation, link, rename, mode change, and
-// deletion asks policy about its path, and a non-nil result refuses the
-// operation before the store changes. A nil policy admits every write,
-// which is right for a review process and for tests.
-// See TheoryOfWritePolicy.
+// OpenWithPolicy opens a sandbox store with the sqlite upper layer, whose
+// mutations are admitted by policy: every write, directory creation, link,
+// rename, mode change, and deletion asks policy about its path, and a non-nil
+// result refuses the operation before the store changes. A nil policy admits
+// every write, which is right for a review process and for tests. See
+// TheoryOfWritePolicy and TheoryOfSqliteUpper.
 func OpenWithPolicy(dbPath, base string, policy func(string) error) (*Store, error) {
 	if dbPath == "" {
 		return nil, fmt.Errorf("sandboxfs: empty database path")
@@ -612,88 +518,63 @@ func OpenWithPolicy(dbPath, base string, policy func(string) error) (*Store, err
 	if err != nil {
 		return nil, err
 	}
+	upper, err := openSQLiteUpper(absDB)
+	if err != nil {
+		return nil, err
+	}
+	return newStore(base, upper, policy)
+}
+
+// OpenMemory opens a sandbox store over the read-through base directory with
+// the memory upper layer: the session's mutations live in process memory, so
+// the session leaves no file behind and nothing survives the process. It
+// admits every write; see OpenMemoryWithPolicy for a store that enforces a
+// write policy. See TheoryOfUpperLayer.
+func OpenMemory(base string) (*Store, error) {
+	return OpenMemoryWithPolicy(base, nil)
+}
+
+// OpenMemoryWithPolicy opens a memory-backed sandbox store whose mutations are
+// admitted by policy. See TheoryOfWritePolicy and TheoryOfUpperLayer.
+func OpenMemoryWithPolicy(base string, policy func(string) error) (*Store, error) {
+	return newStore(base, newMemoryUpper(), policy)
+}
+
+// newStore assembles one store around an upper layer: the base directory is
+// opened read-through, the base descriptor answers the read fast path, and the
+// upper layer reports its own record file, when it has one, so the store never
+// mutates the record it serves from. See TheoryOfBaseFdAccess and
+// TheoryOfSandboxFilesystem.
+func newStore(base string, upper upperStore, policy func(string) error) (*Store, error) {
 	absBase, err := filepath.Abs(base)
 	if err != nil {
+		_ = upper.close()
 		return nil, err
 	}
 	baseRoot, err := os.OpenRoot(absBase)
 	if err != nil {
+		_ = upper.close()
 		return nil, err
 	}
-	// One read-only descriptor of the base answers the stat and read fast
-	// paths. See TheoryOfBaseFdAccess.
-	baseFd := openBaseDirFd(absBase)
-	dsn := "file:" + url.PathEscape(absDB) +
-		"?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)" +
-		// synchronous(NORMAL) keeps every commit durable across an
-		// application crash and drops the per-commit fsync a machine crash
-		// would need. The sandbox is a session record, reviewed while the
-		// session runs: losing the last commits of a machine crash costs
-		// nothing a review can use, while an fsync per write and per audit
-		// row costs the write path a disk round trip each time.
-		"&_pragma=synchronous(NORMAL)" +
-		// cache_size(-32000) lifts sqlite's page cache to 32 MiB, so the
-		// store's own pages and the audit trail's stay resident instead of
-		// being re-read from the database per request.
-		"&_pragma=cache_size(-32000)"
-	db, err := sql.Open("sqlite", dsn)
-	if err != nil {
-		closeBaseDirFd(baseFd)
-		baseRoot.Close()
-		return nil, err
-	}
-	// One connection for the process lifetime: the database may sit inside
-	// the filesystem this store serves, and a connection opened later would
-	// resolve its own path through that filesystem — a deadlock with the
-	// server answering the open. The schema commit below creates the WAL
-	// and shared-memory files while they are still reachable.
-	// See TheoryOfFuseMount.
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
-	db.SetConnMaxLifetime(0)
-	if err := db.Ping(); err != nil {
-		db.Close()
-		closeBaseDirFd(baseFd)
-		baseRoot.Close()
-		return nil, err
-	}
-	if _, err := db.Exec(schema); err != nil {
-		db.Close()
-		closeBaseDirFd(baseFd)
-		baseRoot.Close()
-		return nil, err
-	}
-	store := &Store{
-		db:       db,
+	s := &Store{
+		upper:    upper,
 		base:     absBase,
 		baseRoot: baseRoot,
-		dbPath:   absDB,
 		policy:   policy,
-		baseFd:   baseFd,
+		baseFd:   openBaseDirFd(absBase),
 	}
-	// The statement set is prepared before the store serves a request, so no
-	// request pays a parse or waits for a preparation.
-	// See TheoryOfPreparedStatements.
-	if err := store.prepareStatements(); err != nil {
-		db.Close()
-		closeBaseDirFd(baseFd)
-		baseRoot.Close()
-		return nil, err
+	if sb, ok := upper.(selfBackedUpper); ok {
+		s.dbPath = sb.backingPath()
 	}
-	// The whole-layer shortcut is decided once, before the store serves a
-	// request: a database that already holds rows takes the per-path cache
-	// instead. See TheoryOfUpperAbsentCache.
-	if err := store.detectUpperEmpty(); err != nil {
-		db.Close()
-		closeBaseDirFd(baseFd)
-		baseRoot.Close()
-		return nil, err
-	}
-	return store, nil
+	return s, nil
 }
 
-// isOwnDBPath reports whether p names the store's own database or one of its
-// SQLite siblings. See TheoryOfSandboxFilesystem.
+// isOwnDBPath reports whether p names the upper layer's own record or one of
+// its SQLite siblings. A memory layer has no record, so every path is free.
+// The record's path is a filesystem path and a sandbox path is a slash path,
+// so the name comparison runs on slash form; the identity comparison below
+// then covers a mount whose base view renamed the file.
+// See TheoryOfSandboxFilesystem.
 func (s *Store) isOwnDBPath(p string) bool {
 	if s.dbPath == "" {
 		return false
@@ -749,7 +630,7 @@ func Canonical(p string) string {
 	if p == "" {
 		return "/"
 	}
-	if !strings.HasPrefix(p, "/") {
+	if p[0] != '/' {
 		p = "/" + p
 	}
 	return path.Clean(p)
@@ -767,7 +648,7 @@ func relPath(p string) string {
 // canonical: a stat or a read cleans its input once at entry, and cleaning it
 // again for the base access would repeat the traversal on every request.
 func canonicalRel(p string) string {
-	r := strings.TrimPrefix(p, "/")
+	r := p[1:]
 	if r == "" {
 		return "."
 	}
@@ -801,7 +682,7 @@ const fifoOriginalHash = "fifo"
 // See TheoryOfSandboxFilesystem.
 const symlinkOriginalPrefix = "symlink:"
 
-// auditBatchSize bounds the audit rows one transaction carries. See
+// auditBatchSize bounds the audit rows one batch carries. See
 // TheoryOfAuditBatching.
 const auditBatchSize = 64
 
@@ -851,137 +732,55 @@ func scanFileRow(rs rowScanner) (fileRow, error) {
 	return r, nil
 }
 
-// row reads one path's full row from the prepared row statement, so a
-// mutation's lookup pays no SQL parse. The scan reads metadata only: content
-// lives in the chunk table, and a write already holds the bytes it is about to
-// store, so a read that assembled content would copy a file the write is about
-// to discard. See TheoryOfChunkedContent, TheoryOfPreparedStatements and
-// TheoryOfUpperAbsentCache.
+// row reads one path's full row from the upper layer. It is a thin forwarder
+// so the union logic reads the same whether the row comes from a database or a
+// map. See TheoryOfUpperLayer.
 func (s *Store) row(p string) (fileRow, bool, error) {
-	if s.upperAbsent(p) {
-		return fileRow{}, false, nil
-	}
-	// The stamp is read before the query: a write that commits between the
-	// query and the record below moves the epoch, and the absence is then not
-	// recorded. See TheoryOfUpperAbsentCache.
-	epoch := s.upperEpoch.Load()
-	r, err := scanFileRow(queryRowStmt(s.db, s.stmts.selectRow, querySelectRow, p))
-	if errors.Is(err, sql.ErrNoRows) {
-		s.rememberAbsent(p, epoch)
-		return fileRow{}, false, nil
-	}
-	if err != nil {
-		return fileRow{}, false, err
-	}
-	return r, true, nil
+	return s.upper.row(p)
 }
 
 // readUpperRange reads one window of a path the upper layer holds, clamped to
-// the stored size. A metadata-only row — the size sentinel saying the content
-// still lives in the base — reports found false, so the caller serves the
-// window from the base. See TheoryOfBaseCapture,
-// TheoryOfPreparedStatements and TheoryOfUpperAbsentCache.
-func (s *Store) readUpperRange(p string, off int64, size int) (chunk []byte, kind Kind, found bool, err error) {
-	if s.upperAbsent(p) {
-		return nil, 0, false, nil
-	}
-	// The stamp is read before the query, so a write that commits in between
-	// keeps its row from being hidden by the absence recorded below.
-	// See TheoryOfUpperAbsentCache.
-	epoch := s.upperEpoch.Load()
-	var k, deleted int
-	var stored int64
-	err = queryRowStmt(s.db, s.stmts.selectUpper, querySelectUpper, p).Scan(&k, &deleted, &stored)
-	if errors.Is(err, sql.ErrNoRows) {
-		s.rememberAbsent(p, epoch)
-		return nil, 0, false, nil
-	}
-	if err != nil {
-		return nil, 0, false, err
-	}
-	if deleted != 0 {
-		return nil, 0, true, ErrNotExist
-	}
-	if Kind(k) != KindRegular {
-		return nil, Kind(k), true, nil
-	}
-	if stored < 0 {
-		// The row records metadata only: its content still lives in the base.
-		// See TheoryOfBaseCapture.
-		return nil, 0, false, nil
-	}
-	end := min(off+int64(size), stored)
-	if off >= end {
-		return []byte{}, Kind(k), true, nil
-	}
-	chunk, err = s.readChunks(s.db, p, off, int(end-off))
-	if err != nil {
-		return nil, 0, true, err
-	}
-	return chunk, Kind(k), true, nil
+// the stored size. A metadata-only row reports found false, so the caller
+// serves the window from the base. See TheoryOfBaseCapture and
+// TheoryOfUpperLayer.
+func (s *Store) readUpperRange(p string, off int64, size int) ([]byte, Kind, bool, error) {
+	return s.upper.window(p, off, size)
 }
 
-// statRow reads one path's metadata for a stat, from the prepared stat
-// statement, so a stat pays no SQL parse. A metadata-only row reports the
+// statRow reads one path's metadata for a stat. A metadata-only row reports the
 // base's own length, which costs one Lstat and never the file's content. See
-// TheoryOfBaseCapture, TheoryOfPreparedStatements and
-// TheoryOfUpperAbsentCache.
-func (s *Store) statRow(p string) (a Attr, found bool, err error) {
-	if s.upperAbsent(p) {
-		return Attr{}, false, nil
-	}
-	// The stamp is read before the query, so a write that commits in between
-	// keeps its row from being hidden by the absence recorded below.
-	// See TheoryOfUpperAbsentCache.
-	epoch := s.upperEpoch.Load()
-	var kind, deleted int
-	var mode, mtime, size int64
-	var targetSize sql.NullInt64
-	err = queryRowStmt(s.db, s.stmts.selectStat, querySelectStat, p).Scan(&kind, &mode, &mtime, &deleted, &size, &targetSize)
-	if errors.Is(err, sql.ErrNoRows) {
-		s.rememberAbsent(p, epoch)
-		return Attr{}, false, nil
-	}
-	if err != nil {
+// TheoryOfBaseCapture and TheoryOfReadPath.
+func (s *Store) statRow(p string) (Attr, bool, error) {
+	r, ok, err := s.upper.row(p)
+	if err != nil || !ok {
 		return Attr{}, false, err
 	}
-	if deleted != 0 {
+	if r.deleted {
 		return Attr{}, true, ErrNotExist
 	}
-	a = Attr{
-		Kind:    Kind(kind),
-		Mode:    os.FileMode(mode),
-		ModTime: time.Unix(0, mtime),
-	}
-	switch a.Kind {
-	case KindRegular:
-		if size >= 0 {
-			a.Size = size
-		} else if info, statErr := s.baseRoot.Lstat(relPath(p)); statErr == nil {
-			// The row records metadata only, so the base holds the length.
-			// See TheoryOfBaseCapture.
+	a := attrOfRow(r)
+	if r.kind == KindRegular && r.size < 0 {
+		// The row records metadata only, so the base holds the length.
+		// See TheoryOfBaseCapture.
+		if info, statErr := s.baseRoot.Lstat(relPath(p)); statErr == nil {
 			a.Size = info.Size()
 		}
-	case KindSymlink:
-		a.Size = targetSize.Int64
 	}
 	return a, true, nil
 }
 
-// put stores one row's metadata. Content lives in the chunk table: a caller
-// that changes content writes it through putContent or the splice, while a row
-// that stops being a live regular file drops its chunks here.
+// put stores one row's metadata in the upper layer. Content lives in the
+// layer's chunks: a caller that changes content writes it through putContent,
+// while a row that stops being a live regular file drops its chunks.
 // See TheoryOfChunkedContent.
 func (s *Store) put(r fileRow) error {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
-	if err := s.putMetaTx(tx, r); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return s.upper.putRow(r)
+}
+
+// putContent stores one row's metadata and its whole content in one atomic
+// step of the upper layer.
+func (s *Store) putContent(r fileRow, content []byte) error {
+	return s.upper.replaceContent(r, content)
 }
 
 func (s *Store) SpliceFile(p string, off int64, data []byte, perm os.FileMode) error {
@@ -1004,7 +803,7 @@ func (s *Store) SpliceFile(p string, off int64, data []byte, perm os.FileMode) e
 	if off > maxFileSize || off+int64(len(data)) > maxFileSize {
 		return syscall.EFBIG
 	}
-	err := s.spliceChunks(p, off, data)
+	err := s.upper.splice(p, off, data, time.Now())
 	if errors.Is(err, errNoLiveRegularRow) {
 		// No live regular row answered the delta: the path is fresh, a
 		// whiteout, or not a regular file. Materialising it either produces
@@ -1013,7 +812,7 @@ func (s *Store) SpliceFile(p string, off int64, data []byte, perm os.FileMode) e
 		if _, err := s.materializeContent(p, -1, perm); err != nil {
 			return err
 		}
-		err = s.spliceChunks(p, off, data)
+		err = s.upper.splice(p, off, data, time.Now())
 	}
 	if err != nil {
 		return err
@@ -1040,43 +839,13 @@ func (s *Store) audit(op, p, detail string) {
 	batch := s.pending
 	s.pending = nil
 	s.mu.Unlock()
-	_ = s.writeOps(batch)
-}
-
-// writeOps writes one batch of audit rows in a single transaction, keeping the
-// buffer's order. The batch takes one transaction view of the insert and
-// executes it per row: database/sql prepares a transaction-local statement per
-// Tx.Stmt call, so a row that asked for its own view paid a parse per row.
-// See TheoryOfAuditBatching and TheoryOfPreparedStatements.
-func (s *Store) writeOps(ops []Op) error {
-	if len(ops) == 0 {
-		return nil
-	}
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
-	var exec func(args ...any) (sql.Result, error)
-	if s.stmts.putOp == nil {
-		exec = func(args ...any) (sql.Result, error) {
-			return tx.Exec(queryPutOp, args...)
-		}
-	} else {
-		exec = tx.Stmt(s.stmts.putOp).Exec
-	}
-	for _, o := range ops {
-		if _, err := exec(o.Time.Format(time.RFC3339Nano), o.Op, o.Path, o.Detail); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
+	_ = s.upper.writeAudit(batch)
 }
 
 // checkWrite asks the store's write policy about one path, and refuses the
-// store's own database up front, so a stale row can never reach a write that
-// skips the capture that also refuses it.
-// See TheoryOfWritePolicy and TheoryOfSandboxFilesystem.
+// upper layer's own record up front, so a stale row can never reach a write
+// that skips the capture that also refuses it. See TheoryOfWritePolicy and
+// TheoryOfSandboxFilesystem.
 func (s *Store) checkWrite(p string) error {
 	if s.isOwnDBPath(p) {
 		return fmt.Errorf("%w: the sandbox database is never a sandbox target: %s", os.ErrPermission, p)
@@ -1102,62 +871,19 @@ func (s *Store) auditRead(p string) {
 
 // flushOps writes every buffered audit row. The buffer is detached under the
 // lock before the write, so a concurrent audit call keeps its own rows and
-// never blocks behind the transaction. See TheoryOfAuditBatching.
+// never blocks behind the write. See TheoryOfAuditBatching.
 func (s *Store) flushOps() {
 	s.mu.Lock()
 	pending := s.pending
 	s.pending = nil
 	s.mu.Unlock()
-	_ = s.writeOps(pending)
+	_ = s.upper.writeAudit(pending)
 }
 
-// rememberAbsent records that the upper layer does not hold p, so the next
-// lookup of the path costs no sqlite round trip. A write of the path clears
-// the entry, and a write that committed after epoch was read keeps the entry
-// from being recorded at all: that write's row is what the lookup must serve.
-// See TheoryOfUpperAbsentCache.
-func (s *Store) rememberAbsent(p string, epoch uint64) {
-	s.absentMu.Lock()
-	defer s.absentMu.Unlock()
-	if s.upperEpoch.Load() != epoch {
-		return
-	}
-	s.absent.Store(p, true)
-}
-
-// markUpperWritten invalidates what the absence cache says about one written
-// path. The row exists from this write on, so a lookup that found the path
-// absent before it must not record that absence after it. The epoch moves and
-// the entry clears under one lock, so neither writer of the cache can
-// interleave with the other. The call runs before the transaction commits, so
-// no later lookup can pass the stamp check in the interval between the commit
-// and the invalidation. See TheoryOfUpperAbsentCache.
-func (s *Store) markUpperWritten(p string) {
-	s.absentMu.Lock()
-	defer s.absentMu.Unlock()
-	s.upperEpoch.Add(1)
-	s.absent.Delete(p)
-	s.upperEmpty.Store(false)
-}
-
-// Ops returns the audit trail in insertion order. The buffered tail is
+// Ops returns the audit trail in application order. The buffered tail is
 // flushed first, so the answer carries every row the session recorded up to
 // this call. See TheoryOfAuditBatching.
 func (s *Store) Ops() ([]Op, error) {
 	s.flushOps()
-	rows, err := s.db.Query(`SELECT time, op, path, detail FROM ops ORDER BY id`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []Op
-	for rows.Next() {
-		var at, op, p, detail string
-		if err := rows.Scan(&at, &op, &p, &detail); err != nil {
-			return nil, err
-		}
-		t, _ := time.Parse(time.RFC3339Nano, at)
-		out = append(out, Op{Time: t, Op: op, Path: p, Detail: detail})
-	}
-	return out, rows.Err()
+	return s.upper.auditRows()
 }

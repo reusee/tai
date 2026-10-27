@@ -9,10 +9,11 @@ import (
 // run on the request path, so each has a prepared form.
 func TestReadDirAndAuditUsePreparedStatements(t *testing.T) {
 	s, _ := newTestStore(t)
-	if s.stmts.selectDir == nil {
+	u := sqliteOf(t, s)
+	if u.stmts.selectDir == nil {
 		t.Error("the directory listing has no prepared form")
 	}
-	if s.stmts.putOp == nil {
+	if u.stmts.putOp == nil {
 		t.Error("the audit-row insert has no prepared form")
 	}
 	if err := s.WriteFile("/f", []byte("x"), 0o644); err != nil {

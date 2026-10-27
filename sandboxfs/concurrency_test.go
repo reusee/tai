@@ -32,13 +32,14 @@ func newConcurrencyTestStore(t *testing.T) (*Store, string) {
 // of the session and the read keeps serving the base.
 func TestRememberAbsentRejectsAStaleEpoch(t *testing.T) {
 	store, _ := newConcurrencyTestStore(t)
-	epoch := store.upperEpoch.Load()
+	u := sqliteOf(t, store)
+	epoch := u.epoch.Load()
 	if err := store.WriteFile("/a.txt", []byte("written"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	// The lookup's own query ran before the write above; its record runs now.
-	store.rememberAbsent("/a.txt", epoch)
-	if store.upperAbsent("/a.txt") {
+	u.rememberAbsent("/a.txt", epoch)
+	if u.upperAbsent("/a.txt") {
 		t.Fatal("a stale absence survived the write that committed the row")
 	}
 	content, err := store.ReadFile("/a.txt")
@@ -57,6 +58,7 @@ func TestRememberAbsentRejectsAStaleEpoch(t *testing.T) {
 // See TheoryOfUpperAbsentCache.
 func TestConcurrentWriteIsNeverHiddenByACachedAbsence(t *testing.T) {
 	store, _ := newConcurrencyTestStore(t)
+	u := sqliteOf(t, store)
 	for i := 0; i < 200; i++ {
 		p := fmt.Sprintf("/f%d.txt", i)
 		var wg sync.WaitGroup
@@ -72,7 +74,7 @@ func TestConcurrentWriteIsNeverHiddenByACachedAbsence(t *testing.T) {
 			}
 		}()
 		wg.Wait()
-		if store.upperAbsent(p) {
+		if u.upperAbsent(p) {
 			t.Fatalf("%s: a cached absence outlived the write that committed the row", p)
 		}
 		content, err := store.ReadFile(p)

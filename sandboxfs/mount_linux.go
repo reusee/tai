@@ -23,8 +23,17 @@ type MountOptions struct {
 	// so the file may sit inside the filesystem this mount serves. Its
 	// directory must remain visible at the same path after the pivot: the
 	// working directory is, /tmp is not, because the mount replaces /tmp
-	// with a fresh tmpfs. See TheoryOfFuseMount and TheoryOfPassthrough.
+	// with a fresh tmpfs. It is required unless Memory is set. See
+	// TheoryOfFuseMount, TheoryOfPassthrough and TheoryOfUpperLayer.
 	DBPath string
+	// Memory selects the ephemeral memory upper layer instead of the
+	// sqlite one: the session's mutations live in process memory, the
+	// mount leaves no database file behind, and the goal runner's
+	// per-loop apply is the only path that reaches the host. DBPath is
+	// ignored. The trade-off is that an abandoned run keeps nothing to
+	// review, because the changes it never applied never left the
+	// process. See TheoryOfUpperLayer.
+	Memory bool
 	// Mountpoint is the directory the filesystem mounts at. Created when
 	// absent. The path is a host path, not a sandbox path.
 	Mountpoint string
@@ -124,7 +133,9 @@ func passthroughPaths(caller []string) []string {
 
 // MountedFS is one mounted sandbox filesystem.
 type MountedFS struct {
-	// Store is the sqlite-backed upper layer serving the mount.
+	// Store is the upper layer serving the mount: the sqlite record when
+	// the mount opened a database, process memory when it selected the
+	// memory backend. See TheoryOfUpperLayer.
 	Store *Store
 	// Mountpoint is the directory the filesystem mounted at, as the host
 	// sees it before a pivot.
@@ -140,23 +151,33 @@ type MountedFS struct {
 	stopTiming func()
 }
 
-// Mount mounts the sandbox filesystem and, when requested, pivots the process
-// root to it. See TheoryOfFuseMount and TheoryOfPassthrough.
-func Mount(opts MountOptions) (*MountedFS, error) {
+// validateMountOptions checks the mount's required fields before any kernel
+// call. It exists so a test can exercise the options the two upper layers
+// require without mounting: a real mount binds the kernel filesystems into
+// the mountpoint, and a test that mounted would leave directories its
+// temporary tree cannot remove. See TheoryOfUpperLayer.
+func validateMountOptions(opts MountOptions) error {
 	if opts.Mountpoint == "" {
-		return nil, fmt.Errorf("sandboxfs: empty mountpoint")
+		return fmt.Errorf("sandboxfs: empty mountpoint")
 	}
-	if opts.DBPath == "" {
-		return nil, fmt.Errorf("sandboxfs: empty database path")
+	if !opts.Memory && opts.DBPath == "" {
+		return fmt.Errorf("sandboxfs: empty database path")
+	}
+	return nil
+}
+
+// Mount mounts the sandbox filesystem and, when requested, pivots the process
+// root to it. The upper layer behind it is the sqlite record by default and
+// process memory when Memory is set. See TheoryOfFuseMount,
+// TheoryOfPassthrough and TheoryOfUpperLayer.
+func Mount(opts MountOptions) (*MountedFS, error) {
+	if err := validateMountOptions(opts); err != nil {
+		return nil, err
 	}
 	if opts.Base == "" {
 		opts.Base = "/"
 	}
 	absBase, err := filepath.Abs(opts.Base)
-	if err != nil {
-		return nil, err
-	}
-	absDB, err := filepath.Abs(opts.DBPath)
 	if err != nil {
 		return nil, err
 	}
@@ -171,21 +192,40 @@ func Mount(opts MountOptions) (*MountedFS, error) {
 	if err != nil {
 		return nil, err
 	}
-	store, err := OpenWithPolicy(absDB, viewDir, opts.WritePolicy)
-	if err != nil {
-		detachView()
-		return nil, err
-	}
-	// The store's base is the private view, not the host base the database
-	// was opened with. A database inside the base reaches the sandbox as the
-	// path relative to the base, so the two names are recorded by identity
-	// through the view; without this the store would compare the sandbox path
-	// with a host path they do not share and miss the match.
-	// See TheoryOfSandboxFilesystem.
-	if rel, relErr := filepath.Rel(absBase, absDB); relErr == nil &&
-		rel != "." && rel != ".." &&
-		!strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		store.dbPath = filepath.Join(viewDir, rel)
+	var store *Store
+	if opts.Memory {
+		// The ephemeral upper layer: the session's mutations live in
+		// process memory, so the mount leaves no database file and the
+		// goal runner's per-loop apply is the only path that reaches the
+		// host. See TheoryOfUpperLayer.
+		store, err = OpenMemoryWithPolicy(viewDir, opts.WritePolicy)
+		if err != nil {
+			detachView()
+			return nil, err
+		}
+	} else {
+		var absDB string
+		absDB, err = filepath.Abs(opts.DBPath)
+		if err != nil {
+			detachView()
+			return nil, err
+		}
+		store, err = OpenWithPolicy(absDB, viewDir, opts.WritePolicy)
+		if err != nil {
+			detachView()
+			return nil, err
+		}
+		// The store's base is the private view, not the host base the
+		// database was opened with. A database inside the base reaches the
+		// sandbox as the path relative to the base, so the two names are
+		// recorded by identity through the view; without this the store
+		// would compare the sandbox path with a host path they do not share
+		// and miss the match. See TheoryOfSandboxFilesystem.
+		if rel, relErr := filepath.Rel(absBase, absDB); relErr == nil &&
+			rel != "." && rel != ".." &&
+			!strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			store.dbPath = filepath.Join(viewDir, rel)
+		}
 	}
 	detachView()
 	devFd, err := unix.Open("/dev/fuse", unix.O_RDWR|unix.O_CLOEXEC, 0)
@@ -216,9 +256,6 @@ func Mount(opts MountOptions) (*MountedFS, error) {
 		// See TheoryOfOperationTiming.
 		mfs.stopTiming = server.timings.StartReporter(timingIntervalOf(timing), os.Stderr)
 	}
-	// The kernel filesystems ride beside the caller's list: the theory names
-	// them as always passthrough, and a caller that forgets one hands the
-	// store a device node it must not serve. See TheoryOfPassthrough.
 	if err := mfs.bindPassthrough(passthroughPaths(opts.Passthrough)); err != nil {
 		_ = mfs.Unmount()
 		return nil, err

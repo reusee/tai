@@ -34,10 +34,11 @@ func newCacheTestStore(t *testing.T) (*Store, string) {
 // See TheoryOfUpperAbsentCache.
 func TestUpperAbsentCacheRefreshesOnWrite(t *testing.T) {
 	store, _ := newCacheTestStore(t)
+	u := sqliteOf(t, store)
 	if _, err := store.Stat("/a.txt"); err != nil {
 		t.Fatal(err)
 	}
-	if !store.upperAbsent("/a.txt") {
+	if !u.upperAbsent("/a.txt") {
 		t.Fatal("lookup of a base-only path did not record the absence")
 	}
 	if err := store.WriteFile("/a.txt", []byte("changed"), 0o644); err != nil {
@@ -50,7 +51,7 @@ func TestUpperAbsentCacheRefreshesOnWrite(t *testing.T) {
 	if string(content) != "changed" {
 		t.Fatalf("content = %q, want %q", content, "changed")
 	}
-	if store.upperAbsent("/a.txt") {
+	if u.upperAbsent("/a.txt") {
 		t.Fatal("write left a cached absence in place")
 	}
 }
@@ -217,9 +218,10 @@ func TestParentOfMatchesPathDir(t *testing.T) {
 
 // TestReadRangeServesWrittenWindowAfterCachedAbsence checks the read path: a
 // window read recorded the absence, and the write that follows makes the upper
-// layer answer the same window.
+// layer answer the same window. See TheoryOfUpperAbsentCache.
 func TestReadRangeServesWrittenWindowAfterCachedAbsence(t *testing.T) {
 	store, _ := newCacheTestStore(t)
+	u := sqliteOf(t, store)
 	chunk, err := store.ReadRange("/a.txt", 0, 64)
 	if err != nil {
 		t.Fatal(err)
@@ -227,7 +229,7 @@ func TestReadRangeServesWrittenWindowAfterCachedAbsence(t *testing.T) {
 	if string(chunk) != "hello" {
 		t.Fatalf("chunk = %q, want %q", chunk, "hello")
 	}
-	if !store.upperAbsent("/a.txt") {
+	if !u.upperAbsent("/a.txt") {
 		t.Fatal("base read did not record the upper-layer absence")
 	}
 	if err := store.WriteFile("/a.txt", []byte("hello world"), 0o644); err != nil {
@@ -251,10 +253,11 @@ func TestFreshStoreReadsWithoutItsUpperLayer(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(base, "d"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if !store.upperEmpty.Load() {
+	u := sqliteOf(t, store)
+	if !u.empty.Load() {
 		t.Fatal("a store opened on an empty database did not record the empty upper layer")
 	}
-	if err := store.db.Close(); err != nil {
+	if err := u.db.Close(); err != nil {
 		t.Fatal(err)
 	}
 	a, err := store.Stat("/a.txt")

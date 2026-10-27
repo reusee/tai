@@ -992,8 +992,14 @@ func TestCanWriteFollowsPolicy(t *testing.T) {
 	}
 }
 
+// TestOwnDatabaseIsNeverASandboxTarget protects TheoryOfSandboxFilesystem: the
+// store recognises its own record by name and by identity, filters it from the
+// change list, and refuses to apply it. The stale row is injected through the
+// sqlite layer's connection; a memory layer carries no record to protect, so
+// the test names the sqlite one.
 func TestOwnDatabaseIsNeverASandboxTarget(t *testing.T) {
 	s, _ := newTestStore(t)
+	u := sqliteOf(t, s)
 	// The mount's base view is a bind of "/", so the sandbox path of the
 	// database equals its recorded path. Simulate that shape and check the
 	// three SQLite siblings by name.
@@ -1011,7 +1017,7 @@ func TestOwnDatabaseIsNeverASandboxTarget(t *testing.T) {
 
 	// A pre-existing row for the database is filtered from the change list
 	// even though the write path now refuses future mutations.
-	if _, err := s.db.Exec(
+	if _, err := u.db.Exec(
 		`INSERT INTO files (path, kind, mode, mtime, deleted, original_exists, original_hash)
 		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		"/app.db", 0, 0o644, 0, 0, 0, "",
