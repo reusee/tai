@@ -21,10 +21,9 @@ const TheoryOfFuseMount = `
 The sandbox is mounted as a FUSE filesystem, not emulated in-process. FUSE
 is the only mechanism that routes every file operation of every process —
 the toolchain, shell commands, the change-block applier — through one
-userspace handler, so the store's audit and its durable upper layer cover
-all I/O without each consumer knowing they exist. A userspace-only
-abstraction would cover only the code paths that opt into it, which
-defeats the design.
+userspace handler, so the store's audit and its upper layer cover all I/O
+without each consumer knowing they exist. A userspace-only abstraction would
+cover only the code paths that opt into it, which defeats the design.
 
 The implementation speaks the kernel protocol directly instead of a third-
 party library: the protocol is small (a request header, an opcode, and
@@ -67,14 +66,14 @@ entry by appending to the canonical parent, because a directory walk is the
 toolchain's dominant pattern and a lock and a path cleaning per entry are
 the costs that pattern repeats for a large tree. FORGET is accepted without a
 reply and ignored: paths stay addressable for the session's life, matching
-the store, which keeps every touched path in the audit trail and the
-record file.
+the store, which keeps every touched path in the audit trail and, for a
+durable session, the record file.
 
-Write-back happens on WRITE, not on flush: the store is a record file, so
-an open file's content lives in the store and a kernel WRITE persists the
-new content immediately. A killed process therefore leaves a consistent
-store, and the review step sees every byte the session wrote. The read and
-write paths own the mechanism (see TheoryOfReadPath and
+Write-back happens on WRITE, not on flush: the store is the session's only
+copy of what it wrote, so an open file's content lives in the store and a
+kernel WRITE records the new content immediately. A killed process therefore
+leaves a consistent store, and the review step sees every byte the session
+wrote. The read and write paths own the mechanism (see TheoryOfReadPath and
 TheoryOfWriteSplice); the POSIX-visible rules are in TheoryOfCompletePOSIX.
 
 A request buffer is sized for the largest request the kernel may send: the
@@ -271,11 +270,13 @@ it waited for — and the blocked request holds its worker for as long as the
 terminal stays silent. The caller's own entries ride beside them, and a
 duplicate binds once.
 
-The store's sqlite database is the one file that must not transit FUSE: the
+A durable session's record is the one file that must not transit FUSE: the
 FUSE daemon serves the store, so a store read that reached the daemon would
 recurse. Its directory must therefore be one of the passthroughs, or the
-database must be opened and its WAL files created before the pivot. The
-mount helper documents the requirement on MountOptions.DBPath.
+record must be opened and its WAL files created before the pivot, which the
+mount does. A session on the default memory layer holds no such file, so the
+requirement does not arise for it. The mount helper documents the
+requirement on MountOptions.DBPath.
 `
 
 const (

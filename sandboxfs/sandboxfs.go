@@ -26,10 +26,10 @@ base layer is the host filesystem, read through unchanged, so the model
 reads real data without copying it into the sandbox. The upper layer records
 every mutation: content, kind, mode, and the base state of the path as it
 stood when the session first touched it. The upper layer has two backends —
-a SQL record file that outlives the process and that the review command
-browses and applies later, and process memory that leaves nothing behind.
-The record file is a sqlite database by default and a DuckDB database on
-request; see TheoryOfSqlDialects. See TheoryOfUpperLayer and
+process memory, which is the default and leaves nothing behind, and a SQL
+record file that outlives the process and that the review command browses
+and applies later. The record file is a sqlite database, or a DuckDB
+database on request; see TheoryOfSqlDialects. See TheoryOfUpperLayer and
 TheoryOfSqlUpper.
 
 The boundary is the filesystem, not the tool's file abstraction. Change
@@ -455,11 +455,12 @@ func Open(dbPath, base string) (*Store, error) {
 }
 
 // DefaultDBPath returns the store path of a working directory: one record
-// file inside it — a sqlite database by default, a DuckDB database when the
-// mount selects that dialect — so a session's filesystem environment stays
-// with the project it belongs to. The result is a filesystem path, so it joins
-// with the platform's separator even though the store itself speaks slash
-// paths. See TheoryOfSqlDialects.
+// file inside it — a sqlite database, or a DuckDB database when the mount
+// selects that dialect — so a durable session's filesystem environment stays
+// with the project it belongs to. A session on the default memory layer leaves
+// no file here. The result is a filesystem path, so it joins with the
+// platform's separator even though the store itself speaks slash paths.
+// See TheoryOfUpperLayer and TheoryOfSqlDialects.
 func DefaultDBPath(dir string) string {
 	return filepath.Join(dir, ".tai-sandbox.db")
 }

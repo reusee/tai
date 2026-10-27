@@ -331,8 +331,10 @@ func TestMountOptionsRequirePaths(t *testing.T) {
 	if _, err := Mount(MountOptions{DBPath: "x.db"}); err == nil {
 		t.Fatal("empty mountpoint must fail")
 	}
-	if _, err := Mount(MountOptions{Mountpoint: t.TempDir()}); err == nil {
-		t.Fatal("empty db path must fail")
+	// The memory layer is the default and names no record, so a mountpoint
+	// alone is a valid request. See TheoryOfUpperLayer.
+	if err := validateMountOptions(MountOptions{Mountpoint: t.TempDir()}); err != nil {
+		t.Fatalf("the default memory layer needs no record: %v", err)
 	}
 }
 

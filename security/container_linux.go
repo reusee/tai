@@ -45,9 +45,10 @@ namespace's capability restrictions.
 
 The sandbox filesystem supersedes the writable bind mounts as the write path:
 once mounted and pivoted, the process root is the FUSE view, writes are
-recorded in the session's sqlite file instead of reaching the host, and the
-mount policy survives as the store's write policy. The writable set stays the
-same, so this layer changes where a write lands, not whether it is allowed.
+recorded in the session's upper layer instead of reaching the host — process
+memory by default, a record file when the session named one — and the mount
+policy survives as the store's write policy. The writable set stays the same,
+so this layer changes where a write lands, not whether it is allowed.
 See TheoryOfSandboxRoot in sandbox_root_linux.go.
 
 Landlock complements the mount hardening by re-enforcing the same
@@ -100,10 +101,6 @@ const inContainerEnv = "CAI_IN_CONTAINER"
 // through exec (e.g., setuid binaries). See TheoryOfContainerIsolation.
 const prSetNoNewPrivs = 38
 
-// MaybeRunInContainer re-executes the current process inside a new user
-// namespace with filesystem isolation, or hardens the filesystem if already
-// containerized. On non-Linux platforms this is a no-op.
-// See TheoryOfContainerIsolation.
 func MaybeRunInContainer() {
 	// Allow disabling containerization for debugging or restricted kernels.
 	if os.Getenv(disableContainerEnv) != "" {
@@ -188,8 +185,9 @@ func MaybeRunInContainer() {
 
 	// Mount the task's sandbox filesystem and pivot the process root to
 	// it, so every read falls through to the host and every write lands
-	// in the sqlite upper layer. Best-effort like the mount hardening:
-	// a failure leaves the mount policy as the only layer.
+	// in the store's upper layer — process memory by default, a record
+	// file when the session named one. Best-effort like the mount
+	// hardening: a failure leaves the mount policy as the only layer.
 	// See TheoryOfSandboxRoot.
 	if cwd, err := os.Getwd(); err == nil {
 		if err := setupSandboxRoot(cwd); err != nil {

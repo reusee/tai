@@ -14,13 +14,16 @@ import (
 )
 
 const TheoryOfSandboxCommand = `
-The sandbox command is the review half of the filesystem environment: the
-session records its writes in a SQL record file, and this command lists the net
-changes and the audit trail, then applies the changes the user names. The
-record's engine is read from its header — sqlite by default, DuckDB when the
-session selected that dialect — so the command reviews whichever engine wrote
-the file, as long as the binary links the driver that engine needs
-(sandboxfs.TheoryOfSqlDialects).
+The sandbox command is the review half of the filesystem environment: a
+session that selected the durable SQL upper layer records its writes in a
+record file, and this command lists the net changes and the audit trail, then
+applies the changes the user names. The record's engine is read from its
+header — sqlite, or DuckDB when the session selected that dialect — so the
+command reviews whichever engine wrote the file, as long as the binary links
+the driver that engine needs (sandboxfs.TheoryOfSqlDialects). A session on
+the default memory layer leaves no record, so there is nothing here to
+review: that layer's changes reach the host through the goal runner's
+per-loop apply instead (see sandboxfs.TheoryOfUpperLayer).
 
 A listing is the default: the net changes — added, modified, and deleted
 paths, with directory, symbolic-link, and named-pipe kinds and any apply
@@ -35,10 +38,9 @@ apply. A conflicting change is never applied silently: the command reports
 it with its reason and leaves the host path untouched, so the user decides.
 See sandboxfs.TheoryOfApplyConflict.
 
-The database path is the session's default — sandboxfs.DefaultDBPath of the
-working directory — unless the CAI_SANDBOX_DB environment names another
-recorded file. A recorded session is browsable at any later time from that
-file.
+The record path is the session's default — sandboxfs.DefaultDBPath of the
+working directory — unless the CAI_SANDBOX_DB environment named another file.
+A recorded session is browsable at any later time from that file.
 `
 
 const sandboxDBEnv = "CAI_SANDBOX_DB"
@@ -58,7 +60,7 @@ var SandboxCommand = apps.New("sandbox",
 			dbPath = sandboxfs.DefaultDBPath(cwd)
 		}
 		if _, err := os.Stat(dbPath); err != nil {
-			return fmt.Errorf("sandbox: no recorded session at %s: %w", dbPath, err)
+			return fmt.Errorf("sandbox: no recorded session at %s; a session on the default memory layer leaves no record: %w", dbPath, err)
 		}
 		// The record's engine is read from its header, so a session that
 		// selected the DuckDB dialect is reviewed as long as the binary links

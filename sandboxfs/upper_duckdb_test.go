@@ -83,8 +83,8 @@ func TestSQLUpperRejectsAnUnknownDriver(t *testing.T) {
 }
 
 // TestValidateMountOptionsDuckDB checks the mount's dialect selection: the
-// DuckDB dialect needs its record path like sqlite does, the two upper layers
-// cannot be combined, and the dialect alone is a valid request.
+// DuckDB dialect names no record of its own, so it needs its record path like
+// sqlite does, and the dialect with a record is a valid request.
 // See TheoryOfSqlDialects and TheoryOfUpperLayer.
 func TestValidateMountOptionsDuckDB(t *testing.T) {
 	for _, tc := range []struct {
@@ -98,12 +98,7 @@ func TestValidateMountOptionsDuckDB(t *testing.T) {
 			wantErr: "empty database path",
 		},
 		{
-			name:    "dialect and memory are exclusive",
-			opts:    MountOptions{Mountpoint: "/tmp/mnt", DuckDB: true, DBPath: "/tmp/x", Memory: true},
-			wantErr: "different upper layers",
-		},
-		{
-			name: "dialect alone is accepted",
+			name: "dialect with a record is accepted",
 			opts: MountOptions{Mountpoint: "/tmp/mnt", DuckDB: true, DBPath: "/tmp/x"},
 		},
 	} {

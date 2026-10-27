@@ -8,15 +8,20 @@ union logic — capture of the base state, kind checks, the size sentinel,
 whiteouts, conflict detection, apply — is written once against it. A session's
 semantics therefore do not depend on where its mutations live.
 
-The SQL layer is durable: one database file records the session, outlives the
-process, and the review command browses and applies it later. Its dialect
-decides the engine that holds the file — sqlite by default, DuckDB when the
-binary that selects it links a driver (see TheoryOfSqlDialects). The memory
-layer is ephemeral: the same rows and chunks live in maps, the session leaves
-no file behind, and nothing survives the process. A session that needs no
-durable record — a run whose changes reach the host as it proceeds, a test, a
-filesystem with no room for a database beside the project — takes the memory
-layer and pays no disk round trip per mutation.
+The memory layer is the default: the rows and content chunks live in maps, the
+session leaves no file behind, nothing survives the process, and a mutation
+pays no disk round trip. A default session therefore needs no record file and
+no decision about where one lives — a run whose changes reach the host as it
+proceeds, a test, a filesystem with no room for a database beside the project
+all get the cheap layer by asking for nothing.
+
+The SQL layer is durable and opt-in: one database file records the session,
+outlives the process, and the review command browses and applies it later. A
+caller selects it by naming the record. Its dialect decides the engine that
+holds the file — sqlite, or DuckDB when the binary that selects it links a
+driver (see TheoryOfSqlDialects). Naming the record is the whole selection, so
+the durable layer exists exactly where a session asked for work that outlives
+it.
 
 Both layers keep content in fixed-size chunks, so one write window costs its
 own payload in either one; the layout is TheoryOfChunkedContent's subject.
