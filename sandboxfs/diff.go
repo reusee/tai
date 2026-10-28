@@ -293,6 +293,11 @@ func (s *Store) Apply(selected func(Change) bool) (applied []Change, err error) 
 // applied ones, so ApplyAll can tell its caller what still awaits the user's
 // decision. See TheoryOfApplyConflict.
 func (s *Store) applyChanges(selected func(Change) bool) (applied, conflicts []Change, err error) {
+	// The apply drops the upper rows that showed each change, so its audit row
+	// is the only record the write leaves: the trail reaches the upper layer
+	// with the apply, never behind a full batch that may never come.
+	// See TheoryOfAuditBatching.
+	defer s.flushOps()
 	changes, err := s.Changes()
 	if err != nil {
 		return nil, nil, err

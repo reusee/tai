@@ -83,6 +83,14 @@ The layer is best-effort like the mount hardening: a kernel without
 unprivileged FUSE, a missing /dev/fuse, or a failed pivot leaves the
 process with the mount policy alone and the session continues, with no
 active store and therefore no per-loop apply.
+
+The process end flushes the record's audit trail (CloseSandboxRoot). It does
+not unmount or close the store: after the pivot the mountpoint's pre-pivot
+path no longer resolves, closing the FUSE device in another goroutine does
+not wake the server's blocked read on it, and a store close would cut off a
+request that is still being answered. The trail's tail is all the exit needs,
+and the kernel tears the mount down when the process ends. See
+sandboxfs.TheoryOfAuditBatching.
 `
 
 // sandboxDuckDBEnv selects the DuckDB dialect of the durable SQL layer for the
@@ -123,6 +131,13 @@ const sandboxDBEnv = "CAI_SANDBOX_DB"
 // place instead. It is exclusive with sandboxDBEnv: a session has one record.
 // See TheoryOfSandboxRoot.
 const sandboxDirEnv = "CAI_SANDBOX_DIR"
+
+// activeSandboxRoot is the sandbox filesystem this process mounted, kept so
+// the process end closes it: the close flushes the record's audit tail. The
+// mount and the store stay open — the kernel tears the mount down when the
+// process ends — so the flush is all the exit needs. See CloseSandboxRoot
+// and TheoryOfSandboxRoot.
+var activeSandboxRoot *sandboxfs.MountedFS
 
 // setupSandboxRoot mounts the sandbox filesystem and pivots the process root
 // to it, then records the store that served the pivot as the process's active
@@ -177,7 +192,32 @@ func setupSandboxRoot(cwd string) error {
 	// it. See sandboxfs.TheoryOfActiveStore and
 	// pipeline.TheoryOfLoopChangeApply.
 	sandboxfs.SetActiveStore(mounted.Store)
+	// The mount lives for the whole process, so the process keeps it and the
+	// top frame closes it. See CloseSandboxRoot.
+	activeSandboxRoot = mounted
 	return nil
+}
+
+// CloseSandboxRoot flushes the audit trail of the sandbox filesystem this
+// process mounted. The process's top frame calls it, so a session that ends
+// normally leaves the record's writes: the mutations an apply did not reach —
+// the ai command's round-by-round changes, a review phase's edits — are rows
+// only the flush preserves, because a batch that never filled is never
+// written. The mount and the store stay open: after the pivot the mountpoint's
+// pre-pivot path no longer resolves, a closed FUSE device in another goroutine
+// does not wake the server's blocked read on it, and the request pool is still
+// answering. It is idempotent, and a process without a sandbox — a failed
+// mount, the review command, a disabled or non-Linux run — has nothing to
+// flush. See TheoryOfSandboxRoot and sandboxfs.TheoryOfAuditBatching.
+func CloseSandboxRoot() {
+	mounted := activeSandboxRoot
+	if mounted == nil {
+		return
+	}
+	activeSandboxRoot = nil
+	if mounted.Store != nil {
+		mounted.Store.FlushAudit()
+	}
 }
 
 // sandboxRecordOptions returns the record this session's environment selects:

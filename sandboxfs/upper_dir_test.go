@@ -77,6 +77,71 @@ func TestOpenDirRecordsToADirectory(t *testing.T) {
 	}
 }
 
+// TestApplyFlushesTheAuditTrail protects TheoryOfAuditBatching: the apply drops
+// the upper rows that showed each change, so its audit row must reach the trail
+// with the apply instead of waiting for a full batch. A session whose reads
+// filled whole batches would otherwise leave every write and apply row in a
+// tail no one flushes, and the record would show reads only.
+func TestApplyFlushesTheAuditTrail(t *testing.T) {
+	store, base, _ := newTestDirStore(t)
+	if err := store.WriteFile("/a.txt", []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.ApplyAll(); err != nil {
+		t.Fatal(err)
+	}
+	if hostContent(t, base, "a.txt") != "x" {
+		t.Fatal("the apply did not reach the host")
+	}
+	// Read the record the way the review command does, without the store's own
+	// flush: Ops would flush the buffer and hide a missing flush.
+	ops, err := store.upper.auditRows()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"write", "apply"} {
+		found := false
+		for _, op := range ops {
+			if op.Op == want && op.Path == "/a.txt" {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("the trail lacks the %s row of /a.txt: %+v", want, ops)
+		}
+	}
+}
+
+// TestFlushAuditWritesTheBufferedTrail protects TheoryOfAuditBatching: the
+// process-end flush reaches the upper layer without closing the store, so a
+// session that ends normally carries whatever a full batch never wrote. The
+// test reads the record directly, because Ops flushes the buffer itself and
+// would hide a missing flush.
+func TestFlushAuditWritesTheBufferedTrail(t *testing.T) {
+	store, _, _ := newTestDirStore(t)
+	if err := store.WriteFile("/a.txt", []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store.FlushAudit()
+	ops, err := store.upper.auditRows()
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, op := range ops {
+		if op.Op == "write" && op.Path == "/a.txt" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("the trail lacks the write row of /a.txt: %+v", ops)
+	}
+	// The store keeps serving after the flush: the flush is not a close.
+	if _, err := store.ReadFile("/a.txt"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestOpenDirMetadataOnlyLeavesNoContentFile protects TheoryOfBaseCapture
 // against the directory layer: a chmod of a base file records metadata alone,
 // so the record holds one metadata file and no content file, and a partial

@@ -17,6 +17,13 @@ import (
 func main() {
 	security.MaybeRunInContainer()
 
+	// The sandbox filesystem lives for the whole process, so its close is the
+	// process's top frame: the close flushes the record's audit tail, and the
+	// mount and the store stay open — the kernel tears the mount down when
+	// the process ends. See security.CloseSandboxRoot and
+	// security.TheoryOfSandboxRoot.
+	defer security.CloseSandboxRoot()
+
 	scope := dscope.New(dscope.Methods(new(Module))...)
 
 	// Override the default configs.Loader (provided by configs.Module)

@@ -42,6 +42,15 @@ func TestSetupSandboxRootSkippedForReview(t *testing.T) {
 	}
 }
 
+// TestCloseSandboxRootWithoutAMount protects TheoryOfSandboxRoot: the
+// process's top frame calls the close on every path, so a process without a
+// sandbox — a failed mount, the review command, a disabled run — must close
+// nothing and must survive a repeated call.
+func TestCloseSandboxRootWithoutAMount(t *testing.T) {
+	CloseSandboxRoot()
+	CloseSandboxRoot()
+}
+
 func TestSandboxRecordOptions(t *testing.T) {
 	env := func(m map[string]string) func(string) string {
 		return func(k string) string { return m[k] }

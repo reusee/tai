@@ -369,8 +369,9 @@ and the review step's job is to let the user choose.
 const TheoryOfAuditBatching = `
 The audit trail records what a session did to which path. Its rows are
 buffered by the store and handed to the upper layer in batches: audit appends
-a row and writes the buffer when it reaches auditBatchSize, and Ops and Close
-flush the tail, so one commit serves a whole batch.
+a row and writes the buffer when it reaches auditBatchSize, and Ops, the apply
+step, the process-end flush, and Close flush the tail, so one commit serves a
+whole batch.
 
 A commit dominates a small statement's cost in the SQL layer, so a row
 written per commit charged every mutation and every path's first read a
@@ -380,14 +381,21 @@ The directory layer pays one append per batch instead of one per row, and the
 memory layer pays nothing per row; both keep the same shape, because the batch
 is the store's, not the backend's.
 
-The trade-off is the tail: rows buffered when a process dies outside a close
-are lost, so the trail is complete for a session that ends normally and may be
-short for one that was killed. The audit is best-effort by design — it never
-fails an operation — and the review step reads changes from the content rows,
-which stay durable at every write in the durable layers. Rows keep their call
-order within a batch; under concurrent mutation a later batch can commit
-before an earlier one, so the trail is ordered by insertion, and each batch
-keeps its own order.
+The trade-off is the tail: rows buffered when a process dies outside a flush
+are lost. Three flushes bound that loss, at the points where the trail carries
+information nothing else does. The apply step flushes when it hands changes to
+the host: it drops the upper rows that showed each change, so its audit row is
+all the record the write ever leaves, and waiting for a full batch would lose
+exactly the mutations a review cannot reconstruct. The process-end flush runs
+at normal exit through Store.FlushAudit, so a session that ends carries the
+writes no apply reached — the ai command's round-by-round changes, a review
+phase's edits. Store.Close flushes as well, for a caller that closes a store
+it opened. A killed process may still carry a short tail; the audit is
+best-effort by design, never failing an operation, and the review step reads
+changes from the content rows, which stay durable at every write in the
+durable layers. Rows keep their call order within a batch; under concurrent
+mutation a later batch can commit before an earlier one, so the trail is
+ordered by insertion, and each batch keeps its own order.
 `
 
 // Kind is the file type of a sandbox path.
@@ -973,4 +981,15 @@ func (s *Store) flushOps() {
 func (s *Store) Ops() ([]Op, error) {
 	s.flushOps()
 	return s.upper.auditRows()
+}
+
+// FlushAudit writes every buffered audit row to the upper layer, so the trail
+// records the session up to this call. It is the process-end flush: a session
+// that ends normally carries its whole trail without closing anything, which
+// a mounted store cannot do — the mount lives for the process, and a full
+// unmount after the root pivot would wait on a server whose FUSE device read
+// is still blocked. Closing the store flushes too; this is the lighter call
+// for a process that runs until it exits. See TheoryOfAuditBatching.
+func (s *Store) FlushAudit() {
+	s.flushOps()
 }
