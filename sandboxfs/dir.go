@@ -27,11 +27,13 @@ that window, merged against the rows already read. A reply therefore costs the
 window it carries, and a directory of a million entries costs a million small
 requests instead of one long one.
 
-The upper layer's rows arrive in one query per listing, keyed by entry name,
-so a merging window never queries per entry. A fresh session holds no row and
-skips the query (see TheoryOfUpperAbsentCache). The entries of one window keep
-the base's own order; only the store's whole-listing API sorts, because a
-caller of that API reads the result as a set.
+The upper layer's rows arrive in one call per listing — one query in the SQL
+layer, one scan of the record directory in the directory layer, one map pass
+in the memory layer — keyed by entry name, so a merging window never asks per
+entry. A fresh session holds no row and skips the call where the layer can tell
+(see TheoryOfUpperAbsentCache). The entries of one window keep the base's own
+order; only the store's whole-listing API sorts, because a caller of that API
+reads the result as a set.
 
 A mutation the mount serves marks an open listing stale; it does not reset the
 stream. The entries already delivered stay addressable by the cookies the

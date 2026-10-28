@@ -1,8 +1,9 @@
 // Package sandboxfs gives a task its own filesystem environment: a
 // read-through union of the host filesystem and an upper layer that records
 // every mutation, serves the session's reads, lists the net changes, and
-// applies selected changes back to the host. The upper layer is a sqlite file
-// or process memory; see TheoryOfUpperLayer. See TheoryOfSandboxFilesystem.
+// applies selected changes back to the host. The upper layer is process
+// memory, a SQL record file, or a directory record of ordinary files; see
+// TheoryOfUpperLayer. See TheoryOfSandboxFilesystem.
 package sandboxfs
 
 import (
@@ -21,65 +22,66 @@ import (
 )
 
 const TheoryOfSandboxFilesystem = `
-A task runs inside one filesystem environment built from two layers. The
-base layer is the host filesystem, read through unchanged, so the model
-reads real data without copying it into the sandbox. The upper layer records
-every mutation: content, kind, mode, and the base state of the path as it
-stood when the session first touched it. The upper layer has two backends —
-process memory, which is the default and leaves nothing behind, and a SQL
-record file that outlives the process and that the review command browses
-and applies later. The record file is a sqlite database, or a DuckDB
-database on request; see TheoryOfSqlDialects. See TheoryOfUpperLayer and
-TheoryOfSqlUpper.
+A task runs inside one filesystem environment built from two layers. The base
+layer is the host filesystem, read through unchanged, so the model reads real
+data without copying it into the sandbox. The upper layer records every
+mutation: content, kind, mode, and the base state of the path as it stood when
+the session first touched it. The upper layer has three backends — process
+memory, which is the default and leaves nothing behind; a SQL record file that
+outlives the process and that the review command browses and applies later; and
+a directory record of ordinary files that outlives the process the same way,
+with the host filesystem doing the storage. The record file is a sqlite
+database, or a DuckDB database on request; see TheoryOfSqlDialects. See
+TheoryOfUpperLayer, TheoryOfSqlUpper and TheoryOfDirUpper.
 
-The boundary is the filesystem, not the tool's file abstraction. Change
-blocks keep applying atomically through changes.FileStore, and FileStore
-never learns that the sandbox exists: the sandbox intercepts below it, at
-the mount namespace, so it covers every reader and writer — the toolchain,
-shell commands, and any other subprocess — and not only the change-block
-path.
+The boundary is the filesystem, not the tool's file abstraction. Change blocks
+keep applying atomically through changes.FileStore, and FileStore never learns
+that the sandbox exists: the sandbox intercepts below it, at the mount
+namespace, so it covers every reader and writer — the toolchain, shell
+commands, and any other subprocess — and not only the change-block path.
 
-Reads fall through to the base except where the upper layer overrides the
-path; a whiteout hides a deleted base file, and a directory listing merges
-both layers. Every mutation writes an audit row, and a path's first read
-writes one too: the audit answers which files a session touched, not how
-often it read them.
+Reads fall through to the base except where the upper layer overrides the path;
+a whiteout hides a deleted base file, and a directory listing merges both
+layers. Every mutation writes an audit row, and a path's first read writes one
+too: the audit answers which files a session touched, not how often it read
+them.
 
-A path's net change is derived from hashes, never from a stored second copy
-of the content: the first mutation stores the base content hash, so a path
-rewritten to its original bytes — or created and deleted in one session —
-shows no change. The recorded hash also marks a change of kind, because a
-bare digest cannot: a directory records no hash of its own, so a hash on a
-live directory row states that the base held content, and a link's recorded
-hash carries a tag, so a regular file whose bytes spell a base link's target
-is still a change. Applying a change writes the upper content to the host,
-with the mode the row recorded beside it, and drops the upper row, so the
-next diff is exact and a repeated apply is a no-op.
+A path's net change is derived from hashes, never from a stored second copy of
+the content: the first mutation stores the base content hash, so a path
+rewritten to its original bytes — or created and deleted in one session — shows
+no change. The recorded hash also marks a change of kind, because a bare digest
+cannot: a directory records no hash of its own, so a hash on a live directory
+row states that the base held content, and a link's recorded hash carries a tag,
+so a regular file whose bytes spell a base link's target is still a change.
+Applying a change writes the upper content to the host, with the mode the row
+recorded beside it, and drops the upper row, so the next diff is exact and a
+repeated apply is a no-op.
 
-The store never targets its own record. The review session holds the record
-file open for its whole life, and its records are the review surface; a
-sandbox mutation of the database file — or of the record's sibling files,
-SQLite's -wal and -shm and DuckDB's .wal — would corrupt the record the
-review depends on. The store refuses such a mutation before it reads the
-base and omits the path's net change, so the path never enters the
-reviewable set. A memory backend has no record to protect, so the check
-finds nothing. See TheoryOfCompletePOSIX for how the record's siblings
-arise.
+The store never targets its own record. The review session holds the record open
+for its whole life, and its records are the review surface; a sandbox mutation
+of the record — the database file, one of its sibling files (SQLite's -wal and
+-shm, DuckDB's .wal), or, for a directory record, any file beneath the record
+directory — would corrupt the record the review depends on. The store refuses
+such a mutation before it reads the base and omits the path's net change, so the
+path never enters the reviewable set. A memory backend has no record to
+protect, so the check finds nothing. See TheoryOfCompletePOSIX for how the
+SQL record's siblings arise, and TheoryOfDirRecord for the directory record's
+own extent.
 
-The check matches by file identity, not by text alone. A direct store names
-the database and its base as host paths from one tree, so a relative path
-between them locates the file's sandbox name. A mounted store serves a
-private bind view of the base, whose paths are not the host paths the
-database was opened with; the mount records the database's name in the view
-so the two names still meet on one inode. Without that step a text
-comparison misses every mutation of a database that lives inside the base.
+The check matches by file identity, not by text alone. A direct store names the
+record and its base as host paths from one tree, so a relative path between them
+locates the file's sandbox name. A mounted store serves a private bind view of
+the base, whose paths are not the host paths the record was opened with; the
+mount records the record's name in the view so the two names still meet on one
+inode. Without that step a text comparison misses every mutation of a record
+that lives inside the base. A directory record makes the match structural: its
+sandbox name and every path beneath it are the record.
 
-The environment is deliberately not a fresh isolated copy. The model must
-reach the host's real data; the safety comes from intercepting writes and
-making them reviewable, not from hiding data. This is also why a plain
-overlay filesystem does not serve: it offers no read or write hook to
-audit, intercept, or defer a write, while this upper layer offers all
-three.
+The environment is deliberately not a fresh isolated copy. The model must reach
+the host's real data; the safety comes from intercepting writes and making them
+reviewable, not from hiding data. This is also why a plain overlay filesystem
+does not serve: it offers no read or write hook to audit, intercept, or defer a
+write, while this upper layer offers all three.
 `
 
 const TheoryOfReadPath = `
@@ -106,10 +108,10 @@ request already stat'ed.
 
 A metadata lookup never loads content. Stat needs the kind, mode, mtime,
 and size; the row's metadata is the whole answer, and the content lives in the
-chunks or, for a metadata-only row, in the base. The size therefore comes
-from the row's stored size column or, when that column carries the metadata
-sentinel, from one Lstat of the base path, so a getattr or lookup on a large
-file costs one small row and never a heap copy of the file.
+upper layer's content store or, for a metadata-only row, in the base. The size
+therefore comes from the row's stored size column or, when that column carries
+the metadata sentinel, from one Lstat of the base path, so a getattr or lookup
+on a large file costs one small row and never a heap copy of the file.
 
 A read handle opens the base file once. The kernel streams a file in
 windows; reopening and re-checking the host file per window spends a stat
@@ -119,16 +121,17 @@ so a pipe is never opened and its read never blocks.
 
 The cache never shadows the session. Every read asks the upper layer
 first — a SQL layer that holds no row answers without a query, a memory
-layer answers from its map — so a written path serves its new content and a
-whiteout reports the deletion without any invalidation. A truncation — the
-truncating open or setattr's size change — marks every reader cached for the
-path stale, and a write drops its own handle's reader and marks every other
-handle's, because the content that was just written is the store content from
-then on. The mark is an atomic flag the reader consumes before it serves a
-window, never a lock the invalidator waits on: the invalidator can be another
-handle's writer, and two writers waiting for each other would deadlock. The
-cached descriptor fixes a base file's view at open, the same snapshot the
-review step compares the host against when it reports a conflict.
+layer answers from its map, and a directory layer from one failed file open —
+so a written path serves its new content and a whiteout reports the deletion
+without any invalidation. A truncation — the truncating open or setattr's size
+change — marks every reader cached for the path stale, and a write drops its
+own handle's reader and marks every other handle's, because the content that
+was just written is the store content from then on. The mark is an atomic flag
+the reader consumes before it serves a window, never a lock the invalidator
+waits on: the invalidator can be another handle's writer, and two writers
+waiting for each other would deadlock. The cached descriptor fixes a base
+file's view at open, the same snapshot the review step compares the host
+against when it reports a conflict.
 
 A directory handle carries the entries its replies already named and a cursor
 for the rest, so one reply pulls only the window it carries and a large
@@ -146,8 +149,10 @@ server's own notice.
 const TheoryOfWriteSplice = `
 The write path grows with the payload, never with the file. A kernel WRITE
 carries at most one negotiated request window of bytes, and the upper layer
-writes that window into the chunks the payload covers; the chunk layout and
-its cost are TheoryOfChunkedContent's subject. A ten-megabyte file written in
+writes that window and no other byte: the SQL and memory layers write the
+chunks the payload covers, and the directory layer writes its one content file
+at the window's offset (see TheoryOfDirUpper). The chunk layout and its cost
+are TheoryOfChunkedContent's subject. A ten-megabyte file written in
 one-megabyte windows therefore moves ten megabytes, never the growing prefix
 an in-place whole-blob rewrite would copy once per window.
 
@@ -180,7 +185,8 @@ and extends its size, so the delta's admissibility and its length cost one
 statement. A path the upper layer holds no live regular row for refuses the
 splice, the caller materialises it, and the splice runs once more; the hot path
 therefore costs one commit and never a second lookup of the content this write
-exists to avoid copying. The statement shapes are TheoryOfPreparedStatements'.
+exists to avoid copying. The memory and SQL layers' statement shapes are
+TheoryOfPreparedStatements'.
 `
 
 const TheoryOfApplyConflict = `
@@ -297,10 +303,12 @@ TheoryOfFuseMount.
 
 Durability: FSYNC and FSYNCDIR succeed without doing anything, and they mean
 exactly what the backend means: the SQL layer's writes are transactions that
-persist as they complete, whichever dialect holds the record, and the memory
-layer's writes live only in this process. A tool that fsyncs to force data to
-disk gets the answer it expects; with the SQL layer the data has already
-reached the database by the time the call returns.
+persist as they complete, whichever dialect holds the record; the directory
+layer's writes are files that reach the operating system as they complete
+(see TheoryOfDirUpper); and the memory layer's writes live only in this
+process. A tool that fsyncs to force data to disk gets the answer it expects;
+with either durable layer the data has already left the process by the time
+the call returns.
 
 RENAME2's flags are honoured where the store can honour them: NOREPLACE
 refuses an existing destination with EEXIST. EXCHANGE and WHITEOUT need an
@@ -365,14 +373,15 @@ A commit dominates a small statement's cost in the SQL layer, so a row
 written per commit charged every mutation and every path's first read a
 commit of its own beside the operation's own statement. Batching removes that
 second commit from the request path without changing what the trail records.
-The memory layer pays nothing per row and keeps the same shape, because the
-batch is the store's, not the backend's.
+The directory layer pays one append per batch instead of one per row, and the
+memory layer pays nothing per row; both keep the same shape, because the batch
+is the store's, not the backend's.
 
 The trade-off is the tail: rows buffered when a process dies outside a close
 are lost, so the trail is complete for a session that ends normally and may be
 short for one that was killed. The audit is best-effort by design — it never
 fails an operation — and the review step reads changes from the content rows,
-which stay durable at every write in the SQL layer. Rows keep their call
+which stay durable at every write in the durable layers. Rows keep their call
 order within a batch; under concurrent mutation a later batch can commit
 before an earlier one, so the trail is ordered by insertion, and each batch
 keeps its own order.
@@ -447,8 +456,9 @@ type Store struct {
 // Open opens the sandbox store at dbPath over the read-through base
 // directory, with the sqlite dialect of the SQL upper layer. The database
 // file is created when absent. It admits every write; see OpenWithPolicy for
-// a store that enforces a write policy, and OpenDuckDB for a record held by
-// another engine. See TheoryOfSandboxFilesystem, TheoryOfSqlUpper and
+// a store that enforces a write policy, OpenDuckDB for a record held by
+// another engine, and OpenDir for a directory record. See
+// TheoryOfSandboxFilesystem, TheoryOfSqlUpper, TheoryOfDirRecord and
 // TheoryOfSqlDialects.
 func Open(dbPath, base string) (*Store, error) {
 	return OpenWithPolicy(dbPath, base, nil)
@@ -528,15 +538,19 @@ func OpenDuckDBWithPolicy(dbPath, base string, policy func(string) error) (*Stor
 	return openDurable(dbPath, base, policy, openDuckDBUpper)
 }
 
-// OpenAny opens the sandbox store at dbPath by routing the record to the
-// dialect that wrote it: DuckDB opens when the file's header carries DuckDB's
-// magic, and sqlite opens for sqlite's header, for a path that does not exist
-// yet, and for any other shape, whose own error then names a file that is no
-// record. The review command takes this path, so a user never has to remember
-// which engine wrote the record. The DuckDB route needs the binary's driver
-// import, exactly as the mount does. See TheoryOfSqlDialects.
+// OpenAny opens the sandbox store at dbPath by routing the record to the layer
+// and dialect that wrote it: a record directory opens the directory layer,
+// DuckDB opens when the file's header carries DuckDB's magic, and sqlite opens
+// for sqlite's header, for a path that does not exist yet, and for any other
+// shape, whose own error then names a file that is no record. The review
+// command takes this path, so a user never has to remember which layer wrote
+// the record. The DuckDB route needs the binary's driver import, exactly as the
+// mount does. See TheoryOfDirRecord and TheoryOfSqlDialects.
 func OpenAny(dbPath, base string) (*Store, error) {
 	if dbPath != "" {
+		if info, err := os.Stat(dbPath); err == nil && info.IsDir() {
+			return OpenDir(dbPath, base)
+		}
 		engine, err := recordEngine(dbPath)
 		if err != nil {
 			return nil, err
@@ -621,13 +635,18 @@ func newStore(base string, upper upperStore, policy func(string) error) (*Store,
 	return s, nil
 }
 
-// isOwnDBPath reports whether p names the upper layer's own record or one of
-// the backend's sibling files: sqlite keeps its -wal and -shm beside the
-// database, DuckDB keeps its .wal. A memory layer has no record, so every path
-// is free. The record's path is a filesystem path and a sandbox path is a slash
-// path, so the name comparison runs on slash form; the identity comparison
-// below then covers a mount whose base view renamed the file.
-// See TheoryOfSandboxFilesystem and TheoryOfSqlDialects.
+// isOwnDBPath reports whether p names the upper layer's own record: the record
+// path itself, a backend's sibling file beside it (sqlite's -wal and -shm,
+// DuckDB's .wal), and — for a directory record — every path beneath the record
+// directory. A memory layer has no record, so every path is free. The record's
+// path is a filesystem path and a sandbox path is a slash path, so the name
+// comparison runs on slash form twice: once against the recorded path, and once
+// against the path relative to the base, which is the record's sandbox name. The
+// second form is what catches a directory record's files after a mount rewrote
+// the record's path to its private base view, and what catches a direct store
+// whose record sits inside its own base. The identity comparison below then
+// covers a mount whose base view renamed the file. See TheoryOfSandboxFilesystem,
+// TheoryOfDirRecord and TheoryOfSqlDialects.
 func (s *Store) isOwnDBPath(p string) bool {
 	if s.dbPath == "" {
 		return false
@@ -642,6 +661,17 @@ func (s *Store) isOwnDBPath(p string) bool {
 	if err != nil || rel == "." || rel == ".." ||
 		strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return false
+	}
+	// The record's sandbox name and, for a record directory, every path under
+	// it are the record. A directory record holds a metadata file per recorded
+	// path and a content file per content-bearing path, all beneath this name.
+	// See TheoryOfDirRecord.
+	record := Canonical(filepath.ToSlash(rel))
+	switch {
+	case cp == record:
+		return true
+	case record != "/" && strings.HasPrefix(cp, record+"/"):
+		return true
 	}
 	var own []os.FileInfo
 	for _, name := range [4]string{rel, rel + "-wal", rel + "-shm", rel + ".wal"} {
@@ -786,8 +816,8 @@ func scanFileRow(rs rowScanner) (fileRow, error) {
 }
 
 // row reads one path's full row from the upper layer. It is a thin forwarder
-// so the union logic reads the same whether the row comes from a database or a
-// map. See TheoryOfUpperLayer.
+// so the union logic reads the same whether the row comes from a database, a
+// map, or a record file. See TheoryOfUpperLayer.
 func (s *Store) row(p string) (fileRow, bool, error) {
 	return s.upper.row(p)
 }
@@ -823,9 +853,9 @@ func (s *Store) statRow(p string) (Attr, bool, error) {
 }
 
 // put stores one row's metadata in the upper layer. Content lives in the
-// layer's chunks: a caller that changes content writes it through putContent,
-// while a row that stops being a live regular file drops its chunks.
-// See TheoryOfChunkedContent.
+// layer's content store: a caller that changes content writes it through
+// putContent, while a row that stops being a live regular file drops its
+// content. See TheoryOfChunkedContent.
 func (s *Store) put(r fileRow) error {
 	return s.upper.putRow(r)
 }
@@ -901,7 +931,7 @@ func (s *Store) audit(op, p, detail string) {
 // TheoryOfSandboxFilesystem.
 func (s *Store) checkWrite(p string) error {
 	if s.isOwnDBPath(p) {
-		return fmt.Errorf("%w: the sandbox database is never a sandbox target: %s", os.ErrPermission, p)
+		return fmt.Errorf("%w: the sandbox record is never a sandbox target: %s", os.ErrPermission, p)
 	}
 	if s.policy == nil {
 		return nil

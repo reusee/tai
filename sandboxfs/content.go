@@ -13,13 +13,16 @@ import (
 )
 
 const TheoryOfChunkedContent = `
-Content lives in fixed-size chunks, one chunk per contentChunkSize bytes, so a
-change costs the bytes it changes. The upper layer's rows carry metadata only —
-kind, mode, mtime, deleted, size, link target, and the recorded original — and
-its chunks carry the bytes; the splice that writes them is
-TheoryOfWriteSplice's subject. A single blob column instead rewrote the whole
-file per window, which made the write traffic quadratic in the window count —
-the defect the execution trace and the profile both pointed at.
+Content lives in fixed-size chunks in the memory and SQL layers, one chunk per
+contentChunkSize bytes, so a change costs the bytes it changes. Those layers'
+rows carry metadata only — kind, mode, mtime, deleted, size, link target, and
+the recorded original — and their chunks carry the bytes; the splice that
+writes them is TheoryOfWriteSplice's subject. The directory layer needs no
+layout at all: one file holds each path's whole content on the host and the
+host filesystem windows it (see TheoryOfDirUpper). A single blob column instead
+rewrote the whole file per window, which made the write traffic quadratic in
+the window count — the defect the execution trace and the profile both pointed
+at.
 
 The chunk's size is the balance between two measured costs. A partial write
 rewrites the chunk it lands inside, so the traffic a small edit costs is the

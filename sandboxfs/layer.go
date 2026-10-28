@@ -32,15 +32,15 @@ deletion of a file of any size never reads its bytes: Stat asks the base for
 the length with one Lstat, and a read falls through to the base. A write
 replaces the sentinel with the stored length and the row becomes
 content-authoritative; a partial write first materialises the base content, so
-the two never disagree on what the row's chunk set means.
+the two never disagree on what the row's content means.
 
 The materialised content does not stream past the bound either. A first write
-materialises the base bytes into chunks, and a rename or a hard link copies
-them into a stored row: the destination is a row the store must hold whole, so
-a base file above maxFileSize is refused with EFBIG at the bound. A truncation
-captures only the prefix it keeps. A deletion and a permission or time change
-record metadata and a hash only, so they stay available on a file of any size,
-compared on its prefix alone.
+materialises the base bytes into the layer's content store, and a rename or a
+hard link copies them into a stored row: the destination is a row the store
+must hold whole, so a base file above maxFileSize is refused with EFBIG at the
+bound. A truncation captures only the prefix it keeps. A deletion and a
+permission or time change record metadata and a hash only, so they stay
+available on a file of any size, compared on its prefix alone.
 
 Without the three rules the pause grows with whatever the session touches —
 an image, an archive, a database — and a few such pauses together hold every

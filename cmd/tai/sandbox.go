@@ -15,15 +15,18 @@ import (
 
 const TheoryOfSandboxCommand = `
 The sandbox command is the review half of the filesystem environment: a
-session that selected the durable SQL upper layer records its writes in a
-record file, and this command lists the net changes and the audit trail, then
-applies the changes the user names. The record's engine is read from its
-header — sqlite, or DuckDB when the session selected that dialect — so the
-command reviews whichever engine wrote the file, as long as the binary links
-the driver that engine needs (sandboxfs.TheoryOfSqlDialects). A session on
-the default memory layer leaves no record, so there is nothing here to
-review: that layer's changes reach the host through the goal runner's
-per-loop apply instead (see sandboxfs.TheoryOfUpperLayer).
+session that selected a durable upper layer records its writes in a record,
+and this command lists the net changes and the audit trail, then applies the
+changes the user names. The record takes one of two shapes. A database file
+— sqlite, or DuckDB when the session selected that dialect — has its engine
+read from its header, so the command reviews whichever engine wrote the file
+as long as the binary links the driver that engine needs
+(sandboxfs.TheoryOfSqlDialects). A directory record is a hidden directory of
+ordinary files, recognised by its path being a directory, and it needs no
+driver (sandboxfs.TheoryOfDirRecord). A session on the default memory layer
+leaves no record, so there is nothing here to review: that layer's changes
+reach the host through the goal runner's per-loop apply instead (see
+sandboxfs.TheoryOfUpperLayer).
 
 A listing is the default: the net changes — added, modified, and deleted
 paths, with directory, symbolic-link, and named-pipe kinds and any apply
@@ -38,12 +41,21 @@ apply. A conflicting change is never applied silently: the command reports
 it with its reason and leaves the host path untouched, so the user decides.
 See sandboxfs.TheoryOfApplyConflict.
 
-The record path is the session's default — sandboxfs.DefaultDBPath of the
-working directory — unless the CAI_SANDBOX_DB environment named another file.
-A recorded session is browsable at any later time from that file.
+The record path is CAI_SANDBOX_DB for a database record, CAI_SANDBOX_DIR for a
+directory record, or sandboxfs.DefaultRecordPath of the working directory —
+the directory record when one exists, the database record otherwise. Naming
+both variables is a configuration fault, because a session has one record.
+A recorded session is browsable at any later time from its record.
 `
 
 const sandboxDBEnv = "CAI_SANDBOX_DB"
+
+// sandboxDirEnv names a directory record of this session, mirroring the
+// security layer's variable: the review reads the directory record whose path
+// this names, and sandboxDBEnv names a database record instead. Setting both
+// is a configuration fault, because a session has one record.
+// See TheoryOfSandboxCommand.
+const sandboxDirEnv = "CAI_SANDBOX_DIR"
 
 var SandboxCommand = apps.New("sandbox",
 	"Review and apply the session filesystem changes",
@@ -55,17 +67,28 @@ var SandboxCommand = apps.New("sandbox",
 		if err != nil {
 			return err
 		}
+		// The record is one per session: the database path and the directory
+		// path are exclusive, and a session that names neither is reviewed at
+		// its default record — the directory record when one exists, the
+		// database file otherwise. See TheoryOfSandboxCommand and
+		// sandboxfs.TheoryOfDirRecord.
 		dbPath := os.Getenv(sandboxDBEnv)
-		if dbPath == "" {
-			dbPath = sandboxfs.DefaultDBPath(cwd)
+		dirPath := os.Getenv(sandboxDirEnv)
+		switch {
+		case dbPath != "" && dirPath != "":
+			return fmt.Errorf("sandbox: %s and %s name one session's record; set one", sandboxDBEnv, sandboxDirEnv)
+		case dirPath != "":
+			dbPath = dirPath
+		case dbPath == "":
+			dbPath = sandboxfs.DefaultRecordPath(cwd)
 		}
 		if _, err := os.Stat(dbPath); err != nil {
 			return fmt.Errorf("sandbox: no recorded session at %s; a session on the default memory layer leaves no record: %w", dbPath, err)
 		}
-		// The record's engine is read from its header, so a session that
-		// selected the DuckDB dialect is reviewed as long as the binary links
-		// the driver, and a sqlite record needs nothing. See
-		// sandboxfs.TheoryOfSqlDialects.
+		// The record's shape selects the layer: a directory path opens the
+		// directory upper layer, and a file path its header names — sqlite, or
+		// DuckDB when the session selected that dialect.
+		// See sandboxfs.TheoryOfDirRecord and sandboxfs.TheoryOfSqlDialects.
 		store, err := sandboxfs.OpenAny(dbPath, "/")
 		if err != nil {
 			return err

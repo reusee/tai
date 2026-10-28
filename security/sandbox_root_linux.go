@@ -37,27 +37,31 @@ container's /tmp, so the mount moves with the pivot and leaves no directory
 in the project.
 
 The default upper layer is process memory: the session's mutations live in
-process memory, the mount leaves no database behind, and the goal runner's
+process memory, the mount leaves no record behind, and the goal runner's
 per-loop apply is the only path that reaches the host. The layer pays no
 disk round trip per mutation, and the trade-off is explicit: an abandoned
 run keeps nothing to review, because the changes it never applied never
-left the process, and the sandbox command has no file to read in this mode.
+left the process, and the sandbox command has no record to read in this mode.
 See sandboxfs.TheoryOfUpperLayer.
 
-A durable session is opt-in. CAI_SANDBOX_DB names its record file, and
-CAI_SANDBOX_DUCKDB selects the DuckDB dialect of that record instead of
-sqlite's; a dialect named without a record records itself at
-sandboxfs.DefaultDBPath of the working directory — one hidden file beside
-the project, browsable and appliable after the session by the sandbox
-command. A DuckDB session's binary must link a DuckDB driver: none is linked
-here, so a session that selects it without one fails the mount, and the
-best-effort rule below leaves the mount policy as the only layer. The store
-opens the record before the pivot and holds one connection for the session's
-life, because a connection opened later would resolve its own path through
-the mount the store answers. The CAI_SANDBOX_DB override must name a
-directory still visible at the same path after the pivot: the working
-directory and every passthrough qualify; /tmp does not, because the sandbox
-mounts a fresh tmpfs there and the original /tmp is hidden.
+A durable session is opt-in, and its record takes one of two shapes.
+CAI_SANDBOX_DB names a database record, and CAI_SANDBOX_DUCKDB selects that
+record's DuckDB dialect instead of sqlite's; a dialect named without a record
+records itself at sandboxfs.DefaultDBPath of the working directory — one
+hidden file beside the project, browsable and appliable after the session by
+the sandbox command. CAI_SANDBOX_DIR names a directory record instead: one
+hidden directory beside the project holding ordinary files, which needs no
+driver and no schema (sandboxfs.TheoryOfDirRecord). The two names are
+exclusive, because a session has one record; naming both fails the mount. A
+DuckDB session's binary must link a DuckDB driver: none is linked here, so a
+session that selects it without one fails the mount, and the best-effort rule
+below leaves the mount policy as the only layer. The store opens the record
+before the pivot and holds it for the session's life, because an open after
+the pivot would resolve its own path through the mount the store answers. The
+CAI_SANDBOX_DB and CAI_SANDBOX_DIR overrides must name a place still visible
+at the same path after the pivot: the working directory and every passthrough
+qualify; /tmp does not, because the sandbox mounts a fresh tmpfs there and the
+original /tmp is hidden.
 
 Each goal loop's changes go back to the host when the loop ends: the store
 that served the pivot is recorded as the process's active store, and the
@@ -111,13 +115,22 @@ func isSandboxReview(args []string) bool {
 // supplies the engine that holds the record. See TheoryOfSandboxRoot.
 const sandboxDBEnv = "CAI_SANDBOX_DB"
 
+// sandboxDirEnv names a directory record of this session. Naming it selects the
+// directory upper layer (sandboxfs.TheoryOfDirRecord), so the session's changes
+// live in ordinary files instead of a database and need no driver. It is
+// exclusive with sandboxDBEnv: a session has one record. See
+// TheoryOfSandboxRoot.
+const sandboxDirEnv = "CAI_SANDBOX_DIR"
+
 // setupSandboxRoot mounts the sandbox filesystem and pivots the process root
 // to it, then records the store that served the pivot as the process's active
 // store, so the goal runner applies every loop's changes to the host. It runs
 // after the container filesystem hardening, so the passthrough sources are the
-// hardened mounts. The memory upper layer is the default; CAI_SANDBOX_DB names
-// a durable record instead, and CAI_SANDBOX_DUCKDB selects the DuckDB dialect
-// of it. See TheoryOfSandboxRoot and sandboxfs.TheoryOfSqlDialects.
+// hardened mounts. The memory upper layer is the default; CAI_SANDBOX_DB names a
+// durable database record instead, CAI_SANDBOX_DUCKDB selects that record's
+// DuckDB dialect, and CAI_SANDBOX_DIR names a durable directory record. See
+// TheoryOfSandboxRoot and sandboxfs.TheoryOfSqlDialects and
+// sandboxfs.TheoryOfDirRecord.
 func setupSandboxRoot(cwd string) error {
 	if os.Getenv(disableSandboxRootEnv) != "" {
 		return nil
@@ -126,10 +139,21 @@ func setupSandboxRoot(cwd string) error {
 		return nil
 	}
 	// Memory is the default: a durable record exists only where the session
-	// named one, or named its dialect, which then records itself at the
-	// project's default path. See TheoryOfSandboxRoot.
+	// named one, or named a marker that then records itself at the project's
+	// default path. The database and the directory record are exclusive,
+	// because a session has one record. See TheoryOfSandboxRoot.
 	duckdb := os.Getenv(sandboxDuckDBEnv) != ""
+	dirRecord := os.Getenv(sandboxDirEnv) != ""
 	dbPath := os.Getenv(sandboxDBEnv)
+	if dirRecord {
+		if dbPath != "" {
+			return fmt.Errorf("%s and %s name one session's record; set one", sandboxDirEnv, sandboxDBEnv)
+		}
+		if duckdb {
+			return fmt.Errorf("%s and %s name one session's record; set one", sandboxDirEnv, sandboxDuckDBEnv)
+		}
+		dbPath = os.Getenv(sandboxDirEnv)
+	}
 	if dbPath == "" && duckdb {
 		dbPath = sandboxfs.DefaultDBPath(cwd)
 	}
@@ -155,6 +179,7 @@ func setupSandboxRoot(cwd string) error {
 		Base:        "/",
 		DBPath:      absDB,
 		DuckDB:      duckdb,
+		DirRecord:   dirRecord,
 		Mountpoint:  mountpoint,
 		Passthrough: passthrough,
 		WritePolicy: sandboxWritePolicy(WritableDirs()),

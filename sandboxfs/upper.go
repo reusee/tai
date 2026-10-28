@@ -3,42 +3,51 @@ package sandboxfs
 import "time"
 
 const TheoryOfUpperLayer = `
-The upper layer is one contract with two implementations, and the store's
+The upper layer is one contract with three implementations, and the store's
 union logic — capture of the base state, kind checks, the size sentinel,
 whiteouts, conflict detection, apply — is written once against it. A session's
 semantics therefore do not depend on where its mutations live.
 
-The memory layer is the default: the rows and content chunks live in maps, the
-session leaves no file behind, nothing survives the process, and a mutation
-pays no disk round trip. A default session therefore needs no record file and
-no decision about where one lives — a run whose changes reach the host as it
-proceeds, a test, a filesystem with no room for a database beside the project
-all get the cheap layer by asking for nothing.
+The memory layer is the default: the rows and content live in maps, the session
+leaves no file behind, nothing survives the process, and a mutation pays no
+disk round trip. A default session therefore needs no record and no decision
+about where one lives — a run whose changes reach the host as it proceeds, a
+test, a filesystem with no room for a record all get the cheap layer by asking
+for nothing.
 
 The SQL layer is durable and opt-in: one database file records the session,
 outlives the process, and the review command browses and applies it later. A
 caller selects it by naming the record. Its dialect decides the engine that
 holds the file — sqlite, or DuckDB when the binary that selects it links a
-driver (see TheoryOfSqlDialects). Naming the record is the whole selection, so
-the durable layer exists exactly where a session asked for work that outlives
-it.
+driver (see TheoryOfSqlDialects).
 
-Both layers keep content in fixed-size chunks, so one write window costs its
-own payload in either one; the layout is TheoryOfChunkedContent's subject.
-The memory layer copies every chunk it stores: the caller's buffer may be a
-reused request buffer, and the layer must own the bytes it answers with.
+The directory layer is durable and opt-in too, and the thinnest of the three:
+one host directory records the session as ordinary files, and the host
+filesystem does the storing, the windowing, and the truncation. It needs no
+driver, no schema, and no chunk layout, so a project that wants a durable
+record without a database gets one. Its own model lives in TheoryOfDirUpper and
+its selection in TheoryOfDirRecord.
 
-The contract speaks rows and content windows, never SQL. A row is metadata
-alone. The composite operations — write one row, write one row with its whole
-content, create with content, splice, truncate, drop — are atomic inside the
-layer: the SQL implementation reaches atomicity through a transaction on its
-one connection, the memory implementation through its mutex. Atomicity is the
-layer's own business because only the layer knows where a row and its chunks
-both live.
+The memory and SQL layers keep content in fixed-size chunks, so one write
+window costs its own payload in either one; the layout is
+TheoryOfChunkedContent's subject. The directory layer keeps each path's content
+in one file and lets the host do the same job. The memory layer copies every
+chunk it stores: the caller's buffer may be a reused request buffer, and the
+layer must own the bytes it answers with.
+
+The contract speaks rows and content windows, never SQL and never files. A row
+is metadata alone. The composite operations — write one row, write one row with
+its whole content, create with content, splice, truncate, drop — are atomic
+inside the layer: the SQL implementation reaches atomicity through a
+transaction on its one connection, the memory implementation through its mutex,
+and the directory implementation through its mutex and a rename over the
+committed file. Atomicity is the layer's own business because only the layer
+knows where a row and its content both live.
 
 The negative-lookup cache and the prepared statement set are the SQL layer's
-own: a map lookup needs no absence cache, and the memory layer executes no
-SQL. A caller of the contract sees neither.
+own: a map lookup needs no absence cache, a failed file open costs one host
+lookup, and neither other layer executes SQL. A caller of the contract sees
+neither.
 `
 
 // upperStore is the sandbox's mutable layer: the rows and content the session
