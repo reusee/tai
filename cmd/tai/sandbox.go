@@ -15,18 +15,15 @@ import (
 
 const TheoryOfSandboxCommand = `
 The sandbox command is the review half of the filesystem environment: a
-session that selected a durable upper layer records its writes in a record,
+session that mounted its sandbox filesystem records its writes in a record,
 and this command lists the net changes and the audit trail, then applies the
-changes the user names. The record takes one of two shapes. A database file
-— sqlite, or DuckDB when the session selected that dialect — has its engine
-read from its header, so the command reviews whichever engine wrote the file
-as long as the binary links the driver that engine needs
-(sandboxfs.TheoryOfSqlDialects). A directory record is a hidden directory of
-ordinary files, recognised by its path being a directory, and it needs no
-driver (sandboxfs.TheoryOfDirRecord). A session on the default memory layer
-leaves no record, so there is nothing here to review: that layer's changes
-reach the host through the goal runner's per-loop apply instead (see
-sandboxfs.TheoryOfUpperLayer).
+changes the user names. The default session leaves a directory record: one
+hidden directory per session, inside the working directory, named
+.tai-sandboxfs.<time>.<random>, which needs no driver
+(sandboxfs.TheoryOfDirRecord). A database file — sqlite, or DuckDB when the
+session selected that dialect — has its engine read from its header, so the
+command reviews whichever engine wrote the file as long as the binary links
+the driver that engine needs (sandboxfs.TheoryOfSqlDialects).
 
 A listing is the default: the net changes — added, modified, and deleted
 paths, with directory, symbolic-link, and named-pipe kinds and any apply
@@ -41,20 +38,23 @@ apply. A conflicting change is never applied silently: the command reports
 it with its reason and leaves the host path untouched, so the user decides.
 See sandboxfs.TheoryOfApplyConflict.
 
-The record path is CAI_SANDBOX_DB for a database record, CAI_SANDBOX_DIR for a
-directory record, or sandboxfs.DefaultRecordPath of the working directory —
-the directory record when one exists, the database record otherwise. Naming
-both variables is a configuration fault, because a session has one record.
-A recorded session is browsable at any later time from its record.
+The record path is CAI_SANDBOX_DIR for a pinned directory record,
+CAI_SANDBOX_DB for a database record, or sandboxfs.DefaultRecordPath of the
+working directory — the newest session directory record when one exists, the
+database record otherwise — so a session's record is browsable after it ended
+without the user naming a path. Records accumulate, so an older session is
+reviewed by naming its directory. Naming two variables is a configuration
+fault, because a session has one record. A session that never mounted its
+sandbox leaves no record, so there is nothing here to review.
 `
 
 const sandboxDBEnv = "CAI_SANDBOX_DB"
 
-// sandboxDirEnv names a directory record of this session, mirroring the
-// security layer's variable: the review reads the directory record whose path
-// this names, and sandboxDBEnv names a database record instead. Setting both
-// is a configuration fault, because a session has one record.
-// See TheoryOfSandboxCommand.
+// sandboxDirEnv names the directory record this review reads, mirroring the
+// security layer's variable: the default already selects the directory layer,
+// and this pins the record's place instead of the per-session name. sandboxDBEnv
+// names a database record instead. Setting both is a configuration fault,
+// because a session has one record. See TheoryOfSandboxCommand.
 const sandboxDirEnv = "CAI_SANDBOX_DIR"
 
 var SandboxCommand = apps.New("sandbox",
@@ -69,8 +69,8 @@ var SandboxCommand = apps.New("sandbox",
 		}
 		// The record is one per session: the database path and the directory
 		// path are exclusive, and a session that names neither is reviewed at
-		// its default record — the directory record when one exists, the
-		// database file otherwise. See TheoryOfSandboxCommand and
+		// its default record — the newest session directory when one exists,
+		// the database file otherwise. See TheoryOfSandboxCommand and
 		// sandboxfs.TheoryOfDirRecord.
 		dbPath := os.Getenv(sandboxDBEnv)
 		dirPath := os.Getenv(sandboxDirEnv)
@@ -83,7 +83,7 @@ var SandboxCommand = apps.New("sandbox",
 			dbPath = sandboxfs.DefaultRecordPath(cwd)
 		}
 		if _, err := os.Stat(dbPath); err != nil {
-			return fmt.Errorf("sandbox: no recorded session at %s; a session on the default memory layer leaves no record: %w", dbPath, err)
+			return fmt.Errorf("sandbox: no recorded session at %s; a session records one only when its sandbox filesystem mounted: %w", dbPath, err)
 		}
 		// The record's shape selects the layer: a directory path opens the
 		// directory upper layer, and a file path its header names — sqlite, or

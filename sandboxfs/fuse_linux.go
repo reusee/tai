@@ -67,7 +67,7 @@ toolchain's dominant pattern and a lock and a path cleaning per entry are
 the costs that pattern repeats for a large tree. FORGET is accepted without a
 reply and ignored: paths stay addressable for the session's life, matching
 the store, which keeps every touched path in the audit trail and, for a
-durable session, the record file.
+durable session, its record.
 
 Write-back happens on WRITE, not on flush: the store is the session's only
 copy of what it wrote, so an open file's content lives in the store and a
@@ -270,13 +270,16 @@ it waited for — and the blocked request holds its worker for as long as the
 terminal stays silent. The caller's own entries ride beside them, and a
 duplicate binds once.
 
-A durable session's record is the one file that must not transit FUSE: the
-FUSE daemon serves the store, so a store read that reached the daemon would
-recurse. Its directory must therefore be one of the passthroughs, or the
-record must be opened and its WAL files created before the pivot, which the
-mount does. A session on the default memory layer holds no such file, so the
-requirement does not arise for it. The mount helper documents the
-requirement on MountOptions.DBPath.
+A durable session's record is the one thing that must not transit FUSE: the
+FUSE daemon serves the store, so a store access that reached the daemon
+would recurse. The store therefore opens the record, and its backend's
+files, before the pivot: a database record's -wal and -shm siblings come
+with its first commit, and a directory record is one directory handle taken
+on the host. The default record sits inside the working directory, which the
+mount serves, so this ordering is what keeps the record off the request
+path, not an optimization. The mount helper documents the requirement on
+MountOptions.DBPath, and the store refuses every mutation of the record so
+the review's source stays intact (see TheoryOfSandboxFilesystem).
 `
 
 const (

@@ -18,15 +18,16 @@ import (
 )
 
 const TheoryOfSqlUpper = `
-The SQL layer is the durable upper layer: one database file holds the rows, the
+The SQL layer is one durable upper layer: one database file holds the rows, the
 content chunks, and the audit trail, so a session's filesystem state is one
-portable file the review command browses and applies later. Its dialect decides
-the engine that holds the file — sqlite by default, DuckDB on request — and
-supplies the driver, the schema, and the two statements whose syntax differs
-(see TheoryOfSqlDialects). Its connection, its prepared statement set, and its
-negative-lookup cache live here, beside the row and content operations they
-serve (see TheoryOfUpperLayer). The layers' shared cost model is
-TheoryOfChunkedContent's.
+portable file the review command browses and applies later. It is opt-in — the
+tai tool's default record is the directory layer — and a caller selects it by
+naming the record. Its dialect decides the engine that holds the file — sqlite
+by default, DuckDB on request — and supplies the driver, the schema, and the
+two statements whose syntax differs (see TheoryOfSqlDialects). Its connection,
+its prepared statement set, and its negative-lookup cache live here, beside the
+row and content operations they serve (see TheoryOfUpperLayer). The layers'
+shared cost model is TheoryOfChunkedContent's.
 
 The connection is opened once, for the process lifetime. The database file may
 sit inside the filesystem the mount serves, and a connection opened later would

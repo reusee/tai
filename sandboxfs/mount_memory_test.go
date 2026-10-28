@@ -6,17 +6,17 @@ import (
 )
 
 // TestValidateMountOptionsMemoryModeDoesNotRequireDBPath protects
-// TheoryOfUpperLayer's mount wiring: the memory backend is the default and
-// names no database, so the mount does not require one. The test calls the
-// option validation rather than the mount, because a real mount binds the
-// kernel filesystems into the mountpoint and a test's temporary tree could not
-// remove them.
+// TheoryOfUpperLayer's mount wiring: the memory backend names no database of
+// its own, so the mount does not require one. The test calls the option
+// validation rather than the mount, because a real mount binds the kernel
+// filesystems into the mountpoint and a test's temporary tree could not remove
+// them.
 func TestValidateMountOptionsMemoryModeDoesNotRequireDBPath(t *testing.T) {
 	err := validateMountOptions(MountOptions{
 		Mountpoint: "/tmp/mnt",
 	})
 	if err != nil {
-		t.Fatalf("the default memory layer rejected a mount without a record: %v", err)
+		t.Fatalf("the memory layer rejected a mount without a record: %v", err)
 	}
 }
 
@@ -31,11 +31,11 @@ func TestValidateMountOptionsRequiresMountpoint(t *testing.T) {
 }
 
 // TestOpenMountStoreDefaultsToMemory protects TheoryOfUpperLayer's mount
-// wiring: a mount that names no record gets the memory upper layer — the
-// default — and a mount that names one gets the durable SQL layer. The test
-// calls the store selection rather than the mount, because a real mount binds
-// the kernel filesystems into the mountpoint and a test's temporary tree could
-// not remove them.
+// wiring: a mount that names no record gets the memory upper layer — this
+// API's own default — and a mount that names one gets the durable SQL layer.
+// The test calls the store selection rather than the mount, because a real
+// mount binds the kernel filesystems into the mountpoint and a test's
+// temporary tree could not remove them.
 func TestOpenMountStoreDefaultsToMemory(t *testing.T) {
 	base := t.TempDir()
 	store, absDB, err := openMountStore(MountOptions{}, base)

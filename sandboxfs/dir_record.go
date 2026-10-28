@@ -1,9 +1,13 @@
 package sandboxfs
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 )
 
 const TheoryOfDirRecord = `
@@ -21,12 +25,22 @@ content file per content-bearing path, and the audit log, so the protected set
 is the subtree. A mutation that reached inside would corrupt the record the
 review reads, and would enter the record as a change of itself.
 
-The default record of a working directory is a hidden directory beside the
-project, and it is preferred over the database file when both exist: a session
-that wrote a directory record asked for that layer, and the review command
-finds it without the user naming a path. A directory record is opt-in like the
-database record — the memory layer remains the default — so a project with
-neither file records nothing.
+The directory record is the default the tai tool selects: one hidden directory
+per session, inside the working directory, named
+".tai-sandboxfs.<time>.<random>" (SessionDirPath). The timestamp is UTC and
+fixed-width, so the names sort by session and the review command finds the
+newest record without the user naming a path; the random suffix separates the
+sessions that started within one second, so a later session never overwrites
+the record an earlier one left for review. A caller that wants a determinate
+place — a test, a session pinned by configuration — names the directory
+itself; naming it is the whole selection. The memory layer and the SQL record
+remain selectable, and a project that recorded nothing holds neither a session
+directory nor a database file.
+
+Records accumulate until the user deletes them: the review command reads the
+newest one by default, and an older one is browsed by naming its directory.
+The record is opened before the process root pivots, so its handle stays on
+the host while the session sees the sandbox (see TheoryOfPassthrough).
 `
 
 // OpenDir opens the sandbox store whose upper layer is the directory record at
@@ -58,25 +72,72 @@ func OpenDirWithPolicy(dbDir, base string, policy func(string) error) (*Store, e
 	return newStore(base, upper, policy)
 }
 
-// DefaultDirPath returns the directory record of a working directory: one
-// hidden directory inside it, holding a metadata file per recorded path, a
-// content file per content-bearing path, and the audit log. A session on the
-// memory layer leaves no such directory. See TheoryOfDirRecord.
-func DefaultDirPath(dir string) string {
-	return filepath.Join(dir, ".tai-sandbox.d")
-}
-
 // DefaultRecordPath returns the record a session of the given working directory
-// would leave, for the review command: the directory record when one exists,
-// the SQL record otherwise. A directory record is preferred because a session
-// that wrote one selected the directory layer, and the review command then
-// needs no flag to find it. A project with neither file records nothing, and
-// the returned path names the SQL record's default place, whose own absence is
-// the command's error to report. See TheoryOfDirRecord and TheoryOfSqlUpper.
+// would leave, for the review command: the newest session directory record, the
+// database record otherwise. The session directories sort by the UTC timestamp
+// their names carry, so the review command finds the latest session without a
+// flag. A project that recorded nothing holds neither, and the returned path
+// names the database's default place, whose own absence is the command's error
+// to report. See TheoryOfDirRecord and TheoryOfSqlUpper.
 func DefaultRecordPath(dir string) string {
-	dirRecord := DefaultDirPath(dir)
-	if info, err := os.Stat(dirRecord); err == nil && info.IsDir() {
-		return dirRecord
+	if newest, ok := latestSessionDir(dir); ok {
+		return newest
 	}
 	return DefaultDBPath(dir)
 }
+
+// latestSessionDir returns the newest session directory record of dir, or
+// reports that dir holds none. The name carries the session's UTC timestamp in
+// a fixed-width form, so the largest name is the latest session; the random
+// suffix only separates the sessions of one second, whose order is then
+// arbitrary but stable. See DefaultRecordPath and TheoryOfDirRecord.
+func latestSessionDir(dir string) (string, bool) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return "", false
+	}
+	best := ""
+	for _, e := range entries {
+		name := e.Name()
+		if !e.IsDir() || !strings.HasPrefix(name, sessionRecordPrefix) {
+			continue
+		}
+		if name > best {
+			best = name
+		}
+	}
+	if best == "" {
+		return "", false
+	}
+	return filepath.Join(dir, best), true
+}
+
+// randomRecordSuffix returns the random suffix of one session's record name:
+// four random bytes in hexadecimal, so two sessions that start within one
+// second get different records. A failing entropy source falls back to the
+// clock, which still separates the sessions of one process. See SessionDirPath.
+func randomRecordSuffix(now time.Time) string {
+	var b [4]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return fmt.Sprintf("%08x", uint32(now.UnixNano()))
+	}
+	return hex.EncodeToString(b[:])
+}
+
+// SessionDirPath returns the directory record of one session of the working
+// directory: one hidden directory inside it, named
+// ".tai-sandboxfs.<time>.<random>". The timestamp is UTC and fixed-width, so a
+// listing sorts the records by session and the review command finds the newest
+// one without a flag; the random suffix separates the sessions that started
+// within one second. A later session therefore never overwrites the record an
+// earlier one left for review. See TheoryOfDirRecord and TheoryOfDirUpper.
+func SessionDirPath(dir string, now time.Time) string {
+	return filepath.Join(dir, sessionRecordPrefix+
+		now.UTC().Format("20060102-150405")+"."+randomRecordSuffix(now))
+}
+
+// sessionRecordPrefix names one session's directory record: the hidden
+// directory the session's mutations live in. One directory per session means a
+// later session never overwrites the record an earlier one left for review.
+// See TheoryOfDirRecord.
+const sessionRecordPrefix = ".tai-sandboxfs."

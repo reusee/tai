@@ -3,12 +3,14 @@
 package sandboxfs
 
 import (
+	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // newTestDirStore builds a store on the directory layer and returns it with
@@ -212,23 +214,6 @@ func recordFiles(t *testing.T, dir string) []string {
 	return out
 }
 
-// TestDefaultRecordPathPrefersTheDirectoryRecord protects TheoryOfDirRecord: the
-// review command finds the record a session wrote without a flag, and a
-// directory record wins over a database file because a session that wrote one
-// selected that layer.
-func TestDefaultRecordPathPrefersTheDirectoryRecord(t *testing.T) {
-	dir := t.TempDir()
-	if got, want := DefaultRecordPath(dir), DefaultDBPath(dir); got != want {
-		t.Errorf("no record: got %q, want the database default %q", got, want)
-	}
-	if err := os.MkdirAll(DefaultDirPath(dir), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if got, want := DefaultRecordPath(dir), DefaultDirPath(dir); got != want {
-		t.Errorf("directory record: got %q, want %q", got, want)
-	}
-}
-
 // TestOpenDirRejectsAnEmptyRecord protects the constructor's guard: a record
 // directory names where the session's files live, and an empty name names no
 // place, so the open fails instead of writing beside the process.
@@ -262,5 +247,53 @@ func TestOpenDirWithPolicyRefusesWritesOutsideIt(t *testing.T) {
 	}
 	if err := store.WriteFile("/allowed", []byte("x"), 0o644); err != nil {
 		t.Errorf("write inside the policy: %v", err)
+	}
+}
+
+// TestSessionDirPathNamesTheSession protects TheoryOfDirRecord's naming: one
+// directory per session, named for the session's UTC time and a random suffix,
+// so two sessions of one second never share a record.
+func TestSessionDirPathNamesTheSession(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC)
+	got := SessionDirPath(dir, now)
+	if d, want := filepath.Dir(got), dir; d != want {
+		t.Errorf("record directory %q, want %q", d, want)
+	}
+	name := filepath.Base(got)
+	prefix := ".tai-sandboxfs.20250102-030405."
+	if !strings.HasPrefix(name, prefix) {
+		t.Fatalf("record name %q, want the prefix %q", name, prefix)
+	}
+	suffix := strings.TrimPrefix(name, prefix)
+	if len(suffix) != 8 {
+		t.Errorf("random suffix %q, want 8 hexadecimal characters", suffix)
+	}
+	if _, err := hex.DecodeString(suffix); err != nil {
+		t.Errorf("random suffix %q is not hexadecimal: %v", suffix, err)
+	}
+	if other := SessionDirPath(dir, now); other == got {
+		t.Errorf("two sessions of one second share the record %q", got)
+	}
+}
+
+// TestDefaultRecordPathPrefersTheNewestSessionRecord protects TheoryOfDirRecord:
+// the review command finds the record a session wrote without a flag. The
+// session directories sort by the timestamp their names carry, so the newest
+// one wins over an older session's record and over the database file.
+func TestDefaultRecordPathPrefersTheNewestSessionRecord(t *testing.T) {
+	dir := t.TempDir()
+	if got, want := DefaultRecordPath(dir), DefaultDBPath(dir); got != want {
+		t.Errorf("no record: got %q, want the database default %q", got, want)
+	}
+	older := SessionDirPath(dir, time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC))
+	newer := SessionDirPath(dir, time.Date(2025, 1, 2, 3, 4, 6, 0, time.UTC))
+	for _, p := range []string{older, newer} {
+		if err := os.MkdirAll(p, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := DefaultRecordPath(dir); got != newer {
+		t.Errorf("session records: got %q, want the newest %q", got, newer)
 	}
 }

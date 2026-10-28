@@ -18,6 +18,8 @@ The system still rejects dialogue-grown context: detail arrives through structur
 
 **Security by isolation.** On Linux, the tool re-executes itself in a user namespace with read-only-everything filesystem hardening. Only the current working directory, Go toolchain directories, the user config directory, `/tmp`, and `/dev/shm` are writable. Shell block execution permits any program when no allowlist is configured; a configured `allowed_shell_commands` list narrows execution to the listed commands, matched as whole commands, and AST-level parsing filters common destructive patterns such as `rm -rf /` in every case. Focus files outside writable directories are marked read-only at collection time.
 
+**A sandbox filesystem by default.** Inside the hardened mounts the process root is a FUSE filesystem: reads pass through to the host unchanged, and every write lands in the session's directory record instead of reaching the host. The record is one hidden directory per session inside the working directory — `.tai-sandboxfs.<time>.<random>` — so the records sort by session and `tai sandbox` reviews the newest one without a flag, and a later session never overwrites an earlier one's record. The goal runner applies each loop's recorded changes to the host before the next loop starts, so a run's work is durable as it proceeds, and `tai sandbox -file <path>` applies what a run kept back. A session that names `CAI_SANDBOX_DB` records to a database file instead, `CAI_SANDBOX_DUCKDB` selects that file's DuckDB dialect, and `CAI_SANDBOX_DIR` pins a directory record's place; `CAI_DISABLE_SANDBOX_ROOT` leaves the mount policy as the only layer.
+
 ## What It Is
 
 `tai` is a general-purpose AI tool. It sends context — files, user input, or arbitrary text — to an AI model and applies the model's output to your working tree. It supports multiple AI providers and runs in a sandboxed environment.
@@ -40,6 +42,7 @@ go install github.com/reusee/tai/cmd/tai@latest
 | `tai patch` | Apply a boundary-delimited diff file to the working tree |
 | `tai ping` | Test whether a model is reachable and passes its protocol's capability test (text-protocol block emission, or System One function selection) |
 | `tai record` | List, show, and analyze recorded interaction sessions |
+| `tai sandbox` | Review and apply a sandbox session's recorded filesystem changes |
 
 ## Usage Examples
 
@@ -162,6 +165,7 @@ Gemini, OpenAI, DeepSeek, Volcano Engine (Huoshan), Baidu, Tencent, Alibaba Clou
 | `debugs` | Debug tap (Starlark REPL) |
 | `memories` | Per-model user profile persistence |
 | `records` | Interaction recording and self-improvement analysis |
+| `sandboxfs` | Sandbox filesystem: a read-through base with a per-session directory record |
 
 ### Block Format
 

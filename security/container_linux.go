@@ -45,10 +45,11 @@ namespace's capability restrictions.
 
 The sandbox filesystem supersedes the writable bind mounts as the write path:
 once mounted and pivoted, the process root is the FUSE view, writes are
-recorded in the session's upper layer instead of reaching the host — process
-memory by default, a record file when the session named one — and the mount
-policy survives as the store's write policy. The writable set stays the same,
-so this layer changes where a write lands, not whether it is allowed.
+recorded in the session's upper layer instead of reaching the host — one
+directory record per session by default, a pinned directory, a database file,
+or process memory when the session named one — and the mount policy survives
+as the store's write policy. The writable set stays the same, so this layer
+changes where a write lands, not whether it is allowed.
 See TheoryOfSandboxRoot in sandbox_root_linux.go.
 
 Landlock complements the mount hardening by re-enforcing the same

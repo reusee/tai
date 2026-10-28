@@ -8,25 +8,26 @@ union logic — capture of the base state, kind checks, the size sentinel,
 whiteouts, conflict detection, apply — is written once against it. A session's
 semantics therefore do not depend on where its mutations live.
 
-The memory layer is the default: the rows and content live in maps, the session
-leaves no file behind, nothing survives the process, and a mutation pays no
-disk round trip. A default session therefore needs no record and no decision
-about where one lives — a run whose changes reach the host as it proceeds, a
-test, a filesystem with no room for a record all get the cheap layer by asking
-for nothing.
-
-The SQL layer is durable and opt-in: one database file records the session,
-outlives the process, and the review command browses and applies it later. A
-caller selects it by naming the record. Its dialect decides the engine that
-holds the file — sqlite, or DuckDB when the binary that selects it links a
-driver (see TheoryOfSqlDialects).
-
-The directory layer is durable and opt-in too, and the thinnest of the three:
+The directory layer is the tai tool's default, and the thinnest of the three:
 one host directory records the session as ordinary files, and the host
 filesystem does the storing, the windowing, and the truncation. It needs no
-driver, no schema, and no chunk layout, so a project that wants a durable
-record without a database gets one. Its own model lives in TheoryOfDirUpper and
-its selection in TheoryOfDirRecord.
+driver, no schema, and no chunk layout, so every session leaves a durable
+record without a database, and the record is one directory per session (see
+TheoryOfDirRecord), so a later session never overwrites an earlier one's. Its
+own model lives in TheoryOfDirUpper.
+
+The memory layer leaves nothing behind: the rows and content live in maps, the
+session leaves no file to review, nothing survives the process, and a mutation
+pays no disk round trip. It is the layer of a run whose changes reach the host
+as they proceed, of a test, and of a filesystem with no room for a record. A
+caller selects it by opening it, because the tool's own default is the durable
+directory record.
+
+The SQL layer is durable too, and opt-in like the memory layer: one database
+file records the session, outlives the process, and the review command browses
+and applies it later. A caller selects it by naming the record. Its dialect
+decides the engine that holds the file — sqlite, or DuckDB when the binary that
+selects it links a driver (see TheoryOfSqlDialects).
 
 The memory and SQL layers keep content in fixed-size chunks, so one write
 window costs its own payload in either one; the layout is

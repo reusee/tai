@@ -4,7 +4,12 @@ package security
 
 import (
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
+	"time"
+
+	"github.com/reusee/tai/sandboxfs"
 )
 
 func TestIsSandboxReview(t *testing.T) {
@@ -34,5 +39,65 @@ func TestSetupSandboxRootSkippedForReview(t *testing.T) {
 	t.Cleanup(func() { os.Args = prev })
 	if err := setupSandboxRoot(t.TempDir()); err != nil {
 		t.Fatalf("the review invocation must not need the sandbox root: %v", err)
+	}
+}
+
+func TestSandboxRecordOptions(t *testing.T) {
+	env := func(m map[string]string) func(string) string {
+		return func(k string) string { return m[k] }
+	}
+	cwd := "/work"
+	now := time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC)
+
+	// The default is one directory record per session, named by
+	// sandboxfs.SessionDirPath. See TheoryOfSandboxRoot.
+	record, dirRecord, duckdb, err := sandboxRecordOptions(cwd, env(nil), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !dirRecord || duckdb {
+		t.Fatalf("default selected dir %v, duckdb %v; want the directory layer", dirRecord, duckdb)
+	}
+	prefix := filepath.Join(cwd, ".tai-sandboxfs.20250102-030405.")
+	if !strings.HasPrefix(record, prefix) {
+		t.Fatalf("default record %q, want a session directory with the prefix %q", record, prefix)
+	}
+
+	// A named directory pins the place.
+	record, dirRecord, duckdb, err = sandboxRecordOptions(cwd, env(map[string]string{
+		sandboxDirEnv: "/records/pinned",
+	}), now)
+	if err != nil || !dirRecord || duckdb || record != "/records/pinned" {
+		t.Fatalf("pinned directory: %q dir %v duckdb %v err %v", record, dirRecord, duckdb, err)
+	}
+
+	// A named database selects the SQL layer.
+	record, dirRecord, duckdb, err = sandboxRecordOptions(cwd, env(map[string]string{
+		sandboxDBEnv: "/records/s.db",
+	}), now)
+	if err != nil || dirRecord || duckdb || record != "/records/s.db" {
+		t.Fatalf("database record: %q dir %v duckdb %v err %v", record, dirRecord, duckdb, err)
+	}
+
+	// The dialect without a record records itself at the database default.
+	record, dirRecord, duckdb, err = sandboxRecordOptions(cwd, env(map[string]string{
+		sandboxDuckDBEnv: "1",
+	}), now)
+	if err != nil || dirRecord || !duckdb || record != sandboxfs.DefaultDBPath(cwd) {
+		t.Fatalf("duckdb default: %q dir %v duckdb %v err %v", record, dirRecord, duckdb, err)
+	}
+
+	// The two names are exclusive, because a session has one record.
+	if _, _, _, err := sandboxRecordOptions(cwd, env(map[string]string{
+		sandboxDirEnv: "/a",
+		sandboxDBEnv:  "/b",
+	}), now); err == nil {
+		t.Fatal("two record names were accepted")
+	}
+	if _, _, _, err := sandboxRecordOptions(cwd, env(map[string]string{
+		sandboxDirEnv:    "/a",
+		sandboxDuckDBEnv: "1",
+	}), now); err == nil {
+		t.Fatal("a directory record and a dialect were accepted together")
 	}
 }

@@ -27,12 +27,15 @@ layer is the host filesystem, read through unchanged, so the model reads real
 data without copying it into the sandbox. The upper layer records every
 mutation: content, kind, mode, and the base state of the path as it stood when
 the session first touched it. The upper layer has three backends — process
-memory, which is the default and leaves nothing behind; a SQL record file that
-outlives the process and that the review command browses and applies later; and
-a directory record of ordinary files that outlives the process the same way,
-with the host filesystem doing the storage. The record file is a sqlite
-database, or a DuckDB database on request; see TheoryOfSqlDialects. See
-TheoryOfUpperLayer, TheoryOfSqlUpper and TheoryOfDirUpper.
+memory, which leaves nothing behind; a SQL record file that outlives the
+process and that the review command browses and applies later; and a directory
+record of ordinary files that outlives the process the same way, with the host
+filesystem doing the storage. The tai tool's default is the directory record:
+one directory per session, inside the working directory, named
+.tai-sandboxfs.<time>.<random>, so every session leaves a record the sandbox
+command reviews. The record file is a sqlite database, or a DuckDB database on
+request; see TheoryOfSqlDialects. See TheoryOfUpperLayer, TheoryOfSqlUpper and
+TheoryOfDirUpper.
 
 The boundary is the filesystem, not the tool's file abstraction. Change blocks
 keep applying atomically through changes.FileStore, and FileStore never learns
@@ -464,13 +467,14 @@ func Open(dbPath, base string) (*Store, error) {
 	return OpenWithPolicy(dbPath, base, nil)
 }
 
-// DefaultDBPath returns the store path of a working directory: one record
-// file inside it — a sqlite database, or a DuckDB database when the mount
-// selects that dialect — so a durable session's filesystem environment stays
-// with the project it belongs to. A session on the default memory layer leaves
-// no file here. The result is a filesystem path, so it joins with the
-// platform's separator even though the store itself speaks slash paths.
-// See TheoryOfUpperLayer and TheoryOfSqlDialects.
+// DefaultDBPath returns the database record's place in a working directory: one
+// record file inside the working directory — a sqlite database, or a DuckDB
+// database when the mount selects that dialect. The tai tool's default is the
+// directory record, also inside the working directory (see SessionDirPath);
+// this file is where a session that names the database layer records itself.
+// The result is a filesystem path, so it joins with the platform's separator
+// even though the store itself speaks slash paths. See TheoryOfUpperLayer and
+// TheoryOfSqlDialects.
 func DefaultDBPath(dir string) string {
 	return filepath.Join(dir, ".tai-sandbox.db")
 }
