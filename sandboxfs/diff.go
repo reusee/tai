@@ -291,7 +291,10 @@ func (s *Store) Apply(selected func(Change) bool) (applied []Change, err error) 
 
 // applyChanges is Apply with the conflicting changes reported beside the
 // applied ones, so ApplyAll can tell its caller what still awaits the user's
-// decision. See TheoryOfApplyConflict.
+// decision. Every change is attempted even when an earlier one fails, and the
+// failures are collected: one path the host refuses must not keep the other
+// changes of the same loop out of the host. See TheoryOfApplyConflict and
+// TheoryOfApplyFaultIsolation.
 func (s *Store) applyChanges(selected func(Change) bool) (applied, conflicts []Change, err error) {
 	// The apply drops the upper rows that showed each change, so its audit row
 	// is the only record the write leaves: the trail reaches the upper layer
@@ -323,15 +326,26 @@ func (s *Store) applyChanges(selected func(Change) bool) (applied, conflicts []C
 		}
 		return pending[i].Path < pending[j].Path
 	})
+	// Every change is attempted even when an earlier one fails, and the
+	// failures are collected beside the applied changes: the loop's work is the
+	// record's whole content, so one path the host refuses must not keep the
+	// others out. A failed path keeps its recorded snapshot, so the next apply
+	// retries it against the same base. See TheoryOfApplyFaultIsolation.
+	var failures []error
 	for _, c := range pending {
 		if err := s.applyOne(c); err != nil {
-			return applied, conflicts, err
+			failures = append(failures, fmt.Errorf("%s %s: %w", c.Kind, c.Path, err))
+			continue
 		}
 		if err := s.removeAppliedRow(c.Path); err != nil {
-			return applied, conflicts, err
+			failures = append(failures, fmt.Errorf("drop the row of %s after its apply: %w", c.Path, err))
+			continue
 		}
 		s.audit("apply", c.Path, string(c.Kind))
 		applied = append(applied, c)
+	}
+	if len(failures) > 0 {
+		return applied, conflicts, errors.Join(failures...)
 	}
 	return applied, conflicts, nil
 }
@@ -492,3 +506,27 @@ func chmodAt(root *os.Root, rel string, mode os.FileMode) error {
 	defer f.Close()
 	return unix.Fchmodat(int(f.Fd()), path.Base(rel), uint32(mode.Perm()), 0)
 }
+
+// TheoryOfApplyFaultIsolation is the apply step's fault-isolation rule: one
+// path the host refuses must not keep the other changes of the same loop out
+// of the host. TheoryOfApplyConflict owns the conflict case; this constant
+// owns the failure case, which the conflict check cannot see because the host
+// refuses the write itself. See TheoryOfLoopChangeApply in pipeline for what
+// the runner does with the outcome.
+const TheoryOfApplyFaultIsolation = `
+A failed apply is isolated to its path. One path the host refuses — a parent
+directory that admits no write, a node the host holds with another kind, a
+directory the host refilled after the session deleted it — must not keep the
+other changes of the same loop out of the host: an early return would strand
+every later change behind one fault, while the loop's work is the record's
+whole content. The failures are collected and reported beside the applied
+changes, so the caller names every path the host refused. A failed path keeps
+its recorded snapshot — its upper row and its content — so a later apply
+retries it against the same base instead of losing it.
+
+The applied changes are not rolled back when another path fails. The store is
+the session's filesystem state, and the host receives what the store can
+serve; one path's fault says nothing about the correctness of the others, and
+reverting them would discard work the session completed. Review remains the
+place where the user resolves what an apply kept back.
+`

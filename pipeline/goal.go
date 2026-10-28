@@ -959,10 +959,20 @@ func RunGoal(ctx context.Context, opts GoalOptions) GoalResult {
 
 // applyLoopChanges reports one loop's host apply: the change count, the
 // conflicts a host modification kept back, and the failure of the apply
-// itself. A conflict and a failure leave the changes in the sandbox store for
-// the review command, so neither stops the run. See TheoryOfLoopChangeApply.
+// itself. Every outcome is recorded, because a silent loop leaves the user
+// unable to tell a clean loop from a change the host never received: an
+// absent hook and an apply that found nothing are outcomes too. A conflict
+// and a failure leave the changes in the sandbox store for the review
+// command, so neither stops the run. See TheoryOfLoopChangeApply.
 func applyLoopChanges(loop int, apply LoopChangeApply, reporter goalReporter) {
 	if apply == nil {
+		// The process never bound a per-loop apply, so every loop's recorded
+		// changes stay in the sandbox store and only the review command can
+		// write them. Without this record the run looks like a session that
+		// changed nothing. See TheoryOfSandboxLoopApplyBinding.
+		reporter.failure(fmt.Sprintf(
+			"Goal loop %d: no per-loop apply is bound, so the loop's recorded changes stay in the sandbox store; review and apply them with the sandbox command\n",
+			loop))
 		return
 	}
 	applied, conflicts, err := apply(loop)
@@ -974,6 +984,13 @@ func applyLoopChanges(loop int, apply LoopChangeApply, reporter goalReporter) {
 	if applied > 0 {
 		reporter.message(fmt.Sprintf(
 			"[Applied %d change(s) of goal loop %d to the host]\n", applied, loop))
+	}
+	if applied == 0 && len(conflicts) == 0 && err == nil {
+		// The store held nothing to write. The record states it, so a run
+		// whose changes never reach the host is distinguishable from a run
+		// that changed nothing. See TheoryOfLoopChangeApply.
+		reporter.message(fmt.Sprintf(
+			"[Goal loop %d recorded no host change]\n", loop))
 	}
 	for _, conflict := range conflicts {
 		reporter.failure(fmt.Sprintf(

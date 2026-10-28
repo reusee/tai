@@ -692,6 +692,72 @@ func TestApplyRejectsExternalChange(t *testing.T) {
 	})
 }
 
+// TestApplyAllContinuesAfterAFailingChange pins the apply's fault isolation:
+// one path the host refuses must not block the other changes of the same
+// loop, or a single refused path would keep every change of the loop out of
+// the host while the session still reads its own writes back. The refused
+// deletion is a case no permission bit produces, so the test runs wherever
+// the suite runs, root included: the host refilled a directory the session
+// deleted, and the apply cannot remove it. See TheoryOfApplyFaultIsolation.
+func TestApplyAllContinuesAfterAFailingChange(t *testing.T) {
+	base := t.TempDir()
+	record := t.TempDir()
+
+	if err := os.MkdirAll(filepath.Join(base, "gone"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"b.txt", "c.txt"} {
+		if err := os.WriteFile(filepath.Join(base, name), []byte("old "+name), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	store, err := OpenDirWithPolicy(record, base, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	if err := store.Remove("gone"); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"b.txt", "c.txt"} {
+		if err := store.WriteFile(name, []byte("new "+name), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// The host refills the directory the session deleted, so the deletion
+	// cannot apply: the host refuses to remove a directory that holds an
+	// entry. The other changes of the loop must still reach the host.
+	if err := os.WriteFile(filepath.Join(base, "gone", "y"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	applied, conflicts, err := store.ApplyAll()
+	if err == nil {
+		t.Fatal("expected the refused deletion to fail, got no error")
+	}
+	if len(conflicts) != 0 {
+		t.Fatalf("unexpected conflicts: %v", conflicts)
+	}
+	if len(applied) != 2 {
+		t.Fatalf("got %d applied change(s), want 2: %v", len(applied), applied)
+	}
+	for _, name := range []string{"b.txt", "c.txt"} {
+		got, err := os.ReadFile(filepath.Join(base, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := "new " + name; string(got) != want {
+			t.Errorf("%s = %q, want %q", name, got, want)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(base, "gone", "y")); err != nil {
+		t.Errorf("the host's refilled directory lost its entry: %v", err)
+	}
+}
+
 func TestRemoveNonEmptyDir(t *testing.T) {
 	s, base := newTestStore(t)
 	writeHost(t, base, "d/a.txt", "x")

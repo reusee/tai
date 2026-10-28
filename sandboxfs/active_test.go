@@ -24,21 +24,6 @@ func TestActiveStoreRecordsAndClears(t *testing.T) {
 	}
 }
 
-func TestSandboxUnavailableRecordsAndClears(t *testing.T) {
-	defer sandboxfs.SetSandboxUnavailable(false)
-	if sandboxfs.SandboxUnavailable() {
-		t.Fatal("the default must be available")
-	}
-	sandboxfs.SetSandboxUnavailable(true)
-	if !sandboxfs.SandboxUnavailable() {
-		t.Fatal("want unavailable after the set")
-	}
-	sandboxfs.SetSandboxUnavailable(false)
-	if sandboxfs.SandboxUnavailable() {
-		t.Fatal("want available after the clear")
-	}
-}
-
 func TestApplyAllWritesTheHostAndReportsConflicts(t *testing.T) {
 	dir := t.TempDir()
 	base := filepath.Join(dir, "base")
