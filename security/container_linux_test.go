@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"syscall"
 	"testing"
 )
 
@@ -177,6 +178,28 @@ func TestTmpfsMountData(t *testing.T) {
 	t.Setenv("CAI_TEST_TMPFS_EMPTY", "")
 	if got := tmpfsMountData("CAI_TEST_TMPFS_EMPTY"); got != "" {
 		t.Fatalf("expected empty mount data for empty env, got %q", got)
+	}
+}
+
+func TestMountWritableBindUsesBindRemount(t *testing.T) {
+	var flags []uintptr
+	prev := mountSyscall
+	mountSyscall = func(_, _, _ string, f uintptr, _ string) error {
+		flags = append(flags, f)
+		return nil
+	}
+	defer func() { mountSyscall = prev }()
+	if err := mountWritableBind("/dir"); err != nil {
+		t.Fatal(err)
+	}
+	if len(flags) != 2 {
+		t.Fatalf("mount calls %d, want 2", len(flags))
+	}
+	if flags[0] != syscall.MS_BIND {
+		t.Fatalf("first mount flags %#x, want MS_BIND", flags[0])
+	}
+	if flags[1] != syscall.MS_REMOUNT|syscall.MS_BIND {
+		t.Fatalf("remount flags %#x, want MS_REMOUNT|MS_BIND", flags[1])
 	}
 }
 

@@ -3,417 +3,395 @@
 package security
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"strings"
 	"syscall"
+
+	"golang.org/x/sys/unix"
 )
 
 const TheoryOfContainerIsolation = `
-The tai command runs in a Linux user namespace (CLONE_NEWUSER, CLONE_NEWNS,
-CLONE_NEWPID, CLONE_NEWUTS, CLONE_NEWIPC) to isolate filesystem access,
-preventing AI-driven code generation from writing outside the intended project
-boundary. Network namespace is deliberately omitted because the AI pipeline
-requires network access to call model APIs. The process re-executes itself in
-the new namespace on first launch; the inContainerEnv environment variable
-marks that the process is already containerized, ensuring re-execution happens
-only once. On non-Linux platforms, container isolation is a no-op and the
-command runs directly.
+The process runs inside a user and mount namespace whose root is read-only
+except for one writable set: the current working directory, the Go toolchain
+directories (GOCACHE, GOMODCACHE, GOPATH/pkg), the user config directory,
+/tmp, and /dev/shm. Read access stays unrestricted, so the model can read
+anything it is pointed at; only writes are confined, which is what makes an
+unsupervised run safe to leave alone. TheoryOfWritableDirs owns the set's
+resolution and the caching rules, and TheoryOfLandlock owns the second
+enforcement plane over the same set.
 
-Filesystem hardening enforces a read-only-everything policy with targeted
-writable exceptions. All mount points are remounted read-only, then the
-current working directory is bind-mounted onto itself read-write, creating a
-writable enclave for project file modifications. Go toolchain directories
-(GOCACHE, GOMODCACHE, GOPATH/pkg) are resolved before namespace creation and
-individually bind-mounted read-write so the Go toolchain can function (build
-cache, module downloads, package objects). The user config directory is also
-resolved before namespace creation and bind-mounted read-write so the memory
-system (ai-memory.json) and chat history (ai-chat-history.json) can persist
-data across sessions. A fresh tmpfs is mounted on /tmp for isolated temporary
-file storage, and on /dev/shm for isolated shared memory; these tmpfs mounts
-carry no explicit size limit by default (the kernel caps tmpfs at half of
-physical RAM), so large temporary files created by tests or builds do not
-trigger false ENOSPC errors, though an explicit limit can still be imposed via
-environment variables when tighter control is desired. /proc is remounted to
-show only namespace-local processes, /sys is made read-only, and sensitive
-/proc paths are masked with bind-mounted /dev/null. The NO_NEW_PRIVS prctl
-flag prevents privilege escalation through exec, complementing the user
-namespace's capability restrictions.
+The re-exec is the mechanism. main's first statement calls
+MaybeRunInContainer: the parent starts a child with CLONE_NEWUSER and
+CLONE_NEWNS, maps the child's root to the caller's own uid and gid — so no
+privilege is gained over the host — and exits with the child's status.
+containerEnv marks the second entry, where the same function applies the
+hardening instead of starting another child; disableContainerEnv skips the
+layer for debugging.
 
-The sandbox filesystem supersedes the writable bind mounts as the write path:
-once mounted and pivoted, the process root is the FUSE view, writes are
-recorded in the session's upper layer instead of reaching the host — one
-directory record per session by default, a pinned directory, a database file,
-or process memory when the session named one — and the mount policy survives
-as the store's write policy. The writable set stays the same, so this layer
-changes where a write lands, not whether it is allowed.
-See TheoryOfSandboxRoot in sandbox_root_linux.go.
+Every mount is made private first, so nothing the child mounts propagates
+back to the host namespace, and the root is bound onto itself so the
+read-only remount names a mount object this namespace owns. Making the root
+read-only is the hardening. Making a directory writable again is a bind
+mount of that directory onto itself plus a remount of that same bind
+(mountWritableBind), and the two calls are not interchangeable: a bare
+MS_REMOUNT re-mounts the underlying superblock — the read-only root — instead
+of the bind, so the directory keeps the read-only state. The failure is
+silent from the model's point of view, because the change blocks still apply
+to the sandbox store and the store still serves every read back; only the
+write to the host is missing. mountWritableBind therefore issues bind then
+MS_REMOUNT|MS_BIND and returns its error, never swallowing it. See
+pipeline.TheoryOfLoopChangeApply for what the missing write costs the run.
 
-Landlock complements the mount hardening by re-enforcing the same
-write-containment policy at the LSM layer — an independent kernel
-enforcement plane that, once applied, the process cannot revoke. The layer
-is applied only on the hardened in-container path and is best-effort; see
-TheoryOfLandlock in landlock_linux.go.
+The pre-existing submounts are remounted read-only too, except the kernel
+filesystems (/dev, /proc, /sys) and the writable set: a remount the
+namespace does not own fails, and the read-only root already bounds that
+mount, so such a failure stays a warning-free skip instead of failing the
+setup.
+
+/tmp and /dev/shm are fresh tmpfs mounts rather than bind mounts: their host
+content is machine state no review can use, and a tmpfs keeps them writable
+without widening the host view. Their size limit comes from the environment,
+so a session that needs a large scratch space names it.
+
+The toolchain and config directories are resolved before the child starts and
+carried in goWritableDirsEnv and configDirEnv, because the go command may not
+start once the mounts are hardened. The child never re-resolves them, so the
+mount layer, the writable set, the sandbox store's write policy, and the
+Landlock ruleset all read the same carried values and agree by construction.
+
+The layer is best-effort: a kernel without unprivileged user namespaces, a
+refused mount, or a failed re-exec prints a warning and leaves the process on
+the mount policy it inherited, which is what a run outside a container gets.
+A successful hardening is followed by the sandbox filesystem (see
+TheoryOfSandboxRoot) and then by the Landlock ruleset, in that order: the
+sandbox mount needs to open /dev/fuse and to create its record, which the
+Landlock rule set does not allow the process to do afterwards.
 `
 
-// disableContainerEnv allows bypassing containerization entirely for debugging
-// or pre-isolated environments (e.g., CI runners that already provide sandboxing).
-// See TheoryOfContainerIsolation.
+// disableContainerEnv skips the container layer, leaving the process on the
+// mount policy it inherited. See TheoryOfContainerIsolation.
 const disableContainerEnv = "CAI_DISABLE_CONTAINER"
 
-// goWritableDirsEnv carries the colon-separated list of Go toolchain directories
-// that should be bind-mounted read-write inside the container. These are resolved
-// before entering the namespace because `go env` may not function correctly after
-// mount restrictions are applied. See TheoryOfContainerIsolation.
+// containerEnv marks the re-executed child: the child applies the hardening
+// instead of starting another child. See TheoryOfContainerIsolation.
+const containerEnv = "CAI_IN_CONTAINER"
+
+// goWritableDirsEnv carries the Go toolchain directories resolved before the
+// mount restrictions, one path per os.PathListSeparator. See
+// TheoryOfContainerIsolation and TheoryOfWritableDirs.
 const goWritableDirsEnv = "CAI_GO_WRITABLE_DIRS"
 
-// configDirEnv carries the user config directory path that should be
-// bind-mounted read-write inside the container. This is resolved before
-// entering the namespace because os.UserConfigDir may not function
-// correctly after mount restrictions are applied. The memory system
-// (ai-memory.json) and chat history (ai-chat-history.json) persist
-// files in this directory. See TheoryOfContainerIsolation.
+// configDirEnv carries the user config directory resolved before the mount
+// restrictions. See TheoryOfContainerIsolation and TheoryOfWritableDirs.
 const configDirEnv = "CAI_CONFIG_DIR"
 
-// tmpTmpfsSizeEnv carries the size limit for the /tmp tmpfs mount inside
-// the container. The value is passed through os.Environ() during re-exec.
-// When unset, the tmpfs is mounted without an explicit size limit (kernel
-// default: up to half of physical RAM). This is configurable to impose a
-// tighter cap when desired. See TheoryOfContainerIsolation.
-const tmpTmpfsSizeEnv = "CAI_TMP_TMPFS_SIZE"
+// tmpfsSizeEnv names the size limit of the sandbox's tmpfs mounts; unset
+// leaves the kernel default. See TheoryOfContainerIsolation.
+const tmpfsSizeEnv = "CAI_TMPFS_SIZE"
 
-// shmTmpfsSizeEnv carries the size limit for the /dev/shm tmpfs mount
-// inside the container. The value is passed through os.Environ() during
-// re-exec. When unset, the tmpfs is mounted without an explicit size
-// limit (kernel default: up to half of physical RAM).
+// kernelFilesystemMounts lists the mount points the read-only hardening
+// leaves alone: the kernel filesystems keep the writability the process needs
+// for terminals, ptys, and process bookkeeping, and their content is not
+// reviewable project state. See TheoryOfContainerIsolation.
+var kernelFilesystemMounts = []string{"/dev", "/proc", "/sys"}
+
+// tmpfsMounts lists the directories the layer mounts as fresh tmpfs, in the
+// order they are mounted. See TheoryOfContainerIsolation.
+var tmpfsMounts = []string{"/tmp", "/dev/shm"}
+
+// MaybeRunInContainer places the process inside the container namespace and
+// hardens its filesystem, or leaves it unchanged when the layer is disabled,
+// already applied, or unavailable. The parent re-executes itself and exits
+// with the child's status; the child hardens its own filesystem in place.
 // See TheoryOfContainerIsolation.
-const shmTmpfsSizeEnv = "CAI_SHM_TMPFS_SIZE"
-
-// inContainerEnv marks that the process is already running inside the
-// container namespace, ensuring re-execution happens only once.
-// See TheoryOfContainerIsolation.
-const inContainerEnv = "CAI_IN_CONTAINER"
-
-// prSetNoNewPrivs is the prctl option number for PR_SET_NO_NEW_PRIVS on Linux.
-// It prevents the process and its descendants from gaining new privileges
-// through exec (e.g., setuid binaries). See TheoryOfContainerIsolation.
-const prSetNoNewPrivs = 38
-
 func MaybeRunInContainer() {
-	// Allow disabling containerization for debugging or restricted kernels.
 	if os.Getenv(disableContainerEnv) != "" {
 		return
 	}
-
-	if os.Getenv(inContainerEnv) == "" {
-		// Not yet containerized; re-exec in new namespaces.
-		args := os.Args
-		cmd := exec.Command(args[0], args[1:]...)
-		cmd.Stdin = os.Stdin
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		env := append(os.Environ(), inContainerEnv+"=1")
-		// Resolve Go toolchain writable directories before entering the
-		// namespace, since `go env` may not work correctly after mount
-		// restrictions are applied. See TheoryOfContainerIsolation.
-		goDirs := resolveGoWritableDirs()
-		if len(goDirs) > 0 {
-			env = append(env, goWritableDirsEnv+"="+strings.Join(goDirs, string(filepath.ListSeparator)))
-		}
-		// Resolve user config directory before entering the namespace,
-		// since os.UserConfigDir may not work correctly after mount
-		// restrictions are applied. The memory system (ai-memory.json)
-		// and chat history (ai-chat-history.json) persist files in this
-		// directory. See TheoryOfContainerIsolation.
-		if configDir := resolveConfigDir(); configDir != "" {
-			env = append(env, configDirEnv+"="+configDir)
-		}
-		cmd.Env = env
-		cmd.SysProcAttr = &syscall.SysProcAttr{
-			// User namespace: allows unprivileged container creation.
-			// Mount namespace: enables filesystem isolation.
-			// PID namespace: prevents host process visibility/interaction.
-			// UTS namespace: isolates hostname.
-			// IPC namespace: isolates inter-process communication.
-			// Network namespace is deliberately omitted: the AI pipeline
-			// requires network access to call model APIs.
-			Cloneflags: syscall.CLONE_NEWUSER | syscall.CLONE_NEWNS |
-				syscall.CLONE_NEWPID | syscall.CLONE_NEWUTS | syscall.CLONE_NEWIPC,
-			UidMappings: []syscall.SysProcIDMap{{ContainerID: 0, HostID: os.Getuid(), Size: 1}},
-			GidMappings: []syscall.SysProcIDMap{{ContainerID: 0, HostID: os.Getgid(), Size: 1}},
-		}
-
-		if err := cmd.Start(); err != nil {
-			// Namespace creation or exec failed (e.g., kernel restricts
-			// unprivileged user namespaces). Fall back to running without
-			// containerization rather than aborting, so the tool remains
-			// usable on locked-down systems. The user can supplement with
-			// external sandboxing (e.g., Docker) if needed.
-			fmt.Fprintf(os.Stderr, "Warning: container isolation unavailable (%v), continuing without sandbox\n", err)
-			return
-		}
-
-		// Forward signals that target the parent specifically (not the
-		// entire process group) to the containerized child, so that
-		// `kill <pid>` and terminal disconnect (SIGHUP) reach the child.
-		// SIGINT (Ctrl+C) is delivered to the entire process group
-		// automatically and is not forwarded to avoid double delivery.
-		sigChan := make(chan os.Signal, 1)
-		signal.Notify(sigChan, syscall.SIGTERM, syscall.SIGHUP)
-		go func() {
-			for sig := range sigChan {
-				cmd.Process.Signal(sig)
-			}
-		}()
-
-		if err := cmd.Wait(); err != nil {
-			if exitErr, ok := err.(*exec.ExitError); ok {
-				os.Exit(exitErr.ExitCode())
-			}
-			fmt.Fprintf(os.Stderr, "Warning: container process error (%v)\n", err)
-			return
-		}
-		os.Exit(0)
+	if os.Getenv(containerEnv) != "" {
+		applyContainerFilesystem()
+		return
 	}
+	runInContainer()
+}
 
-	// Already in container; harden the filesystem before continuing.
-	if err := setupContainerFilesystem(); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: container filesystem setup incomplete: %v\n", err)
+// runInContainer re-executes the process inside a user and mount namespace and
+// exits with the child's status. The toolchain and config directories are
+// resolved here, before the mounts, and carried to the child through the
+// environment, because the go command may not start once the mounts are
+// hardened. See TheoryOfContainerIsolation.
+func runInContainer() {
+	exePath, err := os.Executable()
+	if err != nil {
+		warnContainer("resolve the executable", err)
+		return
 	}
-
-	// Mount the task's sandbox filesystem and pivot the process root to
-	// it, so every read falls through to the host and every write lands
-	// in the store's upper layer — process memory by default, a record
-	// file when the session named one. Best-effort like the mount
-	// hardening: a failure leaves the mount policy as the only layer.
-	// See TheoryOfSandboxRoot.
-	if cwd, err := os.Getwd(); err == nil {
-		if err := setupSandboxRoot(cwd); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: sandbox filesystem unavailable (%v), continuing with the mount policy\n", err)
+	env := append(os.Environ(),
+		containerEnv+"=1",
+		goWritableDirsEnv+"="+strings.Join(resolveGoWritableDirs(), string(os.PathListSeparator)),
+		configDirEnv+"="+resolveConfigDir(),
+	)
+	cmd := exec.Command(exePath, os.Args[1:]...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Env = env
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Cloneflags: syscall.CLONE_NEWUSER | syscall.CLONE_NEWNS,
+		UidMappings: []syscall.SysProcIDMap{{
+			ContainerID: 0,
+			HostID:      os.Getuid(),
+			Size:        1,
+		}},
+		GidMappings: []syscall.SysProcIDMap{{
+			ContainerID: 0,
+			HostID:      os.Getgid(),
+			Size:        1,
+		}},
+		GidMappingsEnableSetgroups: false,
+	}
+	if err := cmd.Run(); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			os.Exit(exitErr.ExitCode())
 		}
+		warnContainer("start the container", err)
+		return
 	}
+	os.Exit(0)
+}
 
-	// Re-enforce the writable-set policy at the LSM layer as defense in
-	// depth. Runs after setupContainerFilesystem because
-	// landlock_restrict_self requires the NO_NEW_PRIVS flag it sets.
-	// Best-effort: unsupported kernels skip silently. See TheoryOfLandlock.
+// applyContainerFilesystem hardens the child's filesystem: the read-only root
+// and the writable binds, then the sandbox filesystem, then the Landlock
+// ruleset. Each step is best-effort on its own, so one refused layer leaves
+// the remaining layers to confine the process instead of ending the run.
+// The order is load-bearing: the sandbox mount opens /dev/fuse and creates
+// its record, which the Landlock ruleset does not admit afterwards. See
+// TheoryOfContainerIsolation and TheoryOfSandboxRoot.
+func applyContainerFilesystem() {
+	cwd, err := os.Getwd()
+	if err != nil {
+		warnContainer("determine the working directory", err)
+		return
+	}
+	if err := setupContainerFilesystem(cwd); err != nil {
+		warnContainer("set up the container filesystem", err)
+	}
+	if err := setupSandboxRoot(cwd); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: sandbox filesystem unavailable (%v), continuing without it\n", err)
+	}
 	applyLandlockFilesystemPolicy()
 }
 
-// tmpfsMountData returns the mount data string for a tmpfs mount, applying
-// the size limit from the given environment variable when set. When unset
-// or empty, the empty string is returned, mounting the tmpfs without an
-// explicit size limit (kernel default: up to half of physical RAM). Used to
-// configure /tmp and /dev/shm tmpfs mounts inside the container.
-// See TheoryOfContainerIsolation.
-func tmpfsMountData(envName string) string {
-	if s := os.Getenv(envName); s != "" {
-		return "size=" + s
+// setupContainerFilesystem hardens the process filesystem in the child of
+// MaybeRunInContainer, where the user namespace supplies the mount capability:
+// every mount is made private, the root is made read-only, the pre-existing
+// submounts follow it, /tmp and /dev/shm become fresh tmpfs mounts, and the
+// writable set is bind-remounted read-write. See TheoryOfContainerIsolation.
+func setupContainerFilesystem(cwd string) error {
+	if err := mountSyscall("", "/", "", syscall.MS_REC|syscall.MS_PRIVATE, ""); err != nil {
+		return fmt.Errorf("make mounts private: %w", err)
 	}
-	return ""
+	if err := mountSyscall("/", "/", "", syscall.MS_BIND|syscall.MS_REC, ""); err != nil {
+		return fmt.Errorf("bind the root: %w", err)
+	}
+	if err := mountSyscall("", "/", "", syscall.MS_REMOUNT|syscall.MS_BIND|syscall.MS_RDONLY, ""); err != nil {
+		return fmt.Errorf("make the root read-only: %w", err)
+	}
+	writable := writableMountDirs(cwd)
+	hardenSubmounts(writable)
+	for _, dir := range tmpfsMounts {
+		if err := mountTmpfs(dir, tmpfsMountData(tmpfsSizeEnv)); err != nil {
+			return err
+		}
+	}
+	for _, dir := range writable {
+		if err := mountWritableBind(dir); err != nil {
+			return err
+		}
+	}
+	setNoNewPrivs()
+	return nil
 }
 
-// parseMountPoints reads /proc/self/mountinfo and returns a list of mount
-// point paths. Used to enumerate mounts for read-only remounting. Each line
-// of mountinfo has the mount point as the 5th field (index 4).
+// writableMountDirs returns the directories the mount layer makes writable
+// again after the root turned read-only: the working directory, the Go
+// toolchain directories and the config directory resolved before the mounts.
+// /tmp and /dev/shm are absent because their fresh tmpfs mounts are writable
+// by construction. See TheoryOfContainerIsolation and TheoryOfWritableDirs.
+func writableMountDirs(cwd string) []string {
+	var dirs []string
+	seen := make(map[string]bool)
+	add := func(dir string) {
+		dir = strings.TrimSpace(dir)
+		if dir == "" || !filepath.IsAbs(dir) {
+			return
+		}
+		dir = filepath.Clean(dir)
+		if dir == "/" || seen[dir] {
+			return
+		}
+		seen[dir] = true
+		dirs = append(dirs, dir)
+	}
+	add(cwd)
+	for _, dir := range filepath.SplitList(os.Getenv(goWritableDirsEnv)) {
+		add(dir)
+	}
+	add(os.Getenv(configDirEnv))
+	return dirs
+}
+
+// mountTmpfs mounts a fresh tmpfs at dir. The mount is read-write by
+// construction, so no bind-remount follows it. The directory must already
+// exist: a root turned read-only cannot create it.
+// See TheoryOfContainerIsolation.
+func mountTmpfs(dir, data string) error {
+	if err := mountSyscall("tmpfs", dir, "tmpfs",
+		syscall.MS_NOSUID|syscall.MS_NODEV, data); err != nil {
+		return fmt.Errorf("mount tmpfs at %s: %w", dir, err)
+	}
+	return nil
+}
+
+// mountSyscall issues one mount call. It is a variable so a test drives the
+// flag sequence without a kernel mount. See mountWritableBind.
+var mountSyscall = func(source, target, fstype string, flags uintptr, data string) error {
+	return syscall.Mount(source, target, fstype, flags, data)
+}
+
+// mountWritableBind makes dir writable again after the root turned read-only:
+// one bind mount of dir onto itself, then a remount of that bind carrying
+// MS_REMOUNT|MS_BIND. The second call must carry MS_BIND: a bare MS_REMOUNT
+// re-mounts the underlying superblock — the read-only root — instead of the
+// bind, so the directory keeps the read-only state while the session still
+// reads its own writes back from the sandbox store, and only the write to the
+// host is missing. The error is therefore returned, never swallowed. See
+// TheoryOfContainerIsolation and pipeline.TheoryOfLoopChangeApply.
+func mountWritableBind(dir string) error {
+	if err := mountSyscall(dir, dir, "", syscall.MS_BIND, ""); err != nil {
+		return fmt.Errorf("bind %s: %w", dir, err)
+	}
+	if err := mountSyscall("", dir, "", syscall.MS_REMOUNT|syscall.MS_BIND, ""); err != nil {
+		return fmt.Errorf("remount %s writable: %w", dir, err)
+	}
+	return nil
+}
+
+// hardenSubmounts extends the read-only root over the pre-existing submounts:
+// each mount point outside the writable set and outside the kernel
+// filesystems is remounted read-only the same way the root was. A remount the
+// namespace does not own fails, and the read-only root already bounds that
+// mount, so the failure is a skip rather than a setup error. See
+// TheoryOfContainerIsolation.
+func hardenSubmounts(writable []string) {
+	mounts, err := parseMountPoints()
+	if err != nil {
+		return
+	}
+	for _, mountPoint := range mounts {
+		if mountPoint == "/" || keptWritable(mountPoint, writable) {
+			continue
+		}
+		_ = mountSyscall("", mountPoint, "",
+			syscall.MS_REMOUNT|syscall.MS_BIND|syscall.MS_RDONLY, "")
+	}
+}
+
+// keptWritable reports whether mountPoint is one of the writable directories,
+// lies beneath one, or belongs to a kernel filesystem the process needs
+// writable. See TheoryOfContainerIsolation.
+func keptWritable(mountPoint string, writable []string) bool {
+	for _, dir := range writable {
+		if mountPoint == dir || strings.HasPrefix(mountPoint, dir+"/") {
+			return true
+		}
+	}
+	for _, dir := range kernelFilesystemMounts {
+		if mountPoint == dir || strings.HasPrefix(mountPoint, dir+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// tmpfsMountData renders the mount data of a sandbox tmpfs: a size limit when
+// the named environment variable is set, and no option otherwise, so the mount
+// takes the kernel default. See TheoryOfContainerIsolation.
+func tmpfsMountData(envName string) string {
+	size := strings.TrimSpace(os.Getenv(envName))
+	if size == "" {
+		return ""
+	}
+	return "size=" + size
+}
+
+// setNoNewPrivs sets PR_SET_NO_NEW_PRIVS, so a setuid binary the model runs
+// gains no privilege and the Landlock ruleset can be restricted to the
+// process. Best-effort, like the rest of the layer. See
+// TheoryOfContainerIsolation and TheoryOfLandlock.
+func setNoNewPrivs() {
+	_ = unix.Prctl(unix.PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0)
+}
+
+// parseMountPoints returns the mount points of the current mount namespace,
+// read from /proc/self/mountinfo. The mount point is the fifth field of each
+// line. See TheoryOfContainerIsolation.
 func parseMountPoints() ([]string, error) {
 	data, err := os.ReadFile("/proc/self/mountinfo")
 	if err != nil {
 		return nil, err
 	}
-	var mounts []string
-	for line := range strings.SplitSeq(string(data), "\n") {
+	var out []string
+	for _, line := range strings.Split(string(data), "\n") {
 		fields := strings.Fields(line)
 		if len(fields) < 5 {
 			continue
 		}
-		mounts = append(mounts, fields[4])
+		out = append(out, unescapeMountPath(fields[4]))
 	}
-	return mounts, nil
+	return out, nil
 }
 
-func setupContainerFilesystem() error {
-	// 1. Make all mounts private to this namespace. This is critical:
-	// without it, subsequent mount operations could propagate to the
-	// host mount table via shared subtrees, modifying the host's
-	// filesystem view.
-	if err := syscall.Mount("", "/", "", syscall.MS_REC|syscall.MS_PRIVATE, ""); err != nil {
-		return fmt.Errorf("make mounts private: %w", err)
+// unescapeMountPath decodes the octal escapes the kernel writes into
+// /proc/self/mountinfo: a space is \040, a tab \011, a newline \012, and a
+// backslash \134. A sequence that is not an octal escape stays as written.
+// See TheoryOfContainerIsolation.
+func unescapeMountPath(path string) string {
+	if !strings.Contains(path, `\`) {
+		return path
 	}
-
-	cwd, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("get working directory: %w", err)
-	}
-
-	// 2. Parse mount points before making them read-only, so we can
-	// enumerate and selectively remount them.
-	mountPoints, err := parseMountPoints()
-	if err != nil {
-		return fmt.Errorf("parse mount points: %w", err)
-	}
-
-	// 3. Remount non-special mount points as read-only. This prevents
-	// writes to any directory that is not explicitly exempted. Special
-	// mounts (proc, sys, dev, tmp) are handled separately below.
-	// Failure for individual mounts is non-critical (the mount may not
-	// support remount or may already be read-only).
-	specialMounts := map[string]bool{
-		"/":           true,
-		"/proc":       true,
-		"/sys":        true,
-		"/dev":        true,
-		"/dev/pts":    true,
-		"/dev/shm":    true,
-		"/dev/mqueue": true,
-		"/run":        true,
-		"/tmp":        true,
-	}
-	for _, mp := range mountPoints {
-		if specialMounts[mp] {
-			continue
-		}
-		syscall.Mount("", mp, "", syscall.MS_REMOUNT|syscall.MS_RDONLY, "")
-	}
-
-	// 4. Remount root as read-only. This is the primary filesystem
-	// restriction: everything under / is read-only unless overridden
-	// by a bind mount. Failure is non-critical (root may already be
-	// read-only or may not support remount).
-	syscall.Mount("", "/", "", syscall.MS_REMOUNT|syscall.MS_RDONLY, "")
-
-	// 5. Bind-mount the current working directory onto itself read-write.
-	// This creates a new mount that shadows the read-only view of the
-	// same directory, allowing the AI to write files only within the
-	// project boundary. The bind mount covers the entire CWD subtree,
-	// so all files under CWD are writable.
-	// A second remount ensures the mount is explicitly read-write even
-	// if the source mount was read-only (bind mounts inherit the source
-	// mount's read-only flag; the remount clears it).
-	if cwd != "" && cwd != "/" {
-		if err := syscall.Mount(cwd, cwd, "", syscall.MS_BIND, ""); err == nil {
-			syscall.Mount("", cwd, "", syscall.MS_REMOUNT, "")
-		} else {
-			fmt.Fprintf(os.Stderr, "Warning: failed to make working directory writable in sandbox (%v)\n", err)
-		}
-	}
-
-	// 6. Bind-mount Go toolchain writable directories read-write.
-	// These directories (GOCACHE, GOMODCACHE, GOPATH/pkg) are needed by
-	// the Go toolchain for build cache, module downloads, and package
-	// objects. Directories already under CWD are skipped (already
-	// writable via the CWD bind mount). Failure for individual dirs
-	// is non-critical (the directory may not exist or may already be
-	// writable).
-	goDirsStr := os.Getenv(goWritableDirsEnv)
-	for _, dir := range filepath.SplitList(goDirsStr) {
-		dir = filepath.Clean(strings.TrimSpace(dir))
-		if dir == "" || dir == "/" {
-			continue
-		}
-		// Skip directories already under CWD (already writable).
-		if dir == cwd || strings.HasPrefix(dir, cwd+string(filepath.Separator)) {
-			continue
-		}
-		if err := syscall.Mount(dir, dir, "", syscall.MS_BIND, ""); err == nil {
-			syscall.Mount("", dir, "", syscall.MS_REMOUNT, "")
-		}
-	}
-
-	// 7. Bind-mount the user config directory read-write so the memory
-	// system (ai-memory.json) and chat history (ai-chat-history.json)
-	// can persist files. The directory is resolved before entering the
-	// namespace because os.UserConfigDir may not work correctly after
-	// mount restrictions are applied. Directories already under CWD are
-	// skipped (already writable via the CWD bind mount). Failure is
-	// non-critical (the directory may not exist or may already be
-	// writable). See TheoryOfContainerIsolation.
-	configDir := os.Getenv(configDirEnv)
-	if configDir != "" {
-		configDir = filepath.Clean(configDir)
-		if configDir != "/" && configDir != "" {
-			// Skip if already under CWD (already writable via the CWD bind mount).
-			if configDir != cwd && !strings.HasPrefix(configDir, cwd+string(filepath.Separator)) {
-				if err := syscall.Mount(configDir, configDir, "", syscall.MS_BIND, ""); err == nil {
-					syscall.Mount("", configDir, "", syscall.MS_REMOUNT, "")
+	var b strings.Builder
+	for i := 0; i < len(path); i++ {
+		if path[i] == '\\' && i+3 < len(path) {
+			value := 0
+			octal := true
+			for _, c := range path[i+1 : i+4] {
+				if c < '0' || c > '7' {
+					octal = false
+					break
 				}
+				value = value*8 + int(c-'0')
+			}
+			if octal {
+				b.WriteByte(byte(value))
+				i += 3
+				continue
 			}
 		}
+		b.WriteByte(path[i])
 	}
-
-	// 8. Mount a fresh tmpfs on /tmp. This isolates temporary files from
-	// the host and provides a writable /tmp for tools that need it
-	// (e.g., go test creates temporary files). The size limit is
-	// configurable via tmpTmpfsSizeEnv; when unset, the tmpfs is mounted
-	// without an explicit size limit (kernel default: up to half of
-	// physical RAM), avoiding false ENOSPC errors when tests create
-	// large temporary files. Best-effort: if mounting fails, /tmp is
-	// either read-only (from the root mount) or whatever it was before.
-	_ = syscall.Unmount("/tmp", syscall.MNT_DETACH)
-	syscall.Mount("tmpfs", "/tmp", "tmpfs",
-		syscall.MS_NOSUID|syscall.MS_NODEV, tmpfsMountData(tmpTmpfsSizeEnv))
-
-	// 9. Mount a fresh tmpfs on /dev/shm for shared memory isolation.
-	// This prevents the container from accessing host POSIX shared
-	// memory segments. The size limit is configurable via
-	// shmTmpfsSizeEnv; when unset, the tmpfs is mounted without an
-	// explicit size limit. Best-effort: if /dev/shm doesn't exist or
-	// mounting fails, the existing mount (or none) is used.
-	_ = syscall.Unmount("/dev/shm", syscall.MNT_DETACH)
-	syscall.Mount("tmpfs", "/dev/shm", "tmpfs",
-		syscall.MS_NOSUID|syscall.MS_NODEV, tmpfsMountData(shmTmpfsSizeEnv))
-
-	// 10. Remount /proc to show only processes in this PID namespace.
-	// The host /proc exposes all host PIDs; the remount restricts
-	// visibility to the container's process tree. If unmount fails
-	// (e.g., /proc is busy), the remount is skipped and the host /proc
-	// remains — a security degradation but not a functional break.
-	if err := syscall.Unmount("/proc", syscall.MNT_DETACH); err == nil {
-		if err := syscall.Mount("proc", "/proc", "proc",
-			syscall.MS_NOSUID|syscall.MS_NOEXEC|syscall.MS_NODEV, ""); err != nil {
-			// Remount failed after successful unmount; attempt to
-			// restore /proc so the process does not run without it.
-			syscall.Mount("proc", "/proc", "proc", 0, "")
-		}
-	}
-
-	// 11. Make /sys read-only to prevent sysfs tampering. Failure is
-	// non-critical: /sys may not be a separate mount point on all systems.
-	syscall.Mount("", "/sys", "", syscall.MS_REMOUNT|syscall.MS_RDONLY, "")
-
-	// 12. Mask sensitive /proc files that could leak kernel memory or
-	// configuration. Bind-mount /dev/null over each path so reads return
-	// empty content instead of privileged data. Failure for individual
-	// paths is non-critical (the path may not exist on all kernels).
-	for _, p := range []string{
-		"/proc/kcore",
-		"/proc/kallsyms",
-		"/proc/bus",
-		"/proc/config.gz",
-		"/proc/sched_debug",
-		"/proc/keys",
-		"/proc/timer_list",
-	} {
-		syscall.Mount("/dev/null", p, "", syscall.MS_BIND, "")
-	}
-
-	// 13. Set NO_NEW_PRIVS to prevent privilege escalation through exec.
-	// This ensures that even if a setuid binary is somehow executed, it
-	// cannot gain new privileges. Best-effort: failure is silently
-	// ignored since the user namespace already limits capabilities.
-	setNoNewPrivs()
-
-	return nil
+	return b.String()
 }
 
-// setNoNewPrivs sets the NO_NEW_PRIVS flag on the current process,
-// preventing it and its descendants from gaining new privileges through
-// exec. This is a defense-in-depth measure: the user namespace already
-// limits capabilities, but NO_NEW_PRIVS ensures setuid binaries cannot
-// escalate. Best-effort: failure is silently ignored.
-func setNoNewPrivs() {
-	_, _, _ = syscall.Syscall6(syscall.SYS_PRCTL, prSetNoNewPrivs, 1, 0, 0, 0, 0)
+// warnContainer reports a refused container layer and leaves the process on
+// the mount policy it inherited. A warning, not an error: the layer is
+// best-effort, and a run without it is the behavior of a host that offers no
+// user namespace. See TheoryOfContainerIsolation.
+func warnContainer(what string, err error) {
+	fmt.Fprintf(os.Stderr, "Warning: container isolation unavailable (%s: %v), continuing without it\n", what, err)
 }
