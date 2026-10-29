@@ -38,8 +38,8 @@ container's /tmp, so the mount moves with the pivot and the mountpoint
 leaves no directory behind; the record is the one directory the sandbox
 deliberately leaves in the project.
 
-The default upper layer is a directory record: one hidden directory per
-session, inside the working directory, named .tai-sandboxfs.<time>.<random>
+The default upper layer is a directory record: one directory per session,
+under the working directory's .tai/sandboxfs, named <time>.<random>
 (sandboxfs.SessionDirPath, sandboxfs.TheoryOfDirRecord). The session's
 mutations live there as ordinary files, so every session leaves a record the
 sandbox command browses and applies later; the names sort by session, so the
@@ -53,8 +53,9 @@ CAI_SANDBOX_DIR pins a directory record's place instead of the per-session
 path, CAI_SANDBOX_DB names a database record, and CAI_SANDBOX_DUCKDB selects a
 database record's DuckDB dialect instead of sqlite's; a dialect named without a
 record records itself at sandboxfs.DefaultDBPath of the working directory — one
-hidden file beside the project, browsable and appliable after the session by
-the sandbox command. The record names are exclusive, because a session has one
+database file inside the project's ".tai", beside the session directories,
+browsable and appliable after the session by the sandbox command. The record
+names are exclusive, because a session has one
 record; naming two fails the mount. A DuckDB session's binary must link a
 DuckDB driver: none is linked here, so a session that selects it without one
 fails the mount, and the best-effort rule below leaves the mount policy as the
@@ -126,10 +127,10 @@ func isSandboxReview(args []string) bool {
 const sandboxDBEnv = "CAI_SANDBOX_DB"
 
 // sandboxDirEnv names the directory record of this session, pinning its place.
-// The default is already the directory layer, one directory per session named
-// .tai-sandboxfs.<time>.<random>; naming this variable chooses a determinate
-// place instead. It is exclusive with sandboxDBEnv: a session has one record.
-// See TheoryOfSandboxRoot.
+// The default is already the directory layer, one session directory under the
+// working directory's .tai/sandboxfs; naming this variable chooses a
+// determinate place instead. It is exclusive with sandboxDBEnv: a session has
+// one record. See TheoryOfSandboxRoot.
 const sandboxDirEnv = "CAI_SANDBOX_DIR"
 
 // activeSandboxRoot is the sandbox filesystem this process mounted, kept so

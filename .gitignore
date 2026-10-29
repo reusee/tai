@@ -6,5 +6,4 @@
 /demo
 /.benchmark
 /.res
-.tai-sandbox.db*
-.tai-sandboxfs.*
+.tai/

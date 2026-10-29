@@ -31,11 +31,14 @@ memory, which leaves nothing behind; a SQL record file that outlives the
 process and that the review command browses and applies later; and a directory
 record of ordinary files that outlives the process the same way, with the host
 filesystem doing the storage. The tai tool's default is the directory record:
-one directory per session, inside the working directory, named
-.tai-sandboxfs.<time>.<random>, so every session leaves a record the sandbox
-command reviews. The record file is a sqlite database, or a DuckDB database on
-request; see TheoryOfSqlDialects. See TheoryOfUpperLayer, TheoryOfSqlUpper and
-TheoryOfDirUpper.
+one directory per session, under the working directory's ".tai/sandboxfs",
+named "<time>.<random>", so every session leaves a record the sandbox command
+reviews; the database layer records itself beside the session directories at
+".tai/sandbox.db". Every record the tool creates in a working directory
+therefore lives under the one ".tai" management directory, and the project
+root carries no record entry of its own. The record file is a sqlite database,
+or a DuckDB database on request; see TheoryOfSqlDialects. See
+TheoryOfUpperLayer, TheoryOfSqlUpper and TheoryOfDirUpper.
 
 The boundary is the filesystem, not the tool's file abstraction. Change blocks
 keep applying atomically through changes.FileStore, and FileStore never learns
@@ -476,15 +479,18 @@ func Open(dbPath, base string) (*Store, error) {
 }
 
 // DefaultDBPath returns the database record's place in a working directory: one
-// record file inside the working directory — a sqlite database, or a DuckDB
-// database when the mount selects that dialect. The tai tool's default is the
-// directory record, also inside the working directory (see SessionDirPath);
-// this file is where a session that names the database layer records itself.
-// The result is a filesystem path, so it joins with the platform's separator
-// even though the store itself speaks slash paths. See TheoryOfUpperLayer and
+// record file inside the working directory's ".tai" management directory — a
+// sqlite database, or a DuckDB database when the mount selects that dialect.
+// The tai tool's default is the directory record, which lives beside this file
+// under ".tai/sandboxfs" (see SessionDirPath); this file is where a session that
+// names the database layer records itself. Every record the tool creates in a
+// working directory therefore lives under the one ".tai" management directory,
+// and the project root carries no record entry of its own. The result is a
+// filesystem path, so it joins with the platform's separator even though the
+// store itself speaks slash paths. See TheoryOfUpperLayer and
 // TheoryOfSqlDialects.
 func DefaultDBPath(dir string) string {
-	return filepath.Join(dir, ".tai-sandbox.db")
+	return filepath.Join(dir, recordRootName, "sandbox.db")
 }
 
 // Base returns the read-through base directory.
@@ -517,8 +523,9 @@ func OpenWithPolicy(dbPath, base string, policy func(string) error) (*Store, err
 
 // openDurable assembles a sandbox store on the durable SQL upper layer a
 // constructor opens: the two dialects differ only in which open function the
-// caller passes, so the empty-path check, the absolute path, and the store
-// assembly live here once. See TheoryOfSqlDialects.
+// caller passes, so the empty-path check, the absolute path, the record
+// directory's creation, and the store assembly live here once. See
+// TheoryOfSqlDialects.
 func openDurable(dbPath, base string, policy func(string) error, open func(string) (*sqlUpper, error)) (*Store, error) {
 	if dbPath == "" {
 		return nil, fmt.Errorf("sandboxfs: empty database path")
@@ -526,6 +533,13 @@ func openDurable(dbPath, base string, policy func(string) error, open func(strin
 	absDB, err := filepath.Abs(dbPath)
 	if err != nil {
 		return nil, err
+	}
+	// The default record lives inside the working directory's ".tai", which a
+	// fresh project does not hold yet, and a database driver creates its file
+	// only inside an existing directory. The parent is created here, on the one
+	// path both dialects open through. See DefaultDBPath.
+	if err := os.MkdirAll(filepath.Dir(absDB), 0o755); err != nil {
+		return nil, fmt.Errorf("sandboxfs: create the record directory: %w", err)
 	}
 	upper, err := open(absDB)
 	if err != nil {

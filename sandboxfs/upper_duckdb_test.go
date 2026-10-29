@@ -120,7 +120,8 @@ func TestValidateMountOptionsDuckDB(t *testing.T) {
 // TestOwnRecordCoversTheDuckDBWAL protects the store's refusal to mutate its own
 // record: DuckDB keeps its write-ahead log in a .wal file beside the record, so
 // a session write to that name would corrupt the record the review depends on.
-// The sqlite siblings keep their own names.
+// The record lives inside the project's ".tai" management directory, so the
+// sqlite siblings and the DuckDB sibling keep their place beside it.
 // See TheoryOfSandboxFilesystem and TheoryOfSqlDialects.
 func TestOwnRecordCoversTheDuckDBWAL(t *testing.T) {
 	s, err := OpenMemory(t.TempDir())
@@ -128,18 +129,18 @@ func TestOwnRecordCoversTheDuckDBWAL(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	s.dbPath = "/proj/.tai-sandbox.db"
+	s.dbPath = "/proj/.tai/sandbox.db"
 	for _, p := range []string{
-		"/proj/.tai-sandbox.db",
-		"/proj/.tai-sandbox.db-wal",
-		"/proj/.tai-sandbox.db-shm",
-		"/proj/.tai-sandbox.db.wal",
+		"/proj/.tai/sandbox.db",
+		"/proj/.tai/sandbox.db-wal",
+		"/proj/.tai/sandbox.db-shm",
+		"/proj/.tai/sandbox.db.wal",
 	} {
 		if !s.isOwnDBPath(p) {
 			t.Errorf("%s is not refused as the store's own record", p)
 		}
 	}
-	if s.isOwnDBPath("/proj/.tai-sandbox.db.other") {
+	if s.isOwnDBPath("/proj/.tai/sandbox.db.other") {
 		t.Error("a sibling no backend writes is refused as the record")
 	}
 }

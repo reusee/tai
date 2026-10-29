@@ -316,17 +316,18 @@ func TestOpenDirWithPolicyRefusesWritesOutsideIt(t *testing.T) {
 }
 
 // TestSessionDirPathNamesTheSession protects TheoryOfDirRecord's naming: one
-// directory per session, named for the session's UTC time and a random suffix,
-// so two sessions of one second never share a record.
+// directory per session under the working directory's .tai/sandboxfs, named
+// for the session's UTC time and a random suffix, so two sessions of one
+// second never share a record.
 func TestSessionDirPathNamesTheSession(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC)
 	got := SessionDirPath(dir, now)
-	if d, want := filepath.Dir(got), dir; d != want {
+	if d, want := filepath.Dir(got), filepath.Join(dir, ".tai", "sandboxfs"); d != want {
 		t.Errorf("record directory %q, want %q", d, want)
 	}
 	name := filepath.Base(got)
-	prefix := ".tai-sandboxfs.20250102-030405."
+	prefix := "20250102-030405."
 	if !strings.HasPrefix(name, prefix) {
 		t.Fatalf("record name %q, want the prefix %q", name, prefix)
 	}
@@ -360,5 +361,31 @@ func TestDefaultRecordPathPrefersTheNewestSessionRecord(t *testing.T) {
 	}
 	if got := DefaultRecordPath(dir); got != newer {
 		t.Errorf("session records: got %q, want the newest %q", got, newer)
+	}
+}
+
+// TestDefaultDBPathLivesUnderTheManagementDirectory protects
+// TheoryOfSandboxFilesystem: every record the tai tool creates in a working
+// directory lives under the one ".tai" management directory, so the project
+// root carries no record entry of its own. The database record also opens from
+// a fresh project, which holds no ".tai" yet. See DefaultDBPath.
+func TestDefaultDBPathLivesUnderTheManagementDirectory(t *testing.T) {
+	dir := t.TempDir()
+	got := DefaultDBPath(dir)
+	if want := filepath.Join(dir, ".tai", "sandbox.db"); got != want {
+		t.Fatalf("database record %q, want %q", got, want)
+	}
+	if _, err := os.Stat(filepath.Dir(got)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the test needs an absent management directory: %v", err)
+	}
+	store, err := Open(got, dir)
+	if err != nil {
+		t.Fatalf("opening the default record: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Dir(got)); err != nil {
+		t.Fatalf("the open did not create the management directory: %v", err)
 	}
 }

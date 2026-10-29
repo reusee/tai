@@ -18,8 +18,8 @@ The sandbox command is the review half of the filesystem environment: a
 session that mounted its sandbox filesystem records its writes in a record,
 and this command lists the net changes and the audit trail, then applies the
 changes the user names. The default session leaves a directory record: one
-hidden directory per session, inside the working directory, named
-.tai-sandboxfs.<time>.<random>, which needs no driver
+directory per session, under the working directory's .tai/sandboxfs, named
+<time>.<random>, which needs no driver
 (sandboxfs.TheoryOfDirRecord). A database file — sqlite, or DuckDB when the
 session selected that dialect — has its engine read from its header, so the
 command reviews whichever engine wrote the file as long as the binary links

@@ -67,7 +67,7 @@ func TestSandboxRecordOptions(t *testing.T) {
 	if !dirRecord || duckdb {
 		t.Fatalf("default selected dir %v, duckdb %v; want the directory layer", dirRecord, duckdb)
 	}
-	prefix := filepath.Join(cwd, ".tai-sandboxfs.20250102-030405.")
+	prefix := filepath.Join(cwd, ".tai", "sandboxfs", "20250102-030405.")
 	if !strings.HasPrefix(record, prefix) {
 		t.Fatalf("default record %q, want a session directory with the prefix %q", record, prefix)
 	}

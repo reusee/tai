@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 )
 
@@ -25,17 +24,18 @@ content file per content-bearing path, and the audit log, so the protected set
 is the subtree. A mutation that reached inside would corrupt the record the
 review reads, and would enter the record as a change of itself.
 
-The directory record is the default the tai tool selects: one hidden directory
-per session, inside the working directory, named
-".tai-sandboxfs.<time>.<random>" (SessionDirPath). The timestamp is UTC and
-fixed-width, so the names sort by session and the review command finds the
-newest record without the user naming a path; the random suffix separates the
-sessions that started within one second, so a later session never overwrites
-the record an earlier one left for review. A caller that wants a determinate
-place — a test, a session pinned by configuration — names the directory
-itself; naming it is the whole selection. The memory layer and the SQL record
-remain selectable, and a project that recorded nothing holds neither a session
-directory nor a database file.
+The directory record is the default the tai tool selects: one directory per
+session, under the working directory's ".tai/sandboxfs", named
+"<time>.<random>" (SessionDirPath). The timestamp is UTC and fixed-width, so a
+listing sorts the session directories by session and the review command finds
+the newest record without the user naming a path; the random suffix separates
+the sessions that started within one second, so a later session never
+overwrites the record an earlier one left for review. The folder holds nothing
+but session records, so one directory there is one session. A caller that
+wants a determinate place — a test, a session pinned by configuration — names
+the directory itself; naming it is the whole selection. The memory layer and
+the SQL record remain selectable, and a project that recorded nothing holds no
+session directory.
 
 Records accumulate until the user deletes them: the review command reads the
 newest one by default, and an older one is browsed by naming its directory.
@@ -87,29 +87,31 @@ func DefaultRecordPath(dir string) string {
 }
 
 // latestSessionDir returns the newest session directory record of dir, or
-// reports that dir holds none. The name carries the session's UTC timestamp in
-// a fixed-width form, so the largest name is the latest session; the random
-// suffix only separates the sessions of one second, whose order is then
-// arbitrary but stable. See DefaultRecordPath and TheoryOfDirRecord.
+// reports that dir holds none. The session directories live under
+// ".tai/sandboxfs" and nothing else does, so the largest directory name is the
+// latest session; the name carries the session's UTC timestamp in a
+// fixed-width form, and the random suffix only separates the sessions of one
+// second, whose order is then arbitrary but stable. See DefaultRecordPath and
+// TheoryOfDirRecord.
 func latestSessionDir(dir string) (string, bool) {
-	entries, err := os.ReadDir(dir)
+	sessionsDir := filepath.Join(dir, recordRootName, sessionRecordsName)
+	entries, err := os.ReadDir(sessionsDir)
 	if err != nil {
 		return "", false
 	}
 	best := ""
 	for _, e := range entries {
-		name := e.Name()
-		if !e.IsDir() || !strings.HasPrefix(name, sessionRecordPrefix) {
+		if !e.IsDir() {
 			continue
 		}
-		if name > best {
+		if name := e.Name(); name > best {
 			best = name
 		}
 	}
 	if best == "" {
 		return "", false
 	}
-	return filepath.Join(dir, best), true
+	return filepath.Join(sessionsDir, best), true
 }
 
 // randomRecordSuffix returns the random suffix of one session's record name:
@@ -124,20 +126,27 @@ func randomRecordSuffix(now time.Time) string {
 	return hex.EncodeToString(b[:])
 }
 
+const (
+	// recordRootName names the one directory the tai tool creates in the
+	// working directory for its records, so the project tree carries one
+	// management directory instead of one dot entry per record kind. See
+	// TheoryOfDirRecord.
+	recordRootName = ".tai"
+	// sessionRecordsName names the folder that holds the session records of
+	// one working directory. It holds nothing else, so one directory there is
+	// one session. See TheoryOfDirRecord.
+	sessionRecordsName = "sandboxfs"
+)
+
 // SessionDirPath returns the directory record of one session of the working
-// directory: one hidden directory inside it, named
-// ".tai-sandboxfs.<time>.<random>". The timestamp is UTC and fixed-width, so a
-// listing sorts the records by session and the review command finds the newest
-// one without a flag; the random suffix separates the sessions that started
-// within one second. A later session therefore never overwrites the record an
-// earlier one left for review. See TheoryOfDirRecord and TheoryOfDirUpper.
+// directory: one session directory under the working directory's
+// ".tai/sandboxfs", named "<time>.<random>". The timestamp is UTC and
+// fixed-width, so a listing sorts the session directories by session and the
+// review command finds the newest one without a flag; the random suffix
+// separates the sessions that started within one second. A later session
+// therefore never overwrites the record an earlier one left for review. See
+// TheoryOfDirRecord and TheoryOfDirUpper.
 func SessionDirPath(dir string, now time.Time) string {
-	return filepath.Join(dir, sessionRecordPrefix+
+	return filepath.Join(dir, recordRootName, sessionRecordsName,
 		now.UTC().Format("20060102-150405")+"."+randomRecordSuffix(now))
 }
-
-// sessionRecordPrefix names one session's directory record: the hidden
-// directory the session's mutations live in. One directory per session means a
-// later session never overwrites the record an earlier one left for review.
-// See TheoryOfDirRecord.
-const sessionRecordPrefix = ".tai-sandboxfs."

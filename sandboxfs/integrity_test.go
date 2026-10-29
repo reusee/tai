@@ -108,7 +108,11 @@ func TestOwnDatabaseIsRefusedThroughItsBasePath(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	name := "/" + filepath.Base(dbPath)
+	rel, err := filepath.Rel(base, dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := "/" + filepath.ToSlash(rel)
 	if err := store.WriteFile(name, []byte("not a database"), 0o644); !errors.Is(err, os.ErrPermission) {
 		t.Errorf("writing the store database through %s: got %v, want a permission error", name, err)
 	}

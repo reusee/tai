@@ -97,7 +97,11 @@ func TestCheckWriteRefusesOwnDatabaseWithAStaleRow(t *testing.T) {
 	}
 	defer store.Close()
 	u := sqliteOf(t, store)
-	name := "/" + filepath.Base(dbPath)
+	rel, err := filepath.Rel(base, dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := "/" + filepath.ToSlash(rel)
 	// A row for the database path makes the mutation path skip
 	// captureOriginal, which was the older code's only refusal.
 	if _, err := u.db.Exec(
