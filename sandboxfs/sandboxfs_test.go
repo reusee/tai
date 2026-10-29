@@ -439,6 +439,38 @@ func TestSpliceOnAMetadataOnlyRowMaterialisesTheBaseContent(t *testing.T) {
 	}
 }
 
+func TestSpliceFileKeepsAChmodMode(t *testing.T) {
+	base := t.TempDir()
+	if err := os.WriteFile(filepath.Join(base, "f"), []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, err := OpenMemory(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	// A chmod records the mode and leaves the content in the base.
+	// See TheoryOfCompletePOSIX.
+	if err := s.SetMode("/f", 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// The write carries the mode the caller observed at open, which predates
+	// the chmod. The recorded mode is authoritative: the row's mode is the
+	// freshest record, and the materialisation must keep it.
+	// See TheoryOfCompletePOSIX and TheoryOfWriteSplice.
+	if err := s.SpliceFile("/f", 0, []byte("hello, world"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a, err := s.Stat("/f")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Mode.Perm() != 0o600 {
+		t.Fatalf("got mode %04o, want 0600 after the write of a chmod-touched path", a.Mode.Perm())
+	}
+}
+
 // TestChangesOnAMetadataOnlyRowWhoseHostFileVanished protects
 // TheoryOfBaseCapture and TheoryOfApplyConflict: a metadata-only row keeps its
 // content in the base, so a host file deleted after the capture leaves nothing
@@ -465,6 +497,120 @@ func TestChangesOnAMetadataOnlyRowWhoseHostFileVanished(t *testing.T) {
 	}
 	if applied, err := store.Apply(func(Change) bool { return true }); err != nil || len(applied) != 0 {
 		t.Fatalf("apply: applied %d, err %v; a conflicted change must be skipped", len(applied), err)
+	}
+}
+
+func TestChangesOnAMetadataOnlyRowWhoseHostPathChangedKind(t *testing.T) {
+	base := t.TempDir()
+	if err := os.WriteFile(filepath.Join(base, "f"), []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, err := OpenMemory(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	// A chmod records metadata alone, so the row keeps the base as the content
+	// its hash was taken from. See TheoryOfBaseCapture.
+	if err := s.SetMode("/f", 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// The host turns the file into a directory: the snapshot no longer
+	// describes the host path, which is a conflict of kind the diff must
+	// report instead of failing to read content the row never held.
+	// See TheoryOfApplyConflict.
+	if err := os.Remove(filepath.Join(base, "f")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(base, "f"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	changes, err := s.Changes()
+	if err != nil {
+		t.Fatalf("Changes: %v", err)
+	}
+	if len(changes) != 1 {
+		t.Fatalf("got %d changes, want 1", len(changes))
+	}
+	if changes[0].Conflict == "" {
+		t.Fatalf("want a conflict for a host path that changed kind, got %+v", changes[0])
+	}
+}
+
+func TestChangesOnAMetadataOnlyRowOfAnEmptyFileWhoseHostPathChangedKind(t *testing.T) {
+	base := t.TempDir()
+	if err := os.WriteFile(filepath.Join(base, "f"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, err := OpenMemory(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	if err := s.SetMode("/f", 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// The base file is empty, so the recorded hash equals the hash of the
+	// empty content a failed prefix read leaves behind. The kind change must
+	// still surface as a conflict of kind, not vanish behind that equality.
+	// See TheoryOfApplyConflict.
+	if err := os.Remove(filepath.Join(base, "f")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(base, "f"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	changes, err := s.Changes()
+	if err != nil {
+		t.Fatalf("Changes: %v", err)
+	}
+	if len(changes) != 1 {
+		t.Fatalf("got %d changes, want 1", len(changes))
+	}
+	if changes[0].Conflict == "" {
+		t.Fatalf("want a conflict for a host path that changed kind, got %+v", changes[0])
+	}
+}
+
+func TestChangesOnAMetadataOnlyRowOfAnEmptyFileWhoseHostFileVanished(t *testing.T) {
+	base := t.TempDir()
+	if err := os.WriteFile(filepath.Join(base, "f"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, err := OpenMemory(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	if err := s.SetMode("/f", 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// The base file is empty, so the empty content a failed prefix read leaves
+	// behind compares equal to the recorded hash. The vanished host path must
+	// still surface as a conflict the review step reports, exactly as a
+	// non-empty base file does by its hash mismatch.
+	// See TheoryOfApplyConflict.
+	if err := os.Remove(filepath.Join(base, "f")); err != nil {
+		t.Fatal(err)
+	}
+
+	changes, err := s.Changes()
+	if err != nil {
+		t.Fatalf("Changes: %v", err)
+	}
+	if len(changes) != 1 {
+		t.Fatalf("got %d changes, want 1", len(changes))
+	}
+	if changes[0].Conflict == "" {
+		t.Fatalf("want a conflict for a host path that vanished, got %+v", changes[0])
 	}
 }
 

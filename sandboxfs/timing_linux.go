@@ -243,7 +243,10 @@ func (t *OpTimings) Report() string {
 
 // StartReporter writes one report every interval to w until stop is called.
 // A nil aggregate, a nil writer, or a non-positive interval degrades
-// gracefully, and the returned stop function is idempotent.
+// gracefully, and the returned stop function is idempotent. The stop function
+// also waits for an in-flight report to finish before it returns: a final
+// snapshot written after stop therefore never interleaves with a periodic one,
+// so the two snapshots stay whole and readable.
 // See TheoryOfOperationTiming.
 func (t *OpTimings) StartReporter(interval time.Duration, w io.Writer) (stop func()) {
 	if t == nil || w == nil {
@@ -253,8 +256,11 @@ func (t *OpTimings) StartReporter(interval time.Duration, w io.Writer) (stop fun
 		interval = defaultTimingReportInterval
 	}
 	done := make(chan struct{})
+	var wg sync.WaitGroup
 	var once sync.Once
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {
@@ -266,7 +272,10 @@ func (t *OpTimings) StartReporter(interval time.Duration, w io.Writer) (stop fun
 			}
 		}
 	}()
-	return func() { once.Do(func() { close(done) }) }
+	return func() {
+		once.Do(func() { close(done) })
+		wg.Wait()
+	}
 }
 
 // timingIntervalOf interprets the timing environment value: a positive

@@ -71,21 +71,44 @@ func (s *Store) Changes() ([]Change, error) {
 			continue
 		}
 		var content []byte
+		kindChanged := false
 		if r.kind == KindRegular && !r.deleted {
 			if r.size >= 0 {
 				content, err = s.readContent(r.path, r.size)
 			} else {
 				// The row records metadata only: the compare uses the base's
-				// own prefix. See TheoryOfBaseCapture.
-				content, err = readBasePrefix(s.baseRoot, relPath(r.path))
+				// own prefix. A host path that vanished or turned into a node
+				// of another kind has no prefix, and its empty content would
+				// compare equal to an empty base file's recorded hash, so the
+				// fact travels in kindChanged and detectConflict reports the
+				// conflict. See TheoryOfBaseCapture and TheoryOfApplyConflict.
+				info, lerr := s.baseRoot.Lstat(relPath(r.path))
+				switch {
+				case lerr == nil && info.Mode().IsRegular():
+					content, err = readBasePrefix(s.baseRoot, relPath(r.path))
+				case lerr == nil:
+					kindChanged = true
+				case errors.Is(lerr, os.ErrNotExist):
+					kindChanged = true
+				default:
+					err = lerr
+				}
 			}
 			if err != nil {
 				return nil, err
 			}
 		}
-		c := netChange(r, content)
-		if c == nil {
-			c = s.modeOnlyChange(r, content)
+		var c *Change
+		if kindChanged {
+			// The recorded snapshot no longer describes the host path: the
+			// change is a change of kind, or a vanished host path, which
+			// detectConflict reports as a conflict. See TheoryOfApplyConflict.
+			c = &Change{Path: r.path, Kind: ChangeModified, Mode: r.mode}
+		} else {
+			c = netChange(r, content)
+			if c == nil {
+				c = s.modeOnlyChange(r, content)
+			}
 		}
 		if c == nil {
 			continue

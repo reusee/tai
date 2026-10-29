@@ -95,6 +95,57 @@ func TestOpTimingsReportOrdersByTotal(t *testing.T) {
 	}
 }
 
+// gatedReportWriter blocks each write until the test releases it, so a test
+// can hold a periodic report in flight while it calls the reporter's stop
+// function. See TheoryOfOperationTiming.
+type gatedReportWriter struct {
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (w *gatedReportWriter) Write(p []byte) (int, error) {
+	select {
+	case w.entered <- struct{}{}:
+	default:
+	}
+	<-w.release
+	return len(p), nil
+}
+
+func TestOpTimingsStartReporterStopWaitsForTheReport(t *testing.T) {
+	tm := newOpTimings()
+	tm.recordRequest(fuseOpGetattr, tm.markRequest(1))
+	w := &gatedReportWriter{
+		entered: make(chan struct{}, 1),
+		release: make(chan struct{}),
+	}
+	stop := tm.StartReporter(time.Nanosecond, w)
+	select {
+	case <-w.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the periodic reporter never wrote a report")
+	}
+	// The reporter is inside its write. Stop must not return before that
+	// write finishes, or a final snapshot written after stop would interleave
+	// with this periodic one. See TheoryOfOperationTiming.
+	stopped := make(chan struct{})
+	go func() {
+		stop()
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+		t.Fatal("stop returned while a report was still being written")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(w.release)
+	select {
+	case <-stopped:
+	case <-time.After(5 * time.Second):
+		t.Fatal("stop did not return after the report finished")
+	}
+}
+
 // TestOpTimingsStartReporterWritesSnapshots checks the periodic report: it
 // writes a snapshot on its interval, and the snapshot carries the recorded
 // distribution.

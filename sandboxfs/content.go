@@ -178,12 +178,15 @@ func readBasePrefix(root *os.Root, rel string) ([]byte, error) {
 // materializeContent gives one path a live regular row holding its content.
 // The row keeps the time it recorded, so a change that only touches the mode or
 // keeps a prefix never presents the content as freshly written: a caller that
-// means to stamp the content sets the time after this returns. The mode is
-// applied as given, 000 included: a caller that means to keep an existing mode
-// reads it first, so no layer substitutes a default. A live regular row another
-// writer created while this call ran is that writer's content, and the returned
-// row is the one the caller's delta lands on. See TheoryOfCompletePOSIX,
-// TheoryOfWriteSplice and TheoryOfUpperLayer.
+// means to stamp the content sets the time after this returns. A fresh row —
+// one the upper layer does not hold yet — takes the caller's mode, 000
+// included: the capture records the base's own mode, and the caller may want
+// a different one. A row the upper layer already holds keeps the mode the
+// session last set, because a chmod, a utimes, or a previous write is the
+// freshest record, and the caller's observation may predate it. A live
+// regular row another writer created while this call ran is that writer's
+// content, and the returned row is the one the caller's delta lands on.
+// See TheoryOfCompletePOSIX, TheoryOfWriteSplice and TheoryOfUpperLayer.
 func (s *Store) materializeContent(p string, copySize int64, perm os.FileMode) (fileRow, error) {
 	if err := s.checkParent(p); err != nil {
 		return fileRow{}, err
@@ -197,6 +200,7 @@ func (s *Store) materializeContent(p string, copySize int64, perm os.FileMode) (
 		if err != nil {
 			return fileRow{}, err
 		}
+		r.mode = perm
 	}
 	// A whiteout keeps the kind of the row it replaced, and that kind no
 	// longer constrains the path: after the deletion the name is free for a
@@ -221,7 +225,9 @@ func (s *Store) materializeContent(p string, copySize int64, perm os.FileMode) (
 	}
 	r.path = p
 	r.kind = KindRegular
-	r.mode = perm
+	// The row's mode stays whatever the session last set: a metadata-only row
+	// records a chmod or a utimes, and the caller's observation may predate
+	// it. See TheoryOfCompletePOSIX.
 	r.deleted = false
 	r.target = ""
 	created, err := s.upper.createContent(r, content)
