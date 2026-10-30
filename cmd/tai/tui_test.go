@@ -2365,50 +2365,6 @@ func TestMapTUIKey(t *testing.T) {
 	}
 }
 
-// TestTUICtrlArrowsDispatchLikeArrows verifies that the control letters
-// ctrl-h, ctrl-j, ctrl-k, and ctrl-l run the arrow bindings: the alias is
-// applied at the dispatch entry, so the chat input bar, the tree search bar,
-// and the tab dispatch all see the arrow names. See TheoryOfTUIKeyMapping.
-func TestTUICtrlArrowsDispatchLikeArrows(t *testing.T) {
-	tui := newTUIForTest()
-	tui.tabs.Expanded = []bool{false, true, false}
-	tui.tabs.HasContent = []bool{false, true, false}
-	tui.tabs.Focus = 1
-	tui.scrolls[1].Follow = true
-	tui.screen = taiui.NewTerminalScreen(&strings.Builder{}, 80, 10)
-	tui.width = 80
-	tui.height = 10
-
-	var sb strings.Builder
-	for i := 0; i < 20; i++ {
-		fmt.Fprintf(&sb, "line %d\n", i)
-	}
-	tui.write([]byte(sb.String()))
-	tui.render()
-	if !tui.scrolls[1].Follow || tui.scrolls[1].Offset != tui.scrolls[1].MaxOffset {
-		t.Fatalf("expected the view to start at the tail, got offset %d of %d", tui.scrolls[1].Offset, tui.scrolls[1].MaxOffset)
-	}
-
-	// ctrl-k scrolls up like the up arrow.
-	tui.handleKey("ctrl-k")
-	if tui.scrolls[1].Offset != tui.scrolls[1].MaxOffset-1 {
-		t.Fatalf("ctrl-k must scroll up one row, got offset %d of %d", tui.scrolls[1].Offset, tui.scrolls[1].MaxOffset)
-	}
-	if tui.scrolls[1].Follow {
-		t.Fatal("ctrl-k must stop following, like the up arrow")
-	}
-
-	// ctrl-j scrolls down like the down arrow, which at the latest row
-	// resumes following the tail.
-	tui.handleKey("ctrl-j")
-	if !tui.scrolls[1].Follow {
-		t.Fatal("ctrl-j at the latest row must keep following, like the down arrow")
-	}
-	if tui.scrolls[1].Offset != tui.scrolls[1].MaxOffset {
-		t.Fatalf("expected ctrl-j to stick to the tail, got offset %d of %d", tui.scrolls[1].Offset, tui.scrolls[1].MaxOffset)
-	}
-}
-
 func TestMapTUIKeyMouse(t *testing.T) {
 	for _, key := range []string{"m", "M"} {
 		if got := mapTUIKey(key); got != "mouse" {

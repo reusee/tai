@@ -170,7 +170,6 @@ var tuiHelpLines = []string{
 	"tab\tcycle focus among expanded tabs",
 	"s\ttoggle vertical / horizontal split",
 	"up / down\tscroll focused pane",
-	"ctrl-h / ctrl-j / ctrl-k / ctrl-l\tmove like the left / down / up / right arrows",
 	"page up / down\tscroll focused pane by page",
 	"home / end\tjump to start / end of focused pane",
 	"[ / ]\tjump to previous / next section start or end",

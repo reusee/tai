@@ -33,21 +33,15 @@ func main() {
 	defer t.Stop()
 
 	// The demo drives the terminal directly with ANSI escapes: hide the
-	// cursor while rendering and restore it on exit. The Kitty keyboard
-	// protocol is enabled for the session, as taiui.Session.Run does, so
-	// the control letters ArrowAlias folds — Ctrl+H, Ctrl+J, Ctrl+K, and
-	// Ctrl+L — arrive distinctly instead of as the backspace and enter
-	// bytes they share (see taiui.TheoryOfKeyInput). Mouse reporting is
+	// cursor while rendering and restore it on exit. Mouse reporting is
 	// enabled for the session, so a tap arrives as a press and release
 	// and a swipe as a wheel event or a button-held drag; the demo maps
 	// them onto its own actions. See TheoryOfDemoArchitecture.
 	width, height := 80, 24
 	io.WriteString(t, "\x1b[?25l")
-	io.WriteString(t, taiui.KittyKeyboardEnableSequence)
 	io.WriteString(t, taiui.MouseEnableSequence)
 	defer func() {
 		io.WriteString(t, taiui.MouseDisableSequence)
-		io.WriteString(t, taiui.KittyKeyboardDisableSequence)
 		fmt.Fprintf(t, "\x1b[%d;1H", height)
 		io.WriteString(t, "\x1b[0m\x1b[?25h")
 	}()

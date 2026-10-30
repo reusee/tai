@@ -100,19 +100,14 @@ func (s *Session) Err() error {
 }
 
 // Run drives the session until the Key callback quits it, restoring the
-// terminal on every exit path. It enables the Kitty keyboard protocol for
-// the session's duration, so control keys that share bytes with other keys
-// — Ctrl+H with Backspace, Ctrl+J with Enter — reach the Key callback
-// distinctly (see TheoryOfKeyInput in keys.go). It returns the session
-// error (see Err). See TheoryOfSession.
+// terminal on every exit path. It returns the session error (see Err).
+// See TheoryOfSession.
 func (s *Session) Run() error {
 	io.WriteString(s.Tty, CursorHideSequence)
 	defer func() {
 		io.WriteString(s.Tty, CursorRestoreSequence)
 		s.Tty.Stop()
 	}()
-	io.WriteString(s.Tty, KittyKeyboardEnableSequence)
-	defer io.WriteString(s.Tty, KittyKeyboardDisableSequence)
 	if s.Mouse {
 		io.WriteString(s.Tty, MouseEnableSequence)
 		defer io.WriteString(s.Tty, MouseDisableSequence)

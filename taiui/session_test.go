@@ -98,23 +98,15 @@ func TestSessionLifecycleAndQuit(t *testing.T) {
 	}
 	out := ttyDev.Written()
 	hide := strings.Index(out, CursorHideSequence)
-	kittyEnable := strings.Index(out, KittyKeyboardEnableSequence)
 	enable := strings.Index(out, MouseEnableSequence)
 	disable := strings.Index(out, MouseDisableSequence)
-	kittyDisable := strings.Index(out, KittyKeyboardDisableSequence)
 	restore := strings.Index(out, CursorRestoreSequence)
-	if hide < 0 || kittyEnable < 0 || enable < 0 || disable < 0 || kittyDisable < 0 || restore < 0 {
+	if hide < 0 || enable < 0 || disable < 0 || restore < 0 {
 		t.Fatalf("missing a lifecycle sequence in %q", out)
 	}
-	// The Kitty keyboard protocol is enabled for the whole session
-	// — so Ctrl+H, Ctrl+J, Ctrl+K, and Ctrl+L reach the Key callback
-	// distinctly instead of arriving as Backspace and Enter (see
-	// TheoryOfKeyInput in keys.go) — and disabled on exit, inside the
-	// mouse reporting bracket. Every exit path restores the cursor
-	// last.
-	if !(hide < kittyEnable && kittyEnable < enable && enable < disable && disable < kittyDisable && kittyDisable < restore) {
-		t.Fatalf("unexpected sequence order: hide %d kittyEnable %d enable %d disable %d kittyDisable %d restore %d",
-			hide, kittyEnable, enable, disable, kittyDisable, restore)
+	if !(hide < enable && enable < disable && disable < restore) {
+		t.Fatalf("unexpected sequence order: hide %d enable %d disable %d restore %d",
+			hide, enable, disable, restore)
 	}
 }
 
