@@ -1245,7 +1245,7 @@ func TestOwnDatabaseIsNeverASandboxTarget(t *testing.T) {
 			t.Fatalf("own database appeared as change: %+v", c)
 		}
 	}
-	if err := s.applyOne(Change{Path: "/app.db", Kind: ChangeAdded}); !errors.Is(err, os.ErrPermission) {
+	if err := s.applyOne(Change{Path: "/app.db", Kind: ChangeAdded}, &applyRun{}); !errors.Is(err, os.ErrPermission) {
 		t.Fatalf("apply of own database: %v", err)
 	}
 }

@@ -196,3 +196,104 @@ func TestApplyWritesContentThroughAReadOnlyHostFile(t *testing.T) {
 		t.Errorf("applied mode %o, want the recorded 444", got)
 	}
 }
+
+// TestApplyWritesAChildThroughAReadOnlyDirectory protects
+// TheoryOfApplyWriteBits: a directory's recorded mode is the state the host
+// holds after the apply, never a gate on the apply of what the session put
+// inside. A tree the session populated and then closed — the shape a toolchain
+// leaves for a vendored or released directory — must reach the host, and the
+// directory must end at the recorded bits.
+func TestApplyWritesAChildThroughAReadOnlyDirectory(t *testing.T) {
+	s, base := newTestStore(t)
+	if err := s.Mkdir("/s", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Mkdir("/s/d", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WriteFile("/s/d/f", []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// The session closes the directory after filling it. The store still
+	// serves the child, because the upper layer does not read the parent's
+	// bits; the apply must reach the same state.
+	if err := s.SetMode("/s/d", 0o555); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Apply(nil); err != nil {
+		t.Fatalf("apply of a tree with a read-only directory: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(base, "s/d/f"))
+	if err != nil {
+		t.Fatalf("the child did not reach the host: %v", err)
+	}
+	if string(got) != "x" {
+		t.Errorf("child content %q, want x", got)
+	}
+	info, err := os.Lstat(filepath.Join(base, "s/d"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o555 {
+		t.Errorf("directory mode %o, want the recorded 555", info.Mode().Perm())
+	}
+}
+
+// TestApplyDefersTheModeOfADirectory protects TheoryOfApplyWriteBits from the
+// step the host's permission bits hide: a directory's recorded mode lands in
+// the final phase, never in the creating phase, so the entries the session put
+// inside a directory it then closed still reach the host. The test drives the
+// two phases directly, because this process runs as root and the host refuses
+// nothing it does.
+func TestApplyDefersTheModeOfADirectory(t *testing.T) {
+	s, base := newTestStore(t)
+	if err := s.Mkdir("/d", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WriteFile("/d/f", []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetMode("/d", 0o500); err != nil {
+		t.Fatal(err)
+	}
+	changes, err := s.Changes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := &applyRun{}
+	for _, c := range changes {
+		if c.Conflict != "" {
+			t.Fatalf("unexpected conflict: %+v", c)
+		}
+		if err := s.applyOne(c, run); err != nil {
+			t.Fatalf("apply %s %s: %v", c.Kind, c.Path, err)
+		}
+	}
+	info, err := os.Lstat(filepath.Join(base, "d"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm() & 0o700; got != 0o700 {
+		t.Fatalf("the creating phase left /d at %o; the entries the session put inside it cannot land", info.Mode().Perm())
+	}
+	if len(run.pending) != 1 || run.pending[0].perm != 0o500 {
+		t.Fatalf("the creating phase deferred %+v, want one mode of 500", run.pending)
+	}
+	if failures := run.finish(s); len(failures) != 0 {
+		t.Fatalf("final phase: %+v", failures)
+	}
+	info, err = os.Lstat(filepath.Join(base, "d"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o500 {
+		t.Errorf("after the final phase /d is %o, want the recorded 500", got)
+	}
+	got, err := os.ReadFile(filepath.Join(base, "d/f"))
+	if err != nil {
+		t.Fatalf("the child did not reach the host: %v", err)
+	}
+	if string(got) != "x" {
+		t.Errorf("child content %q, want x", got)
+	}
+}

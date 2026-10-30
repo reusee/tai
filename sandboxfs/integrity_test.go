@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -296,6 +297,33 @@ func TestApplyWritesAModeOnlyChange(t *testing.T) {
 	}
 }
 
+// TestWriteFileRefusesContentAboveTheBound protects TheoryOfCompletePOSIX: the
+// store enforces the size bound on its own, so a store used without a mount
+// refuses the same grow. A whole-file write is a grow like any other one, and
+// content above the bound is refused with EFBIG before a row is allocated.
+func TestWriteFileRefusesContentAboveTheBound(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Join(dir, "base")
+	if err := os.MkdirAll(base, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	store, err := Open(filepath.Join(dir, "upper.db"), base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	tooBig := make([]byte, maxFileSize+1)
+	if err := store.WriteFile("/big", tooBig, 0o644); !errors.Is(err, syscall.EFBIG) {
+		t.Errorf("write above the bound: got %v, want EFBIG", err)
+	}
+	if _, err := store.Stat("/big"); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("the refused write left a row: %v", err)
+	}
+	if changes, err := store.Changes(); err != nil || len(changes) != 0 {
+		t.Errorf("the refused write left a change: %+v %v", changes, err)
+	}
+}
+
 // TestModeOnlyChangeKeepsTheTimes protects TheoryOfCompletePOSIX and
 // TheoryOfApplyConflict: chmod records the bits and nothing else. The stored
 // mtime stays the base file's, because a toolchain reads mtime to judge
@@ -486,5 +514,60 @@ func TestModeOfNoBitsReachesTheHost(t *testing.T) {
 	}
 	if a, err := store.Stat("/h"); err != nil || a.Mode != 0 || a.Size != 2 {
 		t.Errorf("truncation of an upper row of no bits: got mode %o size %d (error %v), want mode 000 size 2", a.Mode, a.Size, err)
+	}
+}
+
+// TestStatOfAMetadataOnlyRowWhoseHostPathVanishedReportsZeroSize protects
+// TheoryOfReadPath and TheoryOfDirectoryStream: a metadata-only row takes its
+// length from the base, and a base path the host no longer holds has no length.
+// The store reports the zero the merging window reports for the same path,
+// never the size sentinel, which a getattr would render as an enormous file
+// while a listing of the same directory reported zero.
+func TestStatOfAMetadataOnlyRowWhoseHostPathVanishedReportsZeroSize(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Join(dir, "base")
+	if err := os.MkdirAll(base, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	host := filepath.Join(base, "a.txt")
+	if err := os.WriteFile(host, []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store, err := Open(filepath.Join(dir, "upper.db"), base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	// A chmod records metadata only: the content still lives in the base, and
+	// the row carries the size sentinel. See TheoryOfBaseCapture.
+	if err := store.SetMode("/a.txt", 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(host); err != nil {
+		t.Fatal(err)
+	}
+	a, err := store.Stat("/a.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Size != 0 {
+		t.Errorf("stat of a vanished base path: size %d, want 0", a.Size)
+	}
+	entries, err := store.ReadDir("/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, e := range entries {
+		if e.Name != "a.txt" {
+			continue
+		}
+		found = true
+		if e.Attr.Size != a.Size {
+			t.Errorf("listing size %d, stat size %d; the two must agree", e.Attr.Size, a.Size)
+		}
+	}
+	if !found {
+		t.Fatalf("the listing holds no a.txt entry: %+v", entries)
 	}
 }

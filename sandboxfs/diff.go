@@ -316,8 +316,10 @@ func (s *Store) Apply(selected func(Change) bool) (applied []Change, err error) 
 // applied ones, so ApplyAll can tell its caller what still awaits the user's
 // decision. Every change is attempted even when an earlier one fails, and the
 // failures are collected: one path the host refuses must not keep the other
-// changes of the same loop out of the host. See TheoryOfApplyConflict and
-// TheoryOfApplyFaultIsolation.
+// changes of the same loop out of the host. A directory's recorded mode lands
+// in a final phase, after the entries the session put inside it, so the bits
+// never refuse the tree the session built. See TheoryOfApplyConflict,
+// TheoryOfApplyFaultIsolation and TheoryOfApplyWriteBits.
 func (s *Store) applyChanges(selected func(Change) bool) (applied, conflicts []Change, err error) {
 	// The apply drops the upper rows that showed each change, so its audit row
 	// is the only record the write leaves: the trail reaches the upper layer
@@ -355,9 +357,26 @@ func (s *Store) applyChanges(selected func(Change) bool) (applied, conflicts []C
 	// others out. A failed path keeps its recorded snapshot, so the next apply
 	// retries it against the same base. See TheoryOfApplyFaultIsolation.
 	var failures []error
+	run := &applyRun{}
+	var written []Change
 	for _, c := range pending {
-		if err := s.applyOne(c); err != nil {
+		if err := s.applyOne(c, run); err != nil {
 			failures = append(failures, fmt.Errorf("%s %s: %w", c.Kind, c.Path, err))
+			continue
+		}
+		written = append(written, c)
+	}
+	// The creating phase left every directory open enough for its children to
+	// land. The final phase restores the recorded modes deepest-first, and a
+	// refused mode keeps its change's row, so the next apply retries it against
+	// the same state. See TheoryOfApplyWriteBits.
+	failed := make(map[string]bool, len(run.pending))
+	for _, f := range run.finish(s) {
+		failures = append(failures, f.err)
+		failed[f.path] = true
+	}
+	for _, c := range written {
+		if failed[c.Path] {
 			continue
 		}
 		if err := s.removeAppliedRow(c.Path); err != nil {
@@ -385,7 +404,7 @@ func applyPhase(c Change) int {
 	return 1
 }
 
-func (s *Store) applyOne(c Change) error {
+func (s *Store) applyOne(c Change, run *applyRun) error {
 	if s.isOwnDBPath(c.Path) {
 		return fmt.Errorf("%w: refusing to apply a change to the session database: %s", os.ErrPermission, c.Path)
 	}
@@ -401,10 +420,12 @@ func (s *Store) applyOne(c Change) error {
 		// argument with the daemon's umask; a truncating write into an
 		// existing host file keeps the old bits. Both cases lose the mode the
 		// row recorded, so every creation below is followed by the explicit
-		// chmod. See TheoryOfSandboxFilesystem.
+		// chmod. A directory defers that chmod to the run's final phase, so its
+		// recorded bits never refuse the entries the session put inside it.
+		// See TheoryOfSandboxFilesystem and TheoryOfApplyWriteBits.
 		switch {
 		case c.Dir:
-			return s.applyDir(rel, perm)
+			return s.applyDir(c.Path, rel, perm, run)
 		case c.FIFO:
 			return s.applyFIFO(rel, perm)
 		case c.Symlink:
@@ -466,32 +487,43 @@ func (s *Store) applyFIFO(rel string, perm os.FileMode) error {
 	return chmodAt(s.baseRoot, rel, perm)
 }
 
-// applyDir writes a directory change: a host path that already holds the
-// directory keeps its node, because a mode-only change carries no content and
-// only the bits are left to set, and every other host kind is replaced. The
-// recorded mode is set explicitly either way, because the kernel masks a
-// creation's mode with the daemon's umask, and the mode is applied as recorded,
-// 000 included. See TheoryOfApplyConflict and TheoryOfSandboxFilesystem.
-func (s *Store) applyDir(rel string, perm os.FileMode) error {
+// applyDir writes a directory change. The creating phase leaves the owner's
+// bits open and records the mode for the final phase: the paths of one apply
+// sort parent-first, so a directory's change runs before the entries the
+// session put inside it, and setting the recorded bits here would refuse every
+// child of a tree the session populated and then closed. A host path that
+// already holds the directory keeps its node, because a mode-only change
+// carries no content; every other host kind is replaced. The kernel masks a
+// creation's mode with the daemon's umask, so the final phase sets the recorded
+// bits explicitly, 000 included. See TheoryOfApplyWriteBits and
+// TheoryOfApplyConflict.
+func (s *Store) applyDir(changePath, rel string, perm os.FileMode, run *applyRun) error {
+	open := perm | 0o700
 	info, err := s.baseRoot.Lstat(rel)
 	switch {
 	case err == nil && info.IsDir():
-		// The host already holds the directory: only the bits are left.
+		// The host already holds the directory: its node stays, and the bits
+		// are widened for the duration of the apply so the entries the session
+		// put inside can land. See TheoryOfApplyWriteBits.
+		if err := chmodAt(s.baseRoot, rel, info.Mode().Perm()|0o700); err != nil {
+			return err
+		}
 	case err == nil:
 		if err := s.baseRoot.Remove(rel); err != nil {
 			return err
 		}
-		if err := s.baseRoot.Mkdir(rel, perm); err != nil {
+		if err := s.baseRoot.Mkdir(rel, open); err != nil {
 			return err
 		}
 	case errors.Is(err, os.ErrNotExist):
-		if err := s.baseRoot.Mkdir(rel, perm); err != nil {
+		if err := s.baseRoot.Mkdir(rel, open); err != nil {
 			return err
 		}
 	default:
 		return err
 	}
-	return chmodAt(s.baseRoot, rel, perm)
+	run.add(changePath, rel, perm)
+	return nil
 }
 
 // prepareWriteTarget makes one host path accept a content write. A node of
@@ -594,4 +626,13 @@ completed, and the row would wait behind a fault the user cannot see. The
 owner's write bit is added for the content write and the recorded bits are set
 afterwards, so the path keeps its node and every link to it while it still ends
 as the mode the session recorded, 000 included.
+
+A directory follows the same rule one level up. The paths of one apply sort
+parent-first, so a directory's change runs before the entries the session put
+inside it; setting the recorded bits at that moment would refuse every child of
+a tree the session populated and then closed, the shape a vendored or released
+directory takes. The creating phase therefore leaves the owner's bits open and
+records the mode for the final phase, which sets every directory's recorded
+bits deepest-first once the whole tree has landed. A refused final mode keeps
+its change's row, so the next apply retries it against the same host state.
 `

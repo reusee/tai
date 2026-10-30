@@ -857,8 +857,11 @@ func (s *Store) readUpperRange(p string, off int64, size int) ([]byte, Kind, boo
 }
 
 // statRow reads one path's metadata for a stat. A metadata-only row reports the
-// base's own length, which costs one Lstat and never the file's content. See
-// TheoryOfBaseCapture and TheoryOfReadPath.
+// base's own length, which costs one Lstat and never the file's content. A base
+// path the host no longer holds has no length: the store reports the zero the
+// merging window reports for the same path, never the size sentinel, which a
+// getattr would render as an enormous file. See TheoryOfBaseCapture,
+// TheoryOfReadPath and TheoryOfDirectoryStream.
 func (s *Store) statRow(p string) (Attr, bool, error) {
 	r, ok, err := s.upper.row(p)
 	if err != nil || !ok {
@@ -871,6 +874,7 @@ func (s *Store) statRow(p string) (Attr, bool, error) {
 	if r.kind == KindRegular && r.size < 0 {
 		// The row records metadata only, so the base holds the length.
 		// See TheoryOfBaseCapture.
+		a.Size = 0
 		if info, statErr := s.baseRoot.Lstat(relPath(p)); statErr == nil {
 			a.Size = info.Size()
 		}

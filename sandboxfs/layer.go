@@ -379,6 +379,13 @@ func (s *Store) WriteFile(p string, content []byte, perm os.FileMode) error {
 	if err := s.checkWrite(p); err != nil {
 		return err
 	}
+	// The store enforces the size bound on its own, so a whole-file write is a
+	// grow like any other one: content above the bound is refused with EFBIG
+	// rather than allocating a row the sandbox cannot hold.
+	// See TheoryOfCompletePOSIX and TheoryOfBaseCapture.
+	if int64(len(content)) > maxFileSize {
+		return syscall.EFBIG
+	}
 	if err := s.checkParent(p); err != nil {
 		return err
 	}

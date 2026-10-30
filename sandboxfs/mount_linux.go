@@ -279,13 +279,28 @@ func Mount(opts MountOptions) (*MountedFS, error) {
 		_ = mfs.Unmount()
 		return nil, err
 	}
-	if opts.Pivot {
-		if err := pivotRoot(opts.Mountpoint); err != nil {
-			_ = mfs.Unmount()
-			return nil, err
-		}
+	if err := mfs.activate(opts.Pivot, pivotRoot); err != nil {
+		_ = mfs.Unmount()
+		return nil, err
 	}
 	return mfs, nil
+}
+
+// activate makes the mount the process root when the caller asked for a pivot,
+// and records the store that serves it. The pivot is a parameter so a test can
+// drive the step without moving the process root, which no test can reach its
+// own files through again. The record is set only after a pivot that succeeded,
+// so a process whose pivot failed carries no store and every consumer degrades
+// to "no sandbox" without a flag. See TheoryOfActiveStore and TheoryOfFuseMount.
+func (m *MountedFS) activate(pivot bool, pivotFn func(string) error) error {
+	if !pivot {
+		return nil
+	}
+	if err := pivotFn(m.Mountpoint); err != nil {
+		return err
+	}
+	SetActiveStore(m.Store)
+	return nil
 }
 
 // openMountStore opens the upper layer the mount selects: process memory when

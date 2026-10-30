@@ -75,3 +75,47 @@ func TestMountServesRootThroughKernel(t *testing.T) {
 		t.Fatalf("read a base file through the mount: %q", content)
 	}
 }
+
+// TestActivateRecordsTheActiveStoreAfterAPivot protects TheoryOfActiveStore:
+// the store that serves the process root is recorded by the call that mounts
+// and pivots, and only after the pivot succeeded, so a process whose pivot
+// failed carries no store. The pivot is a parameter of the step, because no
+// test can move the process root and then reach its own files again.
+func TestActivateRecordsTheActiveStoreAfterAPivot(t *testing.T) {
+	store, _ := newTestStore(t)
+	defer SetActiveStore(nil)
+	m := &MountedFS{Store: store, Mountpoint: "/mnt"}
+
+	// A mount without a pivot is not the process root, so it records nothing.
+	if err := m.activate(false, func(string) error {
+		t.Fatal("the step pivoted a mount that asked for no pivot")
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := ActiveStore(); got != nil {
+		t.Fatalf("a mount without a pivot recorded %p", got)
+	}
+
+	// A pivot that fails leaves no store: every consumer degrades to "no
+	// sandbox" without a flag.
+	failed := errors.New("pivot failed")
+	if err := m.activate(true, func(string) error { return failed }); !errors.Is(err, failed) {
+		t.Fatalf("a failed pivot returned %v, want %v", err, failed)
+	}
+	if got := ActiveStore(); got != nil {
+		t.Fatalf("a failed pivot recorded %p", got)
+	}
+
+	// A pivot that succeeds records the store that serves the new root.
+	pivoted := ""
+	if err := m.activate(true, func(p string) error { pivoted = p; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if pivoted != m.Mountpoint {
+		t.Errorf("the step pivoted %q, want the mountpoint %q", pivoted, m.Mountpoint)
+	}
+	if got := ActiveStore(); got != store {
+		t.Fatalf("the active store is %p, want the mounted store %p", got, store)
+	}
+}
