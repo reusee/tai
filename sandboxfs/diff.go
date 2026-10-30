@@ -423,8 +423,8 @@ func (s *Store) applyOne(c Change) error {
 				return chmodAt(s.baseRoot, rel, perm)
 			}
 		}
-		if info, err := s.baseRoot.Lstat(rel); err == nil && !info.Mode().IsRegular() {
-			_ = s.baseRoot.Remove(rel)
+		if err := s.prepareWriteTarget(rel); err != nil {
+			return err
 		}
 		if err := s.baseRoot.WriteFile(rel, c.Current, perm); err != nil {
 			return err
@@ -494,6 +494,31 @@ func (s *Store) applyDir(rel string, perm os.FileMode) error {
 	return chmodAt(s.baseRoot, rel, perm)
 }
 
+// prepareWriteTarget makes one host path accept a content write. A node of
+// another kind is removed, so the write lands on a fresh node rather than on a
+// directory the kernel refuses to open. A regular file whose own bits refuse
+// the write gains the owner's write bit for the duration of the write: the
+// recorded mode is the state the host holds afterwards and never a gate on the
+// write, so a read-only node still receives the bytes the session wrote. The
+// caller sets the recorded mode once the content is in place, so the widened
+// bits never reach the host's final state. An absent path needs no preparation:
+// the write below creates the node. See TheoryOfApplyWriteBits and
+// TheoryOfApplyConflict.
+func (s *Store) prepareWriteTarget(rel string) error {
+	info, err := s.baseRoot.Lstat(rel)
+	if err != nil {
+		return nil
+	}
+	if !info.Mode().IsRegular() {
+		_ = s.baseRoot.Remove(rel)
+		return nil
+	}
+	if info.Mode().Perm()&0o200 == 0 {
+		return chmodAt(s.baseRoot, rel, info.Mode().Perm()|0o200)
+	}
+	return nil
+}
+
 // removeAppliedRow drops one applied path's upper row and its content, so the
 // next diff is exact. See TheoryOfChunkedContent and TheoryOfUpperLayer.
 func (s *Store) removeAppliedRow(p string) error {
@@ -552,4 +577,21 @@ the session's filesystem state, and the host receives what the store can
 serve; one path's fault says nothing about the correctness of the others, and
 reverting them would discard work the session completed. Review remains the
 place where the user resolves what an apply kept back.
+`
+
+// TheoryOfApplyWriteBits is the apply's write-bit rule: the mode a row recorded
+// is the state the host holds after the write, never a gate on the write
+// itself. See TheoryOfApplyConflict for the mode-only path, which needs no
+// widening because chmod touches no content.
+const TheoryOfApplyWriteBits = `
+The recorded mode is the state the host holds after the write, never a gate on
+the write itself. A tool rewrites an existing file by truncating it and writing
+the new bytes, and the truncation records the base file's own bits: a read-only
+release artifact, or an output an earlier loop left without the owner's write
+bit. The store already holds the session's bytes at that point, so an apply that
+wrote through the host's own bits would answer EACCES for a change the session
+completed, and the row would wait behind a fault the user cannot see. The
+owner's write bit is added for the content write and the recorded bits are set
+afterwards, so the path keeps its node and every link to it while it still ends
+as the mode the session recorded, 000 included.
 `

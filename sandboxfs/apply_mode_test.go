@@ -153,3 +153,46 @@ func TestApplyPreservesTheModePastTheUmask(t *testing.T) {
 		t.Errorf("applied mode %o, want the recorded 666", got)
 	}
 }
+
+// TestApplyWritesContentThroughAReadOnlyHostFile protects TheoryOfApplyWriteBits:
+// the recorded mode is the state the host holds after the write, never a gate on
+// the write. A tool rewrites an existing file by truncating it and writing the
+// new bytes, and the truncation records the base file's own bits, so a host file
+// the session may not write would answer the apply with a permission error while
+// the store already holds the session's bytes. The node keeps its identity and
+// ends with the recorded bits.
+func TestApplyWritesContentThroughAReadOnlyHostFile(t *testing.T) {
+	s, base := newTestStore(t)
+	host := filepath.Join(base, "a.txt")
+	if err := os.WriteFile(host, []byte("old"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// The base file is read-only, the shape a release artifact or an earlier
+	// loop's output leaves behind.
+	if err := os.Chmod(host, 0o444); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.TruncateFile("/a.txt", 0, 0o444); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SpliceFile("/a.txt", 0, []byte("new"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Apply(nil); err != nil {
+		t.Fatalf("apply of a change to a read-only host file: %v", err)
+	}
+	content, err := os.ReadFile(host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "new" {
+		t.Errorf("applied content %q, want new", content)
+	}
+	info, err := os.Lstat(host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o444 {
+		t.Errorf("applied mode %o, want the recorded 444", got)
+	}
+}
