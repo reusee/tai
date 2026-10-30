@@ -79,6 +79,7 @@ const (
 
 var recordBrowserHelp = []string{
 	"up / down\tmove the record selection; scroll the tree",
+	"ctrl-h / ctrl-j / ctrl-k / ctrl-l\tmove like the left / down / up / right arrows",
 	"enter\topen the selected record (the tree carries no focus)",
 	"page up / down\ta page of records; a page of tree rows",
 	"home / end\tfirst / last record or row",
@@ -713,6 +714,11 @@ func (b *RecordBrowser) handleKey(key string) bool {
 	if strings.HasPrefix(key, taiui.MouseKeyPrefix) {
 		return b.handleMouseKey(key)
 	}
+	// Ctrl+H, Ctrl+J, Ctrl+K, and Ctrl+L move like the left, down, up,
+	// and right arrows, the same alias the generation TUI applies: the
+	// list selection and the tree scroll both follow the arrow names.
+	// See TheoryOfRecordBrowser and taiui.TheoryOfKeyInput.
+	key = taiui.ArrowAlias(key)
 	// Any key other than a quit key cancels a pending quit confirmation
 	// before its normal processing, so an accidental quit press never
 	// loses the session. See taiui.TheoryOfSessionChrome.

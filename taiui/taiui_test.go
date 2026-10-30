@@ -4132,6 +4132,29 @@ func TestReadKeysKittyModifierEncoding(t *testing.T) {
 	})
 }
 
+func TestArrowAlias(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"ctrl-h", "left"},
+		{"ctrl-j", "down"},
+		{"ctrl-k", "up"},
+		{"ctrl-l", "right"},
+		// Every other key name passes through unchanged: the arrows keep
+		// their own names, and a control letter under another modifier is
+		// a distinct key rather than a navigation alias.
+		{"left", "left"},
+		{"up", "up"},
+		{"ctrl-a", "ctrl-a"},
+		{"alt-ctrl-h", "alt-ctrl-h"},
+		{"backspace", "backspace"},
+		{"mouse-left@1,2", "mouse-left@1,2"},
+	}
+	for _, c := range cases {
+		if got := ArrowAlias(c.in); got != c.want {
+			t.Fatalf("ArrowAlias(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
 func TestReadKeysLinuxConsoleFunctionKeys(t *testing.T) {
 	// The Linux console sends F1-F5 as ESC [ [ A-E and Shift+F1-F5
 	// as ESC [ [ a-e, using a non-standard second [ that is recognized

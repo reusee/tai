@@ -50,6 +50,19 @@ taiui key input theory:
   silently.
 - Keypad keys decode under both the Kitty and the SS3 application
   keypad encodings.
+- Ctrl+H, Ctrl+J, Ctrl+K, and Ctrl+L reach the application as "ctrl-h",
+  "ctrl-j", "ctrl-k", and "ctrl-l" under the Kitty keyboard protocol,
+  which Session enables for the session's duration so control keys that
+  share bytes with other keys reach the callback distinctly. The legacy
+  encoding delivers Ctrl+H as backspace (0x08) and Ctrl+J as enter
+  (0x0a) — the same bytes Backspace and Enter send — so a terminal
+  without the protocol cannot report those two letters distinctly
+  without breaking the keys that share their bytes. ArrowAlias folds
+  the four names onto left, down, up, and right, and each application
+  applies it at its dispatch entry. The fold is a navigation binding,
+  not a decoding rule: a decoder that renamed the control letters
+  would decide the navigation policy of every project embedding this
+  library.
 - Single bytes cover the control and printable ranges. Key names are
   generic, not application-specific, so the library stays reusable
   across projects; the application maps key names to actions.
@@ -852,6 +865,30 @@ func kittyModifierPrefix(mod int) string {
 func emitSingleKey(b byte, ch chan<- string) {
 	if key := singleKeyName(b); key != "" {
 		ch <- key
+	}
+}
+
+// ArrowAlias folds the control letters Ctrl+H, Ctrl+J, Ctrl+K, and Ctrl+L
+// onto the navigation keys left, down, up, and right: the readline
+// line-editing bindings a terminal user expects to move a cursor. Every other
+// key name passes through unchanged, so the arrows keep their own names and a
+// control letter under another modifier stays a distinct key. The alias is
+// applied by the application at its dispatch entry, never by the decoder: the
+// legacy encoding delivers Ctrl+H and Ctrl+J as backspace and enter, so only
+// the Kitty keyboard protocol and modifyOtherKeys report the control letters
+// on their own (see TheoryOfKeyInput).
+func ArrowAlias(key string) string {
+	switch key {
+	case "ctrl-h":
+		return "left"
+	case "ctrl-j":
+		return "down"
+	case "ctrl-k":
+		return "up"
+	case "ctrl-l":
+		return "right"
+	default:
+		return key
 	}
 }
 

@@ -28,6 +28,11 @@ taiuidemo architecture theory:
   event loop. HandleKey reports whether the state changed, so a key
   press that changes nothing (e.g., up at the scroll clamp) skips the
   render entirely.
+- The demo drives its terminal directly, so it enables the Kitty
+  keyboard protocol for its duration as taiui.Session does: without the
+  protocol Ctrl+H and Ctrl+J arrive as the backspace and enter bytes
+  they share, and ArrowAlias never sees the control letters (see
+  taiui.TheoryOfKeyInput).
 - Pointer input is the library's: taiui.ReadKeys decodes the terminal
   into generic key names, mapDemoKey maps the demo's bindings onto its
   action vocabulary, and HandleKey consumes both actions and pointer
@@ -174,9 +179,12 @@ func (s *State) HandlePointer(event string, y int) (changed bool, quit bool) {
 
 // mapDemoKey maps the library's generic key names onto the demo's action
 // vocabulary, so the dispatch in HandleKey reads as a table of actions
-// rather than a table of characters. Unmapped keys — arrows, pointer
-// events — pass through unchanged. See TheoryOfDemoArchitecture.
+// rather than a table of characters. Ctrl+H, Ctrl+J, Ctrl+K, and Ctrl+L
+// move like the arrow keys, the same alias the tai TUI applies. Unmapped
+// keys — arrows, pointer events — pass through unchanged. See
+// TheoryOfDemoArchitecture and taiui.TheoryOfKeyInput.
 func mapDemoKey(key string) string {
+	key = taiui.ArrowAlias(key)
 	switch key {
 	case "q", "Q", "ctrl-c":
 		return "quit"

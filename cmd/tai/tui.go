@@ -1397,6 +1397,12 @@ func (t *TUI) handleKey(key string) bool {
 		// quit key. See TheoryOfToolbars.
 		return t.handleMouseKey(key)
 	}
+	// Ctrl+H, Ctrl+J, Ctrl+K, and Ctrl+L move like the left, down, up,
+	// and right arrows. The alias is applied at the dispatch entry, so
+	// every path below sees one navigation vocabulary: the chat input
+	// bar's line editing, the tree search bar, and the tab dispatch.
+	// See TheoryOfTUIKeyMapping and taiui.TheoryOfKeyInput.
+	key = taiui.ArrowAlias(key)
 	// While the chat input bar is focused, editing keys edit the
 	// pending line; every other key falls through to the dispatch below
 	// so the TUI stays operable while typing. A fall-through key that
@@ -1519,6 +1525,14 @@ actions rather than a table of characters. The mapping lives in cmd/tai,
 not in taiui, preserving taiui's reusability: key names stay generic,
 and each application defines its own binding. Unmapped keys (arrows,
 function keys, mouse events) pass through unchanged.
+
+The arrow aliases apply before both: taiui.ArrowAlias folds ctrl-h,
+ctrl-j, ctrl-k, and ctrl-l onto left, down, up, and right at the top of
+the dispatch, so the chat input bar's line editing, the tree search bar,
+and the tab dispatch all see one navigation vocabulary. The fold is a
+binding, not a decoding rule — a decoder that renamed the control
+letters would decide the navigation policy of every project embedding
+taiui (see taiui.TheoryOfKeyInput).
 `
 
 func mapTUIKey(key string) string {
