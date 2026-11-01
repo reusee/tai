@@ -371,8 +371,11 @@ func (s *Store) checkParent(p string) error {
 	return nil
 }
 
-func (s *Store) WriteFile(p string, content []byte, perm os.FileMode) error {
+func (s *Store) WriteFile(p string, content []byte, perm os.FileMode) (err error) {
 	p = Canonical(p)
+	defer func() {
+		s.auditOutcome("write", p, fmt.Sprintf("%d bytes", len(content)), err)
+	}()
 	if p == "/" {
 		return syscall.EISDIR
 	}
@@ -423,12 +426,14 @@ func (s *Store) WriteFile(p string, content []byte, perm os.FileMode) error {
 	if err := s.putContent(r, content); err != nil {
 		return err
 	}
-	s.audit("write", p, fmt.Sprintf("%d bytes", len(content)))
 	return nil
 }
 
-func (s *Store) Mkdir(p string, perm os.FileMode) error {
+func (s *Store) Mkdir(p string, perm os.FileMode) (err error) {
 	p = Canonical(p)
+	defer func() {
+		s.auditOutcome("mkdir", p, "", err)
+	}()
 	if p == "/" {
 		return ErrExist
 	}
@@ -471,12 +476,14 @@ func (s *Store) Mkdir(p string, perm os.FileMode) error {
 	if err := s.put(r); err != nil {
 		return err
 	}
-	s.audit("mkdir", p, "")
 	return nil
 }
 
-func (s *Store) Symlink(target, p string) error {
+func (s *Store) Symlink(target, p string) (err error) {
 	p = Canonical(p)
+	defer func() {
+		s.auditOutcome("symlink", p, target, err)
+	}()
 	// A link names a target, and an empty target names nothing: POSIX refuses
 	// symlink(2) with ENOENT, and a store that recorded the empty link would
 	// hand the apply a change the host can never carry out.
@@ -517,12 +524,14 @@ func (s *Store) Symlink(target, p string) error {
 	if err := s.put(r); err != nil {
 		return err
 	}
-	s.audit("symlink", p, target)
 	return nil
 }
 
-func (s *Store) Mkfifo(p string, mode os.FileMode) error {
+func (s *Store) Mkfifo(p string, mode os.FileMode) (err error) {
 	p = Canonical(p)
+	defer func() {
+		s.auditOutcome("mkfifo", p, "", err)
+	}()
 	if err := s.checkWrite(p); err != nil {
 		return err
 	}
@@ -558,7 +567,6 @@ func (s *Store) Mkfifo(p string, mode os.FileMode) error {
 	if err := s.put(r); err != nil {
 		return err
 	}
-	s.audit("mkfifo", p, "")
 	return nil
 }
 
@@ -581,8 +589,11 @@ func (s *Store) Readlink(p string) (string, error) {
 	return s.baseRoot.Readlink(relPath(p))
 }
 
-func (s *Store) Remove(p string) error {
+func (s *Store) Remove(p string) (err error) {
 	p = Canonical(p)
+	defer func() {
+		s.auditOutcome("delete", p, "", err)
+	}()
 	if p == "/" {
 		return syscall.EBUSY
 	}
@@ -631,13 +642,15 @@ func (s *Store) Remove(p string) error {
 	if err := s.put(r); err != nil {
 		return err
 	}
-	s.audit("delete", p, "")
 	return nil
 }
 
-func (s *Store) Rename(oldPath, newPath string) error {
+func (s *Store) Rename(oldPath, newPath string) (err error) {
 	oldPath = Canonical(oldPath)
 	newPath = Canonical(newPath)
+	defer func() {
+		s.auditOutcome("rename", oldPath, newPath, err)
+	}()
 	if oldPath == "/" || newPath == "/" {
 		return syscall.EBUSY
 	}
@@ -760,7 +773,6 @@ func (s *Store) Rename(oldPath, newPath string) error {
 	if err := s.put(rem); err != nil {
 		return err
 	}
-	s.audit("rename", oldPath, newPath)
 	return nil
 }
 
@@ -882,12 +894,14 @@ func (s *Store) renameDir(oldPath, newPath string) error {
 			return err
 		}
 	}
-	s.audit("rename-dir", oldPath, newPath)
 	return nil
 }
 
-func (s *Store) SetMode(p string, mode os.FileMode) error {
+func (s *Store) SetMode(p string, mode os.FileMode) (err error) {
 	p = Canonical(p)
+	defer func() {
+		s.auditOutcome("chmod", p, mode.Perm().String(), err)
+	}()
 	if err := s.checkWrite(p); err != nil {
 		return err
 	}
@@ -920,7 +934,6 @@ func (s *Store) SetMode(p string, mode os.FileMode) error {
 	if err := s.put(r); err != nil {
 		return err
 	}
-	s.audit("chmod", p, mode.Perm().String())
 	return nil
 }
 
@@ -939,9 +952,12 @@ func (s *Store) CanWrite(p string) error {
 // the observable behavior a coding agent expects from a hard link: same
 // content at both paths until either is written. The copied content lands as
 // the destination's chunks. See TheoryOfChunkedContent.
-func (s *Store) Link(oldPath, newPath string) error {
+func (s *Store) Link(oldPath, newPath string) (err error) {
 	oldPath = Canonical(oldPath)
 	newPath = Canonical(newPath)
+	defer func() {
+		s.auditOutcome("link", oldPath, newPath, err)
+	}()
 	if err := s.checkWrite(newPath); err != nil {
 		return err
 	}
@@ -996,12 +1012,14 @@ func (s *Store) Link(oldPath, newPath string) error {
 	if err := s.putContent(r, content); err != nil {
 		return err
 	}
-	s.audit("link", oldPath, newPath)
 	return nil
 }
 
-func (s *Store) SetTimes(p string, mtime time.Time) error {
+func (s *Store) SetTimes(p string, mtime time.Time) (err error) {
 	p = Canonical(p)
+	defer func() {
+		s.auditOutcome("utimes", p, mtime.UTC().Format(time.RFC3339Nano), err)
+	}()
 	if err := s.checkWrite(p); err != nil {
 		return err
 	}
@@ -1032,6 +1050,5 @@ func (s *Store) SetTimes(p string, mtime time.Time) error {
 	if err := s.put(r); err != nil {
 		return err
 	}
-	s.audit("utimes", p, mtime.UTC().Format(time.RFC3339Nano))
 	return nil
 }

@@ -401,6 +401,41 @@ mutation a later batch can commit before an earlier one, so the trail is
 ordered by insertion, and each batch keeps its own order.
 `
 
+// TheoryOfAuditOutcome is the audit's result rule: a row records what became of
+// the operation, and a failed row carries the error the caller received.
+const TheoryOfAuditOutcome = `
+The trail records what became of each operation, not only that it was tried.
+A row's result is ok or error, and a failed row carries the error text the
+caller received: the write policy refuses a path, the host rejects an apply,
+the store reports a missing path, and the record must say which path was asked
+for and why it stayed as it was. Without that text a review reads a gap — a
+path the session clearly meant to change, absent from both the changes and the
+trail — and cannot tell a refusal from a path no one touched. A refused path
+keeps no upper row, so the row is the only record the attempt leaves.
+
+An apply a conflict keeps back records the same way: the path, its kind, and
+the host change that blocked it, so the review answers why the change still
+awaits the user. The changes list names the conflict; the trail names the
+attempt that met it.
+
+One row answers one operation. A mutation reaches its row through one deferred
+call, so every return path records its outcome and an early return added later
+cannot skip the trail. A private step that repeats the operation writes no row
+of its own: a directory rename records one rename row beside the rows of the
+operations it performs on the paths beneath it. The detail keeps describing
+what the operation was asked to do, so a failed row shows the attempt beside
+its refusal. A zero-byte write is no mutation: it transfers nothing, so a
+successful one leaves no row, while a refused one leaves its refusal.
+
+The record carries the result and the error in their own columns. A record
+written before they existed gains them when it opens, before the insert that
+names them is prepared: the table's own description decides what to add, so a
+fresh record adds nothing and a dialect that refuses the alteration reports it
+at the open rather than losing every later row to an insert the table cannot
+satisfy. The trail is a durable file a review browses later, so opening an
+older session must not fail on a column it lacks.
+`
+
 // Kind is the file type of a sandbox path.
 type Kind int
 
@@ -435,13 +470,27 @@ type DirEntry struct {
 	Attr Attr
 }
 
-// Op is one audit-trail record: what a session did to one path, and when.
+// Op is one audit-trail record: what a session did to one path, when, and how
+// the operation ended. Detail describes the operation's argument. Result is
+// ResultOK for a row the operation completed and ResultError for one it
+// refused, whose Error field carries the reason the caller received.
+// See TheoryOfAuditOutcome.
 type Op struct {
 	Time   time.Time
 	Op     string
 	Path   string
 	Detail string
+	Result string
+	Error  string
 }
+
+const (
+	// ResultOK marks the audit row of an operation the store carried out.
+	ResultOK = "ok"
+	// ResultError marks the audit row of an operation the store refused or
+	// could not carry out; Error carries the reason.
+	ResultError = "error"
+)
 
 // Store is one sandbox's filesystem state: the read-through base and the upper
 // layer that records the session's mutations. The union logic lives here and
@@ -896,8 +945,18 @@ func (s *Store) putContent(r fileRow, content []byte) error {
 	return s.upper.replaceContent(r, content)
 }
 
-func (s *Store) SpliceFile(p string, off int64, data []byte, perm os.FileMode) error {
+func (s *Store) SpliceFile(p string, off int64, data []byte, perm os.FileMode) (err error) {
 	p = Canonical(p)
+	defer func() {
+		// A zero-byte write transfers nothing, so a successful one is no
+		// mutation and leaves no row. A refused one does: the caller asked for
+		// a change and the trail says why it did not happen.
+		// See TheoryOfCompletePOSIX and TheoryOfAuditOutcome.
+		if err == nil && len(data) == 0 {
+			return
+		}
+		s.auditOutcome("write", p, fmt.Sprintf("%d bytes at %d", len(data), off), err)
+	}()
 	if p == "/" {
 		return syscall.EISDIR
 	}
@@ -916,7 +975,7 @@ func (s *Store) SpliceFile(p string, off int64, data []byte, perm os.FileMode) e
 	if off > maxFileSize || off+int64(len(data)) > maxFileSize {
 		return syscall.EFBIG
 	}
-	err := s.upper.splice(p, off, data, time.Now())
+	err = s.upper.splice(p, off, data, time.Now())
 	if errors.Is(err, errNoLiveRegularRow) {
 		// No live regular row answered the delta: the path is fresh, a
 		// whiteout, or not a regular file. Materialising it either produces
@@ -930,29 +989,14 @@ func (s *Store) SpliceFile(p string, off int64, data []byte, perm os.FileMode) e
 	if err != nil {
 		return err
 	}
-	s.audit("write", p, fmt.Sprintf("%d bytes at %d", len(data), off))
 	return nil
 }
 
-// audit records one audit-trail row. Audit writes are best-effort: they never
-// fail an operation, and a batch that cannot be written is dropped.
-// See TheoryOfAuditBatching.
+// audit records one successful audit-trail row. Audit writes are best-effort:
+// they never fail an operation, and a batch that cannot be written is dropped.
+// See TheoryOfAuditBatching and TheoryOfAuditOutcome.
 func (s *Store) audit(op, p, detail string) {
-	s.mu.Lock()
-	s.pending = append(s.pending, Op{
-		Time:   time.Now().UTC(),
-		Op:     op,
-		Path:   p,
-		Detail: detail,
-	})
-	if len(s.pending) < auditBatchSize {
-		s.mu.Unlock()
-		return
-	}
-	batch := s.pending
-	s.pending = nil
-	s.mu.Unlock()
-	_ = s.upper.writeAudit(batch)
+	s.appendOp(Op{Op: op, Path: p, Detail: detail, Result: ResultOK})
 }
 
 // checkWrite asks the store's write policy about one path, and refuses the
@@ -967,6 +1011,22 @@ func (s *Store) checkWrite(p string) error {
 		return nil
 	}
 	return s.policy(p)
+}
+
+// appendOp buffers one audit row and writes the batch once it is full.
+// See TheoryOfAuditBatching.
+func (s *Store) appendOp(o Op) {
+	o.Time = time.Now().UTC()
+	s.mu.Lock()
+	s.pending = append(s.pending, o)
+	if len(s.pending) < auditBatchSize {
+		s.mu.Unlock()
+		return
+	}
+	batch := s.pending
+	s.pending = nil
+	s.mu.Unlock()
+	_ = s.upper.writeAudit(batch)
 }
 
 // auditRead records the first read of a path in the session, so the trail keeps
@@ -1001,6 +1061,17 @@ func (s *Store) Ops() ([]Op, error) {
 	return s.upper.auditRows()
 }
 
+// auditOutcome records one mutation's result at every return of the method that
+// ran it. A refused path keeps no upper row, so this row is the only record the
+// attempt leaves. See TheoryOfAuditOutcome.
+func (s *Store) auditOutcome(op, p, detail string, err error) {
+	if err != nil {
+		s.auditFailure(op, p, detail, err)
+		return
+	}
+	s.audit(op, p, detail)
+}
+
 // FlushAudit writes every buffered audit row to the upper layer, so the trail
 // records the session up to this call. It is the process-end flush: a session
 // that ends normally carries its whole trail without closing anything, which
@@ -1010,4 +1081,11 @@ func (s *Store) Ops() ([]Op, error) {
 // for a process that runs until it exits. See TheoryOfAuditBatching.
 func (s *Store) FlushAudit() {
 	s.flushOps()
+}
+
+// auditFailure records one failed operation: the operation's name and path, the
+// argument it was asked to work on, and the error the caller received.
+// See TheoryOfAuditOutcome.
+func (s *Store) auditFailure(op, p, detail string, err error) {
+	s.appendOp(Op{Op: op, Path: p, Detail: detail, Result: ResultError, Error: err.Error()})
 }

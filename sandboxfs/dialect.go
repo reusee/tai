@@ -100,7 +100,9 @@ const (
     time TEXT NOT NULL,
     op TEXT NOT NULL,
     path TEXT NOT NULL,
-    detail TEXT NOT NULL DEFAULT ''
+    detail TEXT NOT NULL DEFAULT '',
+    "result" TEXT NOT NULL DEFAULT '',
+    "error" TEXT NOT NULL DEFAULT ''
 )`
 	ddlOpsSequence = `CREATE SEQUENCE IF NOT EXISTS ops_id START 1`
 	ddlOpsKeyed    = `CREATE TABLE IF NOT EXISTS ops (
@@ -108,7 +110,9 @@ const (
     time TEXT NOT NULL,
     op TEXT NOT NULL,
     path TEXT NOT NULL,
-    detail TEXT NOT NULL DEFAULT ''
+    detail TEXT NOT NULL DEFAULT '',
+    "result" TEXT NOT NULL DEFAULT '',
+    "error" TEXT NOT NULL DEFAULT ''
 )`
 	ddlOpsIndex = `CREATE INDEX IF NOT EXISTS idx_ops_path ON ops(path)`
 )
@@ -138,7 +142,8 @@ var sqliteDialect = sqlDialect{
 	schema: []string{ddlFiles, ddlChunksWithoutRowID, ddlOpsAuto, ddlOpsIndex},
 	guardWrite: `UPDATE files SET size = max(size, ?), mtime = ?
 		 WHERE path = ? AND kind = ? AND deleted = 0 AND size >= 0`,
-	insertOp: `INSERT INTO ops (time, op, path, detail) VALUES (?, ?, ?, ?)`,
+	insertOp: `INSERT INTO ops (time, op, path, detail, "result", "error")
+		 VALUES (?, ?, ?, ?, ?, ?)`,
 }
 
 // duckDBDialect is the DuckDB dialect: the application-registered driver, the
@@ -152,6 +157,6 @@ var duckDBDialect = sqlDialect{
 	schema: []string{ddlOpsSequence, ddlFiles, ddlChunks, ddlOpsKeyed, ddlOpsIndex},
 	guardWrite: `UPDATE files SET size = greatest(size, ?), mtime = ?
 		 WHERE path = ? AND kind = ? AND deleted = 0 AND size >= 0`,
-	insertOp: `INSERT INTO ops (id, time, op, path, detail)
-		 VALUES (nextval('ops_id'), ?, ?, ?, ?)`,
+	insertOp: `INSERT INTO ops (id, time, op, path, detail, "result", "error")
+		 VALUES (nextval('ops_id'), ?, ?, ?, ?, ?, ?)`,
 }

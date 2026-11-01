@@ -336,6 +336,10 @@ func (s *Store) applyChanges(selected func(Change) bool) (applied, conflicts []C
 			continue
 		}
 		if c.Conflict != "" {
+			// A conflict is an apply that did not happen, so its row names the
+			// path, the change's kind, and the host change that blocked it.
+			// See TheoryOfAuditOutcome and TheoryOfApplyConflict.
+			s.auditFailure("apply", c.Path, string(c.Kind), errors.New(c.Conflict))
 			conflicts = append(conflicts, c)
 			continue
 		}
@@ -355,12 +359,16 @@ func (s *Store) applyChanges(selected func(Change) bool) (applied, conflicts []C
 	// failures are collected beside the applied changes: the loop's work is the
 	// record's whole content, so one path the host refuses must not keep the
 	// others out. A failed path keeps its recorded snapshot, so the next apply
-	// retries it against the same base. See TheoryOfApplyFaultIsolation.
+	// retries it against the same base. A failure records its own audit row,
+	// because the refused path keeps no upper row and the trail is the only
+	// record the attempt leaves. See TheoryOfApplyFaultIsolation and
+	// TheoryOfAuditOutcome.
 	var failures []error
 	run := &applyRun{}
 	var written []Change
 	for _, c := range pending {
 		if err := s.applyOne(c, run); err != nil {
+			s.auditFailure("apply", c.Path, string(c.Kind), err)
 			failures = append(failures, fmt.Errorf("%s %s: %w", c.Kind, c.Path, err))
 			continue
 		}
@@ -374,12 +382,14 @@ func (s *Store) applyChanges(selected func(Change) bool) (applied, conflicts []C
 	for _, f := range run.finish(s) {
 		failures = append(failures, f.err)
 		failed[f.path] = true
+		s.auditFailure("apply", f.path, "", f.err)
 	}
 	for _, c := range written {
 		if failed[c.Path] {
 			continue
 		}
 		if err := s.removeAppliedRow(c.Path); err != nil {
+			s.auditFailure("apply", c.Path, string(c.Kind), err)
 			failures = append(failures, fmt.Errorf("drop the row of %s after its apply: %w", c.Path, err))
 			continue
 		}

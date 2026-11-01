@@ -265,8 +265,11 @@ func (s *Store) materializeContent(p string, copySize int64, perm os.FileMode) (
 // ever reading the bytes the truncation drops. A truncation is a mutation, so
 // it writes an audit row like every other one. See TheoryOfChunkedContent,
 // TheoryOfBaseCapture and TheoryOfSandboxFilesystem.
-func (s *Store) TruncateFile(p string, size int64, perm os.FileMode) error {
+func (s *Store) TruncateFile(p string, size int64, perm os.FileMode) (err error) {
 	p = Canonical(p)
+	defer func() {
+		s.auditOutcome("truncate", p, fmt.Sprintf("%d bytes", size), err)
+	}()
 	if p == "/" {
 		return syscall.EISDIR
 	}
@@ -322,6 +325,5 @@ func (s *Store) TruncateFile(p string, size int64, perm os.FileMode) error {
 	if err := s.upper.truncate(p, size, time.Now()); err != nil {
 		return err
 	}
-	s.audit("truncate", p, fmt.Sprintf("%d bytes", size))
 	return nil
 }

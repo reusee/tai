@@ -97,7 +97,7 @@ See TheoryOfUpperLayer.
 const (
 	queryAllRows = `SELECT path, kind, mode, mtime, deleted, size, target, original_exists, original_hash
 		 FROM files ORDER BY path`
-	queryAuditRows = `SELECT time, op, path, detail FROM ops ORDER BY id`
+	queryAuditRows = `SELECT time, op, path, detail, "result", "error" FROM ops ORDER BY id`
 	queryDropRow   = `DELETE FROM files WHERE path = ?`
 )
 
@@ -177,6 +177,13 @@ func openSQLUpper(dialect sqlDialect, dbPath string) (*sqlUpper, error) {
 		}
 	}
 	u := &sqlUpper{db: db, dbPath: dbPath, dialect: dialect}
+	// An older record gains the audit result columns here, before the insert
+	// that names them is prepared: a prepared form names its columns, so it
+	// must see the table it inserts into. See TheoryOfAuditOutcome.
+	if err := u.migrateAuditColumns(); err != nil {
+		db.Close()
+		return nil, err
+	}
 	// The statement set is prepared before the layer serves a request, so no
 	// request pays a parse or waits for a preparation.
 	// See TheoryOfPreparedStatements.
@@ -736,7 +743,7 @@ func (u *sqlUpper) writeAudit(ops []Op) error {
 		exec = tx.Stmt(u.stmts.putOp).Exec
 	}
 	for _, o := range ops {
-		if _, err := exec(o.Time.Format(time.RFC3339Nano), o.Op, o.Path, o.Detail); err != nil {
+		if _, err := exec(o.Time.Format(time.RFC3339Nano), o.Op, o.Path, o.Detail, o.Result, o.Error); err != nil {
 			return err
 		}
 	}
@@ -753,12 +760,12 @@ func (u *sqlUpper) auditRows() ([]Op, error) {
 	defer rows.Close()
 	var out []Op
 	for rows.Next() {
-		var at, op, p, detail string
-		if err := rows.Scan(&at, &op, &p, &detail); err != nil {
+		var at, op, p, detail, result, errText string
+		if err := rows.Scan(&at, &op, &p, &detail, &result, &errText); err != nil {
 			return nil, err
 		}
 		t, _ := time.Parse(time.RFC3339Nano, at)
-		out = append(out, Op{Time: t, Op: op, Path: p, Detail: detail})
+		out = append(out, Op{Time: t, Op: op, Path: p, Detail: detail, Result: result, Error: errText})
 	}
 	return out, rows.Err()
 }
@@ -772,6 +779,43 @@ func (u *sqlUpper) close() error {
 	err := u.db.Close()
 	u.db = nil
 	return err
+}
+
+// migrateAuditColumns adds the audit result columns to a record written before
+// they existed. The table's own description decides what to add, so a fresh
+// record adds nothing and a dialect that refuses the alteration reports it at
+// the open: an insert the table cannot satisfy would drop every later audit row
+// in silence, because the trail never fails an operation.
+// See TheoryOfAuditOutcome.
+func (u *sqlUpper) migrateAuditColumns() error {
+	rows, err := u.db.Query("SELECT * FROM ops LIMIT 0")
+	if err != nil {
+		return fmt.Errorf("sandboxfs: %s audit columns: %w", u.dialect.name, err)
+	}
+	cols, colsErr := rows.Columns()
+	rows.Close()
+	if colsErr != nil {
+		return fmt.Errorf("sandboxfs: %s audit columns: %w", u.dialect.name, colsErr)
+	}
+	have := make(map[string]bool, len(cols))
+	for _, c := range cols {
+		have[c] = true
+	}
+	for _, col := range []struct {
+		name string
+		ddl  string
+	}{
+		{"result", `ALTER TABLE ops ADD COLUMN "result" TEXT NOT NULL DEFAULT ''`},
+		{"error", `ALTER TABLE ops ADD COLUMN "error" TEXT NOT NULL DEFAULT ''`},
+	} {
+		if have[col.name] {
+			continue
+		}
+		if _, err := u.db.Exec(col.ddl); err != nil {
+			return fmt.Errorf("sandboxfs: %s audit column %s: %w", u.dialect.name, col.name, err)
+		}
+	}
+	return nil
 }
 
 // prepareStatements fills the layer's statement set. It runs once, from the
