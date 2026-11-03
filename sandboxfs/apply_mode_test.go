@@ -297,3 +297,116 @@ func TestApplyDefersTheModeOfADirectory(t *testing.T) {
 		t.Errorf("child content %q, want x", got)
 	}
 }
+
+// TestApplyOpensAnAncestorItDidNotChange protects TheoryOfApplyWriteBits from
+// the case one apply hides: the session closed a directory in an earlier loop,
+// that apply restored the recorded bits and dropped the row, and a later loop
+// writes a new entry inside it. Nothing carries a change for the directory
+// then, so the creating phase must open the ancestor on its own and the final
+// phase must put the host's bits back. The test drives the two phases
+// directly, because this process runs as root and the host refuses nothing it
+// does.
+func TestApplyOpensAnAncestorItDidNotChange(t *testing.T) {
+	s, base := newTestStore(t)
+	dir := filepath.Join(base, "d")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// The shape an earlier loop leaves behind: the directory stands on the host
+	// at the bits the session recorded, and the upper layer holds no row for it.
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WriteFile("/d/f", []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	changes, err := s.Changes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != 1 || changes[0].Path != "/d/f" {
+		t.Fatalf("got changes %+v, want the one file /d/f", changes)
+	}
+	run := &applyRun{}
+	if err := s.applyOne(changes[0], run); err != nil {
+		t.Fatalf("apply /d/f: %v", err)
+	}
+	info, err := os.Lstat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm() & 0o700; got != 0o700 {
+		t.Fatalf("the creating phase left /d at %o; the entry the session wrote inside it cannot land", info.Mode().Perm())
+	}
+	if len(run.pending) != 1 || run.pending[0].perm != 0o555 {
+		t.Fatalf("the creating phase deferred %+v, want the host's own 555 for /d", run.pending)
+	}
+	if failures := run.finish(s); len(failures) != 0 {
+		t.Fatalf("final phase: %+v", failures)
+	}
+	info, err = os.Lstat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The directory carries no change, so the host must end exactly as it
+	// stood: the session never asked for the bits the creating phase needed.
+	if got := info.Mode().Perm(); got != 0o555 {
+		t.Errorf("after the final phase /d is %o, want the host's own 555", got)
+	}
+	got, err := os.ReadFile(filepath.Join(base, "d/f"))
+	if err != nil {
+		t.Fatalf("the child did not reach the host: %v", err)
+	}
+	if string(got) != "x" {
+		t.Errorf("child content %q, want x", got)
+	}
+}
+
+// TestApplyRestoresNoModeOfADirectoryItRemoved protects
+// TheoryOfApplyWriteBits: the widen that lets the apply walk into a closed
+// directory is what lets it remove the entry it walked to, and the same apply
+// can then remove the directory too. The final phase names a path the host no
+// longer holds, and a fault there would fail a loop the host had accepted and
+// keep a row for work already done. The test drives the two phases directly,
+// because the store whiteouts the subtree of a removed directory and the
+// integration path would not leave the widen standing.
+func TestApplyRestoresNoModeOfADirectoryItRemoved(t *testing.T) {
+	s, base := newTestStore(t)
+	dir := filepath.Join(base, "d")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "x"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// The shape an earlier loop leaves behind: the directory stands on the host
+	// at the bits the session recorded, and the upper layer holds no row for it.
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Remove("/d/x"); err != nil {
+		t.Fatal(err)
+	}
+	changes, err := s.Changes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != 1 || changes[0].Path != "/d/x" {
+		t.Fatalf("got changes %+v, want the one deletion /d/x", changes)
+	}
+	run := &applyRun{}
+	if err := s.applyOne(changes[0], run); err != nil {
+		t.Fatalf("apply /d/x: %v", err)
+	}
+	if len(run.pending) != 1 || run.pending[0].perm != 0o555 {
+		t.Fatalf("the creating phase deferred %+v, want the host's own 555 for /d", run.pending)
+	}
+	// The same apply removes the directory after the entry inside it, the order
+	// the phases impose.
+	if err := os.Remove(dir); err != nil {
+		t.Fatal(err)
+	}
+	if failures := run.finish(s); len(failures) != 0 {
+		t.Fatalf("final phase of a directory the apply removed: %+v", failures)
+	}
+}

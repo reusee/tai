@@ -419,6 +419,12 @@ func (s *Store) applyOne(c Change, run *applyRun) error {
 		return fmt.Errorf("%w: refusing to apply a change to the session database: %s", os.ErrPermission, c.Path)
 	}
 	rel := relPath(c.Path)
+	// The apply has to reach the path to create, rewrite, or remove it, and the
+	// host may hold a directory above it at the bits an earlier loop closed it
+	// to. See TheoryOfApplyWriteBits.
+	if err := s.openAncestors(c.Path, rel, run); err != nil {
+		return err
+	}
 	// The mode the row recorded is authoritative, including 000: a session
 	// that took every bit away meant exactly that, and a default here would
 	// hand the host a mode the session never chose.
@@ -536,6 +542,52 @@ func (s *Store) applyDir(changePath, rel string, perm os.FileMode, run *applyRun
 	return nil
 }
 
+// openAncestors leaves every directory above one change open enough for the
+// apply to reach it, whether the change creates, rewrites, or removes the path,
+// and defers each observed mode for the final phase. A directory the session
+// closed in an earlier loop keeps its closed bits on the host with no row left
+// to say they were the session's own, so the opening cannot depend on the
+// directory carrying a change in this apply: the mutation below would answer
+// EACCES for an entry the session already completed. A directory this apply
+// created or widened keeps its own record, so the recorded mode of a change
+// always wins over the widened bits. A directory the host does not hold, or
+// holds as another kind, needs no opening: the mutation below reports the
+// path's own error. See TheoryOfApplyWriteBits.
+func (s *Store) openAncestors(changePath, rel string, run *applyRun) error {
+	var chain []string
+	for p := path.Dir(rel); p != "." && p != "/"; p = path.Dir(p) {
+		chain = append(chain, p)
+	}
+	// The chain comes out innermost first, and the widening runs outermost
+	// first so each level stays reachable while the level below it is read.
+	for i := len(chain) - 1; i >= 0; i-- {
+		p := chain[i]
+		if run.isWidened(p) {
+			continue
+		}
+		info, err := s.baseRoot.Lstat(p)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return nil
+			}
+			return err
+		}
+		if !info.IsDir() {
+			return nil
+		}
+		perm := info.Mode().Perm()
+		if open := perm | 0o700; open != perm {
+			if err := chmodAt(s.baseRoot, p, open); err != nil {
+				return err
+			}
+			run.add(changePath, p, perm)
+			continue
+		}
+		run.markWidened(p)
+	}
+	return nil
+}
+
 // prepareWriteTarget makes one host path accept a content write. A node of
 // another kind is removed, so the write lands on a fresh node rather than on a
 // directory the kernel refuses to open. A regular file whose own bits refuse
@@ -621,10 +673,6 @@ reverting them would discard work the session completed. Review remains the
 place where the user resolves what an apply kept back.
 `
 
-// TheoryOfApplyWriteBits is the apply's write-bit rule: the mode a row recorded
-// is the state the host holds after the write, never a gate on the write
-// itself. See TheoryOfApplyConflict for the mode-only path, which needs no
-// widening because chmod touches no content.
 const TheoryOfApplyWriteBits = `
 The recorded mode is the state the host holds after the write, never a gate on
 the write itself. A tool rewrites an existing file by truncating it and writing
@@ -645,4 +693,22 @@ directory takes. The creating phase therefore leaves the owner's bits open and
 records the mode for the final phase, which sets every directory's recorded
 bits deepest-first once the whole tree has landed. A refused final mode keeps
 its change's row, so the next apply retries it against the same host state.
+
+The opening reaches every ancestor of every change, never only the directories
+a change names. A directory the session closed in one loop is applied there and
+its row is dropped; the host keeps the closed bits, and the next loop that
+writes or removes an entry inside it carries no row to say those bits were the
+session's own. An apply that widened only the directories it changed would meet
+EACCES on the open of such an entry, report a fault the host never had, and hold
+the loop's work back for a retry that meets the same bits. The apply therefore
+opens each ancestor it walks through and defers the mode it found, so the final
+phase puts the host back exactly where it stood. A directory this apply already
+created or widened keeps its own record, so the recorded mode of a change always
+wins over the widened bits.
+
+The final phase restores a mode only where a directory still stands. A widen is
+what lets the same apply remove the entry it walked to, so a deferred path may
+be gone by the time the phase runs, or replaced with the node the session put in
+its place. Reporting a fault there would fail a loop the host had accepted and
+keep a row for work already done.
 `
