@@ -21,7 +21,31 @@ func newTestStore(t *testing.T) (*Store, string) {
 			t.Error(err)
 		}
 	})
+	makeTreeRemovable(t, base)
 	return s, base
+}
+
+// makeTreeRemovable registers a cleanup that gives every directory of the tree
+// the owner's write and search bits. A test that pins the apply's recorded mode
+// leaves the host at the bits the session chose, 0o555 among them, and
+// t.TempDir's cleanup cannot unlink the entries of a directory it may not
+// write. The cleanup runs before the temp tree's own, because t.Cleanup runs
+// the last registered one first. The walk visits a directory before its
+// entries, so a directory the test closed is opened before the walk descends
+// into it.
+func makeTreeRemovable(t *testing.T, dir string) {
+	t.Helper()
+	t.Cleanup(func() {
+		_ = filepath.Walk(dir, func(p string, info os.FileInfo, err error) error {
+			if err != nil || !info.IsDir() {
+				return nil
+			}
+			if mode := info.Mode().Perm(); mode&0o700 != 0o700 {
+				_ = os.Chmod(p, mode|0o700)
+			}
+			return nil
+		})
+	})
 }
 
 // TestHashBaseFileMatchesContentHash protects TheoryOfBaseCapture: the
