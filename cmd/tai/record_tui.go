@@ -21,8 +21,9 @@ Record browser theory (cmd/tai):
 - The record subcommand's TUI is a dedicated browser, not the generation
   TUI: one tab — the record tab — with no generation state, no output
   pane, and no chat input. It owns its own terminal session
-  (taiui.Session) and renders two views of that one tab: the record list
-  and the tree of an opened record.
+  (taiui.Session) and renders three views of that one tab: the record
+  list, the tree of an opened record, and the global search's match
+  list.
 - The RecordBrowserEnabled marker states that the selected command's
   TUI is the browser. The record command provides it for its browsing
   modes — the list and an opened record — and withdraws it in the
@@ -33,6 +34,31 @@ Record browser theory (cmd/tai):
   flag opens its record directly on entry. The selected record is the
   browser's one focus: the up and down keys, the page keys, home and
   end, and the wheel move it, and Enter or a double click opens it.
+- The "/" key opens a one-row keyword bar over the browser, and Enter
+  searches EVERY recorded session — the search is global, because the
+  user remembers a phrase and not the session that wrote it — through
+  records.SearchRecordNodes, whose rule is
+  records.TheoryOfGlobalRecordSearch's subject. The bar takes the
+  keyboard while it is open: a plain character edits the keyword
+  instead of running a navigation action, Enter runs the search, and
+  Esc or Ctrl-C closes the bar. The terminal cursor shows at the
+  editing position exactly while the bar is open.
+- The match list is the third view: one row per matched node, carrying
+  the session, the node's type, author, and name, and the matched line
+  as the preview. The up and down keys, the page keys, home and end,
+  and the wheel move its selection; Enter or a double click opens the
+  match's record — loading it when it is not the current one — and
+  jumps the tree to the matched node.
+- A jump opens the record's structure: the whole projection (the v-key
+  filters would hide a node the user asked for), every subtree fold on
+  the node's path cleared, the node expanded when the keyword was found
+  in its content, and the view scrolled so the node's first row lands at
+  the pane top. The tree's own expansion invariant supplies the last
+  step (see TheoryOfTreeTab).
+- Esc steps back one level along the same path: the tree closes to the
+  view that opened it — the match list or the record list — and the
+  match list closes to the record list. A press on the title row's
+  status follows the same path.
 - The tree view renders the opened record's tree with the Tree tab's own
   rendering and pointer interaction — the same rows, fold column,
   previews, expansions, and collapse-all — so a record is browsed
@@ -58,10 +84,11 @@ Record browser theory (cmd/tai):
   since the last change; the row ranges the pointer mapping reads come
   from the same display.
 - The title row's left side carries the status: "count N" for the record
-  list and, while a record is open, "id N" after it. A press on the
-  status returns to the list; the two leading cells stay untouched,
-  keeping the title row's rule at the box edge. The title's center
-  carries only the fixed tab name "Record". See TheoryOfTabTitleStatus.
+  list, "matches N" while a global search's match list is the view, and
+  "id N" while a record is open. A press on the status steps back one
+  level; the two leading cells stay untouched, keeping the title row's
+  rule at the box edge. The title's center carries only the fixed tab
+  name "Record". See TheoryOfTabTitleStatus.
 - Rendering stays a plain function of the browser's state: the browser
   rebuilds a full element tree per frame from its records, the opened
   tree, and the projection, following the TUI's rendering pattern.
@@ -78,21 +105,22 @@ const (
 )
 
 var recordBrowserHelp = []string{
-	"up / down\tmove the record selection; scroll the tree",
-	"enter\topen the selected record (the tree carries no focus)",
-	"page up / down\ta page of records; a page of tree rows",
-	"home / end\tfirst / last record or row",
-	"esc\treturn to the record list",
-	"click\tselect a record",
-	"double-click\topen a record; toggle a tree node's expansion",
+	"up / down\tmove the record or match selection; scroll the tree",
+	"enter\topen the selected record or match; run the keyword search",
+	"page up / down\ta page of records or matches; a page of tree rows",
+	"home / end\tfirst / last record, match, or row",
+	"esc\tclose the keyword bar; step back one view level",
+	"/\tsearch every recorded session for a keyword",
+	"click\tselect a record or match",
+	"double-click\topen a record or match; toggle a tree node's expansion",
 	"tree column\tclick ▸ / ▾ to collapse / expand the node",
 	"subtree column\tclick ▸ / ▾ at a node's left to hide / show its whole subtree",
 	"c\tfold every node of the tree; press again to restore",
 	"v\tcycle the tree's projection (all / summary / model / stream)",
-	"wheel\tscroll the tree; move the record selection",
+	"wheel\tscroll the tree; move the record or match selection",
 	"r\treload the record list",
-	"title status\tclick the count / id segments on the title row to return to the list",
-	"q / Ctrl-C\tquit (press again to confirm)",
+	"title status\tclick the count / matches / id segments to step back one level",
+	"q / Ctrl-C\tquit (press again to confirm); Esc closes the keyword bar",
 	"?\ttoggle this help overlay",
 }
 
@@ -104,9 +132,6 @@ func (Module) RecordBrowserEnabled() RecordBrowserEnabled {
 	return false
 }
 
-// runRecordBrowser starts the record subcommand's TUI: the recorded
-// session list and the tree of an opened record. The app's definitions
-// are already layered on the scope. See TheoryOfRecordBrowser.
 func runRecordBrowser(scope dscope.Scope) {
 	// The display colors come from the resolved tui config section, like
 	// the generation TUI. See TheoryOfUIStyle.
@@ -114,6 +139,7 @@ func runRecordBrowser(scope dscope.Scope) {
 	browser, err := newRecordBrowser(
 		scope.Get[records.ListSessionInfos](),
 		scope.Get[records.LoadSessionTree](),
+		scope.Get[records.SearchRecordNodes](),
 		int64(scope.Get[records.SessionID]()),
 	)
 	if err != nil {
@@ -140,6 +166,10 @@ type RecordBrowser struct {
 
 	listSessions records.ListSessionInfos
 	loadTree     records.LoadSessionTree
+	// searchNodes searches every recorded session's tree by keyword; it
+	// backs the global search the "/" key opens. See
+	// records.TheoryOfGlobalRecordSearch.
+	searchNodes records.SearchRecordNodes
 	// openSession is the record the -session flag selects: the browser
 	// opens it before the list is browsed. Zero means the list view.
 	openSession int64
@@ -147,18 +177,34 @@ type RecordBrowser struct {
 	infos    []records.SessionInfo
 	selected int
 
+	// The global search's state. searching reports that the keyword bar
+	// holds the keyboard; searchBar carries the typed keyword and the
+	// editing cursor; searchKeyword is the keyword the match list on
+	// screen answers; matches is that list; showingMatches reports that
+	// the match list is the view; and matchSelected is its selection.
+	// searchCursorShown tracks the terminal cursor across renders, so the
+	// cursor shows at the editing position exactly while the bar is open.
+	// See TheoryOfRecordBrowser.
+	searching         bool
+	searchBar         taiui.InputBar
+	searchKeyword     string
+	matches           []records.RecordSearchMatch
+	showingMatches    bool
+	matchSelected     int
+	searchCursorShown bool
+
 	// currentID is the opened record's id; 0 means the list view.
 	currentID int64
 	// treePane carries the opened record's tree and the Tree tab's
 	// rendering and interaction state. See TheoryOfRecordBrowser.
 	treePane *TUI
 
-	// lastListPress records the previous left press in the list view,
-	// so a second press at the same cell within the double-click window
-	// opens the record under it.
-	lastListPress  time.Time
-	lastListPressX int
-	lastListPressY int
+	// listPressPair and matchPress record the previous left press at one
+	// cell of the record list and of the match list, so a second press at
+	// the same cell within the double-click window opens the entry under
+	// it. See recordPressPair.hit.
+	listPressPair recordPressPair
+	matchPress    recordPressPair
 
 	err      string
 	quit     taiui.QuitConfirm
@@ -184,6 +230,7 @@ func newRecordTreePane(tabs *taiui.Tabs, width, height int) *TUI {
 func newRecordBrowser(
 	listSessions records.ListSessionInfos,
 	loadTree records.LoadSessionTree,
+	searchNodes records.SearchRecordNodes,
 	openSession int64,
 ) (*RecordBrowser, error) {
 	term, err := taiui.OpenTty()
@@ -207,6 +254,7 @@ func newRecordBrowser(
 		tabs:           tabs,
 		listSessions:   listSessions,
 		loadTree:       loadTree,
+		searchNodes:    searchNodes,
 		openSession:    openSession,
 		treePane:       newRecordTreePane(tabs, width, height),
 		mouseReporting: true,
@@ -330,19 +378,19 @@ func recordStartTime(infos []records.SessionInfo, id int64, tr *tree.Tree) time.
 	return start
 }
 
-// render builds the browser's element tree from its state: the list or
-// the opened record's tree, the title row's status, and the quit and
-// help overlays. See TheoryOfRecordBrowser.
 func (b *RecordBrowser) render() {
 	width := max(b.width, 1)
 	height := max(b.height, 1)
 	box := b.tabBox()
 	b.syncTreePane()
 	var view taiui.Element
-	if b.currentID == 0 {
-		view = b.listView(box)
-	} else {
+	switch {
+	case b.currentID != 0:
 		view = b.treeView(box)
+	case b.showingMatches:
+		view = b.matchesView(box)
+	default:
+		view = b.listView(box)
 	}
 	elements := []any{view}
 	// The status bar is skipped when the title row cannot hold both it
@@ -353,6 +401,11 @@ func (b *RecordBrowser) render() {
 	if b.err != "" {
 		elements = append(elements, b.errorElement(width, height))
 	}
+	// The keyword bar occupies the screen's bottom row while it is open,
+	// drawn over the error row it may share. See TheoryOfRecordBrowser.
+	if b.searching {
+		elements = append(elements, b.searchElement(width, height))
+	}
 	root := taiui.Overlay(elements...)
 	if b.showHelp {
 		root = taiui.Overlay(root, taiui.HelpOverlay(recordBrowserHelp, 16, width, height))
@@ -361,6 +414,7 @@ func (b *RecordBrowser) render() {
 		root = taiui.Overlay(root, taiui.QuitConfirmBar(width, height))
 	}
 	taiui.Render(root, b.screen)
+	b.syncSearchCursor()
 }
 
 // syncTreePane carries the browser's terminal size and mouse state into
@@ -388,18 +442,15 @@ func (b *RecordBrowser) treeScroll() *taiui.ScrollState {
 	return &b.treePane.scrolls[b.treePane.tabIndex(tabTree)]
 }
 
-// navText renders the navigation bar's text: the record count and, while
-// a record is open, its id, as key value status segments. The key value
-// form is the tab title's left status form. See TheoryOfTabTitleStatus
-// and TheoryOfRecordBrowser.
 func (b *RecordBrowser) navText() string {
-	if b.currentID == 0 {
-		return fmt.Sprintf("count %d", len(b.infos))
+	segments := []string{fmt.Sprintf("count %d", len(b.infos))}
+	if b.showingMatches {
+		segments = append(segments, fmt.Sprintf("matches %d", len(b.matches)))
 	}
-	return statusText(
-		fmt.Sprintf("count %d", len(b.infos)),
-		fmt.Sprintf("id %d", b.currentID),
-	)
+	if b.currentID != 0 {
+		segments = append(segments, fmt.Sprintf("id %d", b.currentID))
+	}
+	return statusText(segments...)
 }
 
 // navHit reports whether a press landed on the status bar: the drawn
@@ -538,58 +589,65 @@ func recordStartText(start string) string {
 	return displaywidth.TruncateString(start, 19, "…")
 }
 
-// move handles the up and down keys and the wheel: the list view moves
-// its selection — the browser's one focus — and the tree view scrolls its
-// content by one row. The tree's display and scroll bounds are refreshed
-// first, so a scroll never depends on a render having happened since the
-// last change. See TheoryOfRecordBrowser.
 func (b *RecordBrowser) move(delta int) {
-	if b.currentID == 0 {
+	switch {
+	case b.currentID != 0:
+		b.syncTreeScroll()
+		b.treeScroll().Scroll(delta)
+	case b.showingMatches:
+		b.selectMatch(b.matchSelected + delta)
+	default:
 		b.selectRecord(b.selected + delta)
-		return
 	}
-	b.syncTreeScroll()
-	b.treeScroll().Scroll(delta)
 }
 
-// pageMove moves the list's selection by a page of records, or scrolls
-// the tree view by a page of rows. The tree's display and scroll bounds
-// are refreshed first. See TheoryOfRecordBrowser.
 func (b *RecordBrowser) pageMove(direction int) {
-	if b.currentID == 0 {
+	switch {
+	case b.currentID != 0:
+		b.syncTreeScroll()
+		b.treeScroll().PageScroll(direction, taiui.PaneHeight(b.tabBox()))
+	case b.showingMatches:
+		b.selectMatch(b.matchSelected + direction*max(b.listBox().Height(), 1))
+	default:
 		b.selectRecord(b.selected + direction*max(b.listBox().Height(), 1))
-		return
 	}
-	b.syncTreeScroll()
-	b.treeScroll().PageScroll(direction, taiui.PaneHeight(b.tabBox()))
 }
 
-// moveTo moves the list's selection or the tree view to the first or
-// last entry: the home and end keys. See TheoryOfRecordBrowser.
 func (b *RecordBrowser) moveTo(last bool) {
-	if b.currentID == 0 {
+	switch {
+	case b.currentID != 0:
+		top := 0
+		if last {
+			// A large sentinel offset sticks the view to the tail,
+			// matching the generation TUI's end key. See
+			// taiui.ScrollState.ScrollTo.
+			top = 1 << 30
+		}
+		b.syncTreeScroll()
+		b.treeScroll().ScrollTo(top)
+	case b.showingMatches:
+		if last {
+			b.selectMatch(len(b.matches) - 1)
+		} else {
+			b.selectMatch(0)
+		}
+	default:
 		if last {
 			b.selectRecord(len(b.infos) - 1)
 		} else {
 			b.selectRecord(0)
 		}
-		return
 	}
-	top := 0
-	if last {
-		// A large sentinel offset sticks the view to the tail, matching
-		// the generation TUI's end key. See taiui.ScrollState.ScrollTo.
-		top = 1 << 30
-	}
-	b.syncTreeScroll()
-	b.treeScroll().ScrollTo(top)
 }
 
-// openSelected opens the list's selected record, the Enter key's action
-// in the list view. The tree view carries no focus, so Enter is inert
-// there. See TheoryOfRecordBrowser.
 func (b *RecordBrowser) openSelected() {
 	if b.currentID != 0 {
+		return
+	}
+	if b.showingMatches {
+		if len(b.matches) > 0 {
+			b.openMatch(b.matches[b.matchSelected])
+		}
 		return
 	}
 	if len(b.infos) == 0 {
@@ -598,34 +656,15 @@ func (b *RecordBrowser) openSelected() {
 	b.openRecord(b.infos[b.selected].ID)
 }
 
-// listPress handles a left press in the list view: the press selects the
-// record under it, and a second press at the same cell within the
-// double-click window opens the selected record. The row maps onto a
-// record through the same window the List renders with.
-// See TheoryOfRecordBrowser.
 func (b *RecordBrowser) listPress(x, y int) {
-	if len(b.infos) == 0 {
+	idx, ok := listRowIndex(b.listBox(), len(b.infos), b.selected, x, y)
+	if !ok {
 		return
 	}
-	box := b.listBox()
-	if x < box.Left || x >= box.Right || y < box.Top || y >= box.Bottom {
-		return
-	}
-	from := taiui.ListWindow(len(b.infos), box.Height(), b.selected)
-	idx := from + (y - box.Top)
-	if idx < 0 || idx >= len(b.infos) {
-		return
-	}
-	now := time.Now()
-	if now.Sub(b.lastListPress) <= treeDoubleClickWindow &&
-		x == b.lastListPressX && y == b.lastListPressY && idx == b.selected {
-		b.lastListPress = time.Time{}
+	if b.listPressPair.hit(x, y, time.Now()) {
 		b.openRecord(b.infos[idx].ID)
 		return
 	}
-	b.lastListPress = now
-	b.lastListPressX = x
-	b.lastListPressY = y
 	b.selectRecord(idx)
 }
 
@@ -648,6 +687,12 @@ func (b *RecordBrowser) treePress(x, y int) {
 func (b *RecordBrowser) handleMouseKey(key string) bool {
 	event, x, y, ok := taiui.ParseMouseKey(key)
 	if !ok {
+		return false
+	}
+	if b.searching {
+		// The keyword bar holds the keyboard while it is open, so a
+		// pointer event never reaches the view beneath it; Esc closes
+		// the bar. See TheoryOfRecordBrowser.
 		return false
 	}
 	switch event {
@@ -687,11 +732,15 @@ func (b *RecordBrowser) handleMouseKey(key string) bool {
 			return false
 		}
 		if b.navHit(x, y) {
-			b.backToList()
+			b.stepBack()
 			return false
 		}
 		if b.currentID == 0 {
-			b.listPress(x, y)
+			if b.showingMatches {
+				b.matchesPress(x, y)
+			} else {
+				b.listPress(x, y)
+			}
 			break
 		}
 		// A press inside the tree's content area anchors a swipe. The
@@ -707,9 +756,10 @@ func (b *RecordBrowser) handleMouseKey(key string) bool {
 	return false
 }
 
-// handleKey handles one decoded key name; returning true quits the
-// browser. See TheoryOfRecordBrowser.
 func (b *RecordBrowser) handleKey(key string) bool {
+	if b.searching {
+		return b.handleSearchKey(key)
+	}
 	if strings.HasPrefix(key, taiui.MouseKeyPrefix) {
 		return b.handleMouseKey(key)
 	}
@@ -722,6 +772,11 @@ func (b *RecordBrowser) handleKey(key string) bool {
 	switch key {
 	case "q", "Q", "ctrl-c":
 		return b.quit.QuitKeyPressed()
+	case "/":
+		if b.showHelp {
+			break
+		}
+		b.openSearch()
 	case "?":
 		b.showHelp = !b.showHelp
 	case "esc":
@@ -729,7 +784,7 @@ func (b *RecordBrowser) handleKey(key string) bool {
 			b.showHelp = false
 			break
 		}
-		b.backToList()
+		b.stepBack()
 	case "up":
 		b.move(-1)
 	case "down":

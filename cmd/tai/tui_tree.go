@@ -19,9 +19,11 @@ Tab title status theory (cmd/tai):
   moves while the state changes and the eye finds the state in one place.
 - The left status is a sequence of key value segments joined with " / ":
   "view all / loop 2 / attempt 2" on the Tree tab, "done 2 / pending 2"
-  on the Plan tab, "state generating" on the Output tab, "count 3 / id 2"
-  in the record browser. A segment whose state is unavailable is dropped,
-  so the Tree tab reads "view all" alone when no loop is visible.
+  on the Plan tab, "state generating" on the Output tab, "count 3 /
+  matches 5 / id 2" in the record browser — the matches segment appears
+  while a global search's match list is the view. A segment whose state
+  is unavailable is dropped, so the Tree tab reads "view all" alone when
+  no loop is visible.
 - The two leading cells stay untouched, keeping the title row's dim
   strike-through rule intact at the box edge. The status is an overlay
   element over the panel, derived per render like the input bar and

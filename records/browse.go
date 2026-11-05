@@ -8,12 +8,16 @@ import (
 
 const TheoryOfSessionBrowsing = `
 Session browsing theory:
-- The recorded sessions and their trees are read through two dscope
+- The recorded sessions and their trees are read through the dscope
   functions, so a browser consumes them without a text rendering in
   between: ListSessionInfos returns the session list as data — every
   session, most recent first — and LoadSessionTree reconstructs one
   session's tree from its recorded operation stream with tree.Replay,
   the same tree a live session's Tree tab renders.
+- SearchRecordNodes extends the same data view across every recorded
+  session: it answers a keyword with the nodes whose content or metadata
+  matches, each naming its session and node, so a browser opens the
+  record and jumps there. See TheoryOfGlobalRecordSearch.
 - The command-line listing keeps its own rendering; it renders the
   same data the browser reads, so the two views cannot disagree.
 - A session that recorded no operations has no tree: LoadSessionTree

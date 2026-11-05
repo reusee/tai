@@ -11,8 +11,6 @@ import (
 	"github.com/reusee/tai/tree"
 )
 
-// newRecordBrowserForTest builds a browser over a fake session set; the
-// terminal screen writes into output. See TheoryOfRecordBrowser.
 func newRecordBrowserForTest(
 	list records.ListSessionInfos,
 	load records.LoadSessionTree,
@@ -32,6 +30,11 @@ func newRecordBrowserForTest(
 		openSession:    openSession,
 		treePane:       newRecordTreePane(tabs, 80, 24),
 		mouseReporting: true,
+		// A no-match search by default; a test that exercises the
+		// global search replaces it. See TheoryOfRecordBrowser.
+		searchNodes: func(string) ([]records.RecordSearchMatch, error) {
+			return nil, nil
+		},
 	}
 }
 
