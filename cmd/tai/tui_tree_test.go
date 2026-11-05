@@ -681,6 +681,102 @@ func TestTreeElapsedTimer(t *testing.T) {
 	}
 }
 
+// TestTreeTimerClickShowsCreatedTime verifies that a left press on a
+// node's right-aligned timer switches that node's time column to its
+// concrete creation time and a second press returns the elapsed form,
+// while a press on the node's text keeps the elapsed form. See
+// TheoryOfTreeTab.
+func TestTreeTimerClickShowsCreatedTime(t *testing.T) {
+	tui := newTUIForTest()
+	start := time.Now().Add(-time.Minute).Truncate(time.Second)
+	created := start.Add(10 * time.Second)
+	tui.startTime = start
+	tr, err := tree.New().WriteAll(tree.WriteOp{
+		Parent: "root", Name: "attempt-1", Type: tree.TypeAttempt,
+		Author: tree.AuthorProgram, Content: "attempt 1", InsertTime: created,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tui.treeView = tr
+	tui.mu.Lock()
+	defer tui.mu.Unlock()
+	tui.width, tui.height = 80, 25
+	tui.tabs.Expanded[0] = true
+	tui.scrolls[0].Offset = 0
+	box := tui.tabs.Boxes(tui.width, tui.height)[0]
+	contentWidth := treeContentWidth(box.Width())
+	display := tui.treeDisplay(contentWidth, panelStyle.BaseBG)
+	if len(display) == 0 {
+		t.Fatal("expected display rows")
+	}
+	elapsed := formatTreeElapsed(10 * time.Second)
+	if !strings.HasSuffix(display[0].Text, elapsed) {
+		t.Fatalf("expected the elapsed timer, got %q", display[0].Text)
+	}
+	// The time column right-aligns on the header row, so its last cell
+	// belongs to the timer.
+	timerX, timerY := box.Left+contentWidth-1, box.Top+1
+	tui.treeAtClick(timerX, timerY)
+	display = tui.treeDisplay(contentWidth, panelStyle.BaseBG)
+	if !strings.HasSuffix(display[0].Text, formatTreeTime(created)) {
+		t.Fatalf("expected the creation time after the timer press, got %q", display[0].Text)
+	}
+	tui.treeAtClick(timerX, timerY)
+	display = tui.treeDisplay(contentWidth, panelStyle.BaseBG)
+	if !strings.HasSuffix(display[0].Text, elapsed) {
+		t.Fatalf("expected the elapsed form after the second press, got %q", display[0].Text)
+	}
+	// A press on the node's text keeps the elapsed form: the timer is the
+	// only single-press target of the time column.
+	tui.treeAtClick(box.Left+3, timerY)
+	display = tui.treeDisplay(contentWidth, panelStyle.BaseBG)
+	if !strings.HasSuffix(display[0].Text, elapsed) {
+		t.Fatalf("a press on the text must not switch the time column, got %q", display[0].Text)
+	}
+}
+
+// TestTreeStreamTimerClickShowsCreatedTime verifies the timer toggle in
+// the flat stream projection: the stream row right-aligns the same time
+// column, and a press on its cells switches the row to the node's
+// concrete creation time. See TheoryOfTreeTab.
+func TestTreeStreamTimerClickShowsCreatedTime(t *testing.T) {
+	tui := newTUIForTest()
+	start := time.Now().Add(-time.Minute).Truncate(time.Second)
+	created := start.Add(10 * time.Second)
+	tui.startTime = start
+	tr, err := tree.New().WriteAll(tree.WriteOp{
+		Parent: "root", Name: "attempt-1", Type: tree.TypeAttempt,
+		Author: tree.AuthorProgram, Content: "attempt 1", InsertTime: created,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tui.treeView = tr
+	tui.mu.Lock()
+	defer tui.mu.Unlock()
+	tui.width, tui.height = 80, 25
+	tui.tabs.Expanded[0] = true
+	tui.scrolls[0].Offset = 0
+	tui.treeTab.mode = treeViewStream
+	box := tui.tabs.Boxes(tui.width, tui.height)[0]
+	contentWidth := treeContentWidth(box.Width())
+	display := tui.treeDisplay(contentWidth, panelStyle.BaseBG)
+	if len(display) == 0 {
+		t.Fatal("expected display rows")
+	}
+	elapsed := formatTreeElapsed(10 * time.Second)
+	if !strings.HasSuffix(display[0].Text, elapsed) {
+		t.Fatalf("expected the elapsed timer in the stream view, got %q", display[0].Text)
+	}
+	timerX, timerY := box.Left+contentWidth-1, box.Top+1
+	tui.treeAtClick(timerX, timerY)
+	display = tui.treeDisplay(contentWidth, panelStyle.BaseBG)
+	if !strings.HasSuffix(display[0].Text, formatTreeTime(created)) {
+		t.Fatalf("expected the creation time in the stream view, got %q", display[0].Text)
+	}
+}
+
 func TestTreeLineColorRules(t *testing.T) {
 	prev := treeColorRules
 	defer func() { treeColorRules = prev }()

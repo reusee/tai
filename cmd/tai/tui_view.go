@@ -179,6 +179,7 @@ var tuiHelpLines = []string{
 	"click\tselect / toggle tab under cursor; click the input row to focus input",
 	"output column\tclick ▸ / ▾ at a section's first row to collapse / expand it",
 	"tree row\tclick 👉 on an attempt line to jump the Output tab to its output section; double-click the text to expand or collapse a node (a single text press is inert)",
+	"tree timer\tclick the right-aligned timer on a tree row to show the node's creation time; click it again to return to the elapsed form",
 	"tree column\tclick ▸ / ▾ on an expandable node's first row (or its first visible row when scrolled) to collapse / expand it",
 	"subtree column\tclick ▸ / ▾ at a node's left (or its first visible row when scrolled) to hide / show its whole subtree",
 	"title toolbar\tclick the icon at an expanded tab title's right edge to show its buttons — Tree Switch Collapse, Plan Collapse, Output Up Down Collapse, Logs Split Mouse Help Quit; an action press runs the action and keeps the toolbar open, so press the icon again or anywhere else to hide it",

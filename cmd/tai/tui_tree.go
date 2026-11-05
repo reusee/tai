@@ -77,7 +77,7 @@ Tree tab theory (cmd/tai):
   by insert time — the chronological order the nodes were written —
   with no indentation, no fold column, and no expansion: the node's
   type fragment, the content's first non-blank line as the preview,
-  the attempt node's jump marker, and the right-aligned elapsed timer,
+  the attempt node's jump marker, and the right-aligned time column,
   in the node's configured line color. Stream rows record expandable
   false, so the fold controls and double-click toggles are inert, while
   the click path still maps presses onto nodes.
@@ -187,9 +187,20 @@ Tree tab theory (cmd/tai):
   or its name segment ("usage"). The tab alternates the two background
   shades per node: all display lines of one node share one shade, and
   consecutive nodes alternate.
-- Each node's first display line right-aligns the elapsed timer
+- Each node's first display line right-aligns the elapsed fragment
   ("+0:07") from the session start to the node's insert time; a pane
-  too narrow for the timer omits it.
+  too narrow for the timer omits it. A left press on the timer's own
+  cells switches that node's time column to its concrete creation
+  time ("2006-01-02 15:04:05"), and a second press returns the elapsed
+  form: the elapsed fragment answers how long after the session start
+  the node was written, the timestamp answers when. The toggle is per
+  node and per pane, and the press must land on the timer's cells of
+  the node's header row, so a press elsewhere on the row keeps the
+  text's inert single-press contract. Both projections render the same
+  time column, so the toggle reads alike in the tree and the stream
+  forms. The creation time is the node's insert time, the moment the
+  write was applied and the same value a merged or replayed subtree
+  keeps (see tree.TheoryOfTree).
 - The attempt structure node's line ends with the 👉 jump marker: a
   left press on the marker's cells jumps the Output tab to the output
   section that attempt wrote (see TheoryOfTUIOutputSections). Display
@@ -287,15 +298,18 @@ const treeIndentWidth = 2
 // parameters, so a frame re-renders only nodes that are new or
 // repositioned; the global alignment and the expandability derived
 // from it join the cached state, because a wider visible entry
-// re-pads every cached sibling. See TheoryOfTreeTab.
+// re-pads every cached sibling, and the time column's form joins it
+// because a timer click changes one node's header text. See
+// TheoryOfTreeTab.
 type treeCached struct {
-	width      int
-	depth      int
-	shade      taiui.Color
-	expanded   bool
-	align      treeAlignments
-	expandable bool
-	lines      []taiui.Line
+	width         int
+	depth         int
+	shade         taiui.Color
+	expanded      bool
+	timerAbsolute bool
+	align         treeAlignments
+	expandable    bool
+	lines         []taiui.Line
 }
 
 // treeDoubleClickWindow is the maximum interval between two left
@@ -422,6 +436,11 @@ type treeTabState struct {
 	// collapsed restores them. Nil until the first fold. See
 	// TheoryOfTreeTab.
 	collapseAllSaved map[string]bool
+	// timerAbsolute records the nodes whose time column a click switched
+	// from the elapsed fragment to the node's concrete creation time. The
+	// toggle is per node and per pane; a missing entry shows the elapsed
+	// form. See TheoryOfTreeTab.
+	timerAbsolute map[string]bool
 
 	// Search state, per tree-shaped pane. See TheoryOfTreeSearch.
 	searching   bool
@@ -652,6 +671,26 @@ func formatTreeElapsed(d time.Duration) string {
 		return fmt.Sprintf("+%d:%02d:%02d", hours, minutes, secs)
 	}
 	return fmt.Sprintf("+%d:%02d", minutes, secs)
+}
+
+// formatTreeTime renders a node's creation time as the concrete local
+// timestamp the timer click reveals: "2006-01-02 15:04:05". The elapsed
+// fragment answers how long after the session start the node was written,
+// and the timestamp answers when. See TheoryOfTreeTab.
+func formatTreeTime(t time.Time) string {
+	return t.Local().Format("2006-01-02 15:04:05")
+}
+
+// treeTimerText returns the text of one node's right-aligned time column:
+// the elapsed fragment, or — after a click on the timer — the node's
+// concrete creation time. Both projections render this column, so the
+// toggle reads alike in the tree and the stream forms. See
+// TheoryOfTreeTab.
+func (t *TUI) treeTimerText(n *tree.Node, elapsed time.Duration) string {
+	if t.treeTab.timerAbsolute[n.Name] {
+		return formatTreeTime(n.InsertTime)
+	}
+	return formatTreeElapsed(elapsed)
 }
 
 func (t *TUI) setTree(tr *tree.Tree) {
@@ -895,7 +934,8 @@ func (t *TUI) treeStreamDisplayWith(contentWidth int, base taiui.Color, tr *tree
 		if n.InsertTime.After(t.startTime) {
 			elapsed = n.InsertTime.Sub(t.startTime)
 		}
-		lines := treeStreamNodeLines(n, elapsed, shade, contentWidth, options, align)
+		timerText := t.treeTimerText(n, elapsed)
+		lines := treeStreamNodeLines(n, timerText, shade, contentWidth, options, align)
 		start := len(out)
 		out = append(out, lines...)
 		t.treeTab.rows = append(t.treeTab.rows, treeRowRange{
@@ -908,10 +948,11 @@ func (t *TUI) treeStreamDisplayWith(contentWidth int, base taiui.Color, tr *tree
 // treeStreamNodeLines renders one stream row: the node's type fragment
 // — its second part aligned like the tree rows — the content's first
 // non-blank line as the preview, and the attempt node's jump marker,
-// truncated to the pane width with the elapsed timer right-aligned —
-// the same timer layout the tree rows render. The row carries the
-// node's configured line color. See TheoryOfTreeTab.
-func treeStreamNodeLines(n *tree.Node, elapsed time.Duration, shade taiui.Color, contentWidth int, options displaywidth.Options, align treeAlignments) []taiui.Line {
+// truncated to the pane width with the time column right-aligned — the
+// same timer layout the tree rows render, in the form the node's timer
+// currently takes. The row carries the node's configured line color.
+// See TheoryOfTreeTab.
+func treeStreamNodeLines(n *tree.Node, timerText string, shade taiui.Color, contentWidth int, options displaywidth.Options, align treeAlignments) []taiui.Line {
 	text := treeNodeTypeText(n, align, options)
 	if first := treeFirstLine(n); first != "" {
 		text += " " + first
@@ -919,7 +960,6 @@ func treeStreamNodeLines(n *tree.Node, elapsed time.Duration, shade taiui.Color,
 	if n.Type == tree.TypeAttempt {
 		text += " " + eventJumpMarker
 	}
-	timerText := formatTreeElapsed(elapsed)
 	timerWidth := options.String(timerText)
 	timerZone := timerWidth + 1
 	wrapWidth := max(contentWidth, 1)
@@ -943,9 +983,10 @@ func treeStreamNodeLines(n *tree.Node, elapsed time.Duration, shade taiui.Color,
 
 func (t *TUI) treeNodeLines(n *tree.Node, depth int, shade taiui.Color, contentWidth int, options displaywidth.Options, align treeAlignments) ([]taiui.Line, bool) {
 	expanded := t.treeTab.expanded[n.Name]
+	timerAbsolute := t.treeTab.timerAbsolute[n.Name]
 	if c, ok := t.treeTab.cache[n.Name]; ok &&
 		c.width == contentWidth && c.depth == depth && c.shade == shade && c.expanded == expanded &&
-		c.align == align {
+		c.timerAbsolute == timerAbsolute && c.align == align {
 		return c.lines, c.expandable
 	}
 	elapsed := time.Since(t.startTime)
@@ -958,7 +999,7 @@ func (t *TUI) treeNodeLines(n *tree.Node, depth int, shade taiui.Color, contentW
 	foldWidth := treeFoldSlotWidth(options)
 	blankSlot := strings.Repeat(" ", foldWidth)
 	wrapWidth := max(contentWidth, 1)
-	timerText := formatTreeElapsed(elapsed)
+	timerText := t.treeTimerText(n, elapsed)
 	timerWidth := options.String(timerText)
 	timerZone := timerWidth + 1
 
@@ -999,9 +1040,9 @@ func (t *TUI) treeNodeLines(n *tree.Node, depth int, shade taiui.Color, contentW
 	}
 	lines := make([]taiui.Line, 0, 1+len(body))
 	if wrapWidth > timerZone {
-		// The elapsed timer right-aligns on the header row: the
-		// header truncates one timer zone narrower and the residual
-		// columns pad to the timer. See TheoryOfTreeTab.
+		// The time column right-aligns on the header row: the header
+		// truncates one timer zone narrower and the residual columns
+		// pad to the timer. See TheoryOfTreeTab.
 		avail := wrapWidth - timerZone
 		text := displaywidth.TruncateString(header, avail, "…")
 		pad := wrapWidth - timerWidth - options.String(text)
@@ -1044,7 +1085,7 @@ func (t *TUI) treeNodeLines(n *tree.Node, depth int, shade taiui.Color, contentW
 	}
 	t.treeTab.cache[n.Name] = treeCached{
 		width: contentWidth, depth: depth, shade: shade, expanded: expanded,
-		align: align, expandable: expandable, lines: lines,
+		timerAbsolute: timerAbsolute, align: align, expandable: expandable, lines: lines,
 	}
 	return lines, expandable
 }
@@ -1506,10 +1547,12 @@ func (t *TUI) scrollToTreeNode(name string) {
 
 // treeAtClick handles a left press in a tree-shaped pane: a press on an
 // attempt node's jump marker jumps the Output tab to that attempt's
-// output section; a double-click — two presses at the same cell within
-// treeDoubleClickWindow — toggles the node's expansion, so a single
-// press on the text is inert and reading never expands or folds a node
-// by accident; the fold column is the single-press toggle path (see
+// output section; a press on the node's right-aligned time column
+// switches that column between the elapsed fragment and the node's
+// concrete creation time; a double-click — two presses at the same cell
+// within treeDoubleClickWindow — toggles the node's expansion, so a
+// single press on the text is inert and reading never expands or folds a
+// node by accident; the fold column is the single-press toggle path (see
 // toggleTreeControlAtClick). Presses outside the pane's content area
 // are no-ops. The pane's own layout index drives the box and the scroll
 // state, so the Plan pane's presses act on the Plan pane. Called with
@@ -1540,12 +1583,21 @@ func (t *TUI) treeAtClick(x, y int) {
 	if node == nil {
 		return
 	}
+	pressCol := x - box.Left
+	// A press on the node's right-aligned time column switches that
+	// column between the elapsed fragment and the node's concrete
+	// creation time. The timer is a control of its own, so the check
+	// comes before the jump marker and the double-click logic: a second
+	// press on the timer toggles the column back instead of counting as
+	// a double-click. See TheoryOfTreeTab.
+	if t.treeTimerAtClick(node, row, pressCol, box) {
+		return
+	}
 	// Only the attempt node's jump marker jumps: the press must land
 	// on the marker's own columns in the header's first display row.
 	// The display lines render at the box's left edge, so the press
 	// column maps directly onto the line's display columns. See
 	// TheoryOfTUIOutputSections and TheoryOfTreeTab.
-	pressCol := x - box.Left
 	if node.Type == tree.TypeAttempt {
 		if line, ok := t.treeDisplayLine(row, box); ok {
 			start, end, hasMarker := markerColumnRange(line.Text, taiui.DisplayWidthOptions())
@@ -1572,6 +1624,52 @@ func (t *TUI) treeAtClick(x, y int) {
 	t.lastTreePress = now
 	t.lastTreePressX = x
 	t.lastTreePressY = y
+}
+
+// treeTimerAtClick switches one node's time column between the elapsed
+// fragment and the node's concrete creation time when a left press lands
+// on the timer's own cells of the node's header row, and reports whether
+// it consumed the press. The timer right-aligns on the header, so the
+// press must be on that row — a body row carries no timer — and inside
+// the timer's cell range of the rendered line, measured with the same
+// width options the renderer uses, so what is drawn is what is pressed.
+// A press anywhere else on the row keeps the text's inert single-press
+// contract, and the toggle is per node and per pane. See
+// TheoryOfTreeTab.
+func (t *TUI) treeTimerAtClick(node *tree.Node, row, pressCol int, box taiui.Box) bool {
+	header := -1
+	for _, r := range t.treeTab.rows {
+		if r.name == node.Name {
+			header = r.startRow
+			break
+		}
+	}
+	if header < 0 || row != header {
+		return false
+	}
+	line, ok := t.treeDisplayLine(row, box)
+	if !ok {
+		return false
+	}
+	options := taiui.DisplayWidthOptions()
+	elapsed := time.Duration(0)
+	if node.InsertTime.After(t.startTime) {
+		elapsed = node.InsertTime.Sub(t.startTime)
+	}
+	timerText := t.treeTimerText(node, elapsed)
+	if !strings.HasSuffix(line.Text, timerText) {
+		return false
+	}
+	lineWidth := options.String(line.Text)
+	timerWidth := options.String(timerText)
+	if pressCol < lineWidth-timerWidth || pressCol >= lineWidth {
+		return false
+	}
+	if t.treeTab.timerAbsolute == nil {
+		t.treeTab.timerAbsolute = make(map[string]bool)
+	}
+	t.treeTab.timerAbsolute[node.Name] = !t.treeTab.timerAbsolute[node.Name]
+	return true
 }
 
 // sectionOfTreeNode resolves the output section an attempt node maps

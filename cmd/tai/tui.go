@@ -449,7 +449,10 @@ toggles its content expansion, the node's fold column toggles it on a
 single press, and the pane's leftmost subtree column folds or unfolds
 the node's whole subtree on a single press; a single press on the text
 is inert, so a reading press never toggles a node by accident (see
-TheoryOfTreeTab and TheoryOfTreeSubtreeFold). A press on the Output
+TheoryOfTreeTab and TheoryOfTreeSubtreeFold). A single press on a row's
+right-aligned timer switches that node's time column between the
+elapsed fragment and its concrete creation time, so the click reveals
+when the node was written (see TheoryOfTreeTab). A press on the Output
 tab's control column toggles the section under it; a double-click on a
 collapsed section's row expands it, and a single press on the content
 is inert, so reading never expands a section by accident (see
