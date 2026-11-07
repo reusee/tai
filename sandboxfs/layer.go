@@ -123,21 +123,21 @@ func baseServable(mode os.FileMode) bool {
 		mode&os.ModeNamedPipe != 0
 }
 
-// ReadFile returns the content of a regular file: the upper layer's content
-// when the session wrote the path, the base's content otherwise. A pipe and a
-// symbolic link cannot be read as content and report EINVAL, and a directory
-// reports EISDIR, matching the kernel's own answers. A metadata-only row
-// reports its content from the base and its size from one Lstat, so a
-// chmod-touched path of any size reads without a materialisation. A base
-// entry is kind-checked before it is opened, so a pipe path never blocks on
-// open. The whole content is bounded by the store's own limit: the callers
-// that turn the bytes into a stored row — the hard link and the directory
-// rename among them — must meet the bound the store enforces, so a base file
-// above maxFileSize reports EFBIG instead of an allocation the store could
-// never hold. A reader that wants a window of a large file takes ReadRange,
-// which moves only the window it names. The base descriptor answers the open
-// and the read with one fstatat and one openat, the same pair a read window
-// pays; a store without the descriptor falls back to the os.Root walk
+// ReadFile returns the content of a regular file: the upper layer's
+// content when the session wrote the path, the base's content otherwise.
+// A pipe and a symbolic link cannot be read as content and report EINVAL,
+// and a directory reports EISDIR, matching the kernel's own answers.
+// A metadata-only row reports its content from the base and its size from one
+// Lstat, so a chmod-touched path of any size reads without a materialisation.
+// A base entry is kind-checked before it is opened, so a pipe path never
+// blocks on open. The whole content is bounded by the store's own limit:
+// the callers that turn the bytes into a stored row — the hard link and the
+// directory rename among them — must meet the bound the store enforces,
+// so a base file above maxFileSize reports EFBIG instead of an allocation the
+// store could never hold. A reader that wants a window of a large file takes
+// ReadRange, which moves only the window it names. The base descriptor answers
+// the open and the read with one fstatat and one openat, the same pair a read
+// window pays; a store without the descriptor falls back to the os.Root walk
 // unchanged. The upper layer's content lives in the chunk table, assembled by
 // the stored size. See TheoryOfChunkedContent, TheoryOfBaseFdAccess and
 // TheoryOfBaseCapture.
@@ -158,12 +158,25 @@ func (s *Store) ReadFile(p string) ([]byte, error) {
 			return nil, syscall.EINVAL
 		}
 		if r.size >= 0 {
-			content, err := s.readContent(p, r.size)
+			// The window reads the row that clamps its own length. Using the
+			// earlier row's size for a later chunk query could pair two
+			// different versions after a concurrent whole-file write.
+			content, kind, found, err := s.readUpperRange(p, 0, maxFileSize)
 			if err != nil {
 				return nil, err
 			}
-			s.auditRead(p)
-			return content, nil
+			if found {
+				switch kind {
+				case KindDir:
+					return nil, syscall.EISDIR
+				case KindSymlink, KindFIFO:
+					return nil, syscall.EINVAL
+				}
+				s.auditRead(p)
+				return content, nil
+			}
+			// A concurrent drop or metadata transition makes the base the
+			// current content source, so the ordinary base path below answers.
 		}
 		// The row records metadata only; the base holds the content, and the
 		// base path below serves it. See TheoryOfBaseCapture.
@@ -925,16 +938,11 @@ func (s *Store) SetMode(p string, mode os.FileMode) (err error) {
 	if r.deleted {
 		return ErrNotExist
 	}
-	// A mode change is not a content change: the row records the bits and a
-	// regular file's content stays in the base, so a chmod of a file above
-	// the store's bound costs one Lstat and nothing else. POSIX gives chmod
-	// no length limit, and a materialisation here would impose one.
-	// See TheoryOfBaseCapture.
-	r.mode = mode.Perm()
-	if err := s.put(r); err != nil {
-		return err
-	}
-	return nil
+	// A mode change is not a content change: the upper layer updates only the
+	// mode of the row current at its own atomic step, so a concurrent content
+	// write cannot be paired with the stale length this caller read earlier.
+	// See TheoryOfBaseCapture and TheoryOfUpperLayer.
+	return s.upper.setMode(r, mode.Perm())
 }
 
 // CanWrite reports whether the store's write policy admits a mutation of p,
@@ -1042,13 +1050,9 @@ func (s *Store) SetTimes(p string, mtime time.Time) (err error) {
 	if r.deleted {
 		return ErrNotExist
 	}
-	// A time change is metadata only: the row records the stamp and a regular
-	// file's content stays in the base, so a utimes of a file above the
-	// store's bound costs one Lstat and nothing else.
-	// See TheoryOfBaseCapture.
-	r.mtime = mtime
-	if err := s.put(r); err != nil {
-		return err
-	}
-	return nil
+	// A time change is metadata only: the upper layer updates only the time of
+	// the row current at its own atomic step, leaving a concurrent content
+	// version and its length together. See TheoryOfBaseCapture and
+	// TheoryOfUpperLayer.
+	return s.upper.setTimes(r, mtime)
 }

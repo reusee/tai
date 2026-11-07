@@ -1,11 +1,13 @@
 package sandboxfs
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 )
 
 // newConcurrencyTestStore opens a store over an empty base directory, so a
@@ -110,5 +112,254 @@ func TestMaterializeContentKeepsAConcurrentWritersRow(t *testing.T) {
 	}
 	if string(content) != "the other writer" {
 		t.Fatalf("content = %q, want the bytes the other writer stored", content)
+	}
+}
+
+// TestSQLWindowDoesNotMixRowVersions protects TheoryOfChunkedContent: a
+// window's stored length and its chunks must come from one committed version.
+// The two candidate contents differ in both length and every payload byte, so
+// a metadata query interleaved with another version's chunk query cannot
+// accidentally look valid.
+func TestSQLWindowDoesNotMixRowVersions(t *testing.T) {
+	store, _ := newConcurrencyTestStore(t)
+	u := sqliteOf(t, store)
+	small := []byte("a")
+	large := bytes.Repeat([]byte("b"), 2*contentChunkSize)
+	row := fileRow{path: "/f", kind: KindRegular, mode: 0o644}
+	if err := u.replaceContent(row, small); err != nil {
+		t.Fatal(err)
+	}
+
+	const rounds = 2000
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		<-start
+		for i := 0; i < rounds; i++ {
+			content := small
+			if i%2 != 0 {
+				content = large
+			}
+			if err := u.replaceContent(row, content); err != nil {
+				errs <- err
+				return
+			}
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		<-start
+		for i := 0; i < rounds; i++ {
+			data, kind, found, err := u.window("/f", 0, maxFileSize)
+			if err != nil {
+				errs <- err
+				return
+			}
+			if !found || kind != KindRegular {
+				errs <- fmt.Errorf("window lost the live regular row: kind %v, found %v", kind, found)
+				return
+			}
+			if !bytes.Equal(data, small) && !bytes.Equal(data, large) {
+				errs <- fmt.Errorf("torn window: %d bytes with prefix %q", len(data), data[:min(len(data), 8)])
+				return
+			}
+		}
+	}()
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Error(err)
+	}
+}
+
+// TestReadFileDoesNotMixRowVersions protects the same rule at the store API:
+// a whole-file read must not combine the row length observed before a
+// concurrent replacement with the bytes observed after it. All three upper
+// layers run the same interleaving because the store shares their union logic.
+func TestReadFileDoesNotMixRowVersions(t *testing.T) {
+	stores := newLayerStores(t)
+	for name, store := range stores {
+		t.Run(name, func(t *testing.T) {
+			small := []byte("a")
+			large := bytes.Repeat([]byte("b"), 2*contentChunkSize)
+			if err := store.WriteFile("/f", small, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			const rounds = 2000
+			start := make(chan struct{})
+			errs := make(chan error, 2)
+			var wg sync.WaitGroup
+			wg.Add(2)
+			go func() {
+				defer wg.Done()
+				<-start
+				for i := 0; i < rounds; i++ {
+					content := small
+					if i%2 != 0 {
+						content = large
+					}
+					if err := store.WriteFile("/f", content, 0o644); err != nil {
+						errs <- err
+						return
+					}
+				}
+			}()
+			go func() {
+				defer wg.Done()
+				<-start
+				for i := 0; i < rounds; i++ {
+					data, err := store.ReadFile("/f")
+					if err != nil {
+						errs <- err
+						return
+					}
+					if !bytes.Equal(data, small) && !bytes.Equal(data, large) {
+						errs <- fmt.Errorf("torn file: %d bytes with prefix %q", len(data), data[:min(len(data), 8)])
+						return
+					}
+				}
+			}()
+			close(start)
+			wg.Wait()
+			close(errs)
+			for err := range errs {
+				t.Error(err)
+			}
+		})
+	}
+}
+
+// TestChangesDoesNotMixRowVersions protects the review path: a change's
+// Current bytes must be one committed version, because Apply writes exactly
+// those bytes to the host. A stale row length combined with newer chunks can
+// otherwise turn a valid session write into corrupted host content.
+func TestChangesDoesNotMixRowVersions(t *testing.T) {
+	stores := newLayerStores(t)
+	for name, store := range stores {
+		t.Run(name, func(t *testing.T) {
+			small := []byte("a")
+			large := bytes.Repeat([]byte("b"), 2*contentChunkSize)
+			if err := store.WriteFile("/f", small, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			const rounds = 2000
+			start := make(chan struct{})
+			errs := make(chan error, 2)
+			var wg sync.WaitGroup
+			wg.Add(2)
+			go func() {
+				defer wg.Done()
+				<-start
+				for i := 0; i < rounds; i++ {
+					content := small
+					if i%2 != 0 {
+						content = large
+					}
+					if err := store.WriteFile("/f", content, 0o644); err != nil {
+						errs <- err
+						return
+					}
+				}
+			}()
+			go func() {
+				defer wg.Done()
+				<-start
+				for i := 0; i < rounds; i++ {
+					changes, err := store.Changes()
+					if err != nil {
+						errs <- err
+						return
+					}
+					if len(changes) != 1 {
+						errs <- fmt.Errorf("got %d changes, want one", len(changes))
+						return
+					}
+					data := changes[0].Current
+					if !bytes.Equal(data, small) && !bytes.Equal(data, large) {
+						errs <- fmt.Errorf("torn change: %d bytes with prefix %q", len(data), data[:min(len(data), 8)])
+						return
+					}
+				}
+			}()
+			close(start)
+			wg.Wait()
+			close(errs)
+			for err := range errs {
+				t.Error(err)
+			}
+		})
+	}
+}
+
+// TestMetadataChangeDoesNotClobberConcurrentContent protects the metadata-only
+// rule: chmod and utimes must change their own field, never restore an earlier
+// row's size over a concurrently written content version. The read after each
+// metadata call accepts either complete content version and no other bytes.
+func TestMetadataChangeDoesNotClobberConcurrentContent(t *testing.T) {
+	stores := newLayerStores(t)
+	operations := map[string]func(*Store) error{
+		"chmod": func(s *Store) error { return s.SetMode("/f", 0o640) },
+		"utimes": func(s *Store) error {
+			return s.SetTimes("/f", time.Unix(123, 456))
+		},
+	}
+	for layer, store := range stores {
+		for opname, mutate := range operations {
+			t.Run(layer+"/"+opname, func(t *testing.T) {
+				small := []byte("a")
+				large := bytes.Repeat([]byte("b"), 2*contentChunkSize)
+				if err := store.WriteFile("/f", small, 0o644); err != nil {
+					t.Fatal(err)
+				}
+				const rounds = 2000
+				start := make(chan struct{})
+				errs := make(chan error, 2)
+				var wg sync.WaitGroup
+				wg.Add(2)
+				go func() {
+					defer wg.Done()
+					<-start
+					for i := 0; i < rounds; i++ {
+						content := small
+						if i%2 != 0 {
+							content = large
+						}
+						if err := store.WriteFile("/f", content, 0o644); err != nil {
+							errs <- err
+							return
+						}
+					}
+				}()
+				go func() {
+					defer wg.Done()
+					<-start
+					for i := 0; i < rounds; i++ {
+						if err := mutate(store); err != nil {
+							errs <- err
+							return
+						}
+						data, err := store.ReadFile("/f")
+						if err != nil {
+							errs <- err
+							return
+						}
+						if !bytes.Equal(data, small) && !bytes.Equal(data, large) {
+							errs <- fmt.Errorf("metadata restored a stale row: %d bytes with prefix %q", len(data), data[:min(len(data), 8)])
+							return
+						}
+					}
+				}()
+				close(start)
+				wg.Wait()
+				close(errs)
+				for err := range errs {
+					t.Error(err)
+				}
+			})
+		}
 	}
 }

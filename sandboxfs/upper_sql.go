@@ -299,21 +299,28 @@ func (u *sqlUpper) row(p string) (fileRow, bool, error) {
 }
 
 // window reads one window of a path the layer holds, clamped to the stored
-// size. A metadata-only row — the size sentinel saying the content still lives
-// in the base — reports found false, so the caller serves the window from the
-// base. See TheoryOfBaseCapture, TheoryOfPreparedStatements and
-// TheoryOfUpperAbsentCache.
+// size. A metadata-only row — the size sentinel saying the content still
+// lives in the base — reports found false, so the caller serves the window
+// from the base. The row and its chunks share one read transaction, so a
+// concurrent content replacement cannot pair one version's length with
+// another version's bytes. See TheoryOfBaseCapture,
+// TheoryOfPreparedStatements and TheoryOfUpperAbsentCache.
 func (u *sqlUpper) window(p string, off int64, size int) ([]byte, Kind, bool, error) {
 	if u.upperAbsent(p) {
 		return nil, 0, false, nil
 	}
+	tx, err := u.db.Begin()
+	if err != nil {
+		return nil, 0, false, err
+	}
+	defer func() { _ = tx.Rollback() }()
 	// The stamp is read before the query, so a write that commits in between
 	// keeps its row from being hidden by the absence recorded below.
 	// See TheoryOfUpperAbsentCache.
 	epoch := u.epoch.Load()
 	var kind, deleted int
 	var stored int64
-	err := queryRowStmt(u.db, u.stmts.selectUpper, querySelectUpper, p).Scan(&kind, &deleted, &stored)
+	err = queryRowStmt(tx, u.stmts.selectUpper, querySelectUpper, p).Scan(&kind, &deleted, &stored)
 	if errors.Is(err, sql.ErrNoRows) {
 		u.rememberAbsent(p, epoch)
 		return nil, 0, false, nil
@@ -336,7 +343,7 @@ func (u *sqlUpper) window(p string, off int64, size int) ([]byte, Kind, bool, er
 	if off >= end {
 		return []byte{}, KindRegular, true, nil
 	}
-	data, err := u.readChunks(u.db, p, off, int(end-off))
+	data, err := u.readChunks(tx, p, off, int(end-off))
 	if err != nil {
 		return nil, 0, true, err
 	}
@@ -423,6 +430,29 @@ func (u *sqlUpper) putRow(r fileRow) error {
 	return tx.Commit()
 }
 
+// updateRow applies one metadata-only change to the row current inside one
+// transaction. The captured row is used only when the layer still holds none,
+// so the update cannot restore an earlier row over a concurrent content write.
+func (u *sqlUpper) updateRow(r fileRow, update func(*fileRow)) error {
+	tx, err := u.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	cur, err := scanFileRow(queryRowStmt(tx, u.stmts.selectRow, querySelectRow, r.path))
+	switch {
+	case err == nil:
+		r = cur
+	case !errors.Is(err, sql.ErrNoRows):
+		return err
+	}
+	update(&r)
+	if err := u.putMetaTx(tx, r); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (u *sqlUpper) putMetaTx(tx *sql.Tx, r fileRow) error {
 	// A row exists from this write on, so no lookup may keep the path cached as
 	// absent: the write epoch moves and the entry clears under one lock, and a
@@ -470,6 +500,12 @@ func (u *sqlUpper) replaceContent(r fileRow, content []byte) error {
 	return tx.Commit()
 }
 
+func (u *sqlUpper) setMode(r fileRow, mode os.FileMode) error {
+	return u.updateRow(r, func(cur *fileRow) {
+		cur.mode = mode
+	})
+}
+
 // createContent stores one row's metadata and its content, but only while the
 // path holds no live regular row that already carries content: such a row is
 // another writer's committed bytes, and replacing it would drop what that
@@ -506,6 +542,12 @@ func (u *sqlUpper) createContent(r fileRow, content []byte) (created bool, err e
 		return false, err
 	}
 	return true, tx.Commit()
+}
+
+func (u *sqlUpper) setTimes(r fileRow, mtime time.Time) error {
+	return u.updateRow(r, func(cur *fileRow) {
+		cur.mtime = mtime
+	})
 }
 
 // splice writes one payload into the stored content in one transaction. One

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -68,6 +69,13 @@ the costs that pattern repeats for a large tree. FORGET is accepted without a
 reply and ignored: paths stay addressable for the session's life, matching
 the store, which keeps every touched path in the audit trail and, for a
 durable session, its record.
+
+A successful RENAME moves every matching node mapping and open handle to the
+destination, including the descendants of a moved directory. The source's
+node ids remain valid at the new path, and an open file description keeps
+serving the content it named before the move. Path changes and invalidation
+use a separate lock because an invalidator must not wait for another handle's
+request lock.
 
 Write-back happens on WRITE, not on flush: the store is the session's only
 copy of what it wrote, so an open file's content lives in the store and a
@@ -774,6 +782,11 @@ type fuseServer struct {
 	nextID  uint64
 	nextFh  uint64
 
+	// handlePathMu serializes a rename's handle-path changes with the
+	// invalidators that inspect those paths without taking each handle's lock.
+	// Ordinary handle requests remain serialized by the handle's own mutex.
+	handlePathMu sync.RWMutex
+
 	// timings aggregates the measured cost of every answered request, so a
 	// session can report which operation its workload spends its time in.
 	// The constructor installs it and the read loop stamps every request; a
@@ -1469,54 +1482,62 @@ func (s *fuseServer) invalidateHandles(p string) {
 	s.invalidateOtherHandles(p, 0)
 }
 
-// invalidateOtherHandles marks the cached base reader of every open handle of p
-// except the writing one stale, so their next read serves the store's
-// now-current content. Handles hold no buffer, so a write through one handle
-// cannot be overwritten by another handle's stale bytes; only the base view
-// must go. The mark is an atomic flag, never a wait on the other handle's
-// lock: this call runs under the writer's own lock, and a writer that blocked
-// on another handle would deadlock with the second writer blocking on the
-// first. The node table's lock is released before the flags are set, so no
-// lock is held across the mark. See TheoryOfWriteSplice and
-// TheoryOfFuseConcurrency.
+// invalidateOtherHandles marks the cached base reader of every open
+// handle of p except the writing one stale, so their next read serves the
+// store's now-current content. Handles hold no buffer, so a write through
+// one handle cannot be overwritten by another handle's stale bytes;
+// only the base view must go. The mark is an atomic flag, never a wait on
+// the other handle's lock: this call runs under the writer's own lock,
+// and a writer that blocked on another handle would deadlock with the second
+// writer blocking on the first. The node table's lock is released before the
+// flags are set, so no lock is held across the mark. See TheoryOfWriteSplice
+// and TheoryOfFuseConcurrency.
 func (s *fuseServer) invalidateOtherHandles(p string, self uint64) {
 	s.mu.Lock()
 	held := make([]*fuseHandle, 0, 2)
 	for fh, h := range s.handles {
-		if fh == self || h.path != p {
-			continue
-		}
-		held = append(held, h)
-	}
-	s.mu.Unlock()
-	for _, h := range held {
-		h.baseStale.Store(true)
-	}
-}
-
-// invalidateDirListings marks the open listings of a directory stale, so a read
-// that starts over reseeds them from the store. The entries already delivered
-// and the cursor's position stay: resetting them would answer the kernel's next
-// cookie with an empty body, which the kernel reads as the end of the
-// directory, and a walk that a create or a delete interrupted would lose every
-// entry past the mutation. The kernel cannot see a change this mount makes on
-// its own, and FOPEN_CACHE_DIR keeps the listing it read, so the stale mark is
-// the server's own notice. The matching handles are collected under the node
-// table's lock and marked under their own, one at a time: a listing request may
-// be using its handle at this moment, and holding the node table across that
-// wait would nest the two locks in the order a listing takes them the other way
-// round. See TheoryOfOpenCaching, TheoryOfReadPath, TheoryOfDirectoryStream
-// and TheoryOfFuseConcurrency.
-func (s *fuseServer) invalidateDirListings(p string) {
-	s.mu.Lock()
-	held := make([]*fuseHandle, 0, 2)
-	for _, h := range s.handles {
-		if h.isDir && h.path == p {
+		if fh != self {
 			held = append(held, h)
 		}
 	}
 	s.mu.Unlock()
 	for _, h := range held {
+		s.handlePathMu.RLock()
+		matches := h.path == p
+		s.handlePathMu.RUnlock()
+		if matches {
+			h.baseStale.Store(true)
+		}
+	}
+}
+
+// invalidateDirListings marks the open listings of a directory stale,
+// so a read that starts over reseeds them from the store. The entries already
+// delivered and the cursor's position stay: resetting them would answer the
+// kernel's next cookie with an empty body, which the kernel reads as the end
+// of the directory, and a walk that a create or a delete interrupted would
+// lose every entry past the mutation. The kernel cannot see a change this
+// mount makes on its own, and FOPEN_CACHE_DIR keeps the listing it read,
+// so the stale mark is the server's own notice. The matching handles
+// are collected under the node table's lock and marked under their own,
+// one at a time: a listing request may be using its handle at this moment,
+// and holding the node table across that wait would nest the two locks in the
+// order a listing takes them the other way round. See TheoryOfOpenCaching,
+// TheoryOfReadPath, TheoryOfDirectoryStream and TheoryOfFuseConcurrency.
+func (s *fuseServer) invalidateDirListings(p string) {
+	s.mu.Lock()
+	held := make([]*fuseHandle, 0, 2)
+	for _, h := range s.handles {
+		held = append(held, h)
+	}
+	s.mu.Unlock()
+	for _, h := range held {
+		s.handlePathMu.RLock()
+		matches := h.isDir && h.path == p
+		s.handlePathMu.RUnlock()
+		if !matches {
+			continue
+		}
 		h.mu.Lock()
 		h.dirStale = true
 		h.mu.Unlock()
@@ -1524,10 +1545,10 @@ func (s *fuseServer) invalidateDirListings(p string) {
 }
 
 // invalidateAttributeListings marks every open listing that can carry p's
-// attributes: p's entry in its parent for every kind, and for a directory also
-// its own "." entry and the ".." entry of each direct child. The handles are
-// collected under the node table's lock and marked under their own locks, the
-// same lock order invalidateDirListings uses. See TheoryOfReadPath.
+// attributes: p's entry in its parent for every kind, and for a directory
+// also its own "." entry and the ".." entry of each direct child. The handles
+// are collected under the node table's lock and marked under their own locks,
+// the same lock order invalidateDirListings uses. See TheoryOfReadPath.
 func (s *fuseServer) invalidateAttributeListings(p string, kind Kind) {
 	s.invalidateDirListings(parentOf(p))
 	if kind != KindDir {
@@ -1536,12 +1557,16 @@ func (s *fuseServer) invalidateAttributeListings(p string, kind Kind) {
 	s.mu.Lock()
 	held := make([]*fuseHandle, 0, 2)
 	for _, h := range s.handles {
-		if h.isDir && (h.path == p || parentOf(h.path) == p) {
-			held = append(held, h)
-		}
+		held = append(held, h)
 	}
 	s.mu.Unlock()
 	for _, h := range held {
+		s.handlePathMu.RLock()
+		matches := h.isDir && (h.path == p || parentOf(h.path) == p)
+		s.handlePathMu.RUnlock()
+		if !matches {
+			continue
+		}
 		h.mu.Lock()
 		h.dirStale = true
 		h.mu.Unlock()
@@ -2369,12 +2394,67 @@ func (s *fuseServer) handleRename(parent uint64, body []byte, two bool) ([]byte,
 	if err := s.store.Rename(oldPath, newPath); err != nil {
 		return nil, err
 	}
+	// The node keeps its identity across the name change: its source node id
+	// and every open handle move to the destination, including a directory's
+	// whole subtree. See TheoryOfCompletePOSIX and TheoryOfFuseMount.
+	s.movePathState(oldPath, newPath)
 	// Both directories lost and gained an entry, so both listings rebuild.
 	// A rename inside one directory asks the same path twice, which the loop
 	// walks without harm. See TheoryOfReadPath.
 	s.invalidateDirListings(parentPath)
 	s.invalidateDirListings(newParent)
 	return nil, nil
+}
+
+// movePathState carries node ids and open handles across a successful rename.
+// A destination id displaced by the source gives way, while the source's id
+// remains the node's id at its new path. Each handle is locked before
+// handlePathMu, so a mover waiting for a busy handle leaves the path lock free
+// for that handle's own invalidation step. See TheoryOfFuseMount.
+func (s *fuseServer) movePathState(oldPath, newPath string) {
+	matches := func(p string) bool {
+		return p == oldPath || strings.HasPrefix(p, oldPath+"/")
+	}
+	moved := func(p string) string {
+		return newPath + strings.TrimPrefix(p, oldPath)
+	}
+	s.mu.Lock()
+	moves := make(map[uint64]string)
+	for id, p := range s.nodes {
+		if matches(p) {
+			moves[id] = moved(p)
+		}
+	}
+	for id := range moves {
+		delete(s.byPath, s.nodes[id])
+	}
+	for id, p := range moves {
+		if other, ok := s.byPath[p]; ok && other != id {
+			delete(s.nodes, other)
+		}
+		s.nodes[id] = p
+	}
+	for id, p := range moves {
+		s.byPath[p] = id
+	}
+	held := make([]*fuseHandle, 0, len(s.handles))
+	for _, h := range s.handles {
+		held = append(held, h)
+	}
+	s.mu.Unlock()
+
+	for _, h := range held {
+		h.mu.Lock()
+		s.handlePathMu.Lock()
+		if matches(h.path) {
+			h.path = moved(h.path)
+			if h.isDir {
+				h.dirStale = true
+			}
+		}
+		s.handlePathMu.Unlock()
+		h.mu.Unlock()
+	}
 }
 
 // handleSymlink creates a symbolic link. The kernel wire form is

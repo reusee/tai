@@ -4,6 +4,7 @@ package sandboxfs
 
 import (
 	"encoding/binary"
+	"runtime"
 	"testing"
 	"time"
 
@@ -157,5 +158,42 @@ func TestFuseServerAnswersAnotherHandleWhileOneIsBusy(t *testing.T) {
 	case <-s.done:
 	case <-time.After(5 * time.Second):
 		t.Fatal("the server did not stop")
+	}
+}
+
+// TestMovePathStateDoesNotBlockInvalidationOnBusyHandle protects the lock
+// order used by rename and invalidation: a rename waiting for a busy handle
+// must leave handlePathMu available to the request holding that handle.
+// Holding the path write lock while waiting would deadlock the writer when it
+// reaches its own invalidation step.
+func TestMovePathStateDoesNotBlockInvalidationOnBusyHandle(t *testing.T) {
+	store, _ := newTestStore(t)
+	s := newFuseServer(store, -1)
+	h := &fuseHandle{path: "/a"}
+	s.handles[1] = h
+	h.mu.Lock()
+	done := make(chan struct{})
+	go func() {
+		s.movePathState("/a", "/b")
+		close(done)
+	}()
+
+	blocked := false
+	for range 1000 {
+		if !s.handlePathMu.TryRLock() {
+			blocked = true
+			break
+		}
+		s.handlePathMu.RUnlock()
+		runtime.Gosched()
+	}
+	h.mu.Unlock()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the path move did not finish after the handle was released")
+	}
+	if blocked {
+		t.Fatal("the path move held handlePathMu while waiting for the busy handle")
 	}
 }

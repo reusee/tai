@@ -440,16 +440,53 @@ func (u *dirUpper) putRow(r fileRow) error {
 	return nil
 }
 
+func (u *dirUpper) setMode(r fileRow, mode os.FileMode) error {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	cur, ok, err := u.readMeta(r.path)
+	if err != nil {
+		return err
+	}
+	if ok {
+		r = fileRowOf(cur)
+	}
+	r.mode = mode
+	return u.writeMeta(r.path, dirRowOf(r))
+}
+
 func (u *dirUpper) replaceContent(r fileRow, content []byte) error {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	r.size = int64(len(content))
+	if r.deleted || r.kind != KindRegular {
+		// A non-regular row carries no content. Commit its metadata first, then
+		// remove any data file left by the row it replaced, matching putRow's
+		// ordering and keeping a link or a pipe free of a content artifact.
+		if err := u.writeMeta(r.path, dirRowOf(r)); err != nil {
+			return err
+		}
+		return u.removeData(r.path)
+	}
 	// The data file is committed before the metadata that sizes it, so a
 	// reader never sees a size whose bytes are not there.
 	// See TheoryOfDirUpper.
 	if err := u.writeData(r.path, content); err != nil {
 		return err
 	}
+	return u.writeMeta(r.path, dirRowOf(r))
+}
+
+func (u *dirUpper) setTimes(r fileRow, mtime time.Time) error {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	cur, ok, err := u.readMeta(r.path)
+	if err != nil {
+		return err
+	}
+	if ok {
+		r = fileRowOf(cur)
+	}
+	r.mtime = mtime
 	return u.writeMeta(r.path, dirRowOf(r))
 }
 

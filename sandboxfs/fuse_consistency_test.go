@@ -109,3 +109,108 @@ func TestFuseServerCreateInvalidatesCachedBaseReader(t *testing.T) {
 		t.Errorf("after the truncating create the handle read %q, want an empty file", got)
 	}
 }
+
+// TestFuseServerRenameKeepsOpenHandleAndNode protects the POSIX rename rule:
+// renaming a name does not detach the open file description or allocate a new
+// inode. The handle opened before the rename must read the same bytes, and the
+// node id allocated before it must resolve to the new path.
+func TestFuseServerRenameKeepsOpenHandleAndNode(t *testing.T) {
+	store, base := newTestStore(t)
+	writeHost(t, base, "a.txt", "content")
+	c := newFuseClient(t, store)
+
+	errno, resp := c.request(t, fuseOpLookup, fuseRootID, c.bodyWithNames(nil, "a.txt"))
+	if errno != 0 {
+		t.Fatalf("lookup errno %d", errno)
+	}
+	var entry fuseEntryOut
+	decodeStruct(&entry, resp)
+	aNode := entry.Nodeid
+	errno, resp = c.request(t, fuseOpOpen, aNode, encodeStruct(&fuseOpenIn{}))
+	if errno != 0 {
+		t.Fatalf("open errno %d", errno)
+	}
+	var openOut fuseOpenOut
+	decodeStruct(&openOut, resp)
+
+	renameIn := fuseRenameIn{Newdir: fuseRootID}
+	errno, _ = c.request(t, fuseOpRename, fuseRootID,
+		c.bodyWithNames(encodeStruct(&renameIn), "a.txt", "b.txt"))
+	if errno != 0 {
+		t.Fatalf("rename errno %d", errno)
+	}
+
+	errno, resp = c.request(t, fuseOpRead, aNode, encodeStruct(&fuseReadIn{
+		Fh: openOut.Fh, Size: 64,
+	}))
+	if errno != 0 || string(resp) != "content" {
+		t.Errorf("read through the pre-rename handle: %q, errno %d; want content", resp, errno)
+	}
+	if errno, _ := c.request(t, fuseOpGetattr, aNode, nil); errno != 0 {
+		t.Errorf("getattr through the pre-rename node: errno %d", errno)
+	}
+	errno, resp = c.request(t, fuseOpLookup, fuseRootID, c.bodyWithNames(nil, "b.txt"))
+	if errno != 0 {
+		t.Fatalf("lookup of the destination: errno %d", errno)
+	}
+	decodeStruct(&entry, resp)
+	if entry.Nodeid != aNode {
+		t.Errorf("destination node id %d, want the source's %d", entry.Nodeid, aNode)
+	}
+}
+
+// TestFuseServerRenameDirectoryKeepsOpenListingAndNode covers the same rule
+// through a subtree: an open directory stream resumes at the destination, and
+// a child looked up before the move keeps its node id at the new path.
+func TestFuseServerRenameDirectoryKeepsOpenListingAndNode(t *testing.T) {
+	store, base := newTestStore(t)
+	writeHost(t, base, "src/f.txt", "content")
+	c := newFuseClient(t, store)
+
+	errno, resp := c.request(t, fuseOpLookup, fuseRootID, c.bodyWithNames(nil, "src"))
+	if errno != 0 {
+		t.Fatalf("lookup of the source directory: errno %d", errno)
+	}
+	var srcEntry fuseEntryOut
+	decodeStruct(&srcEntry, resp)
+	errno, resp = c.request(t, fuseOpOpendir, srcEntry.Nodeid, encodeStruct(&fuseOpenIn{}))
+	if errno != 0 {
+		t.Fatalf("opendir errno %d", errno)
+	}
+	var openOut fuseOpenOut
+	decodeStruct(&openOut, resp)
+	errno, resp = c.request(t, fuseOpLookup, srcEntry.Nodeid, c.bodyWithNames(nil, "f.txt"))
+	if errno != 0 {
+		t.Fatalf("lookup of the child: errno %d", errno)
+	}
+	var childEntry fuseEntryOut
+	decodeStruct(&childEntry, resp)
+	childNode := childEntry.Nodeid
+
+	renameIn := fuseRenameIn{Newdir: fuseRootID}
+	errno, _ = c.request(t, fuseOpRename, fuseRootID,
+		c.bodyWithNames(encodeStruct(&renameIn), "src", "dst"))
+	if errno != 0 {
+		t.Fatalf("rename errno %d", errno)
+	}
+
+	errno, resp = c.request(t, fuseOpReaddir, srcEntry.Nodeid, encodeStruct(&fuseReadIn{
+		Fh: openOut.Fh, Size: 4096,
+	}))
+	if errno != 0 {
+		t.Errorf("read the pre-rename directory handle: errno %d", errno)
+	} else if names := parseDirentNames(t, resp); !contains(names, "f.txt") {
+		t.Errorf("listing after the directory rename: %v, want f.txt", names)
+	}
+	if errno, _ := c.request(t, fuseOpGetattr, srcEntry.Nodeid, nil); errno != 0 {
+		t.Errorf("getattr of the moved directory: errno %d", errno)
+	}
+	errno, resp = c.request(t, fuseOpLookup, srcEntry.Nodeid, c.bodyWithNames(nil, "f.txt"))
+	if errno != 0 {
+		t.Fatalf("lookup of the moved child: errno %d", errno)
+	}
+	decodeStruct(&childEntry, resp)
+	if childEntry.Nodeid != childNode {
+		t.Errorf("moved child node id %d, want %d", childEntry.Nodeid, childNode)
+	}
+}

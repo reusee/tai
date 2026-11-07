@@ -170,6 +170,28 @@ func TestOpenDirMetadataOnlyLeavesNoContentFile(t *testing.T) {
 	}
 }
 
+// TestDirRecordNonRegularRowsHaveNoContentFile protects the row/content
+// invariant: links carry a target, not content, so a rename or a hard link must
+// not leave an empty data file beside the link's metadata in the record.
+func TestDirRecordNonRegularRowsHaveNoContentFile(t *testing.T) {
+	store, _, dir := newTestDirStore(t)
+	if err := store.Symlink("target", "/src"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Rename("/src", "/dst"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Link("/dst", "/hard"); err != nil {
+		t.Fatal(err)
+	}
+	names := recordFiles(t, dir)
+	for _, p := range []string{"/dst", "/hard"} {
+		if slices.Contains(names, dataName(p)) {
+			t.Errorf("link %s has a content file in the record", p)
+		}
+	}
+}
+
 // TestOpenAnyRoutesDirectoryRecord protects TheoryOfDirRecord: the review
 // command routes a record to its layer by shape, not by a flag. A directory
 // path opens the directory layer; a file path opens the SQL layer.
@@ -340,6 +362,24 @@ func TestSessionDirPathNamesTheSession(t *testing.T) {
 	}
 	if other := SessionDirPath(dir, now); other == got {
 		t.Errorf("two sessions of one second share the record %q", got)
+	}
+}
+
+// TestRandomRecordSuffixFallbackDoesNotRepeat protects the record-name
+// guarantee when the entropy source fails: two sessions started in the same
+// timestamp tick must still receive different records, or the later one can
+// overwrite the earlier session's review data.
+func TestRandomRecordSuffixFallbackDoesNotRepeat(t *testing.T) {
+	old := recordRandomRead
+	t.Cleanup(func() { recordRandomRead = old })
+	recordRandomRead = func([]byte) (int, error) {
+		return 0, errors.New("entropy source failed")
+	}
+	now := time.Unix(123, 456)
+	first := randomRecordSuffix(now)
+	second := randomRecordSuffix(now)
+	if first == second {
+		t.Fatalf("two entropy-fallback suffixes are both %q", first)
 	}
 }
 

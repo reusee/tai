@@ -44,12 +44,15 @@ in the base (see TheoryOfBaseCapture). A mutation that changes content writes
 the metadata and the chunks in one atomic step, so a reader never sees a size
 and a chunk set that disagree, and reads clamp to the stored size.
 
-Reading a window is one indexed query over the chunks covering it in the SQL
-layer, and one pass over the stored chunks in the memory layer, assembled with
-zeros for absent chunks: neither pays the round-trip count a substr over a blob
-cost, and neither rewrites a whole column on the write side. The first change
-to a base path materialises the base content into chunks, the cold path taken
-once per file; a truncation materialises only the prefix it keeps.
+The SQL layer reads a window's row and chunks in one transaction, and every
+whole-content read uses the same window operation. A concurrent replacement
+therefore cannot pair one version's length with another's bytes. Reading a
+window is one indexed query over the chunks covering it in the SQL layer, and
+one pass over the stored chunks in the memory layer, assembled with zeros for
+absent chunks: neither pays the round-trip count a substr over a blob cost,
+and neither rewrites a whole column on the write side. The first change to a
+base path materialises the base content into chunks, the cold path taken once
+per file; a truncation materialises only the prefix it keeps.
 `
 
 // captureHashBufferSize is the one buffer a base capture streams through, so
@@ -73,9 +76,25 @@ type dbExecer interface {
 	QueryRow(query string, args ...any) *sql.Row
 }
 
-// readContent returns the whole stored content of a live regular path.
-func (s *Store) readContent(p string, size int64) ([]byte, error) {
-	return s.upper.content(p, 0, int(size))
+// readContent returns the whole stored content of a live regular path. The
+// caller's earlier size is not a slicing parameter: the window reads its own
+// row and chunks atomically, so a concurrent replacement cannot combine that
+// earlier length with a later content version.
+func (s *Store) readContent(p string, _ int64) ([]byte, error) {
+	content, kind, found, err := s.readUpperRange(p, 0, maxFileSize)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, ErrNotExist
+	}
+	switch kind {
+	case KindDir:
+		return nil, syscall.EISDIR
+	case KindSymlink, KindFIFO:
+		return nil, syscall.EINVAL
+	}
+	return content, nil
 }
 
 // readBaseContent reads a base file's content, bounded by limit when limit is

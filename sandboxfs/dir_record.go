@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 )
 
@@ -114,14 +115,25 @@ func latestSessionDir(dir string) (string, bool) {
 	return filepath.Join(sessionsDir, best), true
 }
 
+// recordRandomRead is the entropy read used by session naming. It is a
+// variable so a test can exercise the fallback without making the Go runtime's
+// system entropy failure handler terminate the test process.
+var recordRandomRead = rand.Read
+
+// recordFallbackSequence distinguishes entropy-fallback suffixes generated in
+// the same timestamp tick, so a broken entropy source cannot make one session
+// overwrite another session's record.
+var recordFallbackSequence atomic.Uint64
+
 // randomRecordSuffix returns the random suffix of one session's record name:
 // four random bytes in hexadecimal, so two sessions that start within one
 // second get different records. A failing entropy source falls back to the
-// clock, which still separates the sessions of one process. See SessionDirPath.
+// clock and a process-local sequence, which still separates the sessions of
+// one process. See SessionDirPath.
 func randomRecordSuffix(now time.Time) string {
 	var b [4]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return fmt.Sprintf("%08x", uint32(now.UnixNano()))
+	if _, err := recordRandomRead(b[:]); err != nil {
+		return fmt.Sprintf("%08x", uint32(now.UnixNano())^uint32(recordFallbackSequence.Add(1)))
 	}
 	return hex.EncodeToString(b[:])
 }

@@ -1,6 +1,9 @@
 package sandboxfs
 
-import "time"
+import (
+	"os"
+	"time"
+)
 
 const TheoryOfUpperLayer = `
 The upper layer is one contract with three implementations, and the store's
@@ -45,14 +48,15 @@ and the directory implementation through its mutex and a rename over the
 committed file. Atomicity is the layer's own business because only the layer
 knows where a row and its content both live.
 
-The negative-lookup cache and the prepared statement set are the SQL layer's
-own: a map lookup needs no absence cache, a failed file open costs one host
-lookup, and neither other layer executes SQL. A caller of the contract sees
-neither.
+Metadata-only updates are atomic in the same sense: chmod and utimes change
+their field on the row current at that step instead of writing back a row read
+earlier. A concurrent content write therefore cannot be paired with a stale
+length. The negative-lookup cache and the prepared statement set are the SQL
+layer's own: a map lookup needs no absence cache, a failed file open costs one
+host lookup, and neither other layer executes SQL. A caller of the contract
+sees neither.
 `
 
-// upperStore is the sandbox's mutable layer: the rows and content the session
-// wrote, and the audit trail of what it touched. See TheoryOfUpperLayer.
 type upperStore interface {
 	// row returns one path's row, live or deleted, and whether the layer
 	// holds it.
@@ -81,6 +85,14 @@ type upperStore interface {
 	// putRow writes one metadata row, dropping the content of a row that is
 	// deleted or no longer regular.
 	putRow(r fileRow) error
+
+	// setMode changes only the current row's mode in one atomic step. When
+	// the layer holds no row, r supplies the captured initial row instead.
+	setMode(r fileRow, mode os.FileMode) error
+
+	// setTimes changes only the current row's modification time in one atomic
+	// step. When the layer holds no row, r supplies the captured initial row.
+	setTimes(r fileRow, mtime time.Time) error
 
 	// replaceContent writes one row together with its whole content, in one
 	// atomic step, so a reader never sees a size and a content that disagree.

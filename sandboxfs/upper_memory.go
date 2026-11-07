@@ -1,6 +1,7 @@
 package sandboxfs
 
 import (
+	"os"
 	"slices"
 	"sort"
 	"strings"
@@ -139,12 +140,34 @@ func (m *memoryUpper) putRow(r fileRow) error {
 	return nil
 }
 
+func (m *memoryUpper) setMode(r fileRow, mode os.FileMode) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if cur, ok := m.files[r.path]; ok {
+		r = cur
+	}
+	r.mode = mode
+	m.files[r.path] = r
+	return nil
+}
+
 func (m *memoryUpper) replaceContent(r fileRow, content []byte) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	r.size = int64(len(content))
 	m.files[r.path] = r
 	m.storeContentLocked(r.path, content)
+	return nil
+}
+
+func (m *memoryUpper) setTimes(r fileRow, mtime time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if cur, ok := m.files[r.path]; ok {
+		r = cur
+	}
+	r.mtime = mtime
+	m.files[r.path] = r
 	return nil
 }
 
