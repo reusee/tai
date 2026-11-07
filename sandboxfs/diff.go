@@ -460,13 +460,24 @@ func (s *Store) applyOne(c Change, run *applyRun) error {
 				return chmodAt(s.baseRoot, rel, perm)
 			}
 		}
-		if err := s.prepareWriteTarget(rel); err != nil {
+		restore, err := s.prepareWriteTarget(rel)
+		if err != nil {
 			return err
 		}
+		completed := false
+		defer func() {
+			if !completed && restore != nil {
+				_ = restore()
+			}
+		}()
 		if err := s.baseRoot.WriteFile(rel, c.Current, perm); err != nil {
 			return err
 		}
-		return chmodAt(s.baseRoot, rel, perm)
+		if err := chmodAt(s.baseRoot, rel, perm); err != nil {
+			return err
+		}
+		completed = true
+		return nil
 	case ChangeDeleted:
 		err := s.baseRoot.Remove(rel)
 		if errors.Is(err, os.ErrNotExist) {
@@ -593,24 +604,29 @@ func (s *Store) openAncestors(changePath, rel string, run *applyRun) error {
 // directory the kernel refuses to open. A regular file whose own bits refuse
 // the write gains the owner's write bit for the duration of the write: the
 // recorded mode is the state the host holds afterwards and never a gate on the
-// write, so a read-only node still receives the bytes the session wrote. The
-// caller sets the recorded mode once the content is in place, so the widened
-// bits never reach the host's final state. An absent path needs no preparation:
-// the write below creates the node. See TheoryOfApplyWriteBits and
-// TheoryOfApplyConflict.
-func (s *Store) prepareWriteTarget(rel string) error {
+// write. The returned cleanup restores the original bits after a failed write
+// or final chmod; a successful apply replaces them with the recorded mode. An
+// absent path and a node that already admits the write need no cleanup.
+// See TheoryOfApplyWriteBits and TheoryOfApplyConflict.
+func (s *Store) prepareWriteTarget(rel string) (restore func() error, err error) {
 	info, err := s.baseRoot.Lstat(rel)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	if !info.Mode().IsRegular() {
 		_ = s.baseRoot.Remove(rel)
-		return nil
+		return nil, nil
 	}
-	if info.Mode().Perm()&0o200 == 0 {
-		return chmodAt(s.baseRoot, rel, info.Mode().Perm()|0o200)
+	original := info.Mode().Perm()
+	if original&0o200 == 0 {
+		if err := chmodAt(s.baseRoot, rel, original|0o200); err != nil {
+			return nil, err
+		}
+		return func() error {
+			return chmodAt(s.baseRoot, rel, original)
+		}, nil
 	}
-	return nil
+	return nil, nil
 }
 
 // removeAppliedRow drops one applied path's upper row and its content, so the

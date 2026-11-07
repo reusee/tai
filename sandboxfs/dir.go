@@ -292,7 +292,7 @@ func (c *dirCursor) mergeBase(name string) {
 		return
 	}
 	delete(c.upper, name)
-	if row.noSize {
+	if row.noSize && base.Kind == KindRegular {
 		row.attr.Size = base.Size
 	}
 	c.pending = append(c.pending, DirEntry{Name: name, Attr: row.attr})
@@ -319,11 +319,12 @@ func (c *dirCursor) baseEntry(name string) (Attr, bool) {
 	return attrOf(info), true
 }
 
-// baseSize reports the length a metadata-only row takes from the base. A path
-// the base no longer holds reports zero, the length the store's own stat
-// reports for it. See TheoryOfBaseCapture.
+// baseSize reports the length a metadata-only row takes from the base. Only a
+// regular base file supplies it: a vanished path or one that changed kind
+// reports zero, the length the store's own stat reports for it.
+// See TheoryOfBaseCapture.
 func (c *dirCursor) baseSize(name string) int64 {
-	if a, ok := c.baseEntry(name); ok {
+	if a, ok := c.baseEntry(name); ok && a.Kind == KindRegular {
 		return a.Size
 	}
 	return 0

@@ -877,6 +877,43 @@ func (s *fuseServer) run() {
 	wg.Wait()
 }
 
+// fixedRequestBodySize returns the fixed prefix size of one opcode's request
+// body. Name-carrying requests may have bytes after this prefix. INIT is
+// excluded because older protocol minors legitimately use shorter layouts.
+func fixedRequestBodySize(opcode uint32) int {
+	switch opcode {
+	case fuseOpOpen, fuseOpOpendir:
+		return binary.Size(fuseOpenIn{})
+	case fuseOpSetattr:
+		return binary.Size(fuseSetattrIn{})
+	case fuseOpRead, fuseOpReaddir, fuseOpReaddirplus:
+		return binary.Size(fuseReadIn{})
+	case fuseOpWrite:
+		return binary.Size(fuseWriteIn{})
+	case fuseOpRelease, fuseOpReleasedir:
+		return binary.Size(fuseReleaseIn{})
+	case fuseOpFlush:
+		return binary.Size(fuseFlushIn{})
+	case fuseOpFsync, fuseOpFsyncdir:
+		return binary.Size(fuseFsyncIn{})
+	case fuseOpAccess:
+		return binary.Size(fuseAccessIn{})
+	case fuseOpCreate:
+		return binary.Size(fuseCreateIn{})
+	case fuseOpMkdir:
+		return binary.Size(fuseMkdirIn{})
+	case fuseOpMknod:
+		return binary.Size(fuseMknodIn{})
+	case fuseOpRename:
+		return binary.Size(fuseRenameIn{})
+	case fuseOpRename2:
+		return binary.Size(fuseRename2In{})
+	case fuseOpLink:
+		return binary.Size(fuseLinkIn{})
+	}
+	return 0
+}
+
 func (s *fuseServer) dispatch(buf []byte) {
 	if len(buf) < fuseInHeaderSize {
 		return
@@ -907,6 +944,14 @@ func (s *fuseServer) dispatch(buf []byte) {
 		end = int(h.Len)
 	}
 	body := buf[fuseInHeaderSize:end]
+	// Reject a truncated fixed prefix before resolving a node or handle. The
+	// per-handler checks remain as defense in depth for direct handler calls.
+	if size := fixedRequestBodySize(h.Opcode); len(body) < size {
+		if h.Unique != 0 {
+			s.respond(h.Unique, syscall.EINVAL, nil)
+		}
+		return
+	}
 	// Every handle-scoped request names its handle in the first field of its
 	// body — READ and READDIR, WRITE, and both releases put the handle number
 	// at offset zero — so the dispatch takes that one handle's lock and holds

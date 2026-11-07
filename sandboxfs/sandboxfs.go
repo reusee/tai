@@ -717,12 +717,12 @@ func newStore(base string, upper upperStore, policy func(string) error) (*Store,
 // The record's path is a filesystem path and a sandbox path is a slash path,
 // so the name comparison runs on slash form twice: once against the recorded
 // path, and once against the path relative to the base, which is the record's
-// sandbox name. The second form is what catches a directory record's files
-// after a mount rewrote the record's path to its private base view, and what
-// catches a direct store whose record sits inside its own base. The identity
-// comparison also covers hard links: a record inside the base is stated
-// through baseRoot so a detached mount view still works, while a record
-// outside it is stated by its host path. See TheoryOfSandboxFilesystem,
+// sandbox name. The second form is what catches a directory record's
+// files after a mount rewrote the record's path to its private base view,
+// and what catches a direct store whose record sits inside its own base.
+// The identity comparison also covers hard links: a record inside the base
+// is stated through baseRoot so a detached mount view still works, while a
+// record outside it is stated by its host path. See TheoryOfSandboxFilesystem,
 // TheoryOfDirRecord and TheoryOfSqlDialects.
 func (s *Store) isOwnDBPath(p string) bool {
 	if s.dbPath == "" {
@@ -742,13 +742,16 @@ func (s *Store) isOwnDBPath(p string) bool {
 		return true
 	}
 	if inside {
-		// The record's sandbox name and, for a directory record, every path
-		// under it are the record. See TheoryOfDirRecord.
+		// The record's sandbox name, its backend siblings, and, for a
+		// directory record, every path under it are the record. The sibling
+		// names stay reserved before those files exist, when identity
+		// comparison cannot see them. See TheoryOfDirRecord.
 		record := Canonical(filepath.ToSlash(rel))
-		switch {
-		case cp == record:
+		switch cp {
+		case record, record + "-wal", record + "-shm", record + ".wal":
 			return true
-		case record != "/" && strings.HasPrefix(cp, record+"/"):
+		}
+		if record != "/" && strings.HasPrefix(cp, record+"/") {
 			return true
 		}
 	}
@@ -919,10 +922,10 @@ func (s *Store) readUpperRange(p string, off int64, size int) ([]byte, Kind, boo
 
 // statRow reads one path's metadata for a stat. A metadata-only row reports the
 // base's own length, which costs one Lstat and never the file's content. A base
-// path the host no longer holds has no length: the store reports the zero the
-// merging window reports for the same path, never the size sentinel, which a
-// getattr would render as an enormous file. See TheoryOfBaseCapture,
-// TheoryOfReadPath and TheoryOfDirectoryStream.
+// path the host no longer holds as a regular file has no length: the store
+// reports the zero the merging window reports for the same path, never the size
+// sentinel or another node's length. See TheoryOfBaseCapture, TheoryOfReadPath
+// and TheoryOfDirectoryStream.
 func (s *Store) statRow(p string) (Attr, bool, error) {
 	r, ok, err := s.upper.row(p)
 	if err != nil || !ok {
@@ -933,10 +936,10 @@ func (s *Store) statRow(p string) (Attr, bool, error) {
 	}
 	a := attrOfRow(r)
 	if r.kind == KindRegular && r.size < 0 {
-		// The row records metadata only, so the base holds the length.
-		// See TheoryOfBaseCapture.
+		// The row records metadata only, so a regular base file holds the
+		// length. See TheoryOfBaseCapture.
 		a.Size = 0
-		if info, statErr := s.baseRoot.Lstat(relPath(p)); statErr == nil {
+		if info, statErr := s.baseRoot.Lstat(relPath(p)); statErr == nil && info.Mode().IsRegular() {
 			a.Size = info.Size()
 		}
 	}

@@ -571,3 +571,69 @@ func TestStatOfAMetadataOnlyRowWhoseHostPathVanishedReportsZeroSize(t *testing.T
 		t.Fatalf("the listing holds no a.txt entry: %+v", entries)
 	}
 }
+
+// TestStatOfAMetadataOnlyRowWhoseHostPathChangedKindReportsZeroSize protects
+// TheoryOfReadPath and TheoryOfDirectoryStream: only a regular base file has a
+// length for a metadata-only regular row. A host path that changed kind has no
+// such length, just as a vanished host path has none.
+func TestStatOfAMetadataOnlyRowWhoseHostPathChangedKindReportsZeroSize(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Join(dir, "base")
+	if err := os.MkdirAll(base, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	host := filepath.Join(base, "a.txt")
+	if err := os.WriteFile(host, []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store, err := Open(filepath.Join(dir, "upper.db"), base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.SetMode("/a.txt", 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(host); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(host, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	a, err := store.Stat("/a.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Size != 0 {
+		t.Errorf("stat after the base file became a directory: size %d, want 0", a.Size)
+	}
+	entries, err := store.ReadDir("/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.Name == "a.txt" && e.Attr.Size != 0 {
+			t.Errorf("listing after the base file became a directory: size %d, want 0", e.Attr.Size)
+		}
+	}
+}
+
+// TestOwnDatabaseSiblingIsRefusedBeforeItExists protects
+// TheoryOfSandboxFilesystem: a backend sibling is part of the record even
+// before the backend creates it, so identity comparison cannot be the only
+// guard for a sibling that does not exist yet.
+func TestOwnDatabaseSiblingIsRefusedBeforeItExists(t *testing.T) {
+	base := t.TempDir()
+	store, err := Open(filepath.Join(base, "record.db"), base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	// The DuckDB sibling suffix is not a file SQLite creates. Its absence must
+	// not turn the record's reserved name into an ordinary sandbox target.
+	if err := store.WriteFile("/record.db.wal", []byte("corrupt"), 0o644); !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("write to an absent record sibling: got %v, want a permission error", err)
+	}
+}

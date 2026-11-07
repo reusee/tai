@@ -127,6 +127,77 @@ func TestBaseReadRangeMatchesRootWalk(t *testing.T) {
 	}
 }
 
+// TestBaseReadAtNeverFollowsARacingFinalLink protects the never-follow rule of
+// TheoryOfBaseFdAccess across the whole stat-and-open sequence. A regular file
+// replaced by a link between those two calls must not disclose the link target.
+func TestBaseReadAtNeverFollowsARacingFinalLink(t *testing.T) {
+	store := newBaseFastStore(t)
+	if store.baseFd < 0 {
+		t.Skip("the platform offers no base descriptor")
+	}
+	node := filepath.Join(store.base, "race.txt")
+	if err := os.WriteFile(node, []byte("inside"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	secret := filepath.Join(t.TempDir(), "secret.txt")
+	if err := os.WriteFile(secret, []byte("outside-secret"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			_ = os.Remove(node)
+			_ = os.Symlink(secret, node)
+			_ = os.Remove(node)
+			_ = os.WriteFile(node, []byte("inside"), 0o644)
+		}
+	}()
+	defer func() {
+		close(stop)
+		<-done
+	}()
+	for range 20000 {
+		data, ok, err := baseReadAt(store.baseFd, "race.txt", 0, 32)
+		if !ok {
+			t.Fatal("the fast path did not handle the read")
+		}
+		if err == nil && string(data) == "outside-secret" {
+			t.Fatal("a racing final symlink exposed a file outside the base")
+		}
+	}
+}
+
+// TestBaseFastPathsDoNotEscapeThroughDirectoryLink checks the whole relative
+// path, not only its last component: os.Root confines every component to the
+// base, and the descriptor fast path must not bypass that confinement.
+func TestBaseFastPathsDoNotEscapeThroughDirectoryLink(t *testing.T) {
+	store := newBaseFastStore(t)
+	if store.baseFd < 0 {
+		t.Skip("the platform offers no base descriptor")
+	}
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "secret.txt"), []byte("outside-secret"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(store.base, "escape")); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := baseStatAt(store.baseFd, "escape/secret.txt"); err == nil {
+		t.Error("baseStatAt followed a directory link outside the base")
+	}
+	if data, _, err := baseReadAt(store.baseFd, "escape/secret.txt", 0, 32); err == nil {
+		t.Errorf("baseReadAt escaped the base and read %q", data)
+	}
+}
+
 // TestReadFromReusesWindowBuffer checks that a streamed base file costs one
 // buffer per handle: the second window read into the same handle reuses the
 // allocation the first one grew. See TheoryOfReadPath.

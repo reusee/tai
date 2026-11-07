@@ -19,14 +19,15 @@ per component, which is the right price for a writer whose target it must
 contain and the wrong price for the read path, where a session touches
 thousands of paths it never writes.
 
-One O_PATH descriptor of the base directory answers a metadata lookup with a
-single fstatat and a content window with one fstatat, one openat, and one
-pread. The descriptor never follows the final link of a path it reads, the
-same rule the os.Root walk keeps: a link reports itself as a link, and the
-store serves content only for a regular file. The kernel resolves a link on
-its own and asks the store again for the target's path. The descriptor is
-opened read-only, so a leak of it cannot widen write containment. Writes keep
-the os.Root walk, because containment matters exactly where the store writes.
+One O_PATH descriptor of the base directory answers metadata and content
+requests through confined openat2 resolution: no component, including a
+symlinked directory, can resolve outside the base. The final component is
+opened with O_NOFOLLOW, the same rule the os.Root walk keeps: a link reports
+itself as a link, and the store serves content only for a regular file. The
+kernel resolves a link on its own and asks the store again for the target's
+path. The descriptor is opened read-only, so a leak of it cannot widen write
+containment. Writes keep the os.Root walk, because containment matters exactly
+where the store writes. A kernel without openat2 takes the portable walk.
 
 A directory listing opens the directory once through the root and takes the
 enumeration position from that handle, so the windows one listing delivers
@@ -36,14 +37,14 @@ directory's depth. The entry stat stays because a dirent carries the entry's
 type and a READDIRPLUS reply carries its full attribute — the mode, size, and
 time a name alone does not hold — so the saving is the walk, not the stat.
 
-The window read checks the host kind before it opens, matching the os.Root
-path's order: a directory reports EISDIR, a link or pipe EINVAL, and a regular
-file serves its window. A read handle opens its base file through the same
-kind check and the same single openat, so streaming a file pays no walk per
-open and a pipe stays unopened. A whole-file read takes the same open, so the
-store's own read API pays no walk either. A store without the descriptor falls
-back to the os.Root path unchanged, so the fast path is an optimization, never
-a requirement.
+The window read checks the host kind before it opens for content, matching the
+os.Root path's order: a directory reports EISDIR, a link or pipe EINVAL, and a
+regular file serves its window. A read handle opens its base file through the
+same kind check and the same confined open, so streaming a file pays no
+component-by-component walk and a pipe stays unopened. A whole-file read takes
+the same open, so the store's own read API pays no walk either. A store without
+the descriptor falls back to the os.Root path unchanged, so the fast path is an
+optimization, never a requirement.
 `
 
 // openBaseDirFd opens the read-through base directory once: one O_PATH
@@ -65,16 +66,37 @@ func closeBaseDirFd(fd int) {
 	}
 }
 
-// baseStatAt reports the attributes of rel beneath fd with one fstatat, never
-// following a final-component link, so a link reports itself as the store must.
-// ok reports whether the fast path handled the lookup; a false result sends the
+// baseOpenPath resolves rel beneath fd without letting any component escape
+// that root. flags has the same meaning as openat2's flags field. A false ok
+// reports a kernel without openat2, so the caller takes the os.Root walk.
+// See TheoryOfBaseFdAccess.
+func baseOpenPath(fd int, rel string, flags uint64) (pathFD int, ok bool, err error) {
+	if fd < 0 {
+		return -1, false, nil
+	}
+	pathFD, err = unix.Openat2(fd, rel, &unix.OpenHow{
+		Flags:   flags | unix.O_CLOEXEC,
+		Resolve: unix.RESOLVE_IN_ROOT,
+	})
+	if errors.Is(err, unix.ENOSYS) {
+		return -1, false, nil
+	}
+	return pathFD, true, err
+}
+
+// baseStatAt reports the attributes of rel beneath fd with one confined
+// openat2 and fstat, never following a final-component link, so a link reports
+// itself as the store must and no component can resolve outside the base. ok
+// reports whether the fast path handled the lookup; a false result sends the
 // caller back to the os.Root walk. See TheoryOfBaseFdAccess.
 func baseStatAt(fd int, rel string) (a Attr, ok bool, err error) {
-	if fd < 0 {
-		return Attr{}, false, nil
+	pathFD, ok, err := baseOpenPath(fd, rel, unix.O_PATH|unix.O_NOFOLLOW)
+	if !ok || err != nil {
+		return Attr{}, ok, err
 	}
+	defer unix.Close(pathFD)
 	var st unix.Stat_t
-	if statErr := unix.Fstatat(fd, rel, &st, unix.AT_SYMLINK_NOFOLLOW); statErr != nil {
+	if statErr := unix.Fstat(pathFD, &st); statErr != nil {
 		return Attr{}, true, statErr
 	}
 	return attrOfStatT(&st), true, nil
@@ -123,32 +145,23 @@ func attrOfStatT(st *unix.Stat_t) Attr {
 
 // baseReadAt returns the content window [off, off+size) of rel beneath fd. The
 // host kind is checked before the open, so the errors match the os.Root path:
-// a directory reports EISDIR and a link or pipe EINVAL. ok reports whether the
-// fast path handled the read. See TheoryOfBaseFdAccess.
+// a directory reports EISDIR and a link or pipe EINVAL. The open shares
+// baseOpenFile's no-follow rule, so a link installed after that check cannot
+// expose its target. ok reports whether the fast path handled the read.
+// See TheoryOfBaseFdAccess.
 func baseReadAt(fd int, rel string, off int64, size int) (data []byte, ok bool, err error) {
 	if fd < 0 {
 		return nil, false, nil
 	}
-	var st unix.Stat_t
-	if statErr := unix.Fstatat(fd, rel, &st, unix.AT_SYMLINK_NOFOLLOW); statErr != nil {
-		return nil, true, statErr
+	f, ok, err := baseOpenFile(fd, rel)
+	if !ok || err != nil {
+		return nil, ok, err
 	}
-	switch st.Mode & unix.S_IFMT {
-	case unix.S_IFDIR:
-		return nil, true, syscall.EISDIR
-	case unix.S_IFREG:
-	default:
-		return nil, true, syscall.EINVAL
-	}
-	f, openErr := unix.Openat(fd, rel, unix.O_RDONLY|unix.O_CLOEXEC, 0)
-	if openErr != nil {
-		return nil, true, openErr
-	}
-	defer unix.Close(f)
+	defer f.Close()
 	buf := make([]byte, size)
 	n := 0
 	for {
-		n, err = unix.Pread(f, buf, off)
+		n, err = unix.Pread(int(f.Fd()), buf, off)
 		if !errors.Is(err, unix.EINTR) {
 			break
 		}
@@ -159,19 +172,24 @@ func baseReadAt(fd int, rel string, off int64, size int) (data []byte, ok bool, 
 	return buf[:n], true, nil
 }
 
-// baseOpenFile opens one base file beneath fd for a read handle: one fstatat
-// and one openat, the same pair the window read pays. The host kind is checked
-// before the open, so a directory reports EISDIR and a link or pipe EINVAL, and
-// a pipe is never opened, so its read never blocks. O_NOFOLLOW keeps the rule
-// the stat path keeps: a link reports itself and is never opened as content.
-// ok reports whether the fast path handled the open; a false result sends the
-// caller back to the os.Root walk unchanged. See TheoryOfBaseFdAccess.
+// baseOpenFile opens one base file beneath fd for a read handle: a confined
+// metadata open followed by a confined content open. The host kind is checked
+// before the content open, so a directory reports EISDIR and a link or pipe
+// EINVAL, and a pipe is never opened for reading. O_NOFOLLOW keeps the rule the
+// stat path keeps: a link reports itself and is never opened as content, even
+// when it replaces a regular file after the check. RESOLVE_IN_ROOT keeps every
+// component beneath the base. ok reports whether the fast path handled the
+// open; a false result sends the caller back to the os.Root walk unchanged.
+// See TheoryOfBaseFdAccess.
 func baseOpenFile(fd int, rel string) (f *os.File, ok bool, err error) {
-	if fd < 0 {
-		return nil, false, nil
+	pathFD, ok, err := baseOpenPath(fd, rel, unix.O_PATH|unix.O_NOFOLLOW)
+	if !ok || err != nil {
+		return nil, ok, err
 	}
 	var st unix.Stat_t
-	if statErr := unix.Fstatat(fd, rel, &st, unix.AT_SYMLINK_NOFOLLOW); statErr != nil {
+	statErr := unix.Fstat(pathFD, &st)
+	_ = unix.Close(pathFD)
+	if statErr != nil {
 		return nil, true, statErr
 	}
 	switch st.Mode & unix.S_IFMT {
@@ -181,7 +199,10 @@ func baseOpenFile(fd int, rel string) (f *os.File, ok bool, err error) {
 	default:
 		return nil, true, syscall.EINVAL
 	}
-	fileFd, openErr := unix.Openat(fd, rel, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	fileFd, ok, openErr := baseOpenPath(fd, rel, unix.O_RDONLY|unix.O_NOFOLLOW)
+	if !ok {
+		return nil, false, nil
+	}
 	if openErr != nil {
 		// The stat above named a regular file, so a link here appeared between
 		// the two calls: it still reports EINVAL, never its target's bytes.
