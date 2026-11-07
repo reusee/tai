@@ -1362,6 +1362,15 @@ func (s *fuseServer) handleSetattr(nodeid uint64, body []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	mutated := false
+	defer func() {
+		if mutated {
+			// Invalidate on every return after a successful mutation, including
+			// a later flag's error return: no listing may keep the attribute
+			// the completed part replaced. See TheoryOfReadPath.
+			s.invalidateAttributeListings(p, cur.Kind)
+		}
+	}()
 	if in.Valid&fattrSize != 0 {
 		// The mount and the store must agree on the bound: a truncate the
 		// mount accepts is a size the store can hold, so both read the one
@@ -1377,12 +1386,14 @@ func (s *fuseServer) handleSetattr(nodeid uint64, body []byte) ([]byte, error) {
 		if err := s.store.TruncateFile(p, int64(in.Size), cur.Mode); err != nil {
 			return nil, err
 		}
+		mutated = true
 		s.invalidateHandles(p)
 	}
 	if in.Valid&fattrMode != 0 {
 		if err := s.store.SetMode(p, os.FileMode(in.Mode&0o777)); err != nil {
 			return nil, err
 		}
+		mutated = true
 	}
 	if in.Valid&(fattrMtime|fattrMtimeNow) != 0 {
 		mt := time.Unix(int64(in.Mtime), int64(in.Mtimensec))
@@ -1392,6 +1403,7 @@ func (s *fuseServer) handleSetattr(nodeid uint64, body []byte) ([]byte, error) {
 		if err := s.store.SetTimes(p, mt); err != nil {
 			return nil, err
 		}
+		mutated = true
 	}
 	a, err := s.store.Stat(p)
 	if err != nil {
@@ -1455,6 +1467,31 @@ func (s *fuseServer) invalidateDirListings(p string) {
 	held := make([]*fuseHandle, 0, 2)
 	for _, h := range s.handles {
 		if h.isDir && h.path == p {
+			held = append(held, h)
+		}
+	}
+	s.mu.Unlock()
+	for _, h := range held {
+		h.mu.Lock()
+		h.dirStale = true
+		h.mu.Unlock()
+	}
+}
+
+// invalidateAttributeListings marks every open listing that can carry p's
+// attributes: p's entry in its parent for every kind, and for a directory also
+// its own "." entry and the ".." entry of each direct child. The handles are
+// collected under the node table's lock and marked under their own locks, the
+// same lock order invalidateDirListings uses. See TheoryOfReadPath.
+func (s *fuseServer) invalidateAttributeListings(p string, kind Kind) {
+	s.invalidateDirListings(parentOf(p))
+	if kind != KindDir {
+		return
+	}
+	s.mu.Lock()
+	held := make([]*fuseHandle, 0, 2)
+	for _, h := range s.handles {
+		if h.isDir && (h.path == p || parentOf(h.path) == p) {
 			held = append(held, h)
 		}
 	}
@@ -1572,6 +1609,7 @@ func (s *fuseServer) handleOpen(nodeid uint64, body []byte) ([]byte, error) {
 			return nil, err
 		}
 		s.invalidateHandles(p)
+		s.invalidateDirListings(parentOf(p))
 	}
 	// The open already read the attribute, so the handle carries the mode and
 	// the write path needs no lookup of its own. The store keeps the content
@@ -1713,9 +1751,16 @@ func (s *fuseServer) readFrom(h *fuseHandle, off int64, size int) ([]byte, error
 func (s *fuseServer) handleWrite(body []byte) ([]byte, error) {
 	var in fuseWriteIn
 	decodeStruct(&in, body)
+	s.mu.Lock()
+	h := s.handles[in.Fh]
+	s.mu.Unlock()
+	if h == nil {
+		return nil, syscall.EBADF
+	}
 	// A zero-byte write is a no-op, matching Linux: write(2) with nbyte=0
 	// transfers nothing and does not extend the file, even when the offset
-	// sits past the end. See TheoryOfCompletePOSIX.
+	// sits past the end. The handle is validated above first, as it is for
+	// every other write. See TheoryOfCompletePOSIX.
 	if in.Size == 0 {
 		return encodeStruct(&fuseWriteOut{Size: 0}), nil
 	}
@@ -1735,12 +1780,6 @@ func (s *fuseServer) handleWrite(body []byte) ([]byte, error) {
 		return nil, syscall.EINVAL
 	}
 	data := body[hdrSize : hdrSize+int(in.Size)]
-	s.mu.Lock()
-	h := s.handles[in.Fh]
-	s.mu.Unlock()
-	if h == nil {
-		return nil, syscall.EBADF
-	}
 	// The mode comes from the open that handed the handle back, so the write
 	// path pays no metadata lookup, and it travels as given, 000 included: a
 	// materialised file with no access bits is a choice, not an absent mode.
@@ -1750,6 +1789,10 @@ func (s *fuseServer) handleWrite(body []byte) ([]byte, error) {
 	if err := s.store.SpliceFile(h.path, int64(in.Offset), data, h.mode); err != nil {
 		return nil, err
 	}
+	// A write changes the size and time a listing reports, so the parent
+	// directory's open streams are stale just as they are after an entry
+	// change. See TheoryOfReadPath.
+	s.invalidateDirListings(parentOf(h.path))
 	// The store now holds this write, so the handle's cached base reader can
 	// never serve another window.
 	h.closeBase()
@@ -1805,7 +1848,10 @@ func (s *fuseServer) handleReaddir(body []byte) ([]byte, error) {
 	s.mu.Lock()
 	h := s.handles[in.Fh]
 	s.mu.Unlock()
-	if h == nil || !h.isDir {
+	if h == nil {
+		return nil, syscall.EBADF
+	}
+	if !h.isDir {
 		return nil, syscall.ENOTDIR
 	}
 	start := int(in.Offset)
@@ -1886,7 +1932,10 @@ func (s *fuseServer) handleReaddirPlus(body []byte) ([]byte, error) {
 	s.mu.Lock()
 	h := s.handles[in.Fh]
 	s.mu.Unlock()
-	if h == nil || !h.isDir {
+	if h == nil {
+		return nil, syscall.EBADF
+	}
+	if !h.isDir {
 		return nil, syscall.ENOTDIR
 	}
 	start := int(in.Offset)
@@ -2023,6 +2072,8 @@ func (s *fuseServer) handleCreate(parent uint64, body []byte) ([]byte, error) {
 	// mode of no bits stays a choice below the mask.
 	// See TheoryOfCompletePOSIX.
 	perm := os.FileMode(in.Mode&0o777) &^ os.FileMode(in.Umask&0o777)
+	writeMode := in.Flags&(uint32(unix.O_WRONLY)|uint32(unix.O_RDWR)) != 0
+	truncate := in.Flags&uint32(unix.O_TRUNC) != 0
 	cur, statErr := s.store.Stat(p)
 	created := false
 	switch {
@@ -2033,7 +2084,7 @@ func (s *fuseServer) handleCreate(parent uint64, body []byte) ([]byte, error) {
 		if cur.Kind == KindDir {
 			return nil, syscall.EISDIR
 		}
-		if in.Flags&uint32(unix.O_TRUNC) != 0 {
+		if truncate {
 			// The create's mode describes a file that does not exist yet; an
 			// existing file keeps the mode it already has — a recorded 000 is
 			// a mode, not an absent one — and the create changes nothing but
@@ -2046,7 +2097,8 @@ func (s *fuseServer) handleCreate(parent uint64, body []byte) ([]byte, error) {
 			// file earlier must serve the store's new content, not the
 			// descriptor that fixes the old view. See TheoryOfReadPath.
 			s.invalidateHandles(p)
-		} else if in.Flags&(uint32(unix.O_WRONLY)|uint32(unix.O_RDWR)) != 0 {
+			s.invalidateDirListings(parentPath)
+		} else if writeMode {
 			// A create-open that finds the path already there and carries no
 			// O_TRUNC mutates nothing by itself, so only a write-mode request
 			// asks the policy — the same rule a plain OPEN follows. A
@@ -2081,12 +2133,19 @@ func (s *fuseServer) handleCreate(parent uint64, body []byte) ([]byte, error) {
 	}
 	// The stat above already read the attribute, so the handle carries the
 	// mode and the write path needs no lookup of its own. The store keeps the
-	// content in its chunk table, so nothing about the create state belongs to
-	// the handle. See TheoryOfWriteSplice.
+	// content in its chunk table, so nothing about the create state belongs
+	// to the handle. See TheoryOfWriteSplice.
 	fh := s.registerHandle(&fuseHandle{path: p, mode: a.Mode})
+	out := fuseOpenOut{Fh: fh}
+	if !writeMode && !truncate {
+		// CREATE's open reply follows OPEN's cache rule: without a write mode
+		// or a truncation there is no new content for an old page to shadow.
+		// See TheoryOfOpenCaching.
+		out.OpenFlags = fuseOpenKeepCache
+	}
 	return encodeStruct(&fuseCreateOut{
 		Entry: s.entryOut(id, a),
-		Open:  fuseOpenOut{Fh: fh},
+		Open:  out,
 	}), nil
 }
 

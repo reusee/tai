@@ -988,6 +988,229 @@ func TestFuseServerBoundsTheSizeField(t *testing.T) {
 	}
 }
 
+// TestFuseServerZeroWriteRejectsUnknownHandle protects the handle contract:
+// a zero-byte write transfers no content, but it still names an open handle.
+// An unknown handle is EBADF just as it is for a non-empty write.
+func TestFuseServerZeroWriteRejectsUnknownHandle(t *testing.T) {
+	store, _ := newTestStore(t)
+	s := newFuseServer(store, -1)
+	_, err := s.handleWrite(encodeStruct(&fuseWriteIn{Fh: ^uint64(0)}))
+	if !errors.Is(err, syscall.EBADF) {
+		t.Fatalf("zero-byte write on an unknown handle: got %v, want EBADF", err)
+	}
+}
+
+// TestFuseServerReaddirRejectsUnknownHandle protects the handle contract:
+// an unknown directory handle is EBADF. ENOTDIR is reserved for a valid
+// handle that names a file rather than a directory.
+func TestFuseServerReaddirRejectsUnknownHandle(t *testing.T) {
+	store, _ := newTestStore(t)
+	s := newFuseServer(store, -1)
+	body := encodeStruct(&fuseReadIn{Fh: ^uint64(0)})
+	for name, handle := range map[string]func([]byte) ([]byte, error){
+		"readdir":     s.handleReaddir,
+		"readdirplus": s.handleReaddirPlus,
+	} {
+		if _, err := handle(body); !errors.Is(err, syscall.EBADF) {
+			t.Errorf("%s on an unknown handle: got %v, want EBADF", name, err)
+		}
+	}
+}
+
+// TestFuseServerWriteRefreshesReaddirPlusAttributes protects
+// TheoryOfReadPath: a mutation through the mount marks an open listing stale,
+// so a rewind sees the file's current attributes rather than the size the
+// listing captured before the write.
+func TestFuseServerWriteRefreshesReaddirPlusAttributes(t *testing.T) {
+	store, base := newTestStore(t)
+	writeHost(t, base, "f", "x")
+	s := newFuseServer(store, -1)
+
+	reply, err := s.handleOpendir(fuseRootID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var dirOut fuseOpenOut
+	decodeStruct(&dirOut, reply)
+	dir := s.handles[dirOut.Fh]
+	readBody := encodeStruct(&fuseReadIn{Fh: dirOut.Fh, Size: 1 << 20})
+	if _, err := s.handleReaddirPlus(readBody); err != nil {
+		t.Fatal(err)
+	}
+
+	id, err := s.nodeOf("/f", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reply, err = s.handleOpen(id, encodeStruct(&fuseOpenIn{Flags: uint32(unix.O_WRONLY)}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fileOut fuseOpenOut
+	decodeStruct(&fileOut, reply)
+	payload := []byte("updated")
+	writeIn := fuseWriteIn{Fh: fileOut.Fh, Size: uint32(len(payload))}
+	if _, err := s.handleWrite(append(encodeStruct(&writeIn), payload...)); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := s.handleReaddirPlus(readBody); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, entry := range dir.entries {
+		if entry.Name != "f" {
+			continue
+		}
+		found = true
+		if entry.Attr.Size != int64(len(payload)) {
+			t.Fatalf("size in the rewound listing = %d, want %d", entry.Attr.Size, len(payload))
+		}
+	}
+	if !found {
+		t.Fatal("the rewound listing lost f")
+	}
+}
+
+// TestFuseServerMetadataMutationsRefreshReaddirPlus protects
+// TheoryOfReadPath for every mount operation that changes a file's metadata:
+// truncating opens and SETATTR must invalidate an open listing just as a
+// write does, including a mutation that is only a mode or time change.
+func TestFuseServerMetadataMutationsRefreshReaddirPlus(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*fuseServer, uint64) error
+		check  func(Attr) bool
+	}{
+		{"open truncate", func(s *fuseServer, id uint64) error {
+			_, err := s.handleOpen(id, encodeStruct(&fuseOpenIn{Flags: uint32(unix.O_WRONLY | unix.O_TRUNC)}))
+			return err
+		}, func(a Attr) bool { return a.Size == 0 }},
+		{"create truncate", func(s *fuseServer, _ uint64) error {
+			body := append(encodeStruct(&fuseCreateIn{Flags: uint32(unix.O_WRONLY | unix.O_TRUNC)}), []byte("f\x00")...)
+			_, err := s.handleCreate(fuseRootID, body)
+			return err
+		}, func(a Attr) bool { return a.Size == 0 }},
+		{"setattr truncate", func(s *fuseServer, id uint64) error {
+			_, err := s.handleSetattr(id, encodeStruct(&fuseSetattrIn{Valid: fattrSize, Size: 4}))
+			return err
+		}, func(a Attr) bool { return a.Size == 4 }},
+		{"setattr mode", func(s *fuseServer, id uint64) error {
+			_, err := s.handleSetattr(id, encodeStruct(&fuseSetattrIn{Valid: fattrMode, Mode: 0o600}))
+			return err
+		}, func(a Attr) bool { return a.Mode.Perm() == 0o600 }},
+		{"setattr mtime", func(s *fuseServer, id uint64) error {
+			_, err := s.handleSetattr(id, encodeStruct(&fuseSetattrIn{Valid: fattrMtime, Mtime: 123}))
+			return err
+		}, func(a Attr) bool { return a.ModTime.Unix() == 123 }},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			store, base := newTestStore(t)
+			writeHost(t, base, "f", "x")
+			s := newFuseServer(store, -1)
+			id, err := s.nodeOf("/f", true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			reply, err := s.handleOpendir(fuseRootID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var dirOut fuseOpenOut
+			decodeStruct(&dirOut, reply)
+			dir := s.handles[dirOut.Fh]
+			readBody := encodeStruct(&fuseReadIn{Fh: dirOut.Fh, Size: 1 << 20})
+			if _, err := s.handleReaddirPlus(readBody); err != nil {
+				t.Fatal(err)
+			}
+			if err := tc.mutate(s, id); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.handleReaddirPlus(readBody); err != nil {
+				t.Fatal(err)
+			}
+			found := false
+			for _, entry := range dir.entries {
+				if entry.Name != "f" {
+					continue
+				}
+				found = true
+				if !tc.check(entry.Attr) {
+					t.Fatalf("attributes in the rewound listing = %+v", entry.Attr)
+				}
+			}
+			if !found {
+				t.Fatal("the rewound listing lost f")
+			}
+		})
+	}
+}
+
+// TestFuseServerSetattrDirectoryRefreshesListings protects
+// TheoryOfReadPath for a directory's own attributes: they appear in its
+// parent's listing, in its own "." entry, and in each child's ".." entry.
+// All three views must be reseeded after a mode change.
+func TestFuseServerSetattrDirectoryRefreshesListings(t *testing.T) {
+	store, _ := newTestStore(t)
+	if err := store.Mkdir("/d", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Mkdir("/d/c", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	s := newFuseServer(store, -1)
+	id, err := s.nodeOf("/d", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	type view struct {
+		path  string
+		entry string
+		dir   *fuseHandle
+		read  []byte
+	}
+	views := []view{{path: "/", entry: "d"}, {path: "/d", entry: "."}, {path: "/d/c", entry: ".."}}
+	for i := range views {
+		node, err := s.nodeOf(views[i].path, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		reply, err := s.handleOpendir(node)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out fuseOpenOut
+		decodeStruct(&out, reply)
+		views[i].dir = s.handles[out.Fh]
+		views[i].read = encodeStruct(&fuseReadIn{Fh: out.Fh, Size: 1 << 20})
+		if _, err := s.handleReaddirPlus(views[i].read); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.handleSetattr(id, encodeStruct(&fuseSetattrIn{Valid: fattrMode, Mode: 0o600})); err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range views {
+		if _, err := s.handleReaddirPlus(v.read); err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, entry := range v.dir.entries {
+			if entry.Name != v.entry {
+				continue
+			}
+			found = true
+			if entry.Attr.Mode.Perm() != 0o600 {
+				t.Errorf("%s in the listing of %s has mode %o, want 600", v.entry, v.path, entry.Attr.Mode.Perm())
+			}
+		}
+		if !found {
+			t.Errorf("the listing of %s lost %s", v.path, v.entry)
+		}
+	}
+}
+
 // TestFuseServerAppliesTheUmask protects TheoryOfCompletePOSIX: a create,
 // mkdir, or mknod request carries the caller's umask beside its mode, and the
 // kernel hands both so the filesystem applies the mask, as every local
@@ -1111,6 +1334,25 @@ func TestOpenReplyKeepsThePageCache(t *testing.T) {
 	}
 	if out.OpenFlags&fopenKeepCache == 0 {
 		t.Errorf("a read-only open does not ask to keep the page cache (%#x)", out.OpenFlags)
+	}
+}
+
+// TestFuseServerCreateReadOnlyKeepsPageCache protects TheoryOfOpenCaching:
+// a create-open that finds an existing file, carries no O_TRUNC, and opens it
+// read-only mutates nothing, so it has the same page-cache rights as OPEN.
+func TestFuseServerCreateReadOnlyKeepsPageCache(t *testing.T) {
+	store, base := newTestStore(t)
+	writeHost(t, base, "a.txt", "hello")
+	s := newFuseServer(store, -1)
+	body := append(encodeStruct(&fuseCreateIn{Flags: uint32(unix.O_RDONLY)}), []byte("a.txt\x00")...)
+	reply, err := s.handleCreate(fuseRootID, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out fuseCreateOut
+	decodeStruct(&out, reply)
+	if out.Open.OpenFlags&fuseOpenKeepCache == 0 {
+		t.Fatalf("read-only create-open flags = %#x, want FOPEN_KEEP_CACHE", out.Open.OpenFlags)
 	}
 }
 

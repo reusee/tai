@@ -80,18 +80,21 @@ func (s *Store) readContent(p string, size int64) ([]byte, error) {
 
 // readBaseContent reads a base file's content, bounded by limit when limit is
 // non-negative: a truncating first change keeps only the prefix it keeps, so
-// it never reads bytes it is about to drop. A whole-file capture is bounded by
-// the store's own limit instead, because the bytes it reads become a stored
+// it never reads bytes it is about to drop. A whole-file capture is bounded
+// by the store's own limit instead, because the bytes it reads become a stored
 // row: a base file above maxFileSize reports EFBIG before a byte reaches
 // memory. A base node that is not a regular file reports EINVAL without being
 // opened: a device blocks on its peer's data, and the read would swallow what
-// it waits for. See TheoryOfBaseCapture.
+// it waits for. A file that vanishes before this read reports ErrNotExist;
+// materializeContent bypasses the read only for a path that had no recorded
+// original, so a vanished captured file is never replaced with empty content.
+// See TheoryOfBaseCapture.
 func (s *Store) readBaseContent(p string, limit int64) ([]byte, error) {
 	rel := relPath(p)
 	info, err := s.baseRoot.Lstat(rel)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, nil
+			return nil, ErrNotExist
 		}
 		return nil, err
 	}
@@ -217,7 +220,7 @@ func (s *Store) materializeContent(p string, copySize int64, perm os.FileMode) (
 		}
 	}
 	var content []byte
-	if !r.deleted {
+	if !r.deleted && r.originalExists {
 		content, err = s.readBaseContent(p, copySize)
 		if err != nil {
 			return fileRow{}, err

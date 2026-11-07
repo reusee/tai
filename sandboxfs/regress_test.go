@@ -113,3 +113,77 @@ func TestCheckWriteRefusesOwnDatabaseWithAStaleRow(t *testing.T) {
 		t.Errorf("write over a stale database row: got %v, want a permission error", err)
 	}
 }
+
+// TestMetadataOnlyMutationAfterBaseFileVanishes protects TheoryOfBaseCapture:
+// a metadata-only row still names the base file whose bytes it captured. Once
+// that file vanishes, a content mutation must report the missing base instead
+// of silently replacing the captured content with an empty file.
+func TestMetadataOnlyMutationAfterBaseFileVanishes(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*Store) error
+	}{
+		{"splice", func(s *Store) error {
+			return s.SpliceFile("/f", 0, []byte("z"), 0o600)
+		}},
+		{"truncate", func(s *Store) error {
+			return s.TruncateFile("/f", 1, 0o600)
+		}},
+		{"rename", func(s *Store) error {
+			return s.Rename("/f", "/g")
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			store, base := newTestStore(t)
+			writeHost(t, base, "f", "captured")
+			if err := store.SetMode("/f", 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Remove(filepath.Join(base, "f")); err != nil {
+				t.Fatal(err)
+			}
+			if err := tc.mutate(store); !errors.Is(err, ErrNotExist) {
+				t.Fatalf("mutation after the base file vanished: got %v, want a not-exist error", err)
+			}
+		})
+	}
+}
+
+// TestOwnDatabaseOutsideBaseIsRefusedThroughHardLink protects
+// TheoryOfSandboxFilesystem: record protection is by file identity, not only
+// by path text. A database outside the base is still the store's own record
+// when a hard link inside the base names the same inode.
+func TestOwnDatabaseOutsideBaseIsRefusedThroughHardLink(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Join(dir, "base")
+	if err := os.Mkdir(base, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	store, err := Open(filepath.Join(dir, "record.db"), base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := os.Link(filepath.Join(dir, "record.db"), filepath.Join(base, "alias")); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.WriteFile("/alias", []byte("corrupt"), 0o600); !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("write through a hard link to the record: got %v, want a permission error", err)
+	}
+}
+
+// TestDirRecordAtBaseProtectsTheWholeTree protects TheoryOfDirRecord: when
+// the record directory is the base itself, every sandbox path is beneath the
+// record and therefore outside the session's writable reach.
+func TestDirRecordAtBaseProtectsTheWholeTree(t *testing.T) {
+	base := t.TempDir()
+	store, err := OpenDir(base, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.Mkdir("/work", 0o755); !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("write beneath a record that is the whole base: got %v, want a permission error", err)
+	}
+}

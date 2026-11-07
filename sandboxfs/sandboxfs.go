@@ -712,15 +712,17 @@ func newStore(base string, upper upperStore, policy func(string) error) (*Store,
 
 // isOwnDBPath reports whether p names the upper layer's own record: the record
 // path itself, a backend's sibling file beside it (sqlite's -wal and -shm,
-// DuckDB's .wal), and — for a directory record — every path beneath the record
-// directory. A memory layer has no record, so every path is free. The record's
-// path is a filesystem path and a sandbox path is a slash path, so the name
-// comparison runs on slash form twice: once against the recorded path, and once
-// against the path relative to the base, which is the record's sandbox name. The
-// second form is what catches a directory record's files after a mount rewrote
-// the record's path to its private base view, and what catches a direct store
-// whose record sits inside its own base. The identity comparison below then
-// covers a mount whose base view renamed the file. See TheoryOfSandboxFilesystem,
+// DuckDB's .wal), and — for a directory record — every path beneath the
+// record directory. A memory layer has no record, so every path is free.
+// The record's path is a filesystem path and a sandbox path is a slash path,
+// so the name comparison runs on slash form twice: once against the recorded
+// path, and once against the path relative to the base, which is the record's
+// sandbox name. The second form is what catches a directory record's files
+// after a mount rewrote the record's path to its private base view, and what
+// catches a direct store whose record sits inside its own base. The identity
+// comparison also covers hard links: a record inside the base is stated
+// through baseRoot so a detached mount view still works, while a record
+// outside it is stated by its host path. See TheoryOfSandboxFilesystem,
 // TheoryOfDirRecord and TheoryOfSqlDialects.
 func (s *Store) isOwnDBPath(p string) bool {
 	if s.dbPath == "" {
@@ -732,26 +734,36 @@ func (s *Store) isOwnDBPath(p string) bool {
 	case db, db + "-wal", db + "-shm", db + ".wal":
 		return true
 	}
-	rel, err := filepath.Rel(s.base, s.dbPath)
-	if err != nil || rel == "." || rel == ".." ||
-		strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return false
+	rel, relErr := filepath.Rel(s.base, s.dbPath)
+	inside := relErr == nil && rel != ".." &&
+		!strings.HasPrefix(rel, ".."+string(filepath.Separator))
+	if inside && rel == "." {
+		// A directory record at the base is the whole sandbox tree.
+		return true
 	}
-	// The record's sandbox name and, for a record directory, every path under
-	// it are the record. A directory record holds a metadata file per recorded
-	// path and a content file per content-bearing path, all beneath this name.
-	// See TheoryOfDirRecord.
-	record := Canonical(filepath.ToSlash(rel))
-	switch {
-	case cp == record:
-		return true
-	case record != "/" && strings.HasPrefix(cp, record+"/"):
-		return true
+	if inside {
+		// The record's sandbox name and, for a directory record, every path
+		// under it are the record. See TheoryOfDirRecord.
+		record := Canonical(filepath.ToSlash(rel))
+		switch {
+		case cp == record:
+			return true
+		case record != "/" && strings.HasPrefix(cp, record+"/"):
+			return true
+		}
 	}
 	var own []os.FileInfo
-	for _, name := range [4]string{rel, rel + "-wal", rel + "-shm", rel + ".wal"} {
-		if fi, err := s.baseRoot.Stat(name); err == nil {
-			own = append(own, fi)
+	if inside {
+		for _, name := range [4]string{rel, rel + "-wal", rel + "-shm", rel + ".wal"} {
+			if fi, err := s.baseRoot.Stat(name); err == nil {
+				own = append(own, fi)
+			}
+		}
+	} else {
+		for _, name := range [4]string{s.dbPath, s.dbPath + "-wal", s.dbPath + "-shm", s.dbPath + ".wal"} {
+			if fi, err := os.Stat(name); err == nil {
+				own = append(own, fi)
+			}
 		}
 	}
 	if len(own) == 0 {
