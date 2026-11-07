@@ -51,6 +51,14 @@ inside the process; across processes a live record is a per-file snapshot,
 not one snapshot of the directory, and the review command reads it the way it
 reads the SQL record.
 
+The record is the layer's private data, so a record file's own bits never gate
+the layer's write. A record outlives the build that wrote it, so a record file
+may carry bits an older layer or a host-side tool left on it, and the session
+that truncates or splices the path would then meet the record's permission
+error instead of its own mutation, while a refused audit append would drop
+its batch of the trail in silence. The layer repairs a record file that
+refuses the owner's write to the owner's bits and runs the write once more.
+
 Durability is the host's. A write returns once the bytes reach the operating
 system, the point the SQL layer's synchronous=NORMAL commit stops at: the
 record survives the process, is lost only to a machine crash, and pays no
@@ -140,6 +148,22 @@ func metaName(p string) string {
 
 func dataName(p string) string {
 	return contentHash([]byte(p)) + dirDataSuffix
+}
+
+// openRecordWrite opens one record file for a write. The record is the
+// layer's private data, so a record file's own bits never gate the layer's
+// write: a file that refuses the owner's write — a record an older build
+// wrote, a copied record, a file a host-side tool touched — is repaired to
+// the owner's bits and the open runs once more. See TheoryOfDirUpper.
+func (u *dirUpper) openRecordWrite(name string, flag int) (*os.File, error) {
+	f, err := u.root.OpenFile(name, flag, 0o600)
+	if err == nil || !errors.Is(err, fs.ErrPermission) {
+		return f, err
+	}
+	if cerr := chmodAt(u.root, name, 0o600); cerr != nil {
+		return nil, err
+	}
+	return u.root.OpenFile(name, flag, 0o600)
 }
 
 // readMeta returns one path's row, or reports that the record holds none.
@@ -522,7 +546,7 @@ func (u *dirUpper) splice(p string, off int64, data []byte, mtime time.Time) err
 	if !ok || r.Deleted || Kind(r.Kind) != KindRegular || r.Size < 0 {
 		return errNoLiveRegularRow
 	}
-	f, err := u.root.OpenFile(dataName(p), os.O_RDWR|os.O_CREATE, 0o600)
+	f, err := u.openRecordWrite(dataName(p), os.O_RDWR|os.O_CREATE)
 	if err != nil {
 		return err
 	}
@@ -553,7 +577,7 @@ func (u *dirUpper) truncate(p string, size int64, mtime time.Time) error {
 	if size < r.Size {
 		// Only a shrink touches the file: a grown size reads as zeros past the
 		// file's end, so recording it costs no bytes. See TheoryOfDirUpper.
-		f, err := u.root.OpenFile(dataName(p), os.O_RDWR, 0)
+		f, err := u.openRecordWrite(dataName(p), os.O_RDWR)
 		switch {
 		case err == nil:
 			terr := f.Truncate(size)
@@ -599,7 +623,7 @@ func (u *dirUpper) writeAudit(ops []Op) error {
 	}
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	f, err := u.root.OpenFile(dirAuditName, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
+	f, err := u.openRecordWrite(dirAuditName, os.O_WRONLY|os.O_APPEND|os.O_CREATE)
 	if err != nil {
 		return err
 	}

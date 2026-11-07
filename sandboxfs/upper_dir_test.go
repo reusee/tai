@@ -77,6 +77,45 @@ func TestOpenDirRecordsToADirectory(t *testing.T) {
 	}
 }
 
+// TestWriteAuditRepairsTheRecordLogMode protects TheoryOfDirUpper on the
+// trail's own file: the audit log is a record file, so its own bits must not
+// gate the layer's write — a refused append would drop a batch of the trail
+// in silence, because the trail never fails an operation.
+func TestWriteAuditRepairsTheRecordLogMode(t *testing.T) {
+	dir := t.TempDir()
+	record := dir + "/record"
+	store, err := OpenDir(record, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	// One row first, so the audit log exists before its bits refuse a write.
+	if err := store.WriteFile("/a", []byte("a"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store.FlushAudit()
+	if err := os.Chmod(record+"/"+dirAuditName, 0o400); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.WriteFile("/b", []byte("b"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store.FlushAudit()
+	ops, err := store.Ops()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wrote bool
+	for _, o := range ops {
+		if o.Op == "write" && o.Path == "/b" {
+			wrote = true
+		}
+	}
+	if !wrote {
+		t.Fatal("the audit log's own bits dropped the trail's row")
+	}
+}
+
 // TestApplyFlushesTheAuditTrail protects TheoryOfAuditBatching: the apply drops
 // the upper rows that showed each change, so its audit row must reach the trail
 // with the apply instead of waiting for a full batch. A session whose reads
