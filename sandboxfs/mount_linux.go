@@ -415,6 +415,17 @@ func (m *MountedFS) bindPassthrough(paths []string) error {
 		if err := unix.Mount(p, target, "", flags, ""); err != nil {
 			return fmt.Errorf("sandboxfs: bind passthrough %s: %w", p, err)
 		}
+		if !recursivePassthrough[p] {
+			// The hardened namespace made the root mount read-only, and the
+			// bind inherited the per-mount flag — while writing its cache
+			// through the passthrough is the whole reason a cache directory
+			// bypasses the store. One remount of the bind clears the flag;
+			// a source that is read-only itself keeps the bind as it is, the
+			// same best-effort stand a missing source takes. The kernel
+			// filesystems keep their recursive binds untouched.
+			// See TheoryOfPassthrough.
+			_ = unix.Mount("", target, "", unix.MS_REMOUNT|unix.MS_BIND, "")
+		}
 	}
 	return nil
 }

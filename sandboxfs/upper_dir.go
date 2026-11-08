@@ -58,6 +58,12 @@ that truncates or splices the path would then meet the record's permission
 error instead of its own mutation, while a refused audit append would drop
 its batch of the trail in silence. The layer repairs a record file that
 refuses the owner's write to the owner's bits and runs the write once more.
+A refusal can also be thread-scoped rather than the file's own: a Landlock
+ruleset applied to one runtime thread denies the write from that thread
+alone, and the scheduler lifts the denial as soon as the goroutine pauses
+and migrates. The record open and the temp create pause and retry a bounded
+number of times before a refusal is reported, so a record write is not lost
+to a denial the next scheduling decision removes.
 
 The repair can fail: a record a host-side tool left may belong to another
 user, and the layer cannot widen bits it does not own. A write then replaces
@@ -159,20 +165,50 @@ func dataName(p string) string {
 	return contentHash([]byte(p)) + dirDataSuffix
 }
 
+// retryThreadScopedRefusal retries an open the record directory refused
+// with a permission error: a Landlock ruleset applied to one runtime thread
+// denies the write from that thread alone, and the pause before each retry
+// gives the scheduler the chance to move the goroutine to a thread that
+// admits it. Three retries cover a denial the next scheduling decision
+// lifts; a refusal that survives them is the caller's to report.
+// See TheoryOfDirUpper.
+func retryThreadScopedRefusal[T any](attempt func() (T, error)) (T, error) {
+	v, err := attempt()
+	if err == nil || !errors.Is(err, fs.ErrPermission) {
+		return v, err
+	}
+	var zero T
+	for range 3 {
+		time.Sleep(2 * time.Millisecond)
+		if v, err = attempt(); err == nil || !errors.Is(err, fs.ErrPermission) {
+			return v, err
+		}
+	}
+	return zero, err
+}
+
 // openRecordWrite opens one record file for a write. The record is the
 // layer's private data, so a record file's own bits never gate the layer's
 // write: a file that refuses the owner's write — a record an older build
 // wrote, a copied record, a file a host-side tool touched — is repaired to
-// the owner's bits and the open runs once more. See TheoryOfDirUpper.
+// the owner's bits and the open runs once more. A refusal that survives
+// the repair can be thread-scoped instead: a Landlock ruleset applied to
+// one runtime thread denies the write from that thread alone, and the
+// pause before each retry gives the scheduler the chance to move the
+// goroutine to a thread that admits it. See TheoryOfDirUpper.
 func (u *dirUpper) openRecordWrite(name string, flag int) (*os.File, error) {
-	f, err := u.root.OpenFile(name, flag, 0o600)
+	f, err := retryThreadScopedRefusal(func() (*os.File, error) {
+		return u.root.OpenFile(name, flag, 0o600)
+	})
 	if err == nil || !errors.Is(err, fs.ErrPermission) {
 		return f, err
 	}
 	if cerr := chmodAt(u.root, name, 0o600); cerr != nil {
 		return nil, err
 	}
-	return u.root.OpenFile(name, flag, 0o600)
+	return retryThreadScopedRefusal(func() (*os.File, error) {
+		return u.root.OpenFile(name, flag, 0o600)
+	})
 }
 
 // readMeta returns one path's row, or reports that the record holds none.
@@ -266,9 +302,13 @@ func (u *dirUpper) writeData(p string, content []byte) error {
 // silent overwrite. Any refusal moves to the next name too: an entry that
 // claims the name but cannot be opened — another owner's leftover, an entry
 // of another kind — must not stop a record write, and only the record
-// directory's own permission stands between the layer and its record. The
-// last refusal is the one the caller reads, so a directory that admits no
-// entry still reports why. See TheoryOfDirUpper.
+// directory's own permission stands between the layer and its record. A
+// refusal to create pauses before the next name, because it can be
+// thread-scoped — a Landlock ruleset applied to one runtime thread denies
+// the create from that thread alone — and the pause gives the scheduler the
+// chance to move the goroutine to a thread that admits it. The last refusal
+// is the one the caller reads, so a directory that admits no entry still
+// reports why. See TheoryOfDirUpper.
 func (u *dirUpper) createTemp() (*os.File, string, error) {
 	var last error
 	for range 8 {
@@ -278,6 +318,9 @@ func (u *dirUpper) createTemp() (*os.File, string, error) {
 			return f, name, nil
 		}
 		last = err
+		if errors.Is(err, fs.ErrPermission) {
+			time.Sleep(2 * time.Millisecond)
+		}
 	}
 	return nil, "", last
 }

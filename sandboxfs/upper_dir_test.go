@@ -116,6 +116,29 @@ func TestWriteAuditRepairsTheRecordLogMode(t *testing.T) {
 	}
 }
 
+// TestRetryThreadScopedRefusalOutlivesAThreadScopedDenial pins the record
+// layer's answer to a thread-scoped permission refusal: the denial lifts
+// once the paused goroutine resumes on a thread that admits the open, and a
+// refusal that survives every retry is reported. See TheoryOfDirUpper.
+func TestRetryThreadScopedRefusalOutlivesAThreadScopedDenial(t *testing.T) {
+	refusals := 0
+	open := func() (int, error) {
+		refusals++
+		if refusals <= 2 {
+			return 0, os.ErrPermission
+		}
+		return 7, nil
+	}
+	v, err := retryThreadScopedRefusal(open)
+	if err != nil || v != 7 {
+		t.Fatalf("retry did not lift the denial: %v, %v", v, err)
+	}
+	_, err = retryThreadScopedRefusal(func() (int, error) { return 0, os.ErrPermission })
+	if err != os.ErrPermission {
+		t.Fatalf("persistent refusal was not reported: %v", err)
+	}
+}
+
 // TestSpliceRewriteLandsTheWholeContent protects the record layer's rewrite
 // path: it is what a refused in-place open of a content file falls back to,
 // so its bytes, its gap rule, and its recorded length must match the in-place
