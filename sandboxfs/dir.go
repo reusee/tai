@@ -273,27 +273,32 @@ func (c *dirCursor) refill() (bool, error) {
 }
 
 // mergeBase appends one base entry's merged result to the pending window: a
-// whiteout hides it, a live upper row replaces its attribute, and otherwise the
-// base's own attribute stands. An entry whose attribute cannot be read is
-// skipped, the answer an entry that vanishes mid-walk gets.
-// See TheoryOfDirectoryStream.
+// whiteout hides it, a live upper row replaces the base's attribute, and
+// otherwise the base's own attribute stands. Only a base-only entry whose
+// attribute cannot be read is skipped. A live upper row still answers when the
+// host entry vanishes between enumeration and stat, because the session's own
+// content does not depend on that host entry; a metadata-only row then reports
+// zero length, matching Stat. See TheoryOfDirectoryStream.
 func (c *dirCursor) mergeBase(name string) {
 	if c.deleted[name] {
 		delete(c.deleted, name)
 		return
 	}
-	base, ok := c.baseEntry(name)
-	if !ok {
-		return
-	}
 	row, live := c.upper[name]
+	base, ok := c.baseEntry(name)
 	if !live {
+		if !ok {
+			return
+		}
 		c.pending = append(c.pending, DirEntry{Name: name, Attr: base})
 		return
 	}
 	delete(c.upper, name)
-	if row.noSize && base.Kind == KindRegular {
-		row.attr.Size = base.Size
+	if row.noSize {
+		row.attr.Size = 0
+		if ok && base.Kind == KindRegular {
+			row.attr.Size = base.Size
+		}
 	}
 	c.pending = append(c.pending, DirEntry{Name: name, Attr: row.attr})
 }

@@ -315,8 +315,9 @@ func TestBaseCaptureIsBounded(t *testing.T) {
 
 // TestBaseCaptureOfAnOversizedFile protects TheoryOfBaseCapture: the capture
 // hashes at most the store's bound, so a request never spends a file's size in
-// hash time however large the file is. The apply reads the host through the
-// same bound, so a deletion still applies without a conflict.
+// hash time however large the file is. The snapshot also records the length,
+// and the apply reads the host through the same bound, so a deletion still
+// applies without a conflict.
 func TestBaseCaptureOfAnOversizedFile(t *testing.T) {
 	store, base := newTestStore(t)
 	p := filepath.Join(base, "big.bin")
@@ -342,8 +343,9 @@ func TestBaseCaptureOfAnOversizedFile(t *testing.T) {
 	}
 	prefix := make([]byte, maxFileSize)
 	copy(prefix, "head")
-	if r.originalHash != contentHash(prefix) {
-		t.Fatal("the capture did not stop at the store's bound")
+	originalSize, digest, tagged := parseRegularOriginal(r.originalHash)
+	if !tagged || originalSize != maxFileSize+1 || digest != contentHash(prefix) {
+		t.Fatal("the capture did not record the length and the bounded digest")
 	}
 	changes, err := store.Changes()
 	if err != nil {

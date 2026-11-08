@@ -7,6 +7,7 @@ import (
 	"os"
 	"path"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -19,6 +20,12 @@ the apply step compares the host against. That record costs the request path
 work proportional to the file's size, and a request that runs long holds one
 worker of the fixed pool for its whole duration, so enough of them leave no
 worker answering. Three rules keep the pause small.
+
+A regular file's snapshot pairs its full length with the digest of its bounded
+prefix. The length distinguishes a truncation or an extension whose retained
+prefix is unchanged, and the apply compares both fields so a host length change
+is a conflict too. Records written before this pairing keep their prefix-only
+meaning.
 
 The hash streams through one fixed buffer and stops at maxFileSize. Memory
 stays the buffer's, and a path above that bound costs the prefix the store
@@ -56,6 +63,36 @@ consumes the bytes it waited for, so a capture that hashed one would swallow
 the user's input and hold its worker until the peer writes. See
 TheoryOfFuseConcurrency.
 `
+
+// regularOriginalPrefix tags a regular file's length-and-prefix snapshot.
+// See TheoryOfBaseCapture.
+const regularOriginalPrefix = "regular:"
+
+// formatRegularOriginal records a regular file's full length beside the digest
+// of its bounded prefix, so equal prefixes cannot hide a length change.
+// See TheoryOfBaseCapture.
+func formatRegularOriginal(size int64, digest string) string {
+	return regularOriginalPrefix + strconv.FormatInt(size, 10) + ":" + digest
+}
+
+// parseRegularOriginal decodes a regular file's length-and-prefix snapshot.
+// tagged is false for an older record that holds only the prefix digest.
+// See TheoryOfBaseCapture.
+func parseRegularOriginal(record string) (size int64, digest string, tagged bool) {
+	rest, ok := strings.CutPrefix(record, regularOriginalPrefix)
+	if !ok {
+		return 0, "", false
+	}
+	sizeText, digest, ok := strings.Cut(rest, ":")
+	if !ok || digest == "" {
+		return 0, "", false
+	}
+	size, err := strconv.ParseInt(sizeText, 10, 64)
+	if err != nil || size < 0 {
+		return 0, "", false
+	}
+	return size, digest, true
+}
 
 // Stat returns the attributes of one sandbox path. It never follows a
 // symbolic link: a link reports itself, and the kernel resolves it by
@@ -317,19 +354,21 @@ func (s *Store) ReadDir(p string) ([]DirEntry, error) {
 // captureOriginal records the base state of a path the upper layer is about
 // to touch for the first time: whether the base holds the path, its kind and
 // mode, and — for a regular file or a symbolic link — the content hash the
-// apply step compares the host against. The hash streams, so a path of any
-// size costs one sequential read of at most the store's bound and never an
-// allocation of the file's size. A regular file's row carries the metadata
-// sentinel rather than a content length, so a later metadata change touches
-// no bytes; a write replaces the sentinel with the stored length. A symbolic
-// link's hash carries a tag, so replacing a link with a byte-identical
-// regular file stays a change of kind. A named pipe has no content, so its
-// kind is recorded as a sentinel the net-change comparison recognises. A base
-// node the store cannot serve — a device or a socket — is refused with EINVAL
-// before anything opens it, because opening one blocks on its peer's data. A
-// path that names the store's own database is refused before the read, so a
-// stray write or delete never drags the record through the hash. See
-// TheoryOfApplyConflict, TheoryOfBaseCapture and TheoryOfCompletePOSIX.
+// apply step compares the host against. A regular file's record also carries
+// its full length, so a changed length cannot hide behind an unchanged bounded
+// prefix. The hash streams, so a path of any size costs one sequential read of
+// at most the store's bound and never an allocation of the file's size. A
+// regular file's row carries the metadata sentinel rather than a content
+// length, so a later metadata change touches no bytes; a write replaces the
+// sentinel with the stored length. A symbolic link's hash carries a tag, so
+// replacing a link with a byte-identical regular file stays a change of kind.
+// A named pipe has no content, so its kind is recorded as a sentinel the
+// net-change comparison recognises. A base node the store cannot serve — a
+// device or a socket — is refused with EINVAL before anything opens it,
+// because opening one blocks on its peer's data. A path that names the store's
+// own database is refused before the read, so a stray write or delete never
+// drags the record through the hash. See TheoryOfApplyConflict,
+// TheoryOfBaseCapture and TheoryOfCompletePOSIX.
 func (s *Store) captureOriginal(p string) (fileRow, error) {
 	if s.isOwnDBPath(p) {
 		return fileRow{}, fmt.Errorf("%w: the sandbox database is never a sandbox target: %s", os.ErrPermission, p)
@@ -355,7 +394,7 @@ func (s *Store) captureOriginal(p string) (fileRow, error) {
 		if err != nil {
 			return fileRow{}, err
 		}
-		r.originalHash = sum
+		r.originalHash = formatRegularOriginal(info.Size(), sum)
 		// The row is metadata-only: the sentinel says the content still
 		// lives in the base. See TheoryOfBaseCapture.
 		r.size = -1

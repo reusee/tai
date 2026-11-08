@@ -245,8 +245,10 @@ A named pipe is recorded by existence and mode alone: the store never opens
 it, because pipe reads and writes are kernel objects whose blocking
 semantics a filesystem does not route through FUSE. Applying a pipe creates
 the node with MKNODAT where the host holds none and sets the recorded bits
-on the pipe the host already holds, so an open end survives a mode change. A
-read or write addressed to a pipe path reports EINVAL: the store cannot
+on the pipe the host already holds, so an open end survives a mode change.
+Where no root-confined pipe creation exists, applying a new pipe reports
+ErrUnsupported rather than weakening containment with a path-based fallback.
+A read or write addressed to a pipe path reports EINVAL: the store cannot
 emulate blocking, and returning content would be worse than an honest
 refusal.
 
@@ -840,6 +842,27 @@ func parentOf(p string) string {
 		return "/"
 	}
 	return p[:i]
+}
+
+// childPath names one directory entry of a canonical parent without the
+// cleaning path.Join performs on every component: a listing builds one path per
+// entry, and the parent is already clean and absolute. "." and ".." resolve to
+// the parent itself and its own parent, the values path.Join gives, so a listing
+// and a later LOOKUP of the same name reach one node id and the kernel sees one
+// number for the entry's d_ino and the path's st_ino. The ".." case reads the
+// parent's prefix rather than building the same string again. See
+// TheoryOfFuseMount.
+func childPath(parent, name string) string {
+	switch name {
+	case ".":
+		return parent
+	case "..":
+		return parentOf(parent)
+	}
+	if parent == "/" {
+		return "/" + name
+	}
+	return parent + "/" + name
 }
 
 func contentHash(b []byte) string {

@@ -1,15 +1,11 @@
 package sandboxfs
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"os"
 	"path"
 	"sort"
-	"syscall"
-
-	"golang.org/x/sys/unix"
 )
 
 // ChangeKind classifies one net change of the sandbox relative to the host
@@ -43,6 +39,11 @@ type Change struct {
 	Original []byte
 	Current  []byte
 	Conflict string
+
+	// modeOnly distinguishes a permission change from equal bounded prefixes
+	// of files whose lengths differ. The distinction decides whether an apply
+	// sets the existing node's bits or writes and truncates its content.
+	modeOnly bool
 }
 
 // Changes returns the net changes of the sandbox in path order. A change
@@ -186,6 +187,18 @@ func netChange(r fileRow, content []byte) *Change {
 	if !r.originalExists {
 		return &Change{Path: r.path, Kind: ChangeAdded, Mode: r.mode, Current: content}
 	}
+	if originalSize, originalDigest, tagged := parseRegularOriginal(r.originalHash); tagged {
+		if r.size < 0 {
+			// The session changed no content: this row records metadata alone.
+			// detectConflict compares the host's current length and prefix with
+			// the snapshot when a metadata change needs applying.
+			return nil
+		}
+		if int64(len(content)) == originalSize && contentHash(content) == originalDigest {
+			return nil
+		}
+		return &Change{Path: r.path, Kind: ChangeModified, Mode: r.mode, Current: content}
+	}
 	if contentHash(content) == r.originalHash {
 		return nil
 	}
@@ -207,7 +220,7 @@ func (s *Store) modeOnlyChange(r fileRow, content []byte) *Change {
 	if err != nil || kindOf(info) != r.kind || info.Mode().Perm() == r.mode.Perm() {
 		return nil
 	}
-	c := &Change{Path: r.path, Kind: ChangeModified, Mode: r.mode}
+	c := &Change{Path: r.path, Kind: ChangeModified, Mode: r.mode, modeOnly: true}
 	switch r.kind {
 	case KindDir:
 		c.Dir = true
@@ -232,8 +245,8 @@ func (s *Store) modeOnlyChange(r fileRow, content []byte) *Change {
 // modification. A regular file's host read stops at the store's bound, the
 // same bound the capture hashed, so a host file above maxFileSize costs the
 // bounded read rather than an allocation of the file's own size; the two
-// sides compare one prefix. See TheoryOfApplyConflict and
-// TheoryOfBaseCapture.
+// sides compare one prefix and, for a current snapshot, the full length.
+// See TheoryOfApplyConflict and TheoryOfBaseCapture.
 func (s *Store) detectConflict(c *Change, r fileRow) {
 	if !r.originalExists {
 		if _, err := s.baseRoot.Lstat(relPath(r.path)); err == nil {
@@ -261,7 +274,12 @@ func (s *Store) detectConflict(c *Change, r fileRow) {
 			c.Conflict = err.Error()
 			return
 		}
-		if contentHash(content) != r.originalHash {
+		if originalSize, originalDigest, tagged := parseRegularOriginal(r.originalHash); tagged {
+			if info.Size() != originalSize || contentHash(content) != originalDigest {
+				c.Conflict = "the host file changed after the session snapshot"
+				return
+			}
+		} else if contentHash(content) != r.originalHash {
 			c.Conflict = "the host file changed after the session snapshot"
 			return
 		}
@@ -448,14 +466,14 @@ func (s *Store) applyOne(c Change, run *applyRun) error {
 			_ = s.baseRoot.Remove(rel)
 			return s.baseRoot.Symlink(string(c.Current), rel)
 		}
-		// A change whose host node is a regular file holding the session's own
-		// bytes is a change of mode alone: writing those bytes again would
-		// replace the node, break the links to it, and reset its times for a
-		// permission bit. The host kind is checked here, not only the bytes: a
-		// base symbolic link whose target string spells the session's content
+		// A mode-only change writes no content. The explicit mark matters when
+		// Original and Current are bounded prefixes: equal prefixes do not
+		// imply equal lengths, and treating a truncation as a chmod would leave
+		// the host's tail in place. The host kind is checked too: a base
+		// symbolic link whose target string spells the session's content
 		// compares equal by bytes and is still a change of kind.
-		// See TheoryOfApplyConflict.
-		if c.Kind == ChangeModified && c.Original != nil && bytes.Equal(c.Original, c.Current) {
+		// See TheoryOfApplyConflict and TheoryOfBaseCapture.
+		if c.Kind == ChangeModified && c.modeOnly {
 			if info, err := s.baseRoot.Lstat(rel); err == nil && info.Mode().IsRegular() {
 				return chmodAt(s.baseRoot, rel, perm)
 			}
@@ -635,34 +653,14 @@ func (s *Store) removeAppliedRow(p string) error {
 	return s.upper.drop(p)
 }
 
-// mkfifoAt creates a named pipe beneath root. os.Root has no mkfifo, so the
-// node is created through the parent directory's descriptor with MKNODAT,
-// keeping the write inside the root.
-func mkfifoAt(root *os.Root, rel string, mode os.FileMode) error {
-	dir := path.Dir(rel)
-	f, err := root.Open(dir)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	return unix.Mknodat(int(f.Fd()), path.Base(rel),
-		uint32(syscall.S_IFIFO)|uint32(mode.Perm()), 0)
-}
-
 // chmodAt sets one path's permission bits beneath root without opening the
 // target: a named pipe would block an open, and a mode with no read bit
-// refuses an open of its own file. The parent directory is opened through
-// root, so the fchmodat stays contained, and the final component is a node
-// the caller just created, never a symbolic link the call could follow.
-// See TheoryOfSandboxFilesystem.
+// refuses an open of its own file. os.Root keeps the operation contained and
+// supplies the same operation on platforms without Linux's fchmodat shape.
+// The final component is a node the caller just created, never a symbolic link
+// the call could follow. See TheoryOfSandboxFilesystem.
 func chmodAt(root *os.Root, rel string, mode os.FileMode) error {
-	dir := path.Dir(rel)
-	f, err := root.Open(dir)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	return unix.Fchmodat(int(f.Fd()), path.Base(rel), uint32(mode.Perm()), 0)
+	return root.Chmod(rel, mode)
 }
 
 // TheoryOfApplyFaultIsolation is the apply step's fault-isolation rule: one

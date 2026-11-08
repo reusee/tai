@@ -24,3 +24,7 @@ func baseDirEntryStat(dir *os.File, name string) (Attr, bool, error) {
 func baseReadAt(fd int, rel string, off int64, size int) ([]byte, bool, error) {
 	return nil, false, nil
 }
+
+func baseReadFile(fd int, rel string) ([]byte, bool, error) {
+	return nil, false, nil
+}

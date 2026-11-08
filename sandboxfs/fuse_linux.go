@@ -1173,27 +1173,6 @@ func splitName(b []byte) (name, rest []byte, ok bool) {
 	return b, nil, false
 }
 
-// childPath names one directory entry of a canonical parent without the
-// cleaning path.Join performs on every component: a listing builds one path per
-// entry, and the parent is already clean and absolute. "." and ".." resolve to
-// the parent itself and its own parent, the values path.Join gives, so a listing
-// and a later LOOKUP of the same name reach one node id and the kernel sees one
-// number for the entry's d_ino and the path's st_ino. The ".." case reads the
-// parent's prefix rather than building the same string again. See
-// TheoryOfFuseMount.
-func childPath(parent, name string) string {
-	switch name {
-	case ".":
-		return parent
-	case "..":
-		return parentOf(parent)
-	}
-	if parent == "/" {
-		return "/" + name
-	}
-	return parent + "/" + name
-}
-
 // childNodeLocked returns the node id of one directory entry, allocating it on
 // first use. The caller holds the server's lock, so a listing resolves every
 // entry it carries under one acquisition instead of one per entry: the
@@ -2378,6 +2357,11 @@ func (s *fuseServer) handleRename(parent uint64, body []byte, two bool) ([]byte,
 		renameExchange  = 2
 		renameWhiteout  = 4
 	)
+	// renameat2 rejects bits outside its defined flag set with EINVAL; an
+	// unknown bit cannot be ignored because the caller may rely on its meaning.
+	if flags&^(renameNoReplace|renameExchange|renameWhiteout) != 0 {
+		return nil, syscall.EINVAL
+	}
 	if flags&renameExchange != 0 || flags&renameWhiteout != 0 {
 		return nil, syscall.ENOSYS
 	}
@@ -2389,6 +2373,10 @@ func (s *fuseServer) handleRename(parent uint64, body []byte, two bool) ([]byte,
 		}
 		if _, err := s.store.Stat(newPath); err == nil {
 			return nil, ErrExist
+		} else if !errors.Is(err, ErrNotExist) {
+			// Only absence permits the rename. A failed lookup says nothing
+			// about whether the destination exists, so proceeding could replace it.
+			return nil, err
 		}
 	}
 	if err := s.store.Rename(oldPath, newPath); err != nil {
