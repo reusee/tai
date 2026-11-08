@@ -83,3 +83,19 @@ func TestDefaultPassthroughIncludesTheUserConfigDir(t *testing.T) {
 	}
 	t.Fatalf("DefaultPassthrough() does not carry %q", cfg)
 }
+
+// TestDefaultPassthroughIncludesTheUserCacheDir protects the cache writer's
+// case in TheoryOfPassthrough: gopls and goimports keep their indexes below
+// the user cache directory, and a write policy that confines mutations to
+// the task tree refuses every timestamp update of them. The directory must
+// bypass the store, or the audit trail fills with denials no review can use.
+func TestDefaultPassthroughIncludesTheUserCacheDir(t *testing.T) {
+	cache := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", cache)
+	for _, p := range DefaultPassthrough() {
+		if p == cache {
+			return
+		}
+	}
+	t.Fatalf("DefaultPassthrough() does not carry %q", cache)
+}

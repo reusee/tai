@@ -244,14 +244,18 @@ const fuseCacheTimeoutSec = 60
 
 const TheoryOfPassthrough = `
 Passthrough directories are mounted over the sandbox view, not served
-through the store: the Go toolchain caches (GOCACHE, GOMODCACHE, GOPATH/pkg)
-and the user config directory. The design calls these directories valueless
-for review — their content is machine-managed, and their traffic dominates
-the write volume of a task — so intercepting them would add cost without
-adding review value. /proc, /sys, and /dev are also passthroughs, because
-they must be real kernel filesystems: the container needs PID-scoped /proc,
-device nodes, and sysfs, none of which a read-through file proxy can
-emulate.
+through the store: the user cache directory, the Go toolchain caches
+(GOCACHE, GOMODCACHE, GOPATH/pkg), and the user config directory. The design
+calls these directories valueless for review — their content is
+machine-managed, and their traffic dominates the write volume of a task — so
+intercepting them would add cost without adding review value. A cache writer
+is the load-bearing case: a tool that keeps its index or build cache below
+the user cache directory writes outside the task's writable set, and a policy
+that confines mutations to that set refuses every timestamp update of it, so
+the audit trail fills with denials a review cannot use. /proc, /sys, and /dev
+are also passthroughs, because they must be real kernel filesystems: the
+container needs PID-scoped /proc, device nodes, and sysfs, none of which a
+read-through file proxy can emulate.
 
 /tmp is special. It is local and unreviewed like the others, but the
 filesystem's mountpoint lives inside the container's /tmp, so binding the

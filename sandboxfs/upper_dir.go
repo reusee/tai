@@ -59,6 +59,15 @@ error instead of its own mutation, while a refused audit append would drop
 its batch of the trail in silence. The layer repairs a record file that
 refuses the owner's write to the owner's bits and runs the write once more.
 
+The repair can fail: a record a host-side tool left may belong to another
+user, and the layer cannot widen bits it does not own. A write then replaces
+the entry instead of writing through it, because only the record directory's
+own permission stands between the layer and its record: the content is
+rebuilt from the bytes the in-place path would have kept, and a fresh file
+renamed over the name commits it. The in-place open is therefore the fast
+path, never the only one. A temporary name another entry claims is abandoned
+for the next, so a foreign leftover never stops a write either.
+
 Durability is the host's. A write returns once the bytes reach the operating
 system, the point the SQL layer's synchronous=NORMAL commit stops at: the
 record survives the process, is lost only to a machine crash, and pays no
@@ -254,19 +263,23 @@ func (u *dirUpper) writeData(p string, content []byte) error {
 // createTemp opens a fresh file in the record directory. The sequence keeps a
 // name unique against a temporary file a killed process left behind, and the
 // exclusive create turns a collision into the next name instead of into a
-// silent overwrite. See TheoryOfDirUpper.
+// silent overwrite. Any refusal moves to the next name too: an entry that
+// claims the name but cannot be opened — another owner's leftover, an entry
+// of another kind — must not stop a record write, and only the record
+// directory's own permission stands between the layer and its record. The
+// last refusal is the one the caller reads, so a directory that admits no
+// entry still reports why. See TheoryOfDirUpper.
 func (u *dirUpper) createTemp() (*os.File, string, error) {
+	var last error
 	for range 8 {
 		name := fmt.Sprintf("tmp-%d-%d", os.Getpid(), u.seq.Add(1))
 		f, err := u.root.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
 		if err == nil {
 			return f, name, nil
 		}
-		if !errors.Is(err, fs.ErrExist) {
-			return nil, "", err
-		}
+		last = err
 	}
-	return nil, "", fmt.Errorf("sandboxfs: no free temporary name in the record directory")
+	return nil, "", last
 }
 
 func (u *dirUpper) removeData(p string) error {
@@ -548,7 +561,11 @@ func (u *dirUpper) splice(p string, off int64, data []byte, mtime time.Time) err
 	}
 	f, err := u.openRecordWrite(dataName(p), os.O_RDWR|os.O_CREATE)
 	if err != nil {
-		return err
+		// The entry refuses the open: its bits refuse the owner's write and
+		// the repair cannot widen bits the layer does not own, or it is not
+		// the file the layer expects. The in-place open is the fast path,
+		// never the only one. See TheoryOfDirUpper.
+		return u.spliceRewrite(p, r, off, data, mtime)
 	}
 	_, werr := f.WriteAt(data, off)
 	if cerr := f.Close(); werr == nil {
@@ -560,6 +577,30 @@ func (u *dirUpper) splice(p string, off int64, data []byte, mtime time.Time) err
 	if end := off + int64(len(data)); end > r.Size {
 		r.Size = end
 	}
+	r.MTime = mtime.UnixNano()
+	return u.writeMeta(p, r)
+}
+
+// spliceRewrite lands one payload on a record entry the layer could not open
+// for an in-place write: the whole content is rebuilt in memory — the stored
+// bytes, the payload at its offset, and zeros for a gap past the stored end —
+// and committed through a fresh file, because only the record directory's own
+// permission stands between the layer and its record. The recorded length
+// follows the rebuilt content, so a reader never sees a size whose bytes are
+// not there. See TheoryOfDirUpper.
+func (u *dirUpper) spliceRewrite(p string, r dirRow, off int64, data []byte, mtime time.Time) error {
+	cur := make([]byte, r.Size)
+	if err := u.readDataAt(p, cur, 0); err != nil {
+		return err
+	}
+	if end := off + int64(len(data)); end > r.Size {
+		cur = append(cur, make([]byte, end-r.Size)...)
+	}
+	copy(cur[off:], data)
+	if err := u.writeData(p, cur); err != nil {
+		return err
+	}
+	r.Size = int64(len(cur))
 	r.MTime = mtime.UnixNano()
 	return u.writeMeta(p, r)
 }
@@ -588,8 +629,20 @@ func (u *dirUpper) truncate(p string, size int64, mtime time.Time) error {
 			if terr != nil {
 				return terr
 			}
-		case !errors.Is(err, fs.ErrNotExist):
-			return err
+		case errors.Is(err, fs.ErrNotExist):
+			// Nothing stored: the recorded length is the whole state.
+		default:
+			// The entry refuses the open: its bits refuse the owner's write
+			// and the repair cannot widen bits the layer does not own, or it
+			// is not the file the layer expects. Rebuild the kept prefix
+			// through a fresh file instead. See TheoryOfDirUpper.
+			cur := make([]byte, size)
+			if rerr := u.readDataAt(p, cur, 0); rerr != nil {
+				return rerr
+			}
+			if werr := u.writeData(p, cur); werr != nil {
+				return werr
+			}
 		}
 	}
 	r.Size = size

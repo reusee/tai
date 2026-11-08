@@ -116,6 +116,45 @@ func TestWriteAuditRepairsTheRecordLogMode(t *testing.T) {
 	}
 }
 
+// TestSpliceRewriteLandsTheWholeContent protects the record layer's rewrite
+// path: it is what a refused in-place open of a content file falls back to,
+// so its bytes, its gap rule, and its recorded length must match the in-place
+// splice. See TheoryOfDirUpper.
+func TestSpliceRewriteLandsTheWholeContent(t *testing.T) {
+	dir := t.TempDir()
+	store, err := OpenDir(dir+"/record", dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.WriteFile("/f", []byte("0123456789"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	u, ok := store.upper.(*dirUpper)
+	if !ok {
+		t.Fatalf("the record is not a directory layer: %T", store.upper)
+	}
+	splice := func(off int64, payload string) {
+		t.Helper()
+		r, found, err := u.readMeta("/f")
+		if err != nil || !found {
+			t.Fatalf("read the record of /f: found %v, error %v", found, err)
+		}
+		if err := u.spliceRewrite("/f", r, off, []byte(payload), time.Now()); err != nil {
+			t.Fatalf("rewrite %d bytes at %d: %v", len(payload), off, err)
+		}
+	}
+	splice(3, "abc")
+	splice(12, "xy")
+	content, err := store.ReadFile("/f")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "012abc6789\x00\x00xy"; string(content) != want {
+		t.Fatalf("after the rewrites: got %q, want %q", content, want)
+	}
+}
+
 // TestApplyFlushesTheAuditTrail protects TheoryOfAuditBatching: the apply drops
 // the upper rows that showed each change, so its audit row must reach the trail
 // with the apply instead of waiting for a full batch. A session whose reads

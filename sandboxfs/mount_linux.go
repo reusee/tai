@@ -68,13 +68,20 @@ type MountOptions struct {
 }
 
 // DefaultPassthrough returns the passthrough directories the design names
-// as valueless for review: the kernel filesystems, /tmp, the Go build and
-// module caches, and the user config directory. The caches are the largest
-// read volume of a Go task, and none of these trees holds content a review
-// can use, so leaving them behind the store charges the request path for
-// traffic no review can use. See TheoryOfPassthrough.
+// as valueless for review: the kernel filesystems, /tmp, the user cache
+// directory, the Go build and module caches, and the user config directory.
+// A cache writer keeps its index or build cache below the user cache
+// directory, and a write policy that confines mutations to the task tree
+// refuses every timestamp update of an entry there; the whole directory
+// bypasses the store so those writes stay off the audit trail. The caches
+// are the largest read volume of a Go task, and none of these trees holds
+// content a review can use, so leaving them behind the store charges the
+// request path for traffic no review can use. See TheoryOfPassthrough.
 func DefaultPassthrough() []string {
 	paths := []string{"/dev", "/proc", "/sys", "/tmp"}
+	if dir, err := os.UserCacheDir(); err == nil && filepath.IsAbs(dir) {
+		paths = append(paths, filepath.Clean(dir))
+	}
 	paths = append(paths, goCacheDirs()...)
 	if dir, err := os.UserConfigDir(); err == nil && filepath.IsAbs(dir) {
 		paths = append(paths, filepath.Clean(dir))
