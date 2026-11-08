@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"golang.org/x/sys/unix"
 )
 
 // TestBindPassthroughSkipsAMissingSource protects TheoryOfPassthrough: a
@@ -27,6 +29,45 @@ func TestBindPassthroughSkipsAMissingSource(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(m.Mountpoint, missing)); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("a missing passthrough left a target behind: %v", err)
+	}
+}
+
+// TestBindPassthroughRemountsABindThatInheritedReadOnly pins the
+// passthrough's answer to the hardened namespace: the container marks
+// read-only every mount outside its writable set, a bind copies the
+// source's read-only flag, and the cache writer the passthrough serves
+// must still write through it. The source here is a per-mount read-only
+// bind over a writable filesystem, so the remount clears the flag; a
+// source read-only at the superblock keeps its bind read-only.
+// See TheoryOfPassthrough.
+func TestBindPassthroughRemountsABindThatInheritedReadOnly(t *testing.T) {
+	base := t.TempDir()
+	src := filepath.Join(base, "cache")
+	if err := os.Mkdir(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// The source stands on its own read-only bind, the same stand the
+	// hardened namespace leaves outside its writable set.
+	if err := unix.Mount(src, src, "", unix.MS_BIND, ""); err != nil {
+		t.Skipf("mounting is unavailable here: %v", err)
+	}
+	t.Cleanup(func() { _ = unix.Unmount(src, unix.MNT_DETACH) })
+	if err := unix.Mount(src, src, "", unix.MS_BIND|unix.MS_REMOUNT|unix.MS_RDONLY, ""); err != nil {
+		t.Fatalf("remount the source read-only: %v", err)
+	}
+	m := &MountedFS{Mountpoint: t.TempDir()}
+	target := filepath.Join(m.Mountpoint, src)
+	t.Cleanup(func() { _ = unix.Unmount(target, unix.MNT_DETACH) })
+	if err := m.bindPassthrough([]string{src}); err != nil {
+		t.Fatalf("bind passthrough %s: %v", src, err)
+	}
+	probe := filepath.Join(target, "probe")
+	if err := os.WriteFile(probe, []byte("cache writer"), 0o644); err != nil {
+		t.Fatalf("write through the passthrough bind: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(src, "probe"))
+	if err != nil || string(got) != "cache writer" {
+		t.Fatalf("the write did not land in the source: %v, %q", err, got)
 	}
 }
 

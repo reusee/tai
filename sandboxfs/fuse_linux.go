@@ -282,6 +282,16 @@ it waited for — and the blocked request holds its worker for as long as the
 terminal stays silent. The caller's own entries ride beside them, and a
 duplicate binds once.
 
+The hardened namespace leaves read-only every mount outside its writable
+set, and a bind copies the source's read-only flag: a cache directory
+bound as it stands would answer EROFS to the cache writer, the very
+writer the passthrough exists to serve. A non-recursive bind is therefore
+remounted writable after it lands, best-effort: a source that is
+read-only at the superblock keeps its bind read-only, the same stand a
+missing source takes. The kernel filesystems keep their recursive binds
+as the hardening left them: their flags are that layer's decision, not
+the passthrough's to reset.
+
 A durable session's record is the one thing that must not transit FUSE: the
 FUSE daemon serves the store, so a store access that reached the daemon
 would recurse. The store therefore opens the record, and its backend's
