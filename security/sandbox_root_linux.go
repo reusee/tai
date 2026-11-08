@@ -91,12 +91,12 @@ const disableSandboxRootEnv = "CAI_DISABLE_SANDBOX_ROOT"
 
 // isSandboxReview reports whether the invocation selects the sandbox review
 // command. The review applies recorded changes to the host and must not run
-// inside the sandbox root: its writes would reach the store it reviews, in
-// a second database layer, and its apply would land there instead of on the
-// host. The subcommand is a bare word, so the presence of the word selects
-// the review; a false positive — a flag value that happens to be "sandbox"
-// — only drops the environment to the mount policy, which is the behavior
-// before the sandbox root existed. See TheoryOfSandboxRoot.
+// inside the sandbox root: its writes would reach the store it reviews, and
+// its apply would land there instead of on the host. The subcommand is a
+// bare word, so the presence of the word selects the review; a false
+// positive — a flag value that happens to be "sandbox" — only drops the
+// environment to the mount policy, which is the behavior before the sandbox
+// root existed. See TheoryOfSandboxRoot.
 func isSandboxReview(args []string) bool {
 	for _, a := range args {
 		if a == "sandbox" {
