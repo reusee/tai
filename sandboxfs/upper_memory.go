@@ -9,10 +9,10 @@ import (
 	"time"
 )
 
-// memoryUpper keeps the upper layer in process memory: the same metadata rows
-// and content chunks the sqlite layer stores, held in maps under one mutex.
-// The mutex is the layer's atomicity: every composite operation runs whole
-// while it is held, so a reader never sees a row and a content that disagree.
+// memoryUpper keeps the upper layer in process memory: the session's metadata
+// rows and content chunks, held in maps under one mutex. The mutex is the
+// layer's atomicity: every composite operation runs whole while it is held, so
+// a reader never sees a row and a content that disagree.
 // See TheoryOfUpperLayer.
 type memoryUpper struct {
 	mu     sync.Mutex

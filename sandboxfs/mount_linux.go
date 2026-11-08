@@ -18,37 +18,23 @@ type MountOptions struct {
 	// Base is the read-through base directory. Empty means the host
 	// root: every path a process reads falls through to the host.
 	Base string
-	// DBPath names the durable upper layer's record: a database file —
-	// sqlite's, or DuckDB's when DuckDB is set — or, when DirRecord is set,
-	// a directory. An empty DBPath selects the memory upper layer, which is
-	// this API's own default: the session's mutations live in process
-	// memory, the mount leaves no record behind, and the goal runner's
-	// per-loop apply is the only path that reaches the host. The trade-off
-	// is explicit: an abandoned run keeps nothing to review, because the
-	// changes it never applied never left the process. The tai tool names a
-	// per-session directory record instead — one directory per session,
-	// inside the working directory, so every session leaves a record the
-	// review command browses later. A durable record is opened before any
-	// pivot and held for the session's life, so the file or directory may
-	// sit inside the filesystem this mount serves; its place must remain
-	// visible at the same path after the pivot: the working directory is,
-	// /tmp is not, because the mount replaces /tmp with a fresh tmpfs. See
-	// TheoryOfFuseMount, TheoryOfPassthrough, TheoryOfUpperLayer,
-	// TheoryOfDirRecord and TheoryOfSqlDialects.
+	// DBPath names the durable upper layer's record: a directory of
+	// ordinary files the session records itself in. An empty DBPath selects
+	// the memory upper layer, which is this API's own default: the session's
+	// mutations live in process memory, the mount leaves no record behind,
+	// and the goal runner's per-loop apply is the only path that reaches the
+	// host. The trade-off is explicit: an abandoned run keeps nothing to
+	// review, because the changes it never applied never left the process.
+	// The tai tool names a per-session directory record instead — one
+	// directory per session, inside the working directory, so every session
+	// leaves a record the review command browses later. A durable record is
+	// opened before any pivot and held for the session's life, so the
+	// directory may sit inside the filesystem this mount serves; its place
+	// must remain visible at the same path after the pivot: the working
+	// directory is, /tmp is not, because the mount replaces /tmp with a
+	// fresh tmpfs. See TheoryOfFuseMount, TheoryOfPassthrough,
+	// TheoryOfUpperLayer and TheoryOfDirRecord.
 	DBPath string
-	// DuckDB selects the DuckDB dialect of the durable SQL upper layer
-	// instead of sqlite's. The dialect names no record of its own, so
-	// DBPath must be set too; the binary must import a DuckDB driver, and
-	// none is linked here, so a binary without one reports the open error
-	// and names the dialect. See TheoryOfSqlDialects.
-	DuckDB bool
-	// DirRecord selects the directory upper layer: DBPath names a record
-	// directory of ordinary files instead of a database, so the session
-	// needs no driver and no schema. The directory is created when absent
-	// and opened once before any pivot, so its files stay reachable through
-	// the handle after the process root moves. It is exclusive with DuckDB,
-	// because a directory record has no dialect. See TheoryOfDirRecord.
-	DirRecord bool
 	// Mountpoint is the directory the filesystem mounts at. Created when
 	// absent. The path is a host path, not a sandbox path.
 	Mountpoint string
@@ -157,9 +143,8 @@ func passthroughPaths(caller []string) []string {
 type MountedFS struct {
 	// Store is the upper layer serving the mount: process memory when the
 	// mount named no record — the API's own default — otherwise the durable
-	// layer the mount selected at the record path: the directory record when
-	// DirRecord is set, or the SQL record in sqlite's dialect or DuckDB's.
-	// See TheoryOfUpperLayer, TheoryOfDirRecord and TheoryOfSqlDialects.
+	// directory record at the record path.
+	// See TheoryOfUpperLayer and TheoryOfDirRecord.
 	Store *Store
 	// Mountpoint is the directory the filesystem mounted at, as the host
 	// sees it before a pivot.
@@ -179,38 +164,20 @@ type MountedFS struct {
 // call. It exists so a test can exercise the options the upper layers require
 // without mounting: a real mount binds the kernel filesystems into the
 // mountpoint, and a test that mounted would leave directories its temporary
-// tree cannot remove. A selected layer that names no record — a dialect or a
-// record directory without DBPath — selected a layer it did not open, and the
-// dialect and the directory marker are exclusive, because a directory record
-// has no dialect. See TheoryOfUpperLayer, TheoryOfDirRecord and
-// TheoryOfSqlDialects.
+// tree cannot remove. See TheoryOfUpperLayer and TheoryOfDirRecord.
 func validateMountOptions(opts MountOptions) error {
 	if opts.Mountpoint == "" {
 		return fmt.Errorf("sandboxfs: empty mountpoint")
-	}
-	if opts.DuckDB && opts.DirRecord {
-		// A directory record has no dialect, so the two markers name
-		// different layers; a caller that sets both selected two.
-		// See TheoryOfDirRecord and TheoryOfSqlDialects.
-		return fmt.Errorf("sandboxfs: DuckDB and DirRecord are exclusive; a directory record has no dialect")
-	}
-	if (opts.DuckDB || opts.DirRecord) && opts.DBPath == "" {
-		// The dialect and the directory marker name no record of their own, so
-		// a caller that selected one without naming a record selected a layer it
-		// did not open. See TheoryOfDirRecord and TheoryOfSqlDialects.
-		return fmt.Errorf("sandboxfs: empty database path")
 	}
 	return nil
 }
 
 // Mount mounts the sandbox filesystem and, when requested, pivots the process
-// root to it. The upper layer behind it is process memory when DBPath names no
-// record — this API's own default — and the durable layer of the selected kind
-// otherwise: the directory record when DirRecord is set, sqlite's dialect or
-// DuckDB's when it names a database file. The tai tool names a per-session
-// directory record instead, so its sessions leave a record the sandbox command
-// reviews. See TheoryOfFuseMount, TheoryOfPassthrough, TheoryOfUpperLayer,
-// TheoryOfDirRecord and TheoryOfSqlDialects.
+// root to it. The upper layer behind it is process memory when DBPath names
+// no record — this API's own default — and the directory record at the named
+// path otherwise. The tai tool names a per-session directory record, so its
+// sessions leave a record the sandbox command reviews. See TheoryOfFuseMount,
+// TheoryOfPassthrough, TheoryOfUpperLayer and TheoryOfDirRecord.
 func Mount(opts MountOptions) (*MountedFS, error) {
 	if err := validateMountOptions(opts); err != nil {
 		return nil, err
@@ -241,16 +208,16 @@ func Mount(opts MountOptions) (*MountedFS, error) {
 	if absDB != "" {
 		// The store's base is the private view, not the host base the
 		// record was opened with. A record inside the base reaches the
-		// sandbox as the path relative to the base, so the two names are
-		// recorded by identity through the view; without this the store
-		// would compare the sandbox path with a host path they do not share
-		// and miss the match. A directory record makes the match structural:
+		// sandbox as the path relative to the base, so the two names meet
+		// on the record's files by structure; without this the store would
+		// compare the sandbox path with a host path they do not share and
+		// miss the match. A directory record makes the match structural:
 		// every file beneath the record's own name is the record.
 		// See TheoryOfSandboxFilesystem and TheoryOfDirRecord.
 		if rel, relErr := filepath.Rel(absBase, absDB); relErr == nil &&
 			rel != "." && rel != ".." &&
 			!strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			store.dbPath = filepath.Join(viewDir, rel)
+			store.recordPath = filepath.Join(viewDir, rel)
 		}
 	}
 	detachView()
@@ -312,11 +279,9 @@ func (m *MountedFS) activate(pivot bool, pivotFn func(string) error) error {
 
 // openMountStore opens the upper layer the mount selects: process memory when
 // DBPath names no record — the API's own default, which names nothing to
-// record — otherwise the durable layer of the selected kind at the record path
-// it returns: the directory record when DirRecord is set, sqlite's dialect, or
-// DuckDB's when DuckDB is set. The path is empty for the memory layer, which
-// records itself in no file. See TheoryOfUpperLayer, TheoryOfDirRecord and
-// TheoryOfSqlDialects.
+// record — otherwise the directory record at the record path it returns. The
+// path is empty for the memory layer, which records itself in no file.
+// See TheoryOfUpperLayer and TheoryOfDirRecord.
 func openMountStore(opts MountOptions, base string) (store *Store, absDB string, err error) {
 	if opts.DBPath == "" {
 		// The API's own ephemeral default: the session's mutations live in
@@ -331,14 +296,7 @@ func openMountStore(opts MountOptions, base string) (store *Store, absDB string,
 	if err != nil {
 		return nil, "", err
 	}
-	switch {
-	case opts.DirRecord:
-		store, err = OpenDirWithPolicy(absDB, base, opts.WritePolicy)
-	case opts.DuckDB:
-		store, err = OpenDuckDBWithPolicy(absDB, base, opts.WritePolicy)
-	default:
-		store, err = OpenWithPolicy(absDB, base, opts.WritePolicy)
-	}
+	store, err = OpenDirWithPolicy(absDB, base, opts.WritePolicy)
 	return store, absDB, err
 }
 

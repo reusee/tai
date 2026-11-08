@@ -12,7 +12,7 @@ import (
 func newTestStore(t *testing.T) (*Store, string) {
 	t.Helper()
 	base := t.TempDir()
-	s, err := Open(filepath.Join(t.TempDir(), "sandbox.db"), base)
+	s, err := OpenDir(filepath.Join(t.TempDir(), "rec.d"), base)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1217,7 +1217,7 @@ func TestCanWriteFollowsPolicy(t *testing.T) {
 		}
 		return errors.New("not allowed")
 	}
-	s, err := OpenWithPolicy(filepath.Join(t.TempDir(), "sandbox.db"), base, allow)
+	s, err := OpenDirWithPolicy(filepath.Join(t.TempDir(), "rec.d"), base, allow)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1230,36 +1230,39 @@ func TestCanWriteFollowsPolicy(t *testing.T) {
 	}
 }
 
-// TestOwnDatabaseIsNeverASandboxTarget protects TheoryOfSandboxFilesystem: the
-// store recognises its own record by name and by identity, filters it from the
-// change list, and refuses to apply it. The stale row is injected through the
-// sqlite layer's connection; a memory layer carries no record to protect, so
-// the test names the sqlite one.
-func TestOwnDatabaseIsNeverASandboxTarget(t *testing.T) {
-	s, _ := newTestStore(t)
-	u := sqliteOf(t, s)
-	// The mount's base view is a bind of "/", so the sandbox path of the
-	// database equals its recorded path. Simulate that shape and check the
-	// three SQLite siblings by name.
-	s.dbPath = "/app.db"
-	for _, p := range []string{"/app.db", "/app.db-wal", "/app.db-shm"} {
-		if !s.isOwnDBPath(p) {
-			t.Fatalf("%s must be recognised as the store's own database", p)
+// TestOwnRecordIsNeverASandboxTarget protects TheoryOfSandboxFilesystem: the
+// store recognises its own record by name, filters it from the change list,
+// and refuses to apply it. The stale row is written straight into the record
+// directory; a memory layer carries no record to protect, so the test names
+// the directory layer.
+func TestOwnRecordIsNeverASandboxTarget(t *testing.T) {
+	base := t.TempDir()
+	record := filepath.Join(base, "rec.d")
+	s, err := OpenDir(record, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	u, ok := s.upper.(*dirUpper)
+	if !ok {
+		t.Fatalf("store upper layer is %T, want *dirUpper", s.upper)
+	}
+	for _, p := range []string{"/rec.d", "/rec.d/x"} {
+		if !s.isOwnRecordPath(p) {
+			t.Fatalf("%s must be recognised as the store's own record", p)
 		}
 	}
-	for _, p := range []string{"/app.go", "/app.db.bak", "/data/app.db"} {
-		if s.isOwnDBPath(p) {
-			t.Fatalf("%s must not be recognised as the store's own database", p)
+	for _, p := range []string{"/rec.go", "/rec.d.bak"} {
+		if s.isOwnRecordPath(p) {
+			t.Fatalf("%s must not be recognised as the store's own record", p)
 		}
 	}
 
-	// A pre-existing row for the database is filtered from the change list
+	// A pre-existing row beneath the record is filtered from the change list
 	// even though the write path now refuses future mutations.
-	if _, err := u.db.Exec(
-		`INSERT INTO files (path, kind, mode, mtime, deleted, original_exists, original_hash)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		"/app.db", 0, 0o644, 0, 0, 0, "",
-	); err != nil {
+	if err := u.writeMeta("/rec.d/x", dirRowOf(fileRow{
+		path: "/rec.d/x", kind: KindRegular, mode: 0o644,
+	})); err != nil {
 		t.Fatal(err)
 	}
 	changes, err := s.Changes()
@@ -1267,33 +1270,29 @@ func TestOwnDatabaseIsNeverASandboxTarget(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, c := range changes {
-		if c.Path == "/app.db" {
-			t.Fatalf("own database appeared as change: %+v", c)
+		if c.Path == "/rec.d" || c.Path == "/rec.d/x" {
+			t.Fatalf("own record appeared as change: %+v", c)
 		}
 	}
-	if err := s.applyOne(Change{Path: "/app.db", Kind: ChangeAdded}, &applyRun{}); !errors.Is(err, os.ErrPermission) {
-		t.Fatalf("apply of own database: %v", err)
+	if err := s.applyOne(Change{Path: "/rec.d/x", Kind: ChangeAdded}, &applyRun{}); !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("apply of own record: %v", err)
 	}
 }
 
-func TestWriteRefusesOwnDatabase(t *testing.T) {
+func TestWriteRefusesOwnRecord(t *testing.T) {
 	base := t.TempDir()
-	dbPath := filepath.Join(base, "sandbox.db")
-	s, err := Open(dbPath, base)
+	s, err := OpenDir(filepath.Join(base, "rec.d"), base)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = s.Close() })
-	// The sandbox path of the database equals its recorded path when the
-	// base view is a bind of "/": here the test constructs that shape by
-	// naming the database under the base. The database file itself exists
-	// in the base, so a refused write must be checked against the upper
-	// layer's rows, not against Stat, which would succeed off the base.
-	s.dbPath = "/sandbox.db"
-	for _, p := range []string{"/sandbox.db", "/sandbox.db-wal", "/sandbox.db-shm"} {
+	// The record sits inside the base, so its sandbox path is /rec.d: a write
+	// through it or beneath it must be refused against the upper layer's
+	// rows, not against Stat, which would succeed off the base.
+	for _, p := range []string{"/rec.d", "/rec.d/x"} {
 		err := s.WriteFile(p, []byte("x"), 0o644)
 		if !errors.Is(err, os.ErrPermission) {
-			t.Fatalf("write to %s: want EACCES, got %v", p, err)
+			t.Fatalf("write to %s: want a permission error, got %v", p, err)
 		}
 		if _, ok, err := s.row(p); err != nil {
 			t.Fatal(err)

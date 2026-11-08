@@ -8,7 +8,7 @@ import (
 
 func TestActiveStoreRecordsAndClears(t *testing.T) {
 	dir := t.TempDir()
-	store, err := Open(filepath.Join(dir, "sandbox.db"), dir)
+	store, err := OpenDir(filepath.Join(dir, "rec.d"), dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +30,7 @@ func TestApplyAllWritesTheHostAndReportsConflicts(t *testing.T) {
 	if err := os.MkdirAll(base, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	store, err := Open(filepath.Join(dir, "sandbox.db"), base)
+	store, err := OpenDir(filepath.Join(dir, "rec.d"), base)
 	if err != nil {
 		t.Fatal(err)
 	}

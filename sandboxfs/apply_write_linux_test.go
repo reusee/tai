@@ -37,7 +37,7 @@ func TestApplyRestoresTheHostModeAfterAFailedWrite(t *testing.T) {
 		_, _ = cmd.Process.Wait()
 	}()
 
-	store, err := Open(filepath.Join(dir, "record.db"), base)
+	store, err := OpenDir(filepath.Join(dir, "record.d"), base)
 	if err != nil {
 		t.Fatal(err)
 	}

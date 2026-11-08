@@ -21,7 +21,7 @@ func TestWritePolicyCoversEveryMutation(t *testing.T) {
 		t.Fatal(err)
 	}
 	const refused = "/work/f"
-	store, err := OpenWithPolicy(filepath.Join(dir, "upper.db"), base, func(p string) error {
+	store, err := OpenDirWithPolicy(filepath.Join(dir, "upper.d"), base, func(p string) error {
 		if p == refused {
 			return fmt.Errorf("%w: %s", os.ErrPermission, p)
 		}
@@ -67,7 +67,7 @@ func TestSpliceFileZeroLengthKeepsTheLength(t *testing.T) {
 	if err := os.MkdirAll(base, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	store, err := Open(filepath.Join(dir, "upper.db"), base)
+	store, err := OpenDir(filepath.Join(dir, "upper.d"), base)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,36 +94,33 @@ func TestSpliceFileZeroLengthKeepsTheLength(t *testing.T) {
 	}
 }
 
-// TestOwnDatabaseIsRefusedThroughItsBasePath protects
-// TheoryOfSandboxFilesystem: the store's own database is never a sandbox
-// target, and a base that holds it gives the file a second path.
-func TestOwnDatabaseIsRefusedThroughItsBasePath(t *testing.T) {
+// TestOwnRecordIsRefusedThroughItsBasePath protects
+// TheoryOfSandboxFilesystem: the store's own record is never a sandbox
+// target, and a base that holds it gives the record a second path.
+func TestOwnRecordIsRefusedThroughItsBasePath(t *testing.T) {
 	dir := t.TempDir()
 	base := filepath.Join(dir, "base")
 	if err := os.MkdirAll(base, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	dbPath := DefaultDBPath(base)
-	store, err := Open(dbPath, base)
+	record := filepath.Join(base, "rec.d")
+	store, err := OpenDir(record, base)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	rel, err := filepath.Rel(base, dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	name := "/" + filepath.ToSlash(rel)
-	if err := store.WriteFile(name, []byte("not a database"), 0o644); !errors.Is(err, os.ErrPermission) {
-		t.Errorf("writing the store database through %s: got %v, want a permission error", name, err)
+	for _, p := range []string{"/rec.d", "/rec.d/x"} {
+		if err := store.WriteFile(p, []byte("not a record"), 0o644); !errors.Is(err, os.ErrPermission) {
+			t.Errorf("writing the store record through %s: got %v, want a permission error", p, err)
+		}
 	}
 	changes, err := store.Changes()
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, c := range changes {
-		if c.Path == name {
-			t.Errorf("the store database appears as a change: %s", c.Path)
+		if c.Path == "/rec.d" || c.Path == "/rec.d/x" {
+			t.Errorf("the store record appears as a change: %s", c.Path)
 		}
 	}
 }
@@ -137,7 +134,7 @@ func TestSetModeAndSetTimesOnMissingPathReportNotExist(t *testing.T) {
 	if err := os.MkdirAll(base, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	store, err := Open(filepath.Join(dir, "upper.db"), base)
+	store, err := OpenDir(filepath.Join(dir, "upper.d"), base)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +163,7 @@ func TestDirectoryOverBaseFileIsAChange(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(base, "d"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	store, err := Open(filepath.Join(dir, "upper.db"), base)
+	store, err := OpenDir(filepath.Join(dir, "upper.d"), base)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,7 +205,7 @@ func TestApplyRejectsHostKindChange(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(base, "f"), []byte("base"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	store, err := Open(filepath.Join(dir, "upper.db"), base)
+	store, err := OpenDir(filepath.Join(dir, "upper.d"), base)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,7 +256,7 @@ func TestApplyWritesAModeOnlyChange(t *testing.T) {
 	if err := os.Chmod(filepath.Join(base, "f"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	store, err := Open(filepath.Join(dir, "upper.db"), base)
+	store, err := OpenDir(filepath.Join(dir, "upper.d"), base)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -307,7 +304,7 @@ func TestWriteFileRefusesContentAboveTheBound(t *testing.T) {
 	if err := os.MkdirAll(base, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	store, err := Open(filepath.Join(dir, "upper.db"), base)
+	store, err := OpenDir(filepath.Join(dir, "upper.d"), base)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -346,7 +343,7 @@ func TestModeOnlyChangeKeepsTheTimes(t *testing.T) {
 	if err := os.Chtimes(host, want, want); err != nil {
 		t.Fatal(err)
 	}
-	store, err := Open(filepath.Join(dir, "upper.db"), base)
+	store, err := OpenDir(filepath.Join(dir, "upper.d"), base)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -398,7 +395,7 @@ func TestApplyReplacesASymlinkWithAFileOfTheSameBytes(t *testing.T) {
 	if err := os.Symlink("target", filepath.Join(base, "f")); err != nil {
 		t.Fatal(err)
 	}
-	store, err := Open(filepath.Join(dir, "upper.db"), base)
+	store, err := OpenDir(filepath.Join(dir, "upper.d"), base)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -452,7 +449,7 @@ func TestModeOfNoBitsReachesTheHost(t *testing.T) {
 	if err := os.Chmod(host, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	store, err := Open(filepath.Join(dir, "upper.db"), base)
+	store, err := OpenDir(filepath.Join(dir, "upper.d"), base)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -533,7 +530,7 @@ func TestStatOfAMetadataOnlyRowWhoseHostPathVanishedReportsZeroSize(t *testing.T
 	if err := os.WriteFile(host, []byte("hello"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	store, err := Open(filepath.Join(dir, "upper.db"), base)
+	store, err := OpenDir(filepath.Join(dir, "upper.d"), base)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -586,7 +583,7 @@ func TestStatOfAMetadataOnlyRowWhoseHostPathChangedKindReportsZeroSize(t *testin
 	if err := os.WriteFile(host, []byte("hello"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	store, err := Open(filepath.Join(dir, "upper.db"), base)
+	store, err := OpenDir(filepath.Join(dir, "upper.d"), base)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -616,24 +613,5 @@ func TestStatOfAMetadataOnlyRowWhoseHostPathChangedKindReportsZeroSize(t *testin
 		if e.Name == "a.txt" && e.Attr.Size != 0 {
 			t.Errorf("listing after the base file became a directory: size %d, want 0", e.Attr.Size)
 		}
-	}
-}
-
-// TestOwnDatabaseSiblingIsRefusedBeforeItExists protects
-// TheoryOfSandboxFilesystem: a backend sibling is part of the record even
-// before the backend creates it, so identity comparison cannot be the only
-// guard for a sibling that does not exist yet.
-func TestOwnDatabaseSiblingIsRefusedBeforeItExists(t *testing.T) {
-	base := t.TempDir()
-	store, err := Open(filepath.Join(base, "record.db"), base)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-
-	// The DuckDB sibling suffix is not a file SQLite creates. Its absence must
-	// not turn the record's reserved name into an ordinary sandbox target.
-	if err := store.WriteFile("/record.db.wal", []byte("corrupt"), 0o644); !errors.Is(err, os.ErrPermission) {
-		t.Fatalf("write to an absent record sibling: got %v, want a permission error", err)
 	}
 }

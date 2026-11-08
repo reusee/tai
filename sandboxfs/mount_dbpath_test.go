@@ -10,20 +10,20 @@ import (
 	"testing"
 )
 
-// TestMountRefusesItsOwnDatabase protects TheoryOfSandboxFilesystem: a
-// database that lives inside the base reaches the sandbox through the mount,
-// and the store still refuses to mutate it. The mount's base is a private bind
-// view, so a text comparison between the sandbox path and the host path the
-// database was opened with cannot find the match; the mount records the
-// database's view name so the identity check does. The test skips when the
+// TestMountRefusesItsOwnRecord protects TheoryOfSandboxFilesystem: a record
+// directory that lives inside the base reaches the sandbox through the mount,
+// and the store still refuses to mutate it. The mount's base is a private
+// bind view, so a text comparison between the sandbox path and the host path
+// the record was opened with cannot find the match; the mount records the
+// record's view name so the structural check does. The test skips when the
 // environment cannot mount FUSE.
-func TestMountRefusesItsOwnDatabase(t *testing.T) {
+func TestMountRefusesItsOwnRecord(t *testing.T) {
 	hostDir := t.TempDir()
 	mountPoint := filepath.Join(t.TempDir(), "mnt")
-	dbPath := filepath.Join(hostDir, ".db")
+	recordDir := filepath.Join(hostDir, ".rec.d")
 	mfs, err := Mount(MountOptions{
 		Base:       hostDir,
-		DBPath:     dbPath,
+		DBPath:     recordDir,
 		Mountpoint: mountPoint,
 	})
 	if err != nil {
@@ -42,11 +42,14 @@ func TestMountRefusesItsOwnDatabase(t *testing.T) {
 			t.Errorf("unmount: %v", err)
 		}
 	}()
-	name := "/" + filepath.Base(dbPath)
+	name := "/" + filepath.Base(recordDir)
 	if err := mfs.Store.WriteFile(name, []byte("x"), 0o644); !errors.Is(err, os.ErrPermission) {
-		t.Errorf("write over the mounted database through %s: got %v, want a permission error", name, err)
+		t.Errorf("write over the mounted record through %s: got %v, want a permission error", name, err)
+	}
+	if err := mfs.Store.WriteFile(name+"/x", []byte("x"), 0o644); !errors.Is(err, os.ErrPermission) {
+		t.Errorf("write beneath the mounted record through %s/x: got %v, want a permission error", name, err)
 	}
 	if err := mfs.Store.Remove(name); !errors.Is(err, os.ErrPermission) {
-		t.Errorf("remove of the mounted database through %s: got %v, want a permission error", name, err)
+		t.Errorf("remove of the mounted record through %s: got %v, want a permission error", name, err)
 	}
 }

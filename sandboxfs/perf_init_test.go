@@ -15,7 +15,7 @@ import (
 // store, so no kernel connection is needed.
 func newInitTestServer(t *testing.T) *fuseServer {
 	t.Helper()
-	store, err := Open(filepath.Join(t.TempDir(), "sandbox.db"), t.TempDir())
+	store, err := OpenDir(filepath.Join(t.TempDir(), "rec.d"), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +160,7 @@ func TestReaddirPlusSizesScratchFromEntries(t *testing.T) {
 // every entry decodes from the reply, and a repeated listing reuses the
 // scratch without growing it. See TheoryOfFuseMount.
 func TestReaddirSizesScratchFromEntries(t *testing.T) {
-	store, err := Open(filepath.Join(t.TempDir(), "sandbox.db"), t.TempDir())
+	store, err := OpenDir(filepath.Join(t.TempDir(), "rec.d"), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +212,7 @@ func newLargeListingServer(t *testing.T, files int) (*fuseServer, uint64) {
 			t.Fatal(err)
 		}
 	}
-	store, err := Open(filepath.Join(t.TempDir(), "sandbox.db"), base)
+	store, err := OpenDir(filepath.Join(t.TempDir(), "rec.d"), base)
 	if err != nil {
 		t.Fatal(err)
 	}

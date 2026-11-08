@@ -15,7 +15,7 @@ func newSpliceTestStore(t *testing.T) *Store {
 	if err := os.WriteFile(filepath.Join(base, "a.txt"), []byte("hello"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	store, err := Open(filepath.Join(t.TempDir(), "sandbox.db"), base)
+	store, err := OpenDir(filepath.Join(t.TempDir(), "rec.d"), base)
 	if err != nil {
 		t.Fatal(err)
 	}

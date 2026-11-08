@@ -15,9 +15,9 @@ every consumer degrades to "no sandbox" without a flag. The goal runner reads
 it to apply each loop's recorded changes to the host (see
 pipeline.TheoryOfLoopChangeApply); the review command does not read it,
 because that command runs outside the sandbox root and opens the record's
-directory or database file directly.
+directory directly.
 
-A store a test opens is not the process's environment, so Open and its
+A store a test opens is not the process's environment, so OpenDir and its
 siblings do not record it: only the call that mounts and pivots does.
 `
 

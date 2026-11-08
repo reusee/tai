@@ -30,29 +30,25 @@ func TestValidateMountOptionsRequiresMountpoint(t *testing.T) {
 	}
 }
 
-// TestOpenMountStoreDefaultsToMemory protects TheoryOfUpperLayer's mount
-// wiring: a mount that names no record gets the memory upper layer — this
-// API's own default — and a mount that names one gets the durable SQL layer.
-// The test calls the store selection rather than the mount, because a real
-// mount binds the kernel filesystems into the mountpoint and a test's
-// temporary tree could not remove them.
+// TestOpenMountStoreDefaultsToMemory protects the mount's layer selection: an
+// empty record path selects the memory layer and names no record, while a
+// named record path opens the durable directory record.
 func TestOpenMountStoreDefaultsToMemory(t *testing.T) {
 	base := t.TempDir()
-	store, absDB, err := openMountStore(MountOptions{}, base)
+	store, abs, err := openMountStore(MountOptions{}, base)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	if absDB != "" || store.dbPath != "" {
-		t.Fatalf("the default layer records itself: path %q, abs %q", store.dbPath, absDB)
+	if store.recordPath != "" || abs != "" {
+		t.Fatalf("memory layer named a record: %q %q", store.recordPath, abs)
 	}
-
-	durable, absDB, err := openMountStore(MountOptions{DBPath: t.TempDir() + "/rec.db"}, base)
+	durable, absDB, err := openMountStore(MountOptions{DBPath: t.TempDir()}, base)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer durable.Close()
-	if absDB == "" || durable.dbPath == "" {
-		t.Fatalf("a named record did not open the durable layer: path %q, abs %q", durable.dbPath, absDB)
+	if durable.recordPath == "" || absDB == "" || durable.recordPath != absDB {
+		t.Fatalf("durable layer named no record: %q %q", durable.recordPath, absDB)
 	}
 }

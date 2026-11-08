@@ -144,7 +144,7 @@ func TestFlightWindowReportRowsAreCapped(t *testing.T) {
 // comes from the server's own allocator without a store round trip, so the
 // test measures the resolver wiring alone. See TheoryOfFlightRecorder.
 func TestFuseServerReportResolvesFlightPaths(t *testing.T) {
-	store, err := Open(filepath.Join(t.TempDir(), "sandbox.db"), t.TempDir())
+	store, err := OpenDir(filepath.Join(t.TempDir(), "rec.d"), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -192,7 +192,7 @@ func TestTimingIntervalOf(t *testing.T) {
 // TestNewFuseServerStartsWithTimings checks the wiring every server comes
 // from: the constructor installs the aggregate the read loop feeds.
 func TestNewFuseServerStartsWithTimings(t *testing.T) {
-	store, err := Open(filepath.Join(t.TempDir(), "sandbox.db"), t.TempDir())
+	store, err := OpenDir(filepath.Join(t.TempDir(), "rec.d"), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}

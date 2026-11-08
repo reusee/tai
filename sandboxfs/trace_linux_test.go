@@ -39,12 +39,12 @@ Trace workload theory:
   questions. The table attributes each request's total cost to its opcode and
   names the expensive operation; the trace splits one operation's cost into
   the runtime work inside it — reflection, allocation, garbage collection,
-  sqlite calls, syscalls — so a fix targets the cost that dominates there.
+  file I/O, syscalls — so a fix targets the cost that dominates there.
   The flight window answers a third question: what the workload asked for in
   the moments before the slowest request.
 - The workload repeats every phase for several rounds because a first round
-  pays one-time costs (handle opens, absence-cache misses, sqlite warm-up)
-  that a steady-state request never pays again. Steady-state cost is what a
+  pays one-time costs (handle opens, first record lookups) that a
+  steady-state request never pays again. Steady-state cost is what a
   session's toolchain actually experiences.
 `
 
@@ -100,7 +100,7 @@ func TestTraceFuseWorkload(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(base, "large.bin"), large, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	store, err := Open(filepath.Join(t.TempDir(), "trace.db"), base)
+	store, err := OpenDir(filepath.Join(t.TempDir(), "trace.d"), base)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -26,7 +26,7 @@ func newBaseFastStore(t *testing.T) *Store {
 	if err := os.Symlink("a.txt", filepath.Join(base, "link")); err != nil {
 		t.Fatal(err)
 	}
-	store, err := Open(filepath.Join(t.TempDir(), "sandbox.db"), base)
+	store, err := OpenDir(filepath.Join(t.TempDir(), "rec.d"), base)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,7 +228,7 @@ func BenchmarkReadFromBaseHandle(b *testing.B) {
 	if err := os.WriteFile(filepath.Join(base, "a.bin"), content, 0o644); err != nil {
 		b.Fatal(err)
 	}
-	store, err := Open(filepath.Join(b.TempDir(), "sandbox.db"), base)
+	store, err := OpenDir(filepath.Join(b.TempDir(), "rec.d"), base)
 	if err != nil {
 		b.Fatal(err)
 	}

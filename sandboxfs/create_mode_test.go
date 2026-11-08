@@ -29,7 +29,7 @@ func TestFuseServerCreateKeepsModeOfExistingFile(t *testing.T) {
 	if err := os.Chmod(host, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	store, err := Open(filepath.Join(dir, "upper.db"), base)
+	store, err := OpenDir(filepath.Join(dir, "upper.d"), base)
 	if err != nil {
 		t.Fatal(err)
 	}

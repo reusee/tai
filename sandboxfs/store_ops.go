@@ -175,8 +175,8 @@ func baseServable(mode os.FileMode) bool {
 // ReadRange, which moves only the window it names. The base descriptor answers
 // the open and the read with one fstatat and one openat, the same pair a read
 // window pays; a store without the descriptor falls back to the os.Root walk
-// unchanged. The upper layer's content lives in the chunk table, assembled by
-// the stored size. See TheoryOfChunkedContent, TheoryOfBaseFdAccess and
+// unchanged. The upper layer's content is assembled by the stored size.
+// See TheoryOfChunkedContent, TheoryOfBaseFdAccess and
 // TheoryOfBaseCapture.
 func (s *Store) ReadFile(p string) ([]byte, error) {
 	p = Canonical(p)
@@ -365,13 +365,13 @@ func (s *Store) ReadDir(p string) ([]DirEntry, error) {
 // A named pipe has no content, so its kind is recorded as a sentinel the
 // net-change comparison recognises. A base node the store cannot serve — a
 // device or a socket — is refused with EINVAL before anything opens it,
-// because opening one blocks on its peer's data. A path that names the store's
-// own database is refused before the read, so a stray write or delete never
-// drags the record through the hash. See TheoryOfApplyConflict,
+// because opening one blocks on its peer's data. A path that names the
+// store's own record is refused before the read, so a stray write or delete
+// never drags the record through the hash. See TheoryOfApplyConflict,
 // TheoryOfBaseCapture and TheoryOfCompletePOSIX.
 func (s *Store) captureOriginal(p string) (fileRow, error) {
-	if s.isOwnDBPath(p) {
-		return fileRow{}, fmt.Errorf("%w: the sandbox database is never a sandbox target: %s", os.ErrPermission, p)
+	if s.isOwnRecordPath(p) {
+		return fileRow{}, fmt.Errorf("%w: the sandbox record is never a sandbox target: %s", os.ErrPermission, p)
 	}
 	r := fileRow{path: p, mode: 0o644}
 	info, err := s.baseRoot.Lstat(relPath(p))

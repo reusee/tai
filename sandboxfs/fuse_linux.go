@@ -141,10 +141,9 @@ Request concurrency theory:
   before it serves a window: the writer that invalidates must never wait for
   another handle's lock, because two writers to one path would then each wait
   for the other.
-- The store is safe for concurrent use: sqlite's handle is, the statement set
-  is, the audit buffer and the absence cache and the node table carry their
-  own locks. Paths stay addressable, so two workers naming one path agree on
-  its node id.
+- The store is safe for concurrent use: the upper layers serialise their own
+  state, and the audit buffer and the node table carry their own locks. Paths
+  stay addressable, so two workers naming one path agree on its node id.
 - FORGET, BATCH_FORGET, and INTERRUPT expect no reply and get none, on
   whatever worker reads them.
 `
@@ -163,10 +162,10 @@ definition this server knows.
 
 BIG_WRITES dominates the write path. Without it the kernel caps one WRITE at a
 single page, so a toolchain writing a multi-megabyte file sends one request per
-page, and each request pays its own sqlite transaction and commit: the chunked
-store keeps the bytes linear, but the per-request cost is what multiplies.
-MAX_PAGES raises the announced window to the 1 MiB the kernel caps max_write
-at, so the same write costs one request, one transaction, and one commit.
+page, and each request pays its own store round trip: the chunked store keeps
+the bytes linear, but the per-request cost is what multiplies. MAX_PAGES
+raises the announced window to the 1 MiB the kernel caps max_write at, so the
+same write costs one request.
 
 READDIRPLUS carries a fuse_entry_out per directory entry, so the kernel needs no
 LOOKUP after a listing: a directory walk — the toolchain's dominant pattern —
@@ -294,14 +293,13 @@ the passthrough's to reset.
 
 A durable session's record is the one thing that must not transit FUSE: the
 FUSE daemon serves the store, so a store access that reached the daemon
-would recurse. The store therefore opens the record, and its backend's
-files, before the pivot: a database record's -wal and -shm siblings come
-with its first commit, and a directory record is one directory handle taken
-on the host. The default record sits inside the working directory, which the
-mount serves, so this ordering is what keeps the record off the request
-path, not an optimization. The mount helper documents the requirement on
-MountOptions.DBPath, and the store refuses every mutation of the record so
-the review's source stays intact (see TheoryOfSandboxFilesystem).
+would recurse. The store therefore opens the record before the pivot: a
+directory record is one directory handle taken on the host. The default
+record sits inside the working directory, which the mount serves, so this
+ordering is what keeps the record off the request path, not an optimization.
+The mount helper documents the requirement on MountOptions.DBPath, and the
+store refuses every mutation of the record so the review's source stays
+intact (see TheoryOfSandboxFilesystem).
 `
 
 const (
@@ -1023,9 +1021,8 @@ func (s *fuseServer) dispatch(buf []byte) {
 	case fuseOpFlush, fuseOpFsync:
 		respBody, err = nil, nil
 	case fuseOpFsyncdir:
-		// A directory's metadata lives in sqlite, which persists every
-		// write; the fsyncdir durability guarantee is already satisfied.
-		// See fuseOpFsyncdir.
+		// The store persists every write as it completes, so the fsyncdir
+		// durability guarantee is already satisfied. See fuseOpFsyncdir.
 		respBody, err = nil, nil
 	case fuseOpOpendir:
 		respBody, err = s.handleOpendir(h.Nodeid)
@@ -1207,10 +1204,10 @@ func (s *fuseServer) childNodeLocked(parent, name string) uint64 {
 // nodeOf returns the node id of p, allocating one on first use. When
 // mustExist is true the path is stat'ed first, so an id never names a path the
 // store does not hold. The stat runs before the node table's lock is taken:
-// it reaches the store's one sqlite connection, and every other user of the
-// table — a listing's entry resolution, the flight window's report — would
-// wait behind that round trip for the whole lock. A caller that already read
-// the path's attribute, the lookup and the create handlers among them, passes
+// it reaches the store's upper layer, and every other user of the table —
+// a listing's entry resolution, the flight window's report — would wait
+// behind that round trip for the whole lock. A caller that already read the
+// path's attribute, the lookup and the create handlers among them, passes
 // mustExist false and pays only the map write. See TheoryOfFuseMount.
 func (s *fuseServer) nodeOf(p string, mustExist bool) (uint64, error) {
 	if mustExist {
@@ -1666,7 +1663,7 @@ func (s *fuseServer) handleOpen(nodeid uint64, body []byte) ([]byte, error) {
 	if truncate && a.Kind == KindRegular {
 		// The file's own mode travels beside the length: a materialised base
 		// file keeps the bits it had, and a recorded 000 is a mode, not an
-		// absent one. A truncating open drops the content chunks; it never
+		// absent one. A truncating open drops the stored content; it never
 		// writes the file back. See TheoryOfChunkedContent.
 		if err := s.store.TruncateFile(p, 0, a.Mode); err != nil {
 			return nil, err
@@ -1676,8 +1673,8 @@ func (s *fuseServer) handleOpen(nodeid uint64, body []byte) ([]byte, error) {
 	}
 	// The open already read the attribute, so the handle carries the mode and
 	// the write path needs no lookup of its own. The store keeps the content
-	// in its chunk table, so a truncating open leaves nothing for the handle
-	// to remember. See TheoryOfWriteSplice.
+	// itself, so a truncating open leaves nothing for the handle to remember.
+	// See TheoryOfWriteSplice.
 	fh := s.registerHandle(&fuseHandle{path: p, mode: a.Mode})
 	// A read-only open lets the kernel keep the file's pages across opens, so
 	// a repeated read of an unchanged dependency never reaches the store. A
@@ -2196,8 +2193,8 @@ func (s *fuseServer) handleCreate(parent uint64, body []byte) ([]byte, error) {
 	}
 	// The stat above already read the attribute, so the handle carries the
 	// mode and the write path needs no lookup of its own. The store keeps the
-	// content in its chunk table, so nothing about the create state belongs
-	// to the handle. See TheoryOfWriteSplice.
+	// content itself, so nothing about the create state belongs to the
+	// handle. See TheoryOfWriteSplice.
 	fh := s.registerHandle(&fuseHandle{path: p, mode: a.Mode})
 	out := fuseOpenOut{Fh: fh}
 	if !writeMode && !truncate {

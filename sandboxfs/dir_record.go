@@ -12,18 +12,16 @@ import (
 
 const TheoryOfDirRecord = `
 A record is a place, and the directory layer makes that literal: the record is
-one directory of ordinary files instead of one SQL database. Naming the
-directory is the whole selection, exactly as naming a database file selects the
-SQL layer, so a caller chooses where a session's changes live and nothing else.
-The SQL layer's dialect marker has no counterpart here, because a directory
-names itself. See TheoryOfDirUpper and TheoryOfUpperLayer.
+one directory of ordinary files. Naming the directory is the whole selection,
+so a caller chooses where a session's changes live and nothing else. No engine
+marker has a counterpart here, because a directory names itself.
+See TheoryOfDirUpper and TheoryOfUpperLayer.
 
 The record directory's own name and every path beneath it are the record, and
-the store refuses to mutate any of them. The SQL layer protects one file and
-two siblings; a directory record holds a metadata file per recorded path, a
-content file per content-bearing path, and the audit log, so the protected set
-is the subtree. A mutation that reached inside would corrupt the record the
-review reads, and would enter the record as a change of itself.
+the store refuses to mutate any of them. The record holds a metadata file per
+recorded path, a content file per content-bearing path, and the audit log, so
+the protected set is the subtree. A mutation that reached inside would corrupt
+the record the review reads, and would enter the record as a change of itself.
 
 The directory record is the default the tai tool selects: one directory per
 session, under the working directory's ".tai/sandboxfs", named
@@ -34,9 +32,9 @@ the sessions that started within one second, so a later session never
 overwrites the record an earlier one left for review. The folder holds nothing
 but session records, so one directory there is one session. A caller that
 wants a determinate place — a test, a session pinned by configuration — names
-the directory itself; naming it is the whole selection. The memory layer and
-the SQL record remain selectable, and a project that recorded nothing holds no
-session directory.
+the directory itself; naming it is the whole selection. The memory layer
+remains selectable, and a project that recorded nothing holds no session
+directory.
 
 Records accumulate until the user deletes them: the review command reads the
 newest one by default, and an older one is browsed by naming its directory.
@@ -74,17 +72,17 @@ func OpenDirWithPolicy(dbDir, base string, policy func(string) error) (*Store, e
 }
 
 // DefaultRecordPath returns the record a session of the given working directory
-// would leave, for the review command: the newest session directory record, the
-// database record otherwise. The session directories sort by the UTC timestamp
-// their names carry, so the review command finds the latest session without a
-// flag. A project that recorded nothing holds neither, and the returned path
-// names the database's default place, whose own absence is the command's error
-// to report. See TheoryOfDirRecord and TheoryOfSqlUpper.
+// would leave, for the review command: the newest session directory record, or
+// the session records directory itself when the project holds none yet. The
+// session directories sort by the UTC timestamp their names carry, so the
+// review command finds the latest session without a flag; a project that
+// recorded nothing leaves the command to report that directory's absence.
+// See TheoryOfDirRecord.
 func DefaultRecordPath(dir string) string {
 	if newest, ok := latestSessionDir(dir); ok {
 		return newest
 	}
-	return DefaultDBPath(dir)
+	return filepath.Join(dir, recordRootName, sessionRecordsName)
 }
 
 // latestSessionDir returns the newest session directory record of dir, or

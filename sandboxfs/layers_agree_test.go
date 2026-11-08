@@ -13,7 +13,7 @@ import (
 )
 
 // newLayerStores opens one store per upper layer over the same base directory,
-// so a test can run one operation sequence against all three and compare what a
+// so a test can run one operation sequence against both and compare what a
 // caller sees. See TheoryOfUpperLayer.
 func newLayerStores(t *testing.T) map[string]*Store {
 	t.Helper()
@@ -26,15 +26,11 @@ func newLayerStores(t *testing.T) map[string]*Store {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sql, err := Open(filepath.Join(dir, "record.db"), base)
-	if err != nil {
-		t.Fatal(err)
-	}
 	rec, err := OpenDir(filepath.Join(dir, "record"), base)
 	if err != nil {
 		t.Fatal(err)
 	}
-	stores := map[string]*Store{"memory": mem, "sql": sql, "dir": rec}
+	stores := map[string]*Store{"memory": mem, "dir": rec}
 	t.Cleanup(func() {
 		for _, s := range stores {
 			_ = s.Close()
@@ -88,7 +84,7 @@ func layerView(t *testing.T, s *Store, paths []string) string {
 	return b.String()
 }
 
-// TestLayersAgreeOnOneOperationSequence protects TheoryOfUpperLayer: the three
+// TestLayersAgreeOnOneOperationSequence protects TheoryOfUpperLayer: both
 // backends implement one contract, so one operation sequence must leave one
 // observable state whatever backend holds the session's mutations. A divergence
 // here is a defect in whichever layer disagrees, and the review reads a
@@ -132,7 +128,7 @@ func TestLayersAgreeOnOneOperationSequence(t *testing.T) {
 			views[name] = layerView(t, s, paths)
 		}
 		ref := views["memory"]
-		for _, name := range []string{"sql", "dir"} {
+		for _, name := range []string{"dir"} {
 			if views[name] != ref {
 				t.Fatalf("after %q the %s and memory layers disagree:\n--- memory\n%s\n--- %s\n%s",
 					op.name, name, ref, name, views[name])
@@ -194,7 +190,7 @@ func checkFuzzLayerOperation(t *testing.T, stores map[string]*Store, op fuzzLaye
 	for name, s := range stores {
 		outcomes[name] = fuzzLayerError(op.run(s))
 	}
-	for _, name := range []string{"sql", "dir"} {
+	for _, name := range []string{"dir"} {
 		if outcomes[name] != outcomes["memory"] {
 			return fmt.Errorf("operation outcome: memory=%s, %s=%s",
 				outcomes["memory"], name, outcomes[name])
@@ -204,7 +200,7 @@ func checkFuzzLayerOperation(t *testing.T, stores map[string]*Store, op fuzzLaye
 	for name, s := range stores {
 		views[name] = layerView(t, s, fuzzLayerPaths)
 	}
-	for _, name := range []string{"sql", "dir"} {
+	for _, name := range []string{"dir"} {
 		if views[name] != views["memory"] {
 			return fmt.Errorf("state:\n--- memory\n%s\n--- %s\n%s",
 				views["memory"], name, views[name])

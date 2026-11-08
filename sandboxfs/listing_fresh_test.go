@@ -10,7 +10,7 @@ import (
 // session that has written nothing must read every base entry, sorted, with
 // the kind of each one. The merged path is not exercised here; TestWhiteout
 // and TestCreateListAndApply cover it. See TheoryOfReadPath and
-// TheoryOfUpperAbsentCache.
+// TheoryOfDirectoryStream.
 func TestFreshListingIsTheBaseListing(t *testing.T) {
 	base := t.TempDir()
 	for _, name := range []string{"c.txt", "a.txt", "b.txt"} {
@@ -21,7 +21,7 @@ func TestFreshListingIsTheBaseListing(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(base, "d"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	store, err := Open(filepath.Join(t.TempDir(), "sandbox.db"), base)
+	store, err := OpenDir(filepath.Join(t.TempDir(), "rec.d"), base)
 	if err != nil {
 		t.Fatal(err)
 	}

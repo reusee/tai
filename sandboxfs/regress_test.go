@@ -25,7 +25,7 @@ func TestSetTimesKeepsBaseFileMode(t *testing.T) {
 	if err := os.Chmod(host, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	store, err := Open(filepath.Join(dir, "upper.db"), base)
+	store, err := OpenDir(filepath.Join(dir, "upper.d"), base)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +55,7 @@ func TestSpliceFileAfterRemovedDirectoryCreatesFile(t *testing.T) {
 	if err := os.MkdirAll(base, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	store, err := Open(filepath.Join(dir, "upper.db"), base)
+	store, err := OpenDir(filepath.Join(dir, "upper.d"), base)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,39 +78,33 @@ func TestSpliceFileAfterRemovedDirectoryCreatesFile(t *testing.T) {
 	}
 }
 
-// TestCheckWriteRefusesOwnDatabaseWithAStaleRow protects
-// TheoryOfSandboxFilesystem: the store never mutates its own database, even
-// when a stale row from an older schema leaves one. The refusal belongs to
+// TestCheckWriteRefusesOwnRecordWithAStaleRow protects
+// TheoryOfSandboxFilesystem: the store never mutates its own record, even
+// when a stale row from an older session leaves one. The refusal belongs to
 // the common mutation entry, so no path that skips captureOriginal can slip
-// through. The row is injected through the sqlite layer's connection; a
-// memory layer carries no record to protect, so the test names the sqlite one.
-func TestCheckWriteRefusesOwnDatabaseWithAStaleRow(t *testing.T) {
-	dir := t.TempDir()
-	base := filepath.Join(dir, "base")
-	if err := os.MkdirAll(base, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	dbPath := DefaultDBPath(base)
-	store, err := Open(dbPath, base)
+// through. The row is written straight into the record directory; a memory
+// layer carries no record to protect, so the test names the directory layer.
+func TestCheckWriteRefusesOwnRecordWithAStaleRow(t *testing.T) {
+	base := t.TempDir()
+	record := filepath.Join(base, "rec.d")
+	store, err := OpenDir(record, base)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	u := sqliteOf(t, store)
-	rel, err := filepath.Rel(base, dbPath)
-	if err != nil {
+	u, ok := store.upper.(*dirUpper)
+	if !ok {
+		t.Fatalf("store upper layer is %T, want *dirUpper", store.upper)
+	}
+	// A row beneath the record makes the mutation path skip captureOriginal,
+	// which was the older code's only refusal.
+	if err := u.writeMeta("/rec.d/x", dirRowOf(fileRow{
+		path: "/rec.d/x", kind: KindRegular, mode: 0o644,
+	})); err != nil {
 		t.Fatal(err)
 	}
-	name := "/" + filepath.ToSlash(rel)
-	// A row for the database path makes the mutation path skip
-	// captureOriginal, which was the older code's only refusal.
-	if _, err := u.db.Exec(
-		`INSERT INTO files (path, kind, mode, mtime, deleted, size, target, original_exists, original_hash)
-		 VALUES (?, 0, 420, 0, 0, 0, '', 0, '')`, name); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.WriteFile(name, []byte("corrupt"), 0o644); !errors.Is(err, os.ErrPermission) {
-		t.Errorf("write over a stale database row: got %v, want a permission error", err)
+	if err := store.WriteFile("/rec.d/x", []byte("corrupt"), 0o644); !errors.Is(err, os.ErrPermission) {
+		t.Errorf("write over a stale record row: got %v, want a permission error", err)
 	}
 }
 
@@ -150,26 +144,27 @@ func TestMetadataOnlyMutationAfterBaseFileVanishes(t *testing.T) {
 	}
 }
 
-// TestOwnDatabaseOutsideBaseIsRefusedThroughHardLink protects
-// TheoryOfSandboxFilesystem: record protection is by file identity, not only
-// by path text. A database outside the base is still the store's own record
-// when a hard link inside the base names the same inode.
-func TestOwnDatabaseOutsideBaseIsRefusedThroughHardLink(t *testing.T) {
+// TestOwnRecordAliasIsRefused protects TheoryOfSandboxFilesystem: record
+// protection is by file identity as well as by path text. A record outside
+// the base is still the store's own record when a name inside the base
+// aliases the record directory, and a write through that name is refused.
+func TestOwnRecordAliasIsRefused(t *testing.T) {
 	dir := t.TempDir()
 	base := filepath.Join(dir, "base")
 	if err := os.Mkdir(base, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	store, err := Open(filepath.Join(dir, "record.db"), base)
+	record := filepath.Join(dir, "record.d")
+	store, err := OpenDir(record, base)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	if err := os.Link(filepath.Join(dir, "record.db"), filepath.Join(base, "alias")); err != nil {
+	if err := os.Symlink(record, filepath.Join(base, "alias")); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.WriteFile("/alias", []byte("corrupt"), 0o600); !errors.Is(err, os.ErrPermission) {
-		t.Fatalf("write through a hard link to the record: got %v, want a permission error", err)
+		t.Fatalf("write through an alias of the record: got %v, want a permission error", err)
 	}
 }
 

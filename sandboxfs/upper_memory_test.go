@@ -8,7 +8,7 @@ import (
 )
 
 // TestMemoryStoreServesWritesWithoutItsRecordFile protects TheoryOfUpperLayer:
-// a memory-backed store records the same rows and content the sqlite layer
+// a memory-backed store records the same rows and content a durable layer
 // would, but leaves no file behind, so a session that needs no durable record
 // pays no disk round trip per mutation. The path runs the whole store API —
 // write, read, list, diff, apply — against the memory layer.
@@ -19,15 +19,15 @@ func TestMemoryStoreServesWritesWithoutItsRecordFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	if store.dbPath != "" {
-		t.Fatalf("memory store names a record file: %q", store.dbPath)
+	if store.recordPath != "" {
+		t.Fatalf("memory store names a record file: %q", store.recordPath)
 	}
 	if err := store.WriteFile("/a.txt", []byte("hello"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	got, err := store.ReadFile("/a.txt")
 	if err != nil || string(got) != "hello" {
-		t.Fatalf("content = %q, err = %v, want %q", got, err, "hello")
+		t.Fatalf("content %q, err = %v, want %q", got, err, "hello")
 	}
 	window, err := store.ReadRange("/a.txt", 0, 64)
 	if err != nil || !bytes.Equal(window, []byte("hello")) {

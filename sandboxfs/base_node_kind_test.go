@@ -26,7 +26,7 @@ func TestBaseCaptureRefusesANodeItCannotServe(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer l.Close()
-	store, err := Open(filepath.Join(t.TempDir(), "sandbox.db"), base)
+	store, err := OpenDir(filepath.Join(t.TempDir(), "rec.d"), base)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +49,7 @@ func TestBaseCaptureRefusesANodeItCannotServe(t *testing.T) {
 	if err != nil || fi.Mode()&os.ModeCharDevice == 0 {
 		t.Skip("no character device to test with")
 	}
-	dev, err := Open(filepath.Join(t.TempDir(), "dev.db"), "/dev")
+	dev, err := OpenDir(filepath.Join(t.TempDir(), "dev.d"), "/dev")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +71,7 @@ func TestReadHandleRefusesADeviceThroughThePortableWalk(t *testing.T) {
 	if err != nil || fi.Mode()&os.ModeCharDevice == 0 {
 		t.Skip("no character device to test with")
 	}
-	store, err := Open(filepath.Join(t.TempDir(), "sandbox.db"), "/dev")
+	store, err := OpenDir(filepath.Join(t.TempDir(), "rec.d"), "/dev")
 	if err != nil {
 		t.Fatal(err)
 	}

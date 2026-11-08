@@ -14,26 +14,25 @@ concurrent store access theory:
   in the store, not in the mount: the concurrent benchmarks drive the
   store directly. See TheoryOfFuseMount.
 - The store answers every method concurrently. A read of a path the
-  session never wrote costs one lock-free absence lookup, one lock-free
+  session never wrote costs one upper-layer lookup, one lock-free
   first-read check, and one base window read, so parallel readers run
   beside each other without a lock between them.
-- Every mutation reaches the one sqlite connection the store holds, so
-  concurrent writers serialize there. The design accepts that
-  serialization: one connection keeps a session's reads and writes
-  consistent without a second locking layer, and a coding task spends
-  far more time reading than writing. The writers-only rate divides
-  that serialized engine throughput by the write amplification of a
-  chunk-shaped partial write (see TheoryOfChunkedContent); the chunk
-  size's balance is what keeps the partial write near the transaction's
-  own cost instead of at the chunk's size.
-- A read of a path the session wrote reaches that same connection, so a
+- Every mutation reaches the upper layer's own lock — the memory layer's
+  mutex or the record directory's — so concurrent writers serialize
+  there. The design accepts that serialization: one lock keeps a
+  session's reads and writes consistent without a second locking layer,
+  and a coding task spends far more time reading than writing. The
+  writers-only rate divides that serialized throughput by the write
+  amplification of a chunk-shaped partial write (see
+  TheoryOfChunkedContent); the chunk size's balance is what keeps the
+  partial write near one chunk's own cost.
+- A read of a path the session wrote reaches that same lock, so a
   mixed workload measures both sides at once — the contention a
   toolchain produces when its readers and writers run together. The
-  writers-only benchmark is the ceiling the single connection puts on
-  the write side, and the readers-only benchmark states how far the read
+  writers-only benchmark is the ceiling the layer's lock puts on the
+  write side, and the readers-only benchmark states how far the read
   path scales. Read all three against BenchmarkReadRangeBasePath, the
-  single-threaded cost of one read. See TheoryOfUpperAbsentCache and
-  TheoryOfChunkedContent.
+  single-threaded cost of one read. See TheoryOfChunkedContent.
 - The mixed benchmark must run readers and writers at the same time,
   not in alternating all-read and all-write phases. Every worker that
   alternates from the same iteration index starts on the same side, and
@@ -67,7 +66,7 @@ func newConcurrentBenchStore(b *testing.B) (*Store, []byte) {
 	if err := os.WriteFile(filepath.Join(base, "a.bin"), content, 0o644); err != nil {
 		b.Fatal(err)
 	}
-	store, err := Open(filepath.Join(b.TempDir(), "sandbox.db"), base)
+	store, err := OpenDir(filepath.Join(b.TempDir(), "rec.d"), base)
 	if err != nil {
 		b.Fatal(err)
 	}

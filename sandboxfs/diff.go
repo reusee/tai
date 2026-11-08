@@ -49,18 +49,16 @@ type Change struct {
 // Changes returns the net changes of the sandbox in path order. A change
 // that a conflict blocks still appears, with its reason: the review step
 // shows every change and lets the user decide. The upper layer hands over
-// every row's metadata in one call before any content is read, because the
-// sqlite layer holds a single connection: a row set kept open while a content
-// query runs would wait for the connection it holds. A live regular row's
-// content comes from the layer's chunks, and a deletion's from nothing; a
-// metadata-only row's content comes from the base's own prefix, the same bound
-// the capture hashed, so a permission or time change of a file of any size
-// costs that bounded read rather than the file's own length. A live path whose
-// content and kind still match the snapshot but whose recorded mode does not is
-// a change of mode alone, which the hash cannot see. The upper layer's own
-// record never enters the list: it is the review's source, not a reviewable
-// change. See TheoryOfSandboxFilesystem, TheoryOfApplyConflict,
-// TheoryOfBaseCapture and TheoryOfChunkedContent.
+// every row's metadata in one call before any content is read. A live
+// regular row's content comes from the layer's chunks, and a deletion's from
+// nothing; a metadata-only row's content comes from the base's own prefix,
+// the same bound the capture hashed, so a permission or time change of a
+// file of any size costs that bounded read rather than the file's own
+// length. A live path whose content and kind still match the snapshot but
+// whose recorded mode does not is a change of mode alone, which the hash
+// cannot see. The upper layer's own record never enters the list: it is the
+// review's source, not a reviewable change. See TheoryOfSandboxFilesystem,
+// TheoryOfApplyConflict, TheoryOfBaseCapture and TheoryOfChunkedContent.
 func (s *Store) Changes() ([]Change, error) {
 	all, err := s.upper.allRows()
 	if err != nil {
@@ -68,7 +66,7 @@ func (s *Store) Changes() ([]Change, error) {
 	}
 	var changes []Change
 	for _, r := range all {
-		if s.isOwnDBPath(r.path) {
+		if s.isOwnRecordPath(r.path) {
 			continue
 		}
 		var content []byte
@@ -433,8 +431,8 @@ func applyPhase(c Change) int {
 }
 
 func (s *Store) applyOne(c Change, run *applyRun) error {
-	if s.isOwnDBPath(c.Path) {
-		return fmt.Errorf("%w: refusing to apply a change to the session database: %s", os.ErrPermission, c.Path)
+	if s.isOwnRecordPath(c.Path) {
+		return fmt.Errorf("%w: refusing to apply a change to the session record: %s", os.ErrPermission, c.Path)
 	}
 	rel := relPath(c.Path)
 	// The apply has to reach the path to create, rewrite, or remove it, and the

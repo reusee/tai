@@ -2,7 +2,6 @@ package sandboxfs
 
 import (
 	"crypto/sha256"
-	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -13,27 +12,23 @@ import (
 )
 
 const TheoryOfChunkedContent = `
-Content lives in fixed-size chunks in the memory and SQL layers, one chunk per
-contentChunkSize bytes, so a change costs the bytes it changes. Those layers'
+Content lives in fixed-size chunks in the memory layer, one chunk per
+contentChunkSize bytes, so a change costs the bytes it changes. The layer's
 rows carry metadata only — kind, mode, mtime, deleted, size, link target, and
-the recorded original — and their chunks carry the bytes; the splice that
+the recorded original — and its chunks carry the bytes; the splice that
 writes them is TheoryOfWriteSplice's subject. The directory layer needs no
 layout at all: one file holds each path's whole content on the host and the
-host filesystem windows it (see TheoryOfDirUpper). A single blob column instead
-rewrote the whole file per window, which made the write traffic quadratic in
-the window count — the defect the execution trace and the profile both pointed
-at.
+host filesystem windows it (see TheoryOfDirUpper).
 
 The chunk's size is the balance between two measured costs. A partial write
 rewrites the chunk it lands inside, so the traffic a small edit costs is the
-chunk's size, not the edit's. A bulk window pays one b-tree insert per chunk
-it covers in the SQL layer, so a window of many chunks pays a row count
-that grows as the chunk shrinks. Neither extreme wins: a 64 KiB chunk charged
-a 4 KiB edit for 128 KiB of traffic, and a one-page chunk made a 1 MiB bulk
-window pay 256 row inserts. The store's concurrency lives below the mount, and
-small edits dominate the write traffic, so the chosen size favours the partial
-write: a small edit stays near the transaction's own cost, and a bulk window
-pays its own bytes plus one row (or one map entry) per chunk of payload.
+chunk's size, not the edit's. A bulk window pays one stored entry per chunk
+it covers, so a window of many chunks pays an entry count that grows as the
+chunk shrinks. Neither extreme wins: a 64 KiB chunk charged a 4 KiB edit for
+128 KiB of traffic, and a one-page chunk made a 1 MiB bulk window pay 256
+entries. Small edits dominate the write traffic, so the chosen size favours
+the partial write: a small edit stays near one chunk's cost, and a bulk
+window pays its own bytes plus one entry per chunk of payload.
 
 The row is the identity; the chunks are the content. A chunk exists only for a
 live regular row: a whiteout, a directory, a link, and a pipe hold no content.
@@ -44,15 +39,11 @@ in the base (see TheoryOfBaseCapture). A mutation that changes content writes
 the metadata and the chunks in one atomic step, so a reader never sees a size
 and a chunk set that disagree, and reads clamp to the stored size.
 
-The SQL layer reads a window's row and chunks in one transaction, and every
-whole-content read uses the same window operation. A concurrent replacement
-therefore cannot pair one version's length with another's bytes. Reading a
-window is one indexed query over the chunks covering it in the SQL layer, and
-one pass over the stored chunks in the memory layer, assembled with zeros for
-absent chunks: neither pays the round-trip count a substr over a blob cost,
-and neither rewrites a whole column on the write side. The first change to a
-base path materialises the base content into chunks, the cold path taken once
-per file; a truncation materialises only the prefix it keeps.
+The memory layer reads a window as one pass over the stored chunks, assembled
+with zeros for absent chunks: it pays no round trips and rewrites nothing on
+the write side. The first change to a base path materialises the base content
+into chunks, the cold path taken once per file; a truncation materialises
+only the prefix it keeps.
 `
 
 // captureHashBufferSize is the one buffer a base capture streams through, so
@@ -67,14 +58,6 @@ const contentChunkSize = 4 << 10
 // errNoLiveRegularRow reports that the upper layer holds no live regular row
 // for a path, so a content mutation must materialise it first.
 var errNoLiveRegularRow = errors.New("sandboxfs: no live regular row")
-
-// dbExecer is the statement surface shared by *sql.DB and *sql.Tx, so a
-// content helper of the sqlite layer runs inside its caller's transaction.
-type dbExecer interface {
-	Exec(query string, args ...any) (sql.Result, error)
-	Query(query string, args ...any) (*sql.Rows, error)
-	QueryRow(query string, args ...any) *sql.Row
-}
 
 // readContent returns the whole stored content of a live regular path. The
 // caller's earlier size is not a slicing parameter: the window reads its own

@@ -19,74 +19,12 @@ func newConcurrencyTestStore(t *testing.T) (*Store, string) {
 	if err := os.MkdirAll(base, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	store, err := Open(filepath.Join(dir, "sandbox.db"), base)
+	store, err := OpenDir(filepath.Join(dir, "rec.d"), base)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	return store, base
-}
-
-// TestRememberAbsentRejectsAStaleEpoch protects TheoryOfUpperAbsentCache: a
-// lookup that found no row stamps itself with the write epoch before it
-// queries, so a write that commits in between keeps the absence from being
-// recorded. Without the stamp the cache hides the committed row for the rest
-// of the session and the read keeps serving the base.
-func TestRememberAbsentRejectsAStaleEpoch(t *testing.T) {
-	store, _ := newConcurrencyTestStore(t)
-	u := sqliteOf(t, store)
-	epoch := u.epoch.Load()
-	if err := store.WriteFile("/a.txt", []byte("written"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	// The lookup's own query ran before the write above; its record runs now.
-	u.rememberAbsent("/a.txt", epoch)
-	if u.upperAbsent("/a.txt") {
-		t.Fatal("a stale absence survived the write that committed the row")
-	}
-	content, err := store.ReadFile("/a.txt")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(content) != "written" {
-		t.Fatalf("content = %q, want %q", content, "written")
-	}
-}
-
-// TestConcurrentWriteIsNeverHiddenByACachedAbsence runs the interleaving the
-// cache must survive: one goroutine looks a fresh path up while another writes
-// it. Whatever order the two reach, the absence may not outlive the write, so
-// the path serves the bytes the write stored.
-// See TheoryOfUpperAbsentCache.
-func TestConcurrentWriteIsNeverHiddenByACachedAbsence(t *testing.T) {
-	store, _ := newConcurrencyTestStore(t)
-	u := sqliteOf(t, store)
-	for i := 0; i < 200; i++ {
-		p := fmt.Sprintf("/f%d.txt", i)
-		var wg sync.WaitGroup
-		wg.Add(2)
-		go func() {
-			defer wg.Done()
-			_, _ = store.Stat(p)
-		}()
-		go func() {
-			defer wg.Done()
-			if err := store.WriteFile(p, []byte("written"), 0o644); err != nil {
-				t.Error(err)
-			}
-		}()
-		wg.Wait()
-		if u.upperAbsent(p) {
-			t.Fatalf("%s: a cached absence outlived the write that committed the row", p)
-		}
-		content, err := store.ReadFile(p)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if string(content) != "written" {
-			t.Fatalf("%s: content = %q, want %q", p, content, "written")
-		}
-	}
 }
 
 // TestMaterializeContentKeepsAConcurrentWritersRow protects
@@ -112,67 +50,6 @@ func TestMaterializeContentKeepsAConcurrentWritersRow(t *testing.T) {
 	}
 	if string(content) != "the other writer" {
 		t.Fatalf("content = %q, want the bytes the other writer stored", content)
-	}
-}
-
-// TestSQLWindowDoesNotMixRowVersions protects TheoryOfChunkedContent: a
-// window's stored length and its chunks must come from one committed version.
-// The two candidate contents differ in both length and every payload byte, so
-// a metadata query interleaved with another version's chunk query cannot
-// accidentally look valid.
-func TestSQLWindowDoesNotMixRowVersions(t *testing.T) {
-	store, _ := newConcurrencyTestStore(t)
-	u := sqliteOf(t, store)
-	small := []byte("a")
-	large := bytes.Repeat([]byte("b"), 2*contentChunkSize)
-	row := fileRow{path: "/f", kind: KindRegular, mode: 0o644}
-	if err := u.replaceContent(row, small); err != nil {
-		t.Fatal(err)
-	}
-
-	const rounds = 2000
-	start := make(chan struct{})
-	errs := make(chan error, 2)
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		<-start
-		for i := 0; i < rounds; i++ {
-			content := small
-			if i%2 != 0 {
-				content = large
-			}
-			if err := u.replaceContent(row, content); err != nil {
-				errs <- err
-				return
-			}
-		}
-	}()
-	go func() {
-		defer wg.Done()
-		<-start
-		for i := 0; i < rounds; i++ {
-			data, kind, found, err := u.window("/f", 0, maxFileSize)
-			if err != nil {
-				errs <- err
-				return
-			}
-			if !found || kind != KindRegular {
-				errs <- fmt.Errorf("window lost the live regular row: kind %v, found %v", kind, found)
-				return
-			}
-			if !bytes.Equal(data, small) && !bytes.Equal(data, large) {
-				errs <- fmt.Errorf("torn window: %d bytes with prefix %q", len(data), data[:min(len(data), 8)])
-				return
-			}
-		}
-	}()
-	close(start)
-	wg.Wait()
-	close(errs)
-	for err := range errs {
-		t.Error(err)
 	}
 }
 

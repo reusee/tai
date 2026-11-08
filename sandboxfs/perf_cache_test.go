@@ -20,40 +20,12 @@ func newCacheTestStore(t *testing.T) (*Store, string) {
 	if err := os.WriteFile(filepath.Join(base, "a.txt"), []byte("hello"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	store, err := Open(filepath.Join(t.TempDir(), "sandbox.db"), base)
+	store, err := OpenDir(filepath.Join(t.TempDir(), "rec.d"), base)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	return store, base
-}
-
-// TestUpperAbsentCacheRefreshesOnWrite checks that a path cached as absent
-// serves its new upper-layer content once the session writes it: the write
-// clears the entry, so the lookup reads the row instead of the cached absence.
-// See TheoryOfUpperAbsentCache.
-func TestUpperAbsentCacheRefreshesOnWrite(t *testing.T) {
-	store, _ := newCacheTestStore(t)
-	u := sqliteOf(t, store)
-	if _, err := store.Stat("/a.txt"); err != nil {
-		t.Fatal(err)
-	}
-	if !u.upperAbsent("/a.txt") {
-		t.Fatal("lookup of a base-only path did not record the absence")
-	}
-	if err := store.WriteFile("/a.txt", []byte("changed"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	content, err := store.ReadFile("/a.txt")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(content) != "changed" {
-		t.Fatalf("content = %q, want %q", content, "changed")
-	}
-	if u.upperAbsent("/a.txt") {
-		t.Fatal("write left a cached absence in place")
-	}
 }
 
 // TestBaseOpenFileMatchesRootWalk checks the descriptor open against the
@@ -216,73 +188,6 @@ func TestParentOfMatchesPathDir(t *testing.T) {
 	}
 }
 
-// TestReadRangeServesWrittenWindowAfterCachedAbsence checks the read path: a
-// window read recorded the absence, and the write that follows makes the upper
-// layer answer the same window. See TheoryOfUpperAbsentCache.
-func TestReadRangeServesWrittenWindowAfterCachedAbsence(t *testing.T) {
-	store, _ := newCacheTestStore(t)
-	u := sqliteOf(t, store)
-	chunk, err := store.ReadRange("/a.txt", 0, 64)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(chunk) != "hello" {
-		t.Fatalf("chunk = %q, want %q", chunk, "hello")
-	}
-	if !u.upperAbsent("/a.txt") {
-		t.Fatal("base read did not record the upper-layer absence")
-	}
-	if err := store.WriteFile("/a.txt", []byte("hello world"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	chunk, err = store.ReadRange("/a.txt", 0, 64)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(chunk) != "hello world" {
-		t.Fatalf("chunk = %q, want %q", chunk, "hello world")
-	}
-}
-
-// TestFreshStoreReadsWithoutItsUpperLayer protects TheoryOfUpperAbsentCache: a
-// session that has written nothing answers every lookup from the base, so its
-// read path never reaches sqlite. The closed database states that fact — a
-// lookup that asked it would fail — and the answers must be the base's own.
-func TestFreshStoreReadsWithoutItsUpperLayer(t *testing.T) {
-	store, base := newCacheTestStore(t)
-	if err := os.Mkdir(filepath.Join(base, "d"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	u := sqliteOf(t, store)
-	if !u.empty.Load() {
-		t.Fatal("a store opened on an empty database did not record the empty upper layer")
-	}
-	if err := u.db.Close(); err != nil {
-		t.Fatal(err)
-	}
-	a, err := store.Stat("/a.txt")
-	if err != nil {
-		t.Fatalf("stat of a base path with an empty upper layer: %v", err)
-	}
-	if a.Size != int64(len("hello")) {
-		t.Fatalf("size = %d, want %d", a.Size, len("hello"))
-	}
-	content, err := store.ReadRange("/a.txt", 0, 5)
-	if err != nil {
-		t.Fatalf("read of a base path with an empty upper layer: %v", err)
-	}
-	if string(content) != "hello" {
-		t.Fatalf("content = %q, want %q", content, "hello")
-	}
-	entries, err := store.ReadDir("/")
-	if err != nil {
-		t.Fatalf("listing with an empty upper layer: %v", err)
-	}
-	if len(entries) != 2 {
-		t.Fatalf("listing holds %d entries, want a.txt and d", len(entries))
-	}
-}
-
 // TestEncodeStructDirectPathMatchesReflection checks that the direct encoder
 // and the reflection encoder agree byte for byte on every hot reply type: the
 // kernel parses the reply by its own offsets, so a divergence is a protocol
@@ -337,14 +242,14 @@ func binaryWrite(v any, buf []byte) error {
 }
 
 // BenchmarkStatBasePath measures the metadata lookup of a path the session
-// never writes: the base answers it and the upper-layer absence is cached, so
-// the cost is one canonicalization, one map read, and one base stat.
+// never writes: the base answers it, so the cost is one canonicalization, one
+// upper-layer lookup, and one base stat.
 func BenchmarkStatBasePath(b *testing.B) {
 	base := b.TempDir()
 	if err := os.WriteFile(filepath.Join(base, "a.txt"), []byte("hello"), 0o644); err != nil {
 		b.Fatal(err)
 	}
-	store, err := Open(filepath.Join(b.TempDir(), "sandbox.db"), base)
+	store, err := OpenDir(filepath.Join(b.TempDir(), "rec.d"), base)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -366,7 +271,7 @@ func BenchmarkReadRangeBasePath(b *testing.B) {
 	if err := os.WriteFile(filepath.Join(base, "a.bin"), content, 0o644); err != nil {
 		b.Fatal(err)
 	}
-	store, err := Open(filepath.Join(b.TempDir(), "sandbox.db"), base)
+	store, err := OpenDir(filepath.Join(b.TempDir(), "rec.d"), base)
 	if err != nil {
 		b.Fatal(err)
 	}

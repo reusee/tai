@@ -6,12 +6,12 @@ import (
 )
 
 const TheoryOfUpperLayer = `
-The upper layer is one contract with three implementations, and the store's
+The upper layer is one contract with two implementations, and the store's
 union logic — capture of the base state, kind checks, the size sentinel,
 whiteouts, conflict detection, apply — is written once against it. A session's
 semantics therefore do not depend on where its mutations live.
 
-The directory layer is the tai tool's default, and the thinnest of the three:
+The directory layer is the tai tool's default, and the thinnest of the two:
 one host directory records the session as ordinary files, and the host
 filesystem does the storing, the windowing, and the truncation. It needs no
 driver, no schema, and no chunk layout, so every session leaves a durable
@@ -26,36 +26,34 @@ as they proceed, of a test, and of a filesystem with no room for a record. A
 caller selects it by opening it, because the tool's own default is the durable
 directory record.
 
-The SQL layer is durable too, and opt-in like the memory layer: one database
-file records the session, outlives the process, and the review command browses
-and applies it later. A caller selects it by naming the record. Its dialect
-decides the engine that holds the file — sqlite, or DuckDB when the binary that
-selects it links a driver (see TheoryOfSqlDialects).
+The memory layer keeps content in fixed-size chunks, so one write window costs
+its own payload; the layout is TheoryOfChunkedContent's subject. The directory
+layer keeps each path's content in one file and lets the host do the same job.
+The memory layer copies every chunk it stores: the caller's buffer may be a
+reused request buffer, and the layer must own the bytes it answers with.
 
-The memory and SQL layers keep content in fixed-size chunks, so one write
-window costs its own payload in either one; the layout is
-TheoryOfChunkedContent's subject. The directory layer keeps each path's content
-in one file and lets the host do the same job. The memory layer copies every
-chunk it stores: the caller's buffer may be a reused request buffer, and the
-layer must own the bytes it answers with.
-
-The contract speaks rows and content windows, never SQL and never files. A row
-is metadata alone. The composite operations — write one row, write one row with
-its whole content, create with content, splice, truncate, drop — are atomic
-inside the layer: the SQL implementation reaches atomicity through a
-transaction on its one connection, the memory implementation through its mutex,
-and the directory implementation through its mutex and a rename over the
-committed file. Atomicity is the layer's own business because only the layer
-knows where a row and its content both live.
+The contract speaks rows and content windows, never the layer's own storage.
+A row is metadata alone. The composite operations — write one row, write one
+row with its whole content, create with content, splice, truncate, drop — are
+atomic inside the layer: the memory implementation reaches atomicity through
+its mutex, and the directory implementation through its mutex and a rename
+over the committed file. Atomicity is the layer's own business because only
+the layer knows where a row and its content both live.
 
 Metadata-only updates are atomic in the same sense: chmod and utimes change
 their field on the row current at that step instead of writing back a row read
 earlier. A concurrent content write therefore cannot be paired with a stale
-length. The negative-lookup cache and the prepared statement set are the SQL
-layer's own: a map lookup needs no absence cache, a failed file open costs one
-host lookup, and neither other layer executes SQL. A caller of the contract
-sees neither.
+length. A map lookup needs no cache and a failed file open costs one host
+lookup, so neither layer keeps a lookup cache of its own. A caller of the
+contract sees neither layer's storage.
 `
+
+// selfBackedUpper reports the directory an upper layer records itself in, so
+// the store never mutates its own record. A memory layer does not implement
+// it: nothing it writes is a file. See TheoryOfSandboxFilesystem.
+type selfBackedUpper interface {
+	backingPath() string
+}
 
 type upperStore interface {
 	// row returns one path's row, live or deleted, and whether the layer

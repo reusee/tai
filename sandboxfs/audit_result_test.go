@@ -1,7 +1,6 @@
 package sandboxfs
 
 import (
-	"database/sql"
 	"errors"
 	"fmt"
 	"os"
@@ -20,7 +19,7 @@ func TestAuditRecordsAFailedOperation(t *testing.T) {
 	if err := os.MkdirAll(base, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	store, err := OpenWithPolicy(filepath.Join(dir, "rec.db"), base, func(p string) error {
+	store, err := OpenDirWithPolicy(filepath.Join(dir, "rec.d"), base, func(p string) error {
 		return fmt.Errorf("%w: %s", os.ErrPermission, p)
 	})
 	if err != nil {
@@ -85,53 +84,6 @@ func TestAuditRecordsASuccessfulResult(t *testing.T) {
 	if !found {
 		t.Fatalf("no mkdir row: %+v", ops)
 	}
-}
-
-// TestOpenMigratesAnOlderAuditTable protects TheoryOfAuditOutcome: a record
-// written before the result columns existed opens and records new rows whole,
-// because the trail is a durable file a review browses later.
-func TestOpenMigratesAnOlderAuditTable(t *testing.T) {
-	const oldOps = `CREATE TABLE ops (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    time TEXT NOT NULL,
-    op TEXT NOT NULL,
-    path TEXT NOT NULL,
-    detail TEXT NOT NULL DEFAULT ''
-)`
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "old.db")
-	db, err := sql.Open("sqlite", "file:"+dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(oldOps); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
-	base := filepath.Join(dir, "base")
-	if err := os.MkdirAll(base, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	store, err := Open(dbPath, base)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	if err := store.Mkdir("/d", 0o755); err != nil {
-		t.Fatal(err)
-	}
-	ops, err := store.Ops()
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, op := range ops {
-		if op.Op == "mkdir" && op.Path == "/d" && op.Result == ResultOK {
-			return
-		}
-	}
-	t.Fatalf("the migrated record lacks the mkdir row: %+v", ops)
 }
 
 // TestAuditRecordsAConflict protects TheoryOfAuditOutcome: an apply a conflict

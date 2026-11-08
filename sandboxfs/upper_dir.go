@@ -15,21 +15,21 @@ import (
 )
 
 const TheoryOfDirUpper = `
-The directory layer is the third upper layer, and the thinnest: one host
+The directory layer is the durable upper layer, and the thinnest: one host
 directory holds the whole session record as ordinary files. Each recorded
 path has one metadata file holding its row as JSON — kind, mode, mtime,
 deletion, size, link target, and the recorded original — and, when the path
 carries content, one content file holding the bytes. The audit trail is one
 append-only log beside them.
 
-The host filesystem does what the SQL layer buys with statements and the
-memory layer with maps. A content file is the content: a read window is one
-pread, a write window one pwrite, a truncation one ftruncate, and the file's
-length the stored length. The layer carries no chunks, no schema, no
-transactions, and no negative-lookup cache: a path absent from the record is
-one failed file open, which the host's dentry cache answers for every request
-after the first. What remains is the metadata encoding, the name mapping, and
-the order of the composite operations. See TheoryOfUpperLayer.
+The host filesystem does what the memory layer buys with maps. A content file
+is the content: a read window is one pread, a write window one pwrite, a
+truncation one ftruncate, and the file's length the stored length. The layer
+carries no chunks, no schema, no transactions, and no lookup cache: a path
+absent from the record is one failed file open, which the host's dentry cache
+answers for every request after the first. What remains is the metadata
+encoding, the name mapping, and the order of the composite operations.
+See TheoryOfUpperLayer.
 
 A recorded name is the digest of the canonical path with a fixed suffix, not
 the path itself. A path's bytes may exceed the 255 a directory entry allows,
@@ -48,8 +48,8 @@ the old bytes or the new. The content file is committed before the metadata
 that sizes it, and a drop removes the metadata first, so a row never outlives
 its content or claims bytes that are gone. The layer's mutex is the atomicity
 inside the process; across processes a live record is a per-file snapshot,
-not one snapshot of the directory, and the review command reads it the way it
-reads the SQL record.
+not one snapshot of the directory, and the review command reads it the same
+way.
 
 The record is the layer's private data, so a record file's own bits never gate
 the layer's write. A record outlives the build that wrote it, so a record file
@@ -75,9 +75,8 @@ path, never the only one. A temporary name another entry claims is abandoned
 for the next, so a foreign leftover never stops a write either.
 
 Durability is the host's. A write returns once the bytes reach the operating
-system, the point the SQL layer's synchronous=NORMAL commit stops at: the
-record survives the process, is lost only to a machine crash, and pays no
-fsync per mutation.
+system: the record survives the process, is lost only to a machine crash, and
+pays no fsync per mutation.
 
 The record directory is opened once as a root handle, before any mount pivots
 the process root, and every later operation resolves through that handle. An

@@ -10,13 +10,13 @@ import (
 
 // TestNodeOfStatsOutsideTheNodeTable protects TheoryOfFuseMount: a node id is
 // allocated without holding the node table across the store lookup. That
-// lookup reaches the store's one sqlite connection, and holding the table for
-// the round trip makes every other user of the table wait for it. The stat
+// lookup reaches the store's upper layer, and holding the table for the
+// round trip makes every other user of the table wait for it. The stat
 // therefore runs before the lock is taken, and an answer arrives while another
 // holder keeps the table.
 func TestNodeOfStatsOutsideTheNodeTable(t *testing.T) {
 	dir := t.TempDir()
-	store, err := Open(filepath.Join(dir, "sandbox.db"), dir)
+	store, err := OpenDir(filepath.Join(dir, "rec.d"), dir)
 	if err != nil {
 		t.Fatal(err)
 	}

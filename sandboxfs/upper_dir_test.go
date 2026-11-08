@@ -34,14 +34,14 @@ func newTestDirStore(t *testing.T) (store *Store, base, dir string) {
 // TestOpenDirRecordsToADirectory protects TheoryOfDirUpper: the directory layer
 // records the session as ordinary files inside one directory — one metadata
 // file per recorded path, one content file per content-bearing path, and the
-// audit log — instead of a database. The store API runs end to end against it.
+// audit log. The store API runs end to end against it.
 func TestOpenDirRecordsToADirectory(t *testing.T) {
 	store, base, dir := newTestDirStore(t)
 	if _, ok := store.upper.(*dirUpper); !ok {
 		t.Fatalf("upper layer is %T, want *dirUpper", store.upper)
 	}
-	if store.dbPath != dir {
-		t.Fatalf("record path %q, want %q", store.dbPath, dir)
+	if store.recordPath != dir {
+		t.Fatalf("record path %q, want %q", store.recordPath, dir)
 	}
 
 	if err := store.WriteFile("/a.txt", []byte("hello"), 0o644); err != nil {
@@ -295,7 +295,8 @@ func TestDirRecordNonRegularRowsHaveNoContentFile(t *testing.T) {
 
 // TestOpenAnyRoutesDirectoryRecord protects TheoryOfDirRecord: the review
 // command routes a record to its layer by shape, not by a flag. A directory
-// path opens the directory layer; a file path opens the SQL layer.
+// path opens the directory layer, and a path that is not a directory reports
+// itself as no record.
 func TestOpenAnyRoutesDirectoryRecord(t *testing.T) {
 	base := t.TempDir()
 
@@ -303,7 +304,7 @@ func TestOpenAnyRoutesDirectoryRecord(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dirPath := dirStore.dbPath
+	dirPath := dirStore.recordPath
 	if err := dirStore.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -316,21 +317,12 @@ func TestOpenAnyRoutesDirectoryRecord(t *testing.T) {
 		t.Fatalf("a directory record routed to %T, want *dirUpper", routed.upper)
 	}
 
-	dbPath := filepath.Join(t.TempDir(), "rec.db")
-	dbStore, err := Open(dbPath, base)
-	if err != nil {
+	notRecord := filepath.Join(t.TempDir(), "rec.file")
+	if err := os.WriteFile(notRecord, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := dbStore.Close(); err != nil {
-		t.Fatal(err)
-	}
-	routedDB, err := OpenAny(dbPath, base)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer routedDB.Close()
-	if _, ok := routedDB.upper.(*sqlUpper); !ok {
-		t.Fatalf("a database record routed to %T, want *sqlUpper", routedDB.upper)
+	if _, err := OpenAny(notRecord, base); err == nil {
+		t.Fatal("a file record opened a store")
 	}
 }
 
@@ -359,31 +351,34 @@ func TestOpenDirProtectsTheRecordDirectory(t *testing.T) {
 }
 
 // TestOpenMountStoreSelectsDirRecord protects the mount's layer selection:
-// DirRecord selects the directory layer at the record path the mount returns,
-// and validateMountOptions rejects the marker without a record path and
-// rejects the dialect and the directory marker together.
+// a named record path opens the directory layer at the path the mount
+// returns, and an empty record path selects the memory layer that names
+// nothing to record.
 func TestOpenMountStoreSelectsDirRecord(t *testing.T) {
 	base := t.TempDir()
 	record := filepath.Join(t.TempDir(), "rec.d")
-	store, absDB, err := openMountStore(MountOptions{DBPath: record, DirRecord: true}, base)
+	store, absDB, err := openMountStore(MountOptions{DBPath: record}, base)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
 	if _, ok := store.upper.(*dirUpper); !ok {
-		t.Fatalf("DirRecord selected %T, want *dirUpper", store.upper)
+		t.Fatalf("a record path selected %T, want *dirUpper", store.upper)
 	}
-	if absDB == "" || store.dbPath != absDB {
-		t.Fatalf("record path %q, abs %q; want both set to the same directory", store.dbPath, absDB)
+	if absDB == "" || store.recordPath != absDB {
+		t.Fatalf("record path %q, abs %q; want both set to the same directory", store.recordPath, absDB)
 	}
 
-	err = validateMountOptions(MountOptions{Mountpoint: "/tmp/mnt", DirRecord: true})
-	if err == nil || !strings.Contains(err.Error(), "empty database path") {
-		t.Fatalf("DirRecord without a record: err = %v", err)
+	mem, abs, err := openMountStore(MountOptions{}, base)
+	if err != nil {
+		t.Fatal(err)
 	}
-	err = validateMountOptions(MountOptions{Mountpoint: "/tmp/mnt", DuckDB: true, DirRecord: true, DBPath: record})
-	if err == nil {
-		t.Fatal("validateMountOptions accepted DuckDB and DirRecord together")
+	defer mem.Close()
+	if _, ok := mem.upper.(*memoryUpper); !ok {
+		t.Fatalf("an empty record path selected %T, want *memoryUpper", mem.upper)
+	}
+	if abs != "" {
+		t.Fatalf("the memory layer named a record: %q", abs)
 	}
 }
 
@@ -487,11 +482,14 @@ func TestRandomRecordSuffixFallbackDoesNotRepeat(t *testing.T) {
 // TestDefaultRecordPathPrefersTheNewestSessionRecord protects TheoryOfDirRecord:
 // the review command finds the record a session wrote without a flag. The
 // session directories sort by the timestamp their names carry, so the newest
-// one wins over an older session's record and over the database file.
+// one wins over an older session's record; a project that recorded nothing
+// gets the session records directory itself, whose absence is the command's
+// error to report.
 func TestDefaultRecordPathPrefersTheNewestSessionRecord(t *testing.T) {
 	dir := t.TempDir()
-	if got, want := DefaultRecordPath(dir), DefaultDBPath(dir); got != want {
-		t.Errorf("no record: got %q, want the database default %q", got, want)
+	sessions := filepath.Join(dir, ".tai", "sandboxfs")
+	if got := DefaultRecordPath(dir); got != sessions {
+		t.Errorf("no record: got %q, want the session records root %q", got, sessions)
 	}
 	older := SessionDirPath(dir, time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC))
 	newer := SessionDirPath(dir, time.Date(2025, 1, 2, 3, 4, 6, 0, time.UTC))
@@ -502,31 +500,5 @@ func TestDefaultRecordPathPrefersTheNewestSessionRecord(t *testing.T) {
 	}
 	if got := DefaultRecordPath(dir); got != newer {
 		t.Errorf("session records: got %q, want the newest %q", got, newer)
-	}
-}
-
-// TestDefaultDBPathLivesUnderTheManagementDirectory protects
-// TheoryOfSandboxFilesystem: every record the tai tool creates in a working
-// directory lives under the one ".tai" management directory, so the project
-// root carries no record entry of its own. The database record also opens from
-// a fresh project, which holds no ".tai" yet. See DefaultDBPath.
-func TestDefaultDBPathLivesUnderTheManagementDirectory(t *testing.T) {
-	dir := t.TempDir()
-	got := DefaultDBPath(dir)
-	if want := filepath.Join(dir, ".tai", "sandbox.db"); got != want {
-		t.Fatalf("database record %q, want %q", got, want)
-	}
-	if _, err := os.Stat(filepath.Dir(got)); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("the test needs an absent management directory: %v", err)
-	}
-	store, err := Open(got, dir)
-	if err != nil {
-		t.Fatalf("opening the default record: %v", err)
-	}
-	if err := store.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(filepath.Dir(got)); err != nil {
-		t.Fatalf("the open did not create the management directory: %v", err)
 	}
 }

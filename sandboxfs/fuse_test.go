@@ -445,7 +445,7 @@ func TestFuseServerCreateOnDirectoryReportsEISDIR(t *testing.T) {
 func TestFuseServerCreateKeepsReadOnlyPathOutsidePolicy(t *testing.T) {
 	base := t.TempDir()
 	writeHost(t, base, "kept.txt", "k")
-	store, err := OpenWithPolicy(filepath.Join(t.TempDir(), "sandbox.db"), base,
+	store, err := OpenDirWithPolicy(filepath.Join(t.TempDir(), "rec.d"), base,
 		func(p string) error { return fmt.Errorf("%w: %s", os.ErrPermission, p) })
 	if err != nil {
 		t.Fatal(err)
@@ -609,7 +609,7 @@ func TestReaddirRefreshesAfterAMountMutation(t *testing.T) {
 func TestFuseServerAccessFollowsThePolicy(t *testing.T) {
 	base := t.TempDir()
 	writeHost(t, base, "f", "x")
-	store, err := OpenWithPolicy(filepath.Join(t.TempDir(), "sandbox.db"), base,
+	store, err := OpenDirWithPolicy(filepath.Join(t.TempDir(), "rec.d"), base,
 		func(p string) error { return fmt.Errorf("%w: %s", os.ErrPermission, p) })
 	if err != nil {
 		t.Fatal(err)
@@ -875,7 +875,7 @@ func TestFuseServerOpenTruncatesReadOnly(t *testing.T) {
 
 	// The same open outside the write policy is refused at open time, and the
 	// host content stays.
-	refused, err := OpenWithPolicy(filepath.Join(t.TempDir(), "sandbox.db"), base,
+	refused, err := OpenDirWithPolicy(filepath.Join(t.TempDir(), "rec.d"), base,
 		func(p string) error { return fmt.Errorf("%w: %s", os.ErrPermission, p) })
 	if err != nil {
 		t.Fatal(err)
@@ -1271,7 +1271,7 @@ func TestFuseServerOpenRefusesWriteOutsidePolicy(t *testing.T) {
 		}
 		return fmt.Errorf("%w: %s", os.ErrPermission, p)
 	}
-	s, err := OpenWithPolicy(filepath.Join(t.TempDir(), "sandbox.db"), base, allow)
+	s, err := OpenDirWithPolicy(filepath.Join(t.TempDir(), "rec.d"), base, allow)
 	if err != nil {
 		t.Fatal(err)
 	}

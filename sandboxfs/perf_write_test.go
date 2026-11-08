@@ -15,7 +15,7 @@ func TestBaseFastPathEngaged(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("the base descriptor fast path is Linux-only")
 	}
-	store, err := Open(filepath.Join(t.TempDir(), "sandbox.db"), t.TempDir())
+	store, err := OpenDir(filepath.Join(t.TempDir(), "rec.d"), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +29,7 @@ func TestBaseFastPathEngaged(t *testing.T) {
 // handle, so a benchmark measures the write path alone.
 func newWriteBenchServer(b *testing.B) (*fuseServer, *fuseHandle) {
 	b.Helper()
-	store, err := Open(filepath.Join(b.TempDir(), "sandbox.db"), b.TempDir())
+	store, err := OpenDir(filepath.Join(b.TempDir(), "rec.d"), b.TempDir())
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -68,7 +68,7 @@ func BenchmarkHandleWrite(b *testing.B) {
 // BenchmarkWriteSpliceDelta. See TheoryOfWriteSplice and
 // TheoryOfInitNegotiation.
 func BenchmarkWriteWholeBuffer(b *testing.B) {
-	store, err := Open(filepath.Join(b.TempDir(), "sandbox.db"), b.TempDir())
+	store, err := OpenDir(filepath.Join(b.TempDir(), "rec.d"), b.TempDir())
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -101,7 +101,7 @@ func BenchmarkWriteWholeBuffer(b *testing.B) {
 // through Go. The comparison pair is BenchmarkWriteWholeBuffer. See
 // TheoryOfWriteSplice and TheoryOfInitNegotiation.
 func BenchmarkWriteSpliceDelta(b *testing.B) {
-	store, err := Open(filepath.Join(b.TempDir(), "sandbox.db"), b.TempDir())
+	store, err := OpenDir(filepath.Join(b.TempDir(), "rec.d"), b.TempDir())
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func BenchmarkWriteSpliceDelta(b *testing.B) {
 // entries: one request replaces a listing plus one LOOKUP per entry, which is
 // the toolchain's dominant directory pattern. See TheoryOfInitNegotiation.
 func BenchmarkHandleReaddirPlus(b *testing.B) {
-	store, err := Open(filepath.Join(b.TempDir(), "sandbox.db"), b.TempDir())
+	store, err := OpenDir(filepath.Join(b.TempDir(), "rec.d"), b.TempDir())
 	if err != nil {
 		b.Fatal(err)
 	}

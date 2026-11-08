@@ -17,7 +17,7 @@ import (
 // store as a change the session never made, so the source is resolved first.
 func TestBindPassthroughSkipsAMissingSource(t *testing.T) {
 	base := t.TempDir()
-	store, err := Open(filepath.Join(t.TempDir(), "sandbox.db"), base)
+	store, err := OpenDir(filepath.Join(t.TempDir(), "rec.d"), base)
 	if err != nil {
 		t.Fatal(err)
 	}
