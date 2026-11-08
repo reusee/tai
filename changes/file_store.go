@@ -689,10 +689,12 @@ func (s *MemoryStore) Reset() {
 }
 
 // captureOriginal records the pre-session content of a path the first time
-// the path is modified in this session. Subsequent modifications reuse the
-// recorded original so Diffs always shows the full session delta. A
+// the path is modified in this session. Subsequent modifications reuse
+// the recorded original so Diffs always shows the full session delta. A
 // DiskChangedError from the underlying store is propagated: the baseline
 // must not be recorded from content that no longer matches the snapshot.
+// Any other read error except non-existence is propagated too, so an I/O
+// failure cannot masquerade as an originally absent file.
 func (s *MemoryStore) captureOriginal(path string) error {
 	if _, ok := s.originals[path]; ok {
 		return nil
@@ -702,9 +704,11 @@ func (s *MemoryStore) captureOriginal(path string) error {
 		if _, ok := err.(*DiskChangedError); ok {
 			return err
 		}
-		// A read error (including file not found) means the original
-		// state is "does not exist"; the diff will show a new file or
-		// the absence of an old one.
+		if !os.IsNotExist(err) {
+			return err
+		}
+		// File not found means the original state is "does not exist";
+		// the diff will show a new file or the absence of an old one.
 		s.originals[path] = &memoryFile{exists: false}
 		return nil
 	}

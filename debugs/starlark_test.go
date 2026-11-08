@@ -110,3 +110,13 @@ func TestToStarlarkValue(t *testing.T) {
 		toStarlarkValue(make(chan bool))
 	})
 }
+
+func TestToStarlarkValueMapKeyError(t *testing.T) {
+	type key struct{ Name string }
+	defer func() {
+		if recover() == nil {
+			t.Fatal("an unhashable Starlark dict key must not be silently dropped")
+		}
+	}()
+	toStarlarkValue(map[key]string{{Name: "key"}: "value"})
+}

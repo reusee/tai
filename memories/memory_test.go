@@ -295,6 +295,21 @@ func TestMergeMemoryItemsOrder(t *testing.T) {
 	}
 }
 
+func TestMergeMemoryItemsDeduplicatesAdds(t *testing.T) {
+	got := mergeMemoryItems([]string{"old"}, memoryUpdate{
+		Adds: []string{"new", "new", "old"},
+	})
+	want := []string{"new", "old"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	}
+}
+
 func TestUpdateMemoryFromBlockWithPseudoCallOnly(t *testing.T) {
 	var appended *MemoryEntry
 	currentMemory := func() (*MemoryEntry, error) {

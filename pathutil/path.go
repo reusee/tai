@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/reusee/tai/security"
 )
@@ -59,7 +60,17 @@ func RootMkdirAll(root *os.Root, path string, perm os.FileMode) error {
 		return nil
 	}
 	err := root.Mkdir(path, perm)
-	if err == nil || os.IsExist(err) {
+	if err == nil {
+		return nil
+	}
+	if os.IsExist(err) {
+		info, statErr := root.Stat(path)
+		if statErr != nil {
+			return statErr
+		}
+		if !info.IsDir() {
+			return &os.PathError{Op: "mkdir", Path: path, Err: syscall.ENOTDIR}
+		}
 		return nil
 	}
 	parent := filepath.Dir(path)

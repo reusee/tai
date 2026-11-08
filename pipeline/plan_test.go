@@ -155,6 +155,29 @@ func TestPendingPlanEntries(t *testing.T) {
 	}
 }
 
+func TestPendingPlanEntriesAbortedRoot(t *testing.T) {
+	root := planRootNameOf("root")
+	tr, err := tree.New().Write("root", root, tree.TypePlan, tree.AuthorProgram, "objective")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr, err = tr.Write(root, "entry", tree.TypePlan, tree.AuthorModel, "work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr, err = tr.Abort(root, tree.AuthorProgram, "abandoned")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, complete, empty := pendingPlanEntries(tr, root)
+	if complete || !empty || len(entries) != 0 {
+		t.Fatalf("an aborted plan root must be empty, got entries=%v complete=%v empty=%v", entries, complete, empty)
+	}
+	if planHasPendingWork(tr, root) {
+		t.Fatal("an aborted plan root carries no pending work")
+	}
+}
+
 func TestApplyPlanOpsAtomic(t *testing.T) {
 	tr, err := tree.New().Write("root", planRootNameOf("root"), tree.TypePlan, tree.AuthorProgram, "objective")
 	if err != nil {

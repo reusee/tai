@@ -261,7 +261,7 @@ func pendingPlanEntries(tr *tree.Tree, root string) (entries []*tree.Node, compl
 	if planDoneChild(rootNode) != nil {
 		return nil, true, false
 	}
-	if planDeletedChild(rootNode) != nil {
+	if planDeletedChild(rootNode) != nil || rootNode.IsAborted() {
 		return nil, false, true
 	}
 	if len(planEntries(rootNode)) == 0 {

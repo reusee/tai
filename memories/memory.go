@@ -367,7 +367,7 @@ func mergeMemoryItems(currentItems []string, update memoryUpdate) []string {
 	}
 	ret := []string{}
 	for _, item := range update.Adds {
-		if !deleteSet[item] {
+		if !deleteSet[item] && !slices.Contains(ret, item) {
 			ret = append(ret, item)
 		}
 	}

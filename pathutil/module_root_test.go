@@ -42,3 +42,18 @@ func TestFindGoModuleRoot(t *testing.T) {
 		t.Fatalf("expected not found, got %q, ok %v", got, ok)
 	}
 }
+
+func TestRootMkdirAllRejectsRegularFile(t *testing.T) {
+	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	if err := root.WriteFile("plain", []byte("content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := RootMkdirAll(root, "plain", 0755); err == nil {
+		t.Fatal("RootMkdirAll should reject an existing regular file")
+	}
+}

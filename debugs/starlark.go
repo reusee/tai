@@ -72,10 +72,12 @@ func toStarlarkValue(v any) starlark.Value {
 		d := starlark.NewDict(value.Len())
 		iter := value.MapRange()
 		for iter.Next() {
-			d.SetKey(
+			if err := d.SetKey(
 				toStarlarkValue(iter.Key().Interface()),
 				toStarlarkValue(iter.Value().Interface()),
-			)
+			); err != nil {
+				panic(fmt.Errorf("set starlark dict key: %w", err))
+			}
 		}
 		return d
 

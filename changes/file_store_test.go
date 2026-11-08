@@ -68,6 +68,20 @@ func TestMemoryStoreWriteReadFlush(t *testing.T) {
 	}
 }
 
+func TestMemoryStorePropagatesOriginalReadError(t *testing.T) {
+	root, err := os.OpenRoot(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := NewMemoryStore(NewRootStore(root))
+	if err := root.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.WriteFile("test.go", []byte("new"), 0644); err == nil {
+		t.Fatal("WriteFile should propagate the original read error")
+	}
+}
+
 func TestMemoryStoreResetDiscards(t *testing.T) {
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)
