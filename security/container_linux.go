@@ -34,26 +34,36 @@ layer for debugging.
 
 Every mount is made private first, so nothing the child mounts propagates
 back to the host namespace, and the root is bound onto itself so the
-read-only remount names a mount object this namespace owns. Making the root
-read-only is the hardening. Making a directory writable again is a bind
-mount of that directory onto itself plus a remount of that same bind
-(mountWritableBind), and the two calls are not interchangeable: a bare
-MS_REMOUNT re-mounts the underlying superblock — the read-only root — instead
-of the bind, so the directory keeps the read-only state and every write meant
-for it fails. mountWritableBind therefore issues bind then
-MS_REMOUNT|MS_BIND and returns its error, never swallowing it, so the setup
-reports the fault instead of leaving a directory silently read-only.
+read-only remount names a mount object this namespace owns. The writable
+set becomes independent writable mounts before the root turns read-only: a
+failure at that stage aborts the setup while the process still carries its
+inherited policy, so the best-effort fallback keeps the working directory
+writable, and the read-only root, being the last step that can fail, cannot
+take write access away from those mounts because mount flags are
+per-mount. Making the root read-only is the hardening. Making a directory
+writable is a bind mount of that directory onto itself plus a remount of
+that same bind (mountWritableBind), and the two calls are not
+interchangeable: a bare MS_REMOUNT re-mounts the underlying superblock —
+the read-only root — instead of the bind, so the directory keeps the
+read-only state and every write meant for it fails. mountWritableBind
+therefore issues bind then MS_REMOUNT|MS_BIND and returns its error, never
+swallowing it, so the setup reports the fault instead of leaving a
+directory silently read-only.
 
 The pre-existing submounts are remounted read-only too, except the kernel
 filesystems (/dev, /proc, /sys) and the writable set: a remount the
 namespace does not own fails, and the read-only root already bounds that
 mount, so such a failure stays a warning-free skip instead of failing the
-setup.
+setup. This hardening runs before the fresh tmpfs mounts, because it
+enumerates the namespace's mounts: a tmpfs mounted first would be seen as
+a pre-existing submount and lose the writability it was created for.
 
 /tmp and /dev/shm are fresh tmpfs mounts rather than bind mounts: their host
 content is machine state no review can use, and a tmpfs keeps them writable
 without widening the host view. Their size limit comes from the environment,
-so a session that needs a large scratch space names it.
+so a session that needs a large scratch space names it. A tmpfs mount is
+skipped when its mount point contains a writable directory, the working
+directory included: replacing it would hide a path the session must write.
 
 The toolchain and config directories are resolved before the child starts and
 carried in goWritableDirsEnv and configDirEnv, because the go command may not
@@ -64,7 +74,10 @@ carried values and agree by construction.
 The layer is best-effort: a kernel without unprivileged user namespaces, a
 refused mount, or a failed re-exec prints a warning and leaves the process on
 the mount policy it inherited, which is what a run outside a container gets.
-A successful hardening is followed by the Landlock ruleset.
+The read-only root runs last for that reason: no warning can repair a
+read-only working directory, so no earlier step may leave one. Only a fully
+applied mount layer is followed by the Landlock ruleset, because the ruleset
+re-enforces that policy and must never narrow the inherited one.
 `
 
 // disableContainerEnv skips the container layer, leaving the process on the
@@ -160,10 +173,11 @@ func runInContainer() {
 	os.Exit(0)
 }
 
-// applyContainerFilesystem hardens the child's filesystem: the read-only root
-// and the writable binds, then the Landlock ruleset. Each step is best-effort
-// on its own, so one refused layer leaves the remaining layers to confine the
-// process instead of ending the run. See TheoryOfContainerIsolation.
+// applyContainerFilesystem hardens the child's filesystem: the writable
+// mounts, the read-only root, and the Landlock ruleset. A failed mount layer
+// returns to the inherited policy here, and Landlock is applied only after a
+// fully applied mount layer, because the ruleset re-enforces that policy and
+// would otherwise narrow the inherited one. See TheoryOfContainerIsolation.
 func applyContainerFilesystem() {
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -172,15 +186,19 @@ func applyContainerFilesystem() {
 	}
 	if err := setupContainerFilesystem(cwd); err != nil {
 		warnContainer("set up the container filesystem", err)
+		return
 	}
 	applyLandlockFilesystemPolicy()
 }
 
 // setupContainerFilesystem hardens the process filesystem in the child of
 // MaybeRunInContainer, where the user namespace supplies the mount capability:
-// every mount is made private, the root is made read-only, the pre-existing
-// submounts follow it, /tmp and /dev/shm become fresh tmpfs mounts, and the
-// writable set is bind-remounted read-write. See TheoryOfContainerIsolation.
+// every mount is made private, the writable set becomes independent writable
+// mounts, the pre-existing submounts are hardened, /tmp and /dev/shm become
+// fresh tmpfs mounts, and only the root turns read-only before the final
+// no-new-privs flag. The order is load-bearing: a failure before the read-only
+// root leaves the inherited policy intact, so the best-effort fallback keeps
+// the working directory writable. See TheoryOfContainerIsolation.
 func setupContainerFilesystem(cwd string) error {
 	if err := mountSyscall("", "/", "", syscall.MS_REC|syscall.MS_PRIVATE, ""); err != nil {
 		return fmt.Errorf("make mounts private: %w", err)
@@ -188,20 +206,23 @@ func setupContainerFilesystem(cwd string) error {
 	if err := mountSyscall("/", "/", "", syscall.MS_BIND|syscall.MS_REC, ""); err != nil {
 		return fmt.Errorf("bind the root: %w", err)
 	}
-	if err := mountSyscall("", "/", "", syscall.MS_REMOUNT|syscall.MS_BIND|syscall.MS_RDONLY, ""); err != nil {
-		return fmt.Errorf("make the root read-only: %w", err)
-	}
 	writable := writableMountDirs(cwd)
-	hardenSubmounts(writable)
-	for _, dir := range tmpfsMounts {
-		if err := mountTmpfs(dir, tmpfsMountData(tmpfsSizeEnv)); err != nil {
-			return err
-		}
-	}
 	for _, dir := range writable {
 		if err := mountWritableBind(dir); err != nil {
 			return err
 		}
+	}
+	hardenSubmounts(writable)
+	for _, dir := range tmpfsMounts {
+		if hidesWritable(dir, writable) {
+			continue
+		}
+		if err := mountTmpfs(dir, tmpfsMountData(tmpfsSizeEnv)); err != nil {
+			return err
+		}
+	}
+	if err := mountSyscall("", "/", "", syscall.MS_REMOUNT|syscall.MS_BIND|syscall.MS_RDONLY, ""); err != nil {
+		return fmt.Errorf("make the root read-only: %w", err)
 	}
 	setNoNewPrivs()
 	return nil
@@ -253,14 +274,15 @@ var mountSyscall = func(source, target, fstype string, flags uintptr, data strin
 	return syscall.Mount(source, target, fstype, flags, data)
 }
 
-// mountWritableBind makes dir writable again after the root turned read-only:
-// one bind mount of dir onto itself, then a remount of that bind carrying
-// MS_REMOUNT|MS_BIND. The second call must carry MS_BIND: a bare MS_REMOUNT
-// re-mounts the underlying superblock — the read-only root — instead of the
-// bind, so the directory keeps the read-only state and every write meant for
-// it fails. The error is therefore returned, never swallowed, so the setup
-// reports the fault instead of leaving a directory silently read-only. See
-// TheoryOfContainerIsolation.
+// mountWritableBind makes dir an independent writable mount: one bind mount
+// of dir onto itself, then a remount of that bind carrying
+// MS_REMOUNT|MS_BIND. The bind copies the source mount's flags, so the
+// remount is what clears a read-only state inherited from the source. The
+// second call must carry MS_BIND: a bare MS_REMOUNT re-mounts the underlying
+// superblock instead of the bind, so the directory keeps the read-only state
+// and every write meant for it fails. The error is therefore returned, never
+// swallowed, so the setup reports the fault instead of leaving a directory
+// silently read-only. See TheoryOfContainerIsolation.
 func mountWritableBind(dir string) error {
 	if err := mountSyscall(dir, dir, "", syscall.MS_BIND, ""); err != nil {
 		return fmt.Errorf("bind %s: %w", dir, err)
@@ -302,6 +324,19 @@ func keptWritable(mountPoint string, writable []string) bool {
 	}
 	for _, dir := range kernelFilesystemMounts {
 		if mountPoint == dir || strings.HasPrefix(mountPoint, dir+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// hidesWritable reports whether mounting over dir would hide a writable
+// directory, the working directory included. A hidden writable directory
+// makes every write meant for it resolve elsewhere, so the tmpfs mount is
+// skipped instead. See TheoryOfContainerIsolation.
+func hidesWritable(dir string, writable []string) bool {
+	for _, w := range writable {
+		if w == dir || strings.HasPrefix(w, dir+"/") {
 			return true
 		}
 	}

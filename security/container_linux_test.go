@@ -203,6 +203,149 @@ func TestMountWritableBindUsesBindRemount(t *testing.T) {
 	}
 }
 
+// TestSetupContainerFilesystemTmpfsKeepsWritableDirs checks that a fresh
+// tmpfs never hides a writable directory: replacing /tmp while the working
+// directory lives under it would make every relative path resolve elsewhere
+// and the following writable bind fail. See TheoryOfContainerIsolation.
+func TestSetupContainerFilesystemTmpfsKeepsWritableDirs(t *testing.T) {
+	t.Setenv(goWritableDirsEnv, "")
+	t.Setenv(configDirEnv, "")
+	const cwd = "/tmp/tai-work-dir"
+
+	var tmpfs []string
+	prev := mountSyscall
+	mountSyscall = func(_, target, fstype string, _ uintptr, _ string) error {
+		if fstype == "tmpfs" {
+			tmpfs = append(tmpfs, target)
+		}
+		return nil
+	}
+	defer func() { mountSyscall = prev }()
+
+	if err := setupContainerFilesystem(cwd); err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(tmpfs, "/tmp") {
+		t.Fatalf("/tmp became tmpfs although the working directory %s lies under it", cwd)
+	}
+	if !slices.Contains(tmpfs, "/dev/shm") {
+		t.Fatalf("/dev/shm should keep its fresh tmpfs, got %v", tmpfs)
+	}
+}
+
+// TestSetupContainerFilesystemHardensBeforeTmpfs checks that the pre-existing
+// submounts are hardened before the fresh tmpfs mounts: the hardening
+// enumerates the namespace's mounts, so a tmpfs mounted first would be seen as
+// a pre-existing submount and lose the writability it was created for.
+// See TheoryOfContainerIsolation.
+func TestSetupContainerFilesystemHardensBeforeTmpfs(t *testing.T) {
+	t.Setenv(goWritableDirsEnv, "")
+	t.Setenv(configDirEnv, "")
+	const cwd = "/home/tai-work-dir"
+
+	var calls int
+	var harden, tmpfs []int
+	prev := mountSyscall
+	mountSyscall = func(_, target, fstype string, f uintptr, _ string) error {
+		if fstype == "tmpfs" {
+			tmpfs = append(tmpfs, calls)
+		}
+		if target != "/" && f == syscall.MS_REMOUNT|syscall.MS_BIND|syscall.MS_RDONLY {
+			harden = append(harden, calls)
+		}
+		calls++
+		return nil
+	}
+	defer func() { mountSyscall = prev }()
+
+	if err := setupContainerFilesystem(cwd); err != nil {
+		t.Fatal(err)
+	}
+	if len(tmpfs) != len(tmpfsMounts) {
+		t.Fatalf("tmpfs mounts %d, want %d", len(tmpfs), len(tmpfsMounts))
+	}
+	if len(harden) == 0 {
+		t.Skip("the host exposes no submount outside the kernel filesystems and the writable set")
+	}
+	if last := harden[len(harden)-1]; last > tmpfs[0] {
+		t.Fatalf("submount hardening at call %d runs after the first tmpfs mount at call %d", last, tmpfs[0])
+	}
+}
+
+// TestSetupContainerFilesystemFailureKeepsRootWritable checks that a writable
+// mount failure aborts the setup before the root turns read-only, so the
+// warning path really leaves the process on its inherited policy instead of a
+// read-only working directory. See TheoryOfContainerIsolation.
+func TestSetupContainerFilesystemFailureKeepsRootWritable(t *testing.T) {
+	t.Setenv(goWritableDirsEnv, "")
+	t.Setenv(configDirEnv, "")
+	cwd := t.TempDir()
+
+	rootReadOnly := false
+	prev := mountSyscall
+	mountSyscall = func(_, target, _ string, f uintptr, _ string) error {
+		if target == "/" && f&syscall.MS_RDONLY != 0 {
+			rootReadOnly = true
+		}
+		if target == cwd {
+			return syscall.EPERM
+		}
+		return nil
+	}
+	defer func() { mountSyscall = prev }()
+
+	if err := setupContainerFilesystem(cwd); err == nil {
+		t.Fatal("want an error when the working directory cannot be made writable")
+	}
+	if rootReadOnly {
+		t.Fatal("the root turned read-only although the writable mount failed")
+	}
+}
+
+// TestSetupContainerFilesystemWritableBeforeRootReadOnly checks the order that
+// keeps a failed setup from leaving the working directory read-only: the
+// writable mounts exist before the root turns read-only, so the best-effort
+// fallback keeps the inherited policy instead of a read-only working
+// directory. See TheoryOfContainerIsolation.
+func TestSetupContainerFilesystemWritableBeforeRootReadOnly(t *testing.T) {
+	t.Setenv(goWritableDirsEnv, "")
+	t.Setenv(configDirEnv, "")
+	cwd := t.TempDir()
+
+	var targets []string
+	var flags []uintptr
+	prev := mountSyscall
+	mountSyscall = func(_, target, _ string, f uintptr, _ string) error {
+		targets = append(targets, target)
+		flags = append(flags, f)
+		return nil
+	}
+	defer func() { mountSyscall = prev }()
+
+	if err := setupContainerFilesystem(cwd); err != nil {
+		t.Fatal(err)
+	}
+
+	writableBind, rootReadOnly := -1, -1
+	for i, target := range targets {
+		if target == cwd && flags[i] == syscall.MS_BIND {
+			writableBind = i
+		}
+		if target == "/" && flags[i]&syscall.MS_RDONLY != 0 {
+			rootReadOnly = i
+		}
+	}
+	if writableBind < 0 {
+		t.Fatalf("the working directory was never bound writable: %v", targets)
+	}
+	if rootReadOnly < 0 {
+		t.Fatalf("the root was never made read-only: %v", targets)
+	}
+	if writableBind > rootReadOnly {
+		t.Fatalf("the working directory bound writable at call %d, after the root turned read-only at call %d", writableBind, rootReadOnly)
+	}
+}
+
 // TestParseGoEnvJSON checks the one-invocation decoder: the three values
 // decode from one document, and a malformed document yields zero values so a
 // changed output shape degrades to "no toolchain directories" instead of
