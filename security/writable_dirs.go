@@ -31,20 +31,18 @@ they are determined by the environment and do not change during execution.
 IsWritablePath resolves the CWD fresh on every call and checks it before
 the cached static dirs, ensuring correctness even after CWD changes.
 
-Resolution spawns no subprocess inside the sandbox. The toolchain
+Resolution spawns no subprocess inside the container. The toolchain
 directories and the config directory are resolved once, before the mount
 restrictions, and the hardened environment carries them (goWritableDirsEnv,
-configDirEnv); inside the container the set is read from those values. Two
-facts decide this: ` + "`go env`" + ` may not work after the mounts hardened,
-and every file a toolchain start touches pays a round trip through the
-sandbox server that answers the start's own reads. Outside the container one
-'go env -json' invocation supplies the three toolchain values together, so
-a start that sets none of the variables pays one toolchain start instead of
-three, and a start that sets every variable pays none.
+configDirEnv); inside the container the set is read from those values,
+because ` + "`go env`" + ` may not work after the mounts hardened. Outside the
+container one 'go env -json' invocation supplies the three toolchain values
+together, so a start that sets none of the variables pays one toolchain
+start instead of three, and a start that sets every variable pays none.
 
 A resolved value enters the set only while it still names an existing
-directory: the sandbox write policy matches paths by prefix, so a stale
-entry would widen the policy over a path that no longer exists.
+directory: the writable check matches paths by prefix, so a stale entry
+would admit a path that no longer exists.
 
 The Landlock layer (see TheoryOfLandlock in landlock_linux.go) does not
 call WritableDirs: it consumes the pre-namespace-resolved environment
@@ -167,10 +165,10 @@ var cachedCanonicalStaticWritableDirs = sync.OnceValue(func() []string {
 })
 
 // usableDir returns the cleaned absolute form of dir when it names an existing
-// directory, and the empty string otherwise. The sandbox write policy matches
-// paths by prefix, so a value that no longer names a directory must not enter
-// the set: a stale entry would widen the policy over a path that no longer
-// exists. See TheoryOfWritableDirs.
+// directory, and the empty string otherwise. The writable check matches paths
+// by prefix, so a value that no longer names a directory must not enter the
+// set: a stale entry would admit a path that no longer exists.
+// See TheoryOfWritableDirs.
 func usableDir(dir string) string {
 	dir = filepath.Clean(dir)
 	if dir == "" || dir == "/" || dir == "." {

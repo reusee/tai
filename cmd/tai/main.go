@@ -9,20 +9,12 @@ import (
 	"github.com/reusee/tai/apps"
 	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/flags"
-	"github.com/reusee/tai/pipeline"
 	"github.com/reusee/tai/security"
 	"github.com/reusee/tai/taiconfigs"
 )
 
 func main() {
 	security.MaybeRunInContainer()
-
-	// The sandbox filesystem lives for the whole process, so its close is the
-	// process's top frame: the close flushes the record's audit tail, and the
-	// mount and the store stay open — the kernel tears the mount down when
-	// the process ends. See security.CloseSandboxRoot and
-	// security.TheoryOfSandboxRoot.
-	defer security.CloseSandboxRoot()
 
 	scope := dscope.New(dscope.Methods(new(Module))...)
 
@@ -67,18 +59,6 @@ func main() {
 	// independently, so layering the same defs twice would evaluate
 	// side-effecting providers twice. See apps.TheoryOfApps.
 	scope = app.Scope(scope)
-
-	// Bind the process's sandbox store to the goal runner's per-loop
-	// apply. The fork replaces the nil default pipeline.Module provides,
-	// which a cmd/tai module method cannot do: method discovery descends
-	// into the module-typed fields the module holds, so the embedded
-	// pipeline module's provider and the outer method would both produce
-	// pipeline.LoopChangeApply. The hook reads the active store when it
-	// runs, so a process without a sandbox applies nothing. See
-	// TheoryOfSandboxLoopApplyBinding and pipeline.TheoryOfLoopChangeApply.
-	scope = scope.Fork(func() pipeline.LoopChangeApply {
-		return sandboxLoopChangeApply()
-	})
 
 	// Generator-level events (api_call, api_error) are captured by the
 	// generators module's default EventRecorder — the scope's EventSink —

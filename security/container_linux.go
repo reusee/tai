@@ -39,12 +39,10 @@ read-only is the hardening. Making a directory writable again is a bind
 mount of that directory onto itself plus a remount of that same bind
 (mountWritableBind), and the two calls are not interchangeable: a bare
 MS_REMOUNT re-mounts the underlying superblock — the read-only root — instead
-of the bind, so the directory keeps the read-only state. The failure is
-silent from the model's point of view, because the change blocks still apply
-to the sandbox store and the store still serves every read back; only the
-write to the host is missing. mountWritableBind therefore issues bind then
-MS_REMOUNT|MS_BIND and returns its error, never swallowing it. See
-pipeline.TheoryOfLoopChangeApply for what the missing write costs the run.
+of the bind, so the directory keeps the read-only state and every write meant
+for it fails. mountWritableBind therefore issues bind then
+MS_REMOUNT|MS_BIND and returns its error, never swallowing it, so the setup
+reports the fault instead of leaving a directory silently read-only.
 
 The pre-existing submounts are remounted read-only too, except the kernel
 filesystems (/dev, /proc, /sys) and the writable set: a remount the
@@ -60,16 +58,13 @@ so a session that needs a large scratch space names it.
 The toolchain and config directories are resolved before the child starts and
 carried in goWritableDirsEnv and configDirEnv, because the go command may not
 start once the mounts are hardened. The child never re-resolves them, so the
-mount layer, the writable set, the sandbox store's write policy, and the
-Landlock ruleset all read the same carried values and agree by construction.
+mount layer, the writable set, and the Landlock ruleset all read the same
+carried values and agree by construction.
 
 The layer is best-effort: a kernel without unprivileged user namespaces, a
 refused mount, or a failed re-exec prints a warning and leaves the process on
 the mount policy it inherited, which is what a run outside a container gets.
-A successful hardening is followed by the sandbox filesystem (see
-TheoryOfSandboxRoot) and then by the Landlock ruleset, in that order: the
-sandbox mount needs to open /dev/fuse and to create its record, which the
-Landlock rule set does not allow the process to do afterwards.
+A successful hardening is followed by the Landlock ruleset.
 `
 
 // disableContainerEnv skips the container layer, leaving the process on the
@@ -166,12 +161,9 @@ func runInContainer() {
 }
 
 // applyContainerFilesystem hardens the child's filesystem: the read-only root
-// and the writable binds, then the sandbox filesystem, then the Landlock
-// ruleset. Each step is best-effort on its own, so one refused layer leaves
-// the remaining layers to confine the process instead of ending the run.
-// The order is load-bearing: the sandbox mount opens /dev/fuse and creates
-// its record, which the Landlock ruleset does not admit afterwards. See
-// TheoryOfContainerIsolation and TheoryOfSandboxRoot.
+// and the writable binds, then the Landlock ruleset. Each step is best-effort
+// on its own, so one refused layer leaves the remaining layers to confine the
+// process instead of ending the run. See TheoryOfContainerIsolation.
 func applyContainerFilesystem() {
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -180,9 +172,6 @@ func applyContainerFilesystem() {
 	}
 	if err := setupContainerFilesystem(cwd); err != nil {
 		warnContainer("set up the container filesystem", err)
-	}
-	if err := setupSandboxRoot(cwd); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: sandbox filesystem unavailable (%v), continuing without it\n", err)
 	}
 	applyLandlockFilesystemPolicy()
 }
@@ -268,10 +257,10 @@ var mountSyscall = func(source, target, fstype string, flags uintptr, data strin
 // one bind mount of dir onto itself, then a remount of that bind carrying
 // MS_REMOUNT|MS_BIND. The second call must carry MS_BIND: a bare MS_REMOUNT
 // re-mounts the underlying superblock — the read-only root — instead of the
-// bind, so the directory keeps the read-only state while the session still
-// reads its own writes back from the sandbox store, and only the write to the
-// host is missing. The error is therefore returned, never swallowed. See
-// TheoryOfContainerIsolation and pipeline.TheoryOfLoopChangeApply.
+// bind, so the directory keeps the read-only state and every write meant for
+// it fails. The error is therefore returned, never swallowed, so the setup
+// reports the fault instead of leaving a directory silently read-only. See
+// TheoryOfContainerIsolation.
 func mountWritableBind(dir string) error {
 	if err := mountSyscall(dir, dir, "", syscall.MS_BIND, ""); err != nil {
 		return fmt.Errorf("bind %s: %w", dir, err)

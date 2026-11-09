@@ -38,7 +38,6 @@ var commands = apps.Apps{
 	PatchCommand,
 	PingCommand,
 	RecordCommand,
-	SandboxCommand,
 }
 
 var _ flags.Flag = commands
