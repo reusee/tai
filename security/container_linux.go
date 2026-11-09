@@ -8,6 +8,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -40,10 +42,20 @@ failure at that stage aborts the setup while the process still carries its
 inherited policy, so the best-effort fallback keeps the working directory
 writable, and the read-only root, being the last step that can fail, cannot
 take write access away from those mounts because mount flags are
-per-mount. Making the root read-only is the hardening. Making a directory
-writable is a bind mount of that directory onto itself plus a remount of
-that same bind (mountWritableBind), and the two calls are not
-interchangeable: a bare MS_REMOUNT re-mounts the underlying superblock —
+per-mount. Making the root read-only is the hardening.
+
+The writable set enters the layer as the process reports it, while the
+kernel names mount points by their resolved path. A symlinked component
+therefore makes the hardening pass read the writable bind at the working
+directory as a submount outside the set, remount that bind read-only, and
+leave the working directory unwritable under an otherwise correct policy.
+Every entry is canonicalized before use (canonicalPath), so the mount layer,
+the hardening comparison, the pre-read-only verification, and the Landlock
+rules name one path.
+
+Making a directory writable is a bind mount of that directory onto itself
+plus a remount of that same bind (mountWritableBind), and the two calls are
+not interchangeable: a bare MS_REMOUNT re-mounts the underlying superblock —
 the read-only root — instead of the bind, so the directory keeps the
 read-only state and every write meant for it fails. mountWritableBind
 therefore issues bind then MS_REMOUNT|MS_BIND and returns its error, never
@@ -75,9 +87,15 @@ The layer is best-effort: a kernel without unprivileged user namespaces, a
 refused mount, or a failed re-exec prints a warning and leaves the process on
 the mount policy it inherited, which is what a run outside a container gets.
 The read-only root runs last for that reason: no warning can repair a
-read-only working directory, so no earlier step may leave one. Only a fully
-applied mount layer is followed by the Landlock ruleset, because the ruleset
-re-enforces that policy and must never narrow the inherited one.
+read-only working directory, so no earlier step may leave one, and the setup
+verifies before that step that the topmost mount at the working directory is
+read-write (verifyWritableMount). A read-only result aborts the setup before
+the root turns read-only, so the warning path never stacks a read-only root
+over a working directory that already rejects writes; the filesystem root,
+which cannot host a writable working directory under a read-only root,
+aborts it too. Only a fully applied mount layer is followed by the Landlock
+ruleset, because the ruleset re-enforces that policy and must never narrow
+the inherited one.
 `
 
 // disableContainerEnv skips the container layer, leaving the process on the
@@ -184,6 +202,7 @@ func applyContainerFilesystem() {
 		warnContainer("determine the working directory", err)
 		return
 	}
+	cwd = canonicalPath(cwd)
 	if err := setupContainerFilesystem(cwd); err != nil {
 		warnContainer("set up the container filesystem", err)
 		return
@@ -195,10 +214,11 @@ func applyContainerFilesystem() {
 // MaybeRunInContainer, where the user namespace supplies the mount capability:
 // every mount is made private, the writable set becomes independent writable
 // mounts, the pre-existing submounts are hardened, /tmp and /dev/shm become
-// fresh tmpfs mounts, and only the root turns read-only before the final
-// no-new-privs flag. The order is load-bearing: a failure before the read-only
-// root leaves the inherited policy intact, so the best-effort fallback keeps
-// the working directory writable. See TheoryOfContainerIsolation.
+// fresh tmpfs mounts, the working directory's mount is confirmed read-write,
+// and only then does the root turn read-only before the final no-new-privs
+// flag. The order is load-bearing: a failure before the read-only root leaves
+// the inherited policy intact, so the best-effort fallback keeps the working
+// directory writable. See TheoryOfContainerIsolation.
 func setupContainerFilesystem(cwd string) error {
 	if err := mountSyscall("", "/", "", syscall.MS_REC|syscall.MS_PRIVATE, ""); err != nil {
 		return fmt.Errorf("make mounts private: %w", err)
@@ -221,6 +241,9 @@ func setupContainerFilesystem(cwd string) error {
 			return err
 		}
 	}
+	if err := verifyWritableMount(cwd); err != nil {
+		return fmt.Errorf("the working directory would not stay writable: %w", err)
+	}
 	if err := mountSyscall("", "/", "", syscall.MS_REMOUNT|syscall.MS_BIND|syscall.MS_RDONLY, ""); err != nil {
 		return fmt.Errorf("make the root read-only: %w", err)
 	}
@@ -231,8 +254,10 @@ func setupContainerFilesystem(cwd string) error {
 // writableMountDirs returns the directories the mount layer makes writable
 // again after the root turned read-only: the working directory, the Go
 // toolchain directories and the config directory resolved before the mounts.
-// /tmp and /dev/shm are absent because their fresh tmpfs mounts are writable
-// by construction. See TheoryOfContainerIsolation and TheoryOfWritableDirs.
+// Each entry is canonicalized, so the hardening pass compares it against the
+// mount table by the path the kernel names. /tmp and /dev/shm are absent
+// because their fresh tmpfs mounts are writable by construction.
+// See TheoryOfContainerIsolation and TheoryOfWritableDirs.
 func writableMountDirs(cwd string) []string {
 	var dirs []string
 	seen := make(map[string]bool)
@@ -241,7 +266,7 @@ func writableMountDirs(cwd string) []string {
 		if dir == "" || !filepath.IsAbs(dir) {
 			return
 		}
-		dir = filepath.Clean(dir)
+		dir = canonicalPath(dir)
 		if dir == "/" || seen[dir] {
 			return
 		}
@@ -266,6 +291,18 @@ func mountTmpfs(dir, data string) error {
 		return fmt.Errorf("mount tmpfs at %s: %w", dir, err)
 	}
 	return nil
+}
+
+// canonicalPath resolves the symlinks of dir, so a path the layer compares
+// against the kernel's mount table names the same directory the kernel names.
+// Mount calls resolve symlinks themselves, so an unresolved path would make
+// the layer compare one path and mount another. A path that cannot be resolved
+// stays as written. See TheoryOfContainerIsolation.
+func canonicalPath(dir string) string {
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		return resolved
+	}
+	return filepath.Clean(dir)
 }
 
 // mountSyscall issues one mount call. It is a variable so a test drives the
@@ -343,6 +380,36 @@ func hidesWritable(dir string, writable []string) bool {
 	return false
 }
 
+// writableMountError reports why the working directory would not stay
+// writable, or nil when its topmost mount is read-write. The greatest mount
+// ID at the path is the topmost mount, which is the one a write resolves
+// through. The filesystem root is unwritable by construction, because the last
+// step turns the root mount read-only, and a directory that no mount names has
+// no writable mount to write through. See TheoryOfContainerIsolation.
+func writableMountError(entries []mountEntry, dir string) error {
+	if dir == "/" {
+		return errors.New("the filesystem root cannot stay writable under a read-only root")
+	}
+	var top mountEntry
+	found := false
+	for _, entry := range entries {
+		if entry.mountPoint != dir {
+			continue
+		}
+		if !found || entry.id > top.id {
+			top = entry
+			found = true
+		}
+	}
+	if !found {
+		return fmt.Errorf("no mount names %s", dir)
+	}
+	if top.readOnly {
+		return fmt.Errorf("the mount at %s is read-only", dir)
+	}
+	return nil
+}
+
 // tmpfsMountData renders the mount data of a sandbox tmpfs: a size limit when
 // the named environment variable is set, and no option otherwise, so the mount
 // takes the kernel default. See TheoryOfContainerIsolation.
@@ -354,6 +421,19 @@ func tmpfsMountData(envName string) string {
 	return "size=" + size
 }
 
+// verifyWritableMount reports whether the topmost mount at dir is read-write.
+// It runs before the root turns read-only, so its error aborts the setup
+// instead of leaving a read-only working directory under a read-only root. It
+// is a variable so a test drives the setup without the test process's own
+// mount table. See writableMountError.
+var verifyWritableMount = func(dir string) error {
+	entries, err := parseMountEntries()
+	if err != nil {
+		return fmt.Errorf("read the mount table: %w", err)
+	}
+	return writableMountError(entries, dir)
+}
+
 // setNoNewPrivs sets PR_SET_NO_NEW_PRIVS, so a setuid binary the model runs
 // gains no privilege and the Landlock ruleset can be restricted to the
 // process. Best-effort, like the rest of the layer. See
@@ -362,21 +442,55 @@ func setNoNewPrivs() {
 	_ = unix.Prctl(unix.PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0)
 }
 
-// parseMountPoints returns the mount points of the current mount namespace,
-// read from /proc/self/mountinfo. The mount point is the fifth field of each
-// line. See TheoryOfContainerIsolation.
-func parseMountPoints() ([]string, error) {
+// mountEntry is one line of /proc/self/mountinfo reduced to the fields the
+// writable-mount check needs: the mount ID orders stacked mounts, the mount
+// point names the directory, and the options say whether the mount is
+// read-only. See TheoryOfContainerIsolation.
+type mountEntry struct {
+	id         int
+	mountPoint string
+	readOnly   bool
+}
+
+// parseMountEntries reads the mounts of the current mount namespace. The
+// kernel writes one mount per line of /proc/self/mountinfo: the mount ID is
+// the first field, the mount point the fifth, and the per-mount options the
+// sixth, where "ro" marks a read-only mount.
+// See TheoryOfContainerIsolation.
+func parseMountEntries() ([]mountEntry, error) {
 	data, err := os.ReadFile("/proc/self/mountinfo")
 	if err != nil {
 		return nil, err
 	}
-	var out []string
+	var out []mountEntry
 	for _, line := range strings.Split(string(data), "\n") {
 		fields := strings.Fields(line)
-		if len(fields) < 5 {
+		if len(fields) < 6 {
 			continue
 		}
-		out = append(out, unescapeMountPath(fields[4]))
+		id, err := strconv.Atoi(fields[0])
+		if err != nil {
+			continue
+		}
+		out = append(out, mountEntry{
+			id:         id,
+			mountPoint: unescapeMountPath(fields[4]),
+			readOnly:   slices.Contains(strings.Split(fields[5], ","), "ro"),
+		})
+	}
+	return out, nil
+}
+
+// parseMountPoints returns the mount points of the current mount namespace,
+// read from /proc/self/mountinfo. See TheoryOfContainerIsolation.
+func parseMountPoints() ([]string, error) {
+	entries, err := parseMountEntries()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		out = append(out, entry.mountPoint)
 	}
 	return out, nil
 }

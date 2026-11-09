@@ -3,6 +3,7 @@
 package security
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -144,6 +145,40 @@ func TestResolveConfigDirPrefersPreResolved(t *testing.T) {
 	}
 }
 
+// TestSetupContainerFilesystemAbortsBeforeRootReadOnlyWhenCwdReadOnly checks
+// that a read-only working directory stops the setup before the root turns
+// read-only: the warning path then leaves the root writable instead of
+// stacking a read-only root over a working directory that already rejects
+// writes. See TheoryOfContainerIsolation.
+func TestSetupContainerFilesystemAbortsBeforeRootReadOnlyWhenCwdReadOnly(t *testing.T) {
+	t.Setenv(goWritableDirsEnv, "")
+	t.Setenv(configDirEnv, "")
+	cwd := t.TempDir()
+
+	rootReadOnly := false
+	prevMount := mountSyscall
+	mountSyscall = func(_, target, _ string, f uintptr, _ string) error {
+		if target == "/" && f&syscall.MS_RDONLY != 0 {
+			rootReadOnly = true
+		}
+		return nil
+	}
+	defer func() { mountSyscall = prevMount }()
+
+	prevVerify := verifyWritableMount
+	verifyWritableMount = func(string) error {
+		return errors.New("the mount at the working directory is read-only")
+	}
+	defer func() { verifyWritableMount = prevVerify }()
+
+	if err := setupContainerFilesystem(cwd); err == nil {
+		t.Fatal("want an error when the working directory mount is read-only")
+	}
+	if rootReadOnly {
+		t.Fatal("the root turned read-only although the working directory was read-only")
+	}
+}
+
 func TestParseMountPoints(t *testing.T) {
 	mounts, err := parseMountPoints()
 	if err != nil {
@@ -181,6 +216,33 @@ func TestTmpfsMountData(t *testing.T) {
 	}
 }
 
+// TestWritableMountDirsResolveSymlinks checks that a writable directory given
+// through a symlink enters the set under the resolved path the kernel's mount
+// table names: the hardening pass compares mount points by string, so an
+// unresolved entry would make it read the writable bind as a submount to
+// harden and remount it read-only. See TheoryOfContainerIsolation.
+func TestWritableMountDirsResolveSymlinks(t *testing.T) {
+	t.Setenv(goWritableDirsEnv, "")
+	t.Setenv(configDirEnv, "")
+	target, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "work")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	dirs := writableMountDirs(link)
+
+	if !slices.Contains(dirs, target) {
+		t.Fatalf("writable set %v does not name the resolved directory %s", dirs, target)
+	}
+	if slices.Contains(dirs, link) {
+		t.Fatalf("writable set %v still names the symlink %s", dirs, link)
+	}
+}
+
 func TestMountWritableBindUsesBindRemount(t *testing.T) {
 	var flags []uintptr
 	prev := mountSyscall
@@ -203,6 +265,65 @@ func TestMountWritableBindUsesBindRemount(t *testing.T) {
 	}
 }
 
+// TestSetupContainerFilesystemVerifiesCwdBeforeRootReadOnly checks that the
+// setup confirms the working directory's topmost mount is read-write before
+// the root turns read-only: the last step cannot be undone, so the check must
+// run while a failure still aborts on the inherited policy.
+// See TheoryOfContainerIsolation.
+func TestSetupContainerFilesystemVerifiesCwdBeforeRootReadOnly(t *testing.T) {
+	t.Setenv(goWritableDirsEnv, "")
+	t.Setenv(configDirEnv, "")
+	cwd := t.TempDir()
+
+	calls := 0
+	bindAt, verifyAt, rootReadOnlyAt := -1, -1, -1
+	prevMount := mountSyscall
+	mountSyscall = func(_, target, _ string, f uintptr, _ string) error {
+		switch {
+		case target == cwd && f == syscall.MS_BIND:
+			bindAt = calls
+		case target == "/" && f&syscall.MS_RDONLY != 0:
+			rootReadOnlyAt = calls
+		}
+		calls++
+		return nil
+	}
+	defer func() { mountSyscall = prevMount }()
+
+	prevVerify := verifyWritableMount
+	verifyWritableMount = func(dir string) error {
+		if dir != cwd {
+			t.Errorf("verified %q, want the working directory %q", dir, cwd)
+		}
+		verifyAt = calls
+		return nil
+	}
+	defer func() { verifyWritableMount = prevVerify }()
+
+	if err := setupContainerFilesystem(cwd); err != nil {
+		t.Fatal(err)
+	}
+	if verifyAt < 0 {
+		t.Fatal("the setup never verified the working directory mount")
+	}
+	if bindAt < 0 || verifyAt < bindAt {
+		t.Fatalf("verification at call %d runs before the writable bind at call %d", verifyAt, bindAt)
+	}
+	if rootReadOnlyAt < 0 || verifyAt > rootReadOnlyAt {
+		t.Fatalf("verification at call %d runs after the root turned read-only at call %d", verifyAt, rootReadOnlyAt)
+	}
+}
+
+// stubWritableMountCheck keeps the setup's mount-table check from reading the
+// test process's own mount table, which names no mount for a synthetic working
+// directory. See verifyWritableMount and TheoryOfContainerIsolation.
+func stubWritableMountCheck(t *testing.T) {
+	t.Helper()
+	prev := verifyWritableMount
+	verifyWritableMount = func(string) error { return nil }
+	t.Cleanup(func() { verifyWritableMount = prev })
+}
+
 // TestSetupContainerFilesystemTmpfsKeepsWritableDirs checks that a fresh
 // tmpfs never hides a writable directory: replacing /tmp while the working
 // directory lives under it would make every relative path resolve elsewhere
@@ -211,6 +332,7 @@ func TestSetupContainerFilesystemTmpfsKeepsWritableDirs(t *testing.T) {
 	t.Setenv(goWritableDirsEnv, "")
 	t.Setenv(configDirEnv, "")
 	const cwd = "/tmp/tai-work-dir"
+	stubWritableMountCheck(t)
 
 	var tmpfs []string
 	prev := mountSyscall
@@ -242,6 +364,7 @@ func TestSetupContainerFilesystemHardensBeforeTmpfs(t *testing.T) {
 	t.Setenv(goWritableDirsEnv, "")
 	t.Setenv(configDirEnv, "")
 	const cwd = "/home/tai-work-dir"
+	stubWritableMountCheck(t)
 
 	var calls int
 	var harden, tmpfs []int
@@ -311,6 +434,7 @@ func TestSetupContainerFilesystemWritableBeforeRootReadOnly(t *testing.T) {
 	t.Setenv(goWritableDirsEnv, "")
 	t.Setenv(configDirEnv, "")
 	cwd := t.TempDir()
+	stubWritableMountCheck(t)
 
 	var targets []string
 	var flags []uintptr
@@ -357,5 +481,41 @@ func TestParseGoEnvJSON(t *testing.T) {
 	}
 	if values := parseGoEnvJSON([]byte(`not json`)); values != (goEnvValues{}) {
 		t.Fatalf("malformed document decoded to %+v", values)
+	}
+}
+
+// TestWritableMountError checks the guard itself: the topmost mount at the
+// path decides, so a writable bind stacked over a read-only mount passes and a
+// read-only bind stacked over a writable mount fails. The filesystem root is
+// unwritable because the last step turns it read-only, and a path no mount
+// names has no writable mount to write through. See TheoryOfContainerIsolation.
+func TestWritableMountError(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		dir     string
+		entries []mountEntry
+		wantErr bool
+	}{
+		{name: "topmost writable", dir: "/work", entries: []mountEntry{
+			{id: 1, mountPoint: "/work", readOnly: true},
+			{id: 2, mountPoint: "/work", readOnly: false},
+		}},
+		{name: "topmost read-only", dir: "/work", entries: []mountEntry{
+			{id: 1, mountPoint: "/work", readOnly: false},
+			{id: 2, mountPoint: "/work", readOnly: true},
+		}, wantErr: true},
+		{name: "no mount", dir: "/work", entries: []mountEntry{
+			{id: 1, mountPoint: "/other"},
+		}, wantErr: true},
+		{name: "filesystem root", dir: "/", entries: []mountEntry{
+			{id: 1, mountPoint: "/"},
+		}, wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := writableMountError(tc.entries, tc.dir)
+			if tc.wantErr != (err != nil) {
+				t.Fatalf("writableMountError = %v, wantErr %v", err, tc.wantErr)
+			}
+		})
 	}
 }
