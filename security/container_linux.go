@@ -351,16 +351,26 @@ func hardenSubmounts(writable []string) {
 }
 
 // keptWritable reports whether mountPoint is one of the writable directories,
-// lies beneath one, or belongs to a kernel filesystem the process needs
-// writable. See TheoryOfContainerIsolation.
+// lies beneath one, is a tmpfs mount point the layer fills with a fresh
+// writable filesystem, or belongs to a kernel filesystem the process needs
+// writable. A tmpfs mount point stays writable in both outcomes: the fresh
+// mount replaces it, and a skipped mount leaves the filesystem the writable
+// set promises. See TheoryOfContainerIsolation and TheoryOfWritableDirs.
 func keptWritable(mountPoint string, writable []string) bool {
-	for _, dir := range writable {
-		if mountPoint == dir || strings.HasPrefix(mountPoint, dir+"/") {
-			return true
-		}
+	if beneathAny(mountPoint, writable) {
+		return true
 	}
-	for _, dir := range kernelFilesystemMounts {
-		if mountPoint == dir || strings.HasPrefix(mountPoint, dir+"/") {
+	if beneathAny(mountPoint, tmpfsMounts) {
+		return true
+	}
+	return beneathAny(mountPoint, kernelFilesystemMounts)
+}
+
+// beneathAny reports whether path is one of dirs or lies beneath one of them.
+// See TheoryOfContainerIsolation.
+func beneathAny(path string, dirs []string) bool {
+	for _, dir := range dirs {
+		if path == dir || strings.HasPrefix(path, dir+"/") {
 			return true
 		}
 	}

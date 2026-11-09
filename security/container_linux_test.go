@@ -519,3 +519,30 @@ func TestWritableMountError(t *testing.T) {
 		})
 	}
 }
+
+// TestKeptWritable checks the mount points the read-only hardening leaves
+// alone: a writable directory and everything beneath it, the tmpfs mount
+// points, which the writable set promises whether or not the fresh mount
+// happens, and the kernel filesystems. Every other mount point is hardened.
+// See TheoryOfContainerIsolation.
+func TestKeptWritable(t *testing.T) {
+	writable := []string{"/home/u/proj"}
+	for _, tc := range []struct {
+		mountPoint string
+		want       bool
+	}{
+		{"/home/u/proj", true},
+		{"/home/u/proj/sub", true},
+		{"/home/u", false},
+		{"/tmp", true},
+		{"/tmp/scratch", true},
+		{"/dev/shm", true},
+		{"/dev/pts", true},
+		{"/proc", true},
+		{"/run", false},
+	} {
+		if got := keptWritable(tc.mountPoint, writable); got != tc.want {
+			t.Errorf("keptWritable(%q) = %v, want %v", tc.mountPoint, got, tc.want)
+		}
+	}
+}
