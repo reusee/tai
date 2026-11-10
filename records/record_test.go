@@ -213,14 +213,29 @@ func TestListSessions(t *testing.T) {
 		if err := listSessions(recorder, 10, &buf); err != nil {
 			t.Fatal(err)
 		}
-		out := buf.String()
+		// One key=value line per session, most recent first; the chat
+		// preview appears only for a session that recorded user input.
+		// See TheoryOfSessionBrowsing.
+		lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+		if len(lines) != 2 {
+			t.Fatalf("expected 2 listing lines, got %d:\n%s", len(lines), buf.String())
+		}
 		for _, want := range []string{
-			"id=1", "command=first", "status=success", "operations=1",
+			"id=1", "command=first", "status=success", "operations=1", "chats=hello",
+		} {
+			if !strings.Contains(lines[1], want) {
+				t.Fatalf("the first session's line is missing %q: %s", want, lines[1])
+			}
+		}
+		for _, want := range []string{
 			"id=2", "command=second", "operations=0",
 		} {
-			if !strings.Contains(out, want) {
-				t.Fatalf("listing missing %q:\n%s", want, out)
+			if !strings.Contains(lines[0], want) {
+				t.Fatalf("the second session's line is missing %q: %s", want, lines[0])
 			}
+		}
+		if strings.Contains(lines[0], "chats=") {
+			t.Fatalf("a session without user input must carry no chat preview: %s", lines[0])
 		}
 	})
 }

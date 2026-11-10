@@ -40,7 +40,8 @@ func newRecordBrowserForTest(
 
 // recordBrowserFixture builds a browser whose fake session set carries
 // three records, most recent first: #3 and #2 replay a recorded tree, #1
-// recorded no operations. See TheoryOfRecordBrowser.
+// recorded no operations. The rows carry chat previews, #1 carries none.
+// See TheoryOfRecordBrowser.
 func recordBrowserFixture(t *testing.T, output *strings.Builder) (*RecordBrowser, *tree.Tree) {
 	t.Helper()
 	tr, err := tree.New().WriteAll(
@@ -54,8 +55,8 @@ func recordBrowserFixture(t *testing.T, output *strings.Builder) (*RecordBrowser
 	browser := newRecordBrowserForTest(
 		func() ([]records.SessionInfo, error) {
 			return []records.SessionInfo{
-				{ID: 3, Command: "go_module", StartTime: "2026-01-03T03:04:05Z", Status: "success", OpCount: 3},
-				{ID: 2, Command: "next", StartTime: "2026-01-02T03:04:05Z", Status: "success", OpCount: 3},
+				{ID: 3, Command: "go_module", StartTime: "2026-01-03T03:04:05Z", Status: "success", OpCount: 3, Chat: "按照.todo的做"},
+				{ID: 2, Command: "next", StartTime: "2026-01-02T03:04:05Z", Status: "success", OpCount: 3, Chat: "identify the next step"},
 				{ID: 1, Command: "ai", StartTime: "2026-01-01T03:04:05Z", Status: "error", OpCount: 0},
 			}, nil
 		},
@@ -72,10 +73,11 @@ func recordBrowserFixture(t *testing.T, output *strings.Builder) (*RecordBrowser
 }
 
 // TestRecordBrowserListsAndOpensRecords verifies the browser's two views:
-// the list shows every record and opens the selected one, the open view
-// renders the record's tree with the shared Tree tab rendering and states
-// the record count and id at the title row's left side, and esc returns
-// to the list. See TheoryOfRecordBrowser and TheoryOfTabTitleStatus.
+// the list shows every record with its chat preview and opens the selected
+// one, the open view renders the record's tree with the shared Tree tab
+// rendering and states the record count and id at the title row's left
+// side, and esc returns to the list. See TheoryOfRecordBrowser and
+// TheoryOfTabTitleStatus.
 func TestRecordBrowserListsAndOpensRecords(t *testing.T) {
 	var out strings.Builder
 	b, tr := recordBrowserFixture(t, &out)
@@ -88,7 +90,7 @@ func TestRecordBrowserListsAndOpensRecords(t *testing.T) {
 	}
 	b.render()
 	rendered := out.String()
-	for _, want := range []string{"go_module", "next", "ai", "count 3"} {
+	for _, want := range []string{"go_module", "next", "ai", "count 3", "按照.todo的做", "identify the next step"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("expected %q in the list view, got %q", want, rendered)
 		}

@@ -14,6 +14,12 @@ Session browsing theory:
   session, most recent first — and LoadSessionTree reconstructs one
   session's tree from its recorded operation stream with tree.Replay,
   the same tree a live session's Tree tab renders.
+- The session info carries a chat preview, so a record list identifies a
+  session by what was asked: the user inputs — the user-authored
+  message::user nodes, the program's feedback nodes excluded — reduce to
+  one bounded line each, the fenced chat input the ai command wraps
+  taking precedence over the node's first line, and the preview joins
+  the first inputs with an ellipsis for the ones it leaves out.
 - SearchRecordNodes extends the same data view across every recorded
   session: it answers a keyword with the nodes whose content or metadata
   matches, each naming its session and node, so a browser opens the
@@ -25,8 +31,9 @@ Session browsing theory:
   an empty tree would hide the reason from the caller.
 `
 
-// sessionInfos reads the recorded sessions, most recent first; a
-// non-positive limit reads every session. See TheoryOfSessionBrowsing.
+// sessionInfos reads the recorded sessions, most recent first, with each
+// session's chat preview; a non-positive limit reads every session. See
+// TheoryOfSessionBrowsing.
 func sessionInfos(recorder *Recorder, limit int) ([]SessionInfo, error) {
 	if recorder == nil || recorder.db == nil {
 		return nil, fmt.Errorf("session database not available")
@@ -56,7 +63,13 @@ LIMIT ?`, limit)
 		}
 		infos = append(infos, info)
 	}
-	return infos, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := attachSessionChats(recorder, infos, limit); err != nil {
+		return nil, err
+	}
+	return infos, nil
 }
 
 // ListSessionInfos returns the recorded sessions as data, most recent

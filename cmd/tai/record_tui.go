@@ -34,6 +34,11 @@ Record browser theory (cmd/tai):
   flag opens its record directly on entry. The selected record is the
   browser's one focus: the up and down keys, the page keys, home and
   end, and the wheel move it, and Enter or a double click opens it.
+- Each row ends with the chat preview of the record's user inputs, so a
+  record is picked by what was asked. The metadata before it stays
+  compact — id, command, start date, status, operation count — so the
+  preview keeps most of the row width; the full timestamp remains in
+  the transcript. See records.TheoryOfSessionBrowsing.
 - The "/" key opens a one-row keyword bar over the browser, and Enter
   searches EVERY recorded session — the search is global, because the
   user remembers a phrase and not the session that wrote it — through
@@ -569,24 +574,30 @@ func (b *RecordBrowser) syncTreeScroll() {
 	p.mu.Unlock()
 }
 
-// recordListItem renders one list row: the record's id, command, start,
-// status, and operation count. See TheoryOfRecordBrowser.
+// recordListItem renders one list row: the record's id, command, compact
+// start date, status, and operation count, followed by the chat preview of
+// its user inputs. The date stays compact so the preview — the browsing key
+// — keeps most of the row; the full timestamp remains in the transcript and
+// the tree's elapsed timer. See TheoryOfRecordBrowser.
 func recordListItem(info records.SessionInfo) string {
 	status := info.Status
 	if status == "" {
 		status = "unknown"
 	}
-	return fmt.Sprintf("#%-4d %-12s %-19s %-8s %6d ops",
-		info.ID, info.Command, recordStartText(info.StartTime), status, info.OpCount)
+	row := fmt.Sprintf("#%-4d %-12s %-10s %-8s %6d ops  %s",
+		info.ID, info.Command, recordStartText(info.StartTime), status, info.OpCount, info.Chat)
+	return strings.TrimRight(row, " ")
 }
 
-// recordStartText renders a record's start time compactly; an
-// unparseable value is truncated as is.
+// recordStartText renders a record's start time as its local calendar date:
+// the list row keeps the date and leaves the width to the chat preview, and
+// the full timestamp remains in the transcript. An unparseable value is
+// truncated as is. See TheoryOfRecordBrowser.
 func recordStartText(start string) string {
 	if t, err := time.Parse(time.RFC3339Nano, start); err == nil {
-		return t.Local().Format("2006-01-02 15:04:05")
+		return t.Local().Format("2006-01-02")
 	}
-	return displaywidth.TruncateString(start, 19, "…")
+	return displaywidth.TruncateString(start, 10, "…")
 }
 
 func (b *RecordBrowser) move(delta int) {

@@ -21,11 +21,17 @@ type SessionInfo struct {
 	Status      string
 	Error       string
 	OpCount     int
+	// Chat is a one-line preview of the session's user inputs, in order,
+	// bounded and ellipsized: a record list identifies a session by what
+	// was asked. It is empty when the session recorded no user input. See
+	// TheoryOfSessionBrowsing.
+	Chat string
 }
 
 // listSessions writes one key=value metadata line per session, most
-// recent first, to output. It renders the same session data the record
-// browser reads, so the two views cannot disagree. See
+// recent first, to output, carrying the chat preview of the session's
+// user inputs. It renders the same session data the record browser
+// reads, so the two views cannot disagree. See
 // TheoryOfInteractionRecording and TheoryOfSessionBrowsing.
 func listSessions(recorder *Recorder, limit int, output io.Writer) error {
 	infos, err := sessionInfos(recorder, limit)
@@ -33,8 +39,12 @@ func listSessions(recorder *Recorder, limit int, output io.Writer) error {
 		return err
 	}
 	for _, info := range infos {
-		fmt.Fprintf(output, "id=%d command=%s start=%s status=%s operations=%d\n",
-			info.ID, info.Command, info.StartTime, info.Status, info.OpCount)
+		chats := ""
+		if info.Chat != "" {
+			chats = " chats=" + info.Chat
+		}
+		fmt.Fprintf(output, "id=%d command=%s start=%s status=%s operations=%d%s\n",
+			info.ID, info.Command, info.StartTime, info.Status, info.OpCount, chats)
 	}
 	return nil
 }
