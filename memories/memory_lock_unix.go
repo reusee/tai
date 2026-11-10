@@ -8,20 +8,29 @@ import (
 	"syscall"
 )
 
-// signalZero reports whether the process with the given PID is alive by
-// sending signal 0, which the kernel resolves without delivering any
-// signal: it succeeds for a live PID and fails with ESRCH for a dead one.
-// EPERM also proves liveness — the process exists but belongs to another
-// user. The PID is resolved in the caller's PID namespace, so the probe
-// stays correct inside containers where the /proc mount may reflect a
-// different namespace. Probing with process.Signal(os.Signal(nil)) is NOT
-// a liveness check: the nil Signal fails Signal's internal type assertion
-// and errors regardless of liveness. See TheoryOfMemory.
-func signalZero(pid int) bool {
-	process, err := os.FindProcess(pid)
-	if err != nil {
-		return false
+// tryLockFile attempts to take an exclusive advisory lock on f without
+// blocking, and reports whether it holds the lock. The kernel owns the lock:
+// it is dropped when the holder exits, however it exits, so a lock left by a
+// crashed writer never blocks a later one and no PID liveness check is
+// needed. Two open file descriptions of one path conflict even inside one
+// process, so a retried acquisition observes a concurrent holder the same way
+// another process does. See TheoryOfMemory.
+func tryLockFile(f *os.File) (bool, error) {
+	err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+	if err == nil {
+		return true, nil
 	}
-	err = process.Signal(syscall.Signal(0))
-	return err == nil || errors.Is(err, syscall.EPERM)
+	if errors.Is(err, syscall.EWOULDBLOCK) {
+		return false, nil
+	}
+	return false, err
+}
+
+// unlockFile releases the lock tryLockFile took and closes f. The lock file
+// stays on disk: it is the rendezvous point every writer opens, and removing
+// it would let one writer lock an unlinked inode while a later writer locks a
+// fresh file at the same path. See TheoryOfMemory.
+func unlockFile(f *os.File) {
+	syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	f.Close()
 }

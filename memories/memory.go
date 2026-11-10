@@ -11,8 +11,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -46,10 +44,18 @@ round: a contradictory add-and-delete pair for the same item resolves to
 deleted. A deletion-only round still persists an entry, possibly with an
 empty item list. Otherwise the deletion would be lost on the next read.
 
-File access is guarded by an advisory lock file with PID-based stale detection
-and exponential backoff. Writes are atomic: content is written to a temporary
-file and renamed over the target. The profile path may be a symlink, in which
-case the symlink target is resolved so updates follow the link.
+File access is guarded by an advisory lock: a writer takes an exclusive
+kernel lock (flock) on the lock file, retrying with exponential backoff while
+a concurrent writer holds it. The kernel drops the lock when the holder
+exits, however it exits, so a lock left by a crashed writer never blocks a
+later one; no PID liveness check is involved, because a reused PID would
+misreport a dead holder as live and block every later update. The lock file
+stays on disk as the rendezvous point every writer opens: removing it on
+unlock would let one writer lock an unlinked inode while a later writer locks
+a fresh file at the same path. Writes are atomic: content is written to a
+temporary file and renamed over the target. The profile path may be a
+symlink, in which case the symlink target is resolved so updates follow the
+link.
 
 A fact-only policy governs what is recorded: only information the user
 explicitly expresses or that is confirmed by objective facts.
@@ -166,9 +172,8 @@ func (Module) Memory(
 		}
 		lockFilePath := filePath + ".lock"
 
-		// Lock acquisition is delegated to acquireMemoryLock so the
-		// stale-detection policy is unit-testable; the retry policy
-		// matches the original inline constants. See TheoryOfMemory.
+		// Lock acquisition is delegated to acquireMemoryLock so the lock
+		// policy is unit-testable. See TheoryOfMemory.
 		const maxRetries = 20
 		const baseDelay = 100 * time.Millisecond
 		const maxDelay = 2 * time.Second
@@ -192,43 +197,34 @@ func (Module) Memory(
 	return currentMemory, appendMemory
 }
 
-// acquireMemoryLock acquires the advisory lock file at lockFilePath and
-// returns the unlock function. A lock file whose recorded PID is no
-// longer alive is stale and removed; a lock held by a live process is
-// respected, retrying with exponential backoff up to maxRetries attempts
-// before failing. The stale check must never dispossess a live holder:
-// removing a live process's lock would let two processes interleave their
-// read-modify-write of the profile and lose updates. A lock file whose
-// content is not a parseable PID (e.g., still empty between creation and
-// the PID write) is treated as held. See TheoryOfMemory.
+// acquireMemoryLock acquires the advisory lock at lockFilePath and returns
+// the unlock function. The lock is an exclusive kernel lock (flock) on the
+// lock file, so the kernel releases it when the holder exits, however it
+// exits: a lock left by a crashed or killed writer never blocks a later
+// writer, and no PID liveness check or stale-file cleanup is involved. The
+// lock file stays on disk after unlock; it is the rendezvous point every
+// writer opens. A concurrent holder is respected, retrying with exponential
+// backoff up to maxRetries attempts before failing. See TheoryOfMemory.
 func acquireMemoryLock(lockFilePath string, maxRetries int, baseDelay, maxDelay time.Duration) (func(), error) {
+	f, err := os.OpenFile(lockFilePath, os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open lock file: %w", err)
+	}
 	for attempt := range maxRetries {
-		if f, err := os.OpenFile(lockFilePath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600); err == nil {
-			fmt.Fprintf(f, "%d", os.Getpid())
+		locked, err := tryLockFile(f)
+		if err != nil {
 			f.Close()
-			unlock := func() {
-				os.Remove(lockFilePath)
-			}
-			return unlock, nil
-		} else if !os.IsExist(err) {
-			return nil, fmt.Errorf("failed to create lock file: %w", err)
+			return nil, fmt.Errorf("failed to lock %s: %w", filepath.Base(lockFilePath), err)
 		}
-
-		if data, err := os.ReadFile(lockFilePath); err == nil {
-			pidStr := strings.TrimSpace(string(data))
-			if pid, err := strconv.Atoi(pidStr); err == nil {
-				if !signalZero(pid) {
-					os.Remove(lockFilePath)
-					continue
-				}
-			}
+		if locked {
+			return func() { unlockFile(f) }, nil
 		}
-
 		if attempt < maxRetries-1 {
 			delay := min(baseDelay*time.Duration(1<<uint(attempt)), maxDelay)
 			time.Sleep(delay)
 		}
 	}
+	f.Close()
 	return nil, fmt.Errorf("failed to acquire lock for %s after %d attempts", filepath.Base(lockFilePath), maxRetries)
 }
 
