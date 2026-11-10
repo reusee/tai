@@ -35,23 +35,39 @@ hardening instead of starting another child; disableContainerEnv skips the
 layer for debugging.
 
 Every mount is made private first, so nothing the child mounts propagates
-back to the host namespace, and the root is bound onto itself so the
-read-only remount names a mount object this namespace owns. The writable
-set becomes independent writable mounts before the root turns read-only: a
-failure at that stage aborts the setup while the process still carries its
-inherited policy, so the best-effort fallback keeps the working directory
-writable, and the read-only root, being the last step that can fail, cannot
-take write access away from those mounts because mount flags are
-per-mount. Making the root read-only is the hardening.
+back to the host namespace. The read-only root remounts the mount the
+process's own root path names — the copy CLONE_NEWNS made. The layer does
+not bind "/" onto itself: a lookup of "/" returns that held root path
+without crossing a mount stacked exactly on it, so such a bind would add a
+mount whose flags nothing maintains while the remount kept naming the same
+mount. The writable set becomes independent writable mounts before the root
+turns read-only: a failure at that stage aborts the setup while the process
+still carries its inherited policy, so the best-effort fallback keeps the
+working directory writable, and the read-only root, being the last step that
+can fail, cannot take write access away from those mounts because mount
+flags are per-mount. Making the root read-only is the hardening.
+
+A writable bind needs the process to re-enter it. The working directory
+handle holds the mount the process traversed at start, the writable bind
+stacks above that mount instead of replacing it, and a relative path
+resolves from the held mount without crossing the bind. When the held mount
+is a submount the hardening turns read-only — any working directory below
+/home, /var, or another separate filesystem — every relative write fails
+with EROFS although the policy made the path writable. The setup therefore
+re-enters the working directory after the writable binds (chdirSyscall),
+before the root turns read-only so a failure aborts on the inherited
+policy.
 
 The writable set enters the layer as the process reports it, while the
 kernel names mount points by their resolved path. A symlinked component
 therefore makes the hardening pass read the writable bind at the working
 directory as a submount outside the set, remount that bind read-only, and
 leave the working directory unwritable under an otherwise correct policy.
-Every entry is canonicalized before use (canonicalPath), so the mount layer,
-the hardening comparison, the pre-read-only verification, and the Landlock
-rules name one path.
+Every entry is canonicalized before use (canonicalPath), so the mount
+layer, the hardening comparison, and the pre-read-only verification name
+one path. The Landlock layer needs no such step: its rules key on the inode
+a path resolves to, so a symlinked spelling cannot make the two planes
+disagree.
 
 Making a directory writable is a bind mount of that directory onto itself
 plus a remount of that same bind (mountWritableBind), and the two calls are
@@ -63,12 +79,14 @@ swallowing it, so the setup reports the fault instead of leaving a
 directory silently read-only.
 
 The pre-existing submounts are remounted read-only too, except the kernel
-filesystems (/dev, /proc, /sys) and the writable set: a remount the
-namespace does not own fails, and the read-only root already bounds that
-mount, so such a failure stays a warning-free skip instead of failing the
-setup. This hardening runs before the fresh tmpfs mounts, because it
-enumerates the namespace's mounts: a tmpfs mounted first would be seen as
-a pre-existing submount and lose the writability it was created for.
+filesystems (/dev, /proc, /sys), the writable set, and the tmpfs mount
+points, which stay writable whether a fresh mount replaces them or the
+mount is skipped. A remount the namespace cannot apply — the mount point
+resolving to another mount, or a locked flag — is a warning-free skip: the
+read-only root already bounds that mount, so the failure cannot open it.
+This hardening runs before the fresh tmpfs mounts, because it enumerates the
+namespace's mounts: a tmpfs mounted first would be seen as a pre-existing
+submount and lose the writability it was created for.
 
 /tmp and /dev/shm are fresh tmpfs mounts rather than bind mounts: their host
 content is machine state no review can use, and a tmpfs keeps them writable
@@ -105,15 +123,6 @@ const disableContainerEnv = "CAI_DISABLE_CONTAINER"
 // containerEnv marks the re-executed child: the child applies the hardening
 // instead of starting another child. See TheoryOfContainerIsolation.
 const containerEnv = "CAI_IN_CONTAINER"
-
-// goWritableDirsEnv carries the Go toolchain directories resolved before the
-// mount restrictions, one path per os.PathListSeparator. See
-// TheoryOfContainerIsolation and TheoryOfWritableDirs.
-const goWritableDirsEnv = "CAI_GO_WRITABLE_DIRS"
-
-// configDirEnv carries the user config directory resolved before the mount
-// restrictions. See TheoryOfContainerIsolation and TheoryOfWritableDirs.
-const configDirEnv = "CAI_CONFIG_DIR"
 
 // tmpfsSizeEnv names the size limit of the sandbox's tmpfs mounts; unset
 // leaves the kernel default. See TheoryOfContainerIsolation.
@@ -213,24 +222,25 @@ func applyContainerFilesystem() {
 // setupContainerFilesystem hardens the process filesystem in the child of
 // MaybeRunInContainer, where the user namespace supplies the mount capability:
 // every mount is made private, the writable set becomes independent writable
-// mounts, the pre-existing submounts are hardened, /tmp and /dev/shm become
-// fresh tmpfs mounts, the working directory's mount is confirmed read-write,
-// and only then does the root turn read-only before the final no-new-privs
-// flag. The order is load-bearing: a failure before the read-only root leaves
-// the inherited policy intact, so the best-effort fallback keeps the working
-// directory writable. See TheoryOfContainerIsolation.
+// mounts, the working directory is re-entered so relative paths resolve
+// through its bind, the pre-existing submounts are hardened, /tmp and /dev/shm
+// become fresh tmpfs mounts, the working directory's mount is confirmed
+// read-write, and only then does the root turn read-only before the final
+// no-new-privs flag. The order is load-bearing: a failure before the read-only
+// root leaves the inherited policy intact, so the best-effort fallback keeps
+// the working directory writable. See TheoryOfContainerIsolation.
 func setupContainerFilesystem(cwd string) error {
 	if err := mountSyscall("", "/", "", syscall.MS_REC|syscall.MS_PRIVATE, ""); err != nil {
 		return fmt.Errorf("make mounts private: %w", err)
-	}
-	if err := mountSyscall("/", "/", "", syscall.MS_BIND|syscall.MS_REC, ""); err != nil {
-		return fmt.Errorf("bind the root: %w", err)
 	}
 	writable := writableMountDirs(cwd)
 	for _, dir := range writable {
 		if err := mountWritableBind(dir); err != nil {
 			return err
 		}
+	}
+	if err := chdirSyscall(cwd); err != nil {
+		return fmt.Errorf("re-enter the working directory: %w", err)
 	}
 	hardenSubmounts(writable)
 	for _, dir := range tmpfsMounts {
@@ -310,6 +320,11 @@ func canonicalPath(dir string) string {
 var mountSyscall = func(source, target, fstype string, flags uintptr, data string) error {
 	return syscall.Mount(source, target, fstype, flags, data)
 }
+
+// chdirSyscall re-enters a directory. It is a variable so a test observes the
+// re-entry without moving the test process out of the tree the test runner
+// owns. See TheoryOfContainerIsolation.
+var chdirSyscall = os.Chdir
 
 // mountWritableBind makes dir an independent writable mount: one bind mount
 // of dir onto itself, then a remount of that bind carrying

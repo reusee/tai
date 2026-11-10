@@ -3,6 +3,7 @@
 package security
 
 import (
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -90,6 +91,28 @@ func TestLandlockWritableDevicesIncludeTerminalDevices(t *testing.T) {
 		if !slices.Contains(devices, want) {
 			t.Errorf("missing terminal device %s in %v", want, devices)
 		}
+	}
+}
+
+// TestLandlockAllowBeneathAbortsOnUnopenable checks the rule against the
+// writable set: a path that names nothing is skipped, and a path that exists
+// but cannot be opened aborts enforcement. Skipping such a path would leave
+// every write beneath it denied while the mounts allow them, the working
+// directory included. The non-directory component yields ENOTDIR, which is
+// not the ENOENT that marks a path with nothing beneath it.
+// See TheoryOfLandlock.
+func TestLandlockAllowBeneathAbortsOnUnopenable(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing")
+	if err := landlockAllowBeneath(0, landlockAccessFSWriteFile, missing); err != nil {
+		t.Fatalf("a path that names nothing should be skipped, got %v", err)
+	}
+
+	file := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(file, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := landlockAllowBeneath(0, landlockAccessFSWriteFile, filepath.Join(file, "sub")); err == nil {
+		t.Fatal("want an error when the writable path cannot be opened")
 	}
 }
 

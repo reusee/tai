@@ -50,6 +50,20 @@ values the mount setup consumed, so the two enforcement planes stay
 identical without re-running ` + "`go env`" + ` inside the container.
 `
 
+// goWritableDirsEnv carries the Go toolchain directories resolved before the
+// mount restrictions, one path per os.PathListSeparator. It is declared in
+// this file, which carries no build tag, because resolveGoWritableDirs reads
+// it on every platform; a declaration under a linux-only build tag would not
+// compile elsewhere. See TheoryOfContainerIsolation and TheoryOfWritableDirs.
+const goWritableDirsEnv = "CAI_GO_WRITABLE_DIRS"
+
+// configDirEnv carries the user config directory resolved before the mount
+// restrictions. It is declared in this file, which carries no build tag,
+// because resolveConfigDir reads it on every platform; a declaration under a
+// linux-only build tag would not compile elsewhere. See
+// TheoryOfContainerIsolation and TheoryOfWritableDirs.
+const configDirEnv = "CAI_CONFIG_DIR"
+
 // WritableDirs returns the list of directories that the container
 // filesystem setup makes writable. These directories match exactly
 // what setupContainerFilesystem in container_linux.go binds read-write:

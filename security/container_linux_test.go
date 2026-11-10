@@ -5,6 +5,7 @@ package security
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"syscall"
@@ -154,6 +155,7 @@ func TestSetupContainerFilesystemAbortsBeforeRootReadOnlyWhenCwdReadOnly(t *test
 	t.Setenv(goWritableDirsEnv, "")
 	t.Setenv(configDirEnv, "")
 	cwd := t.TempDir()
+	stubChdir(t, nil)
 
 	rootReadOnly := false
 	prevMount := mountSyscall
@@ -216,6 +218,33 @@ func TestTmpfsMountData(t *testing.T) {
 	}
 }
 
+// TestSetupContainerFilesystemRemountsNamespaceRoot checks that the layer
+// never binds "/" onto itself. The bind would stack above the mount the
+// process's root path names, and a path walk starts at that held path without
+// following a mount stacked exactly on it, so the read-only remount would hit
+// a mount no walk passes through and the root would stay writable for every
+// absolute path. See TheoryOfContainerIsolation.
+func TestSetupContainerFilesystemRemountsNamespaceRoot(t *testing.T) {
+	t.Setenv(goWritableDirsEnv, "")
+	t.Setenv(configDirEnv, "")
+	cwd := t.TempDir()
+	stubChdir(t, nil)
+	stubWritableMountCheck(t)
+
+	prev := mountSyscall
+	mountSyscall = func(_, target, _ string, f uintptr, _ string) error {
+		if target == "/" && f&syscall.MS_BIND != 0 && f&syscall.MS_REMOUNT == 0 {
+			t.Fatalf("the setup binds / onto itself with flags %#x", f)
+		}
+		return nil
+	}
+	defer func() { mountSyscall = prev }()
+
+	if err := setupContainerFilesystem(cwd); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestWritableMountDirsResolveSymlinks checks that a writable directory given
 // through a symlink enters the set under the resolved path the kernel's mount
 // table names: the hardening pass compares mount points by string, so an
@@ -274,6 +303,7 @@ func TestSetupContainerFilesystemVerifiesCwdBeforeRootReadOnly(t *testing.T) {
 	t.Setenv(goWritableDirsEnv, "")
 	t.Setenv(configDirEnv, "")
 	cwd := t.TempDir()
+	stubChdir(t, nil)
 
 	calls := 0
 	bindAt, verifyAt, rootReadOnlyAt := -1, -1, -1
@@ -324,6 +354,23 @@ func stubWritableMountCheck(t *testing.T) {
 	t.Cleanup(func() { verifyWritableMount = prev })
 }
 
+// stubChdir records the directory the setup re-enters instead of moving the
+// test process: the setup re-anchors the working directory on its writable
+// bind, and a test process that followed it would leave the tree the test
+// runner owns, or fail on a path that exists only in the stub mount table.
+// See TheoryOfContainerIsolation.
+func stubChdir(t *testing.T, record func(string)) {
+	t.Helper()
+	prev := chdirSyscall
+	chdirSyscall = func(dir string) error {
+		if record != nil {
+			record(dir)
+		}
+		return nil
+	}
+	t.Cleanup(func() { chdirSyscall = prev })
+}
+
 // TestSetupContainerFilesystemTmpfsKeepsWritableDirs checks that a fresh
 // tmpfs never hides a writable directory: replacing /tmp while the working
 // directory lives under it would make every relative path resolve elsewhere
@@ -332,6 +379,7 @@ func TestSetupContainerFilesystemTmpfsKeepsWritableDirs(t *testing.T) {
 	t.Setenv(goWritableDirsEnv, "")
 	t.Setenv(configDirEnv, "")
 	const cwd = "/tmp/tai-work-dir"
+	stubChdir(t, nil)
 	stubWritableMountCheck(t)
 
 	var tmpfs []string
@@ -364,6 +412,7 @@ func TestSetupContainerFilesystemHardensBeforeTmpfs(t *testing.T) {
 	t.Setenv(goWritableDirsEnv, "")
 	t.Setenv(configDirEnv, "")
 	const cwd = "/home/tai-work-dir"
+	stubChdir(t, nil)
 	stubWritableMountCheck(t)
 
 	var calls int
@@ -434,6 +483,7 @@ func TestSetupContainerFilesystemWritableBeforeRootReadOnly(t *testing.T) {
 	t.Setenv(goWritableDirsEnv, "")
 	t.Setenv(configDirEnv, "")
 	cwd := t.TempDir()
+	stubChdir(t, nil)
 	stubWritableMountCheck(t)
 
 	var targets []string
@@ -520,6 +570,54 @@ func TestWritableMountError(t *testing.T) {
 	}
 }
 
+// TestSetupContainerFilesystemReentersWorkingDirectory checks that the setup
+// re-enters the working directory after binding it writable and before the
+// root turns read-only: the working directory handle holds the mount the
+// process traversed at start, the bind stacks above that mount, and a relative
+// path resolves from the held mount, so a submount the hardening turns
+// read-only would reject every relative write.
+// See TheoryOfContainerIsolation.
+func TestSetupContainerFilesystemReentersWorkingDirectory(t *testing.T) {
+	t.Setenv(goWritableDirsEnv, "")
+	t.Setenv(configDirEnv, "")
+	cwd := t.TempDir()
+	stubWritableMountCheck(t)
+
+	var calls int
+	bindAt, rootReadOnlyAt := -1, -1
+	prev := mountSyscall
+	mountSyscall = func(_, target, _ string, f uintptr, _ string) error {
+		if target == cwd && f == syscall.MS_BIND {
+			bindAt = calls
+		}
+		if target == "/" && f&syscall.MS_RDONLY != 0 {
+			rootReadOnlyAt = calls
+		}
+		calls++
+		return nil
+	}
+	defer func() { mountSyscall = prev }()
+
+	chdirAt, chdirPath := -1, ""
+	stubChdir(t, func(dir string) {
+		chdirPath = dir
+		chdirAt = calls
+	})
+
+	if err := setupContainerFilesystem(cwd); err != nil {
+		t.Fatal(err)
+	}
+	if chdirPath != cwd {
+		t.Fatalf("setup re-entered %q, want the working directory %q", chdirPath, cwd)
+	}
+	if bindAt < 0 || chdirAt < bindAt {
+		t.Fatalf("working directory re-entered at call %d, before its writable bind at call %d", chdirAt, bindAt)
+	}
+	if rootReadOnlyAt < 0 || chdirAt > rootReadOnlyAt {
+		t.Fatalf("working directory re-entered at call %d, after the root turned read-only at call %d", chdirAt, rootReadOnlyAt)
+	}
+}
+
 // TestKeptWritable checks the mount points the read-only hardening leaves
 // alone: a writable directory and everything beneath it, the tmpfs mount
 // points, which the writable set promises whether or not the fresh mount
@@ -544,5 +642,26 @@ func TestKeptWritable(t *testing.T) {
 		if got := keptWritable(tc.mountPoint, writable); got != tc.want {
 			t.Errorf("keptWritable(%q) = %v, want %v", tc.mountPoint, got, tc.want)
 		}
+	}
+}
+
+// TestPackageBuildsOnNonLinux guards the portability the package's own
+// structure promises: container_other.go stubs MaybeRunInContainer precisely
+// so the package compiles outside Linux, and the files without a build tag
+// must not reference identifiers declared only under one. The regression this
+// guards: a constant resolveGoWritableDirs and resolveConfigDir read was
+// declared in container_linux.go, which compiles on Linux and fails on every
+// other platform. The check cross-compiles the package for GOOS=darwin; a
+// missing toolchain skips. See TheoryOfContainerIsolation and
+// TheoryOfWritableDirs.
+func TestPackageBuildsOnNonLinux(t *testing.T) {
+	goBin, err := exec.LookPath("go")
+	if err != nil {
+		t.Skipf("go toolchain unavailable: %v", err)
+	}
+	cmd := exec.Command(goBin, "build", ".")
+	cmd.Env = append(os.Environ(), "GOOS=darwin", "GOARCH=arm64")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("the package must compile on non-Linux platforms: %v\n%s", err, out)
 	}
 }

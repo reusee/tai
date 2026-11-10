@@ -3,6 +3,7 @@
 package security
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -49,12 +50,14 @@ The layer is best-effort, like setNoNewPrivs: a kernel without Landlock
 after the kernel advertised support prints a warning and leaves the
 mount sandbox as the only layer. Landlock applies only on the hardened
 in-container path, so it never changes behavior relative to the mount
-policy — it re-enforces the same policy on a second plane, and a
-directory whose rule cannot be added aborts enforcement rather than deny
-writes the mounts allow. CAI_DISABLE_LANDLOCK bypasses it for debugging,
-mirroring disableContainerEnv. Network restrictions (ABI 4) are out of
-scope: the pipeline requires outbound model API access, the same reason
-the network namespace is omitted.
+policy — it re-enforces the same policy on a second plane, and a writable
+path that exists but cannot be opened or allowed aborts enforcement
+rather than deny writes the mounts allow. Only a path that names nothing
+is skipped: it has nothing beneath it to allow, and the mount layer's
+read-only view of it stands. CAI_DISABLE_LANDLOCK bypasses it for
+debugging, mirroring disableContainerEnv. Network restrictions (ABI 4)
+are out of scope: the pipeline requires outbound model API access, the
+same reason the network namespace is omitted.
 `
 
 // disableLandlockEnv bypasses the Landlock layer for debugging or for
@@ -269,13 +272,19 @@ func landlockEnforceWriteContainment(abiVersion int) error {
 }
 
 // landlockAllowBeneath adds a path-beneath rule allowing every handled
-// right beneath dir. A directory that cannot be opened does not exist,
-// so there is nothing beneath it to allow; the rule is skipped and the
-// mount layer's read-only view of it stands.
+// right beneath dir. A path that names nothing has nothing beneath it to
+// allow, so the rule is skipped and the mount layer's read-only view of it
+// stands. Any other open failure aborts enforcement: the ruleset handles the
+// write rights, so a writable directory without its rule has every write
+// beneath it denied, the working directory included, and that is the one
+// state this layer must never create. See TheoryOfLandlock.
 func landlockAllowBeneath(rulesetFd uintptr, allowed uint64, dir string) error {
 	parentFd, err := syscall.Open(dir, unix.O_PATH|unix.O_CLOEXEC, 0)
 	if err != nil {
-		return nil
+		if errors.Is(err, syscall.ENOENT) {
+			return nil
+		}
+		return err
 	}
 	defer syscall.Close(parentFd)
 
