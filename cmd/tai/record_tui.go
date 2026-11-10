@@ -99,6 +99,15 @@ Record browser theory (cmd/tai):
   tree, and the projection, following the TUI's rendering pattern.
 `
 
+const TheoryOfRecordOpenFailure = `
+A listed record always opens. A record whose operation stream cannot be
+replayed — an empty session, a corrupt stream — opens to the pane that
+states the record has no nodes, with the load failure rendered at the
+screen's bottom row, because a press that changes nothing reads as a
+broken key and hides the reason. Stepping back with Esc returns to the
+list, so a broken record never traps the browser.
+`
+
 // The record browser's fixed labels. See TheoryOfRecordBrowser.
 const (
 	// recordTabTitle names the browser's single tab.
@@ -312,30 +321,36 @@ func (b *RecordBrowser) selectRecord(idx int) {
 }
 
 // openRecord loads the record's tree and switches the browser to the
-// tree view. A load failure keeps the list view and reports the reason.
-// See TheoryOfRecordBrowser.
+// tree view. A record whose stream cannot be replayed still opens: the
+// pane states that the record has no nodes and the failure renders at
+// the screen's bottom row, so a listed record always answers a press
+// where the user looked. See TheoryOfRecordOpenFailure.
 func (b *RecordBrowser) openRecord(id int64) {
 	tr, err := b.loadTree(id)
-	if err != nil {
-		b.err = err.Error()
-		b.currentID = 0
-		return
-	}
-	b.err = ""
 	p := b.treePane
 	paneIdx := p.treeTab.paneIdx
 	p.mu.Lock()
-	p.treeView = tr
 	// A fresh pane state per record: the expansion, projection, row
 	// ranges, and wrap cache all belong to the opened record's tree.
+	p.treeView = tr
 	p.treeTab = treeTabState{paneIdx: paneIdx}
 	p.treeTab.expanded = make(map[string]bool)
 	p.treeTab.seen = make(map[string]bool)
-	p.seedTreeExpansions(tr.Root())
-	p.startTime = recordStartTime(b.infos, id, tr)
+	if tr != nil {
+		p.seedTreeExpansions(tr.Root())
+		p.startTime = recordStartTime(b.infos, id, tr)
+	} else {
+		// The elapsed timer needs an anchor even without a tree; the
+		// zero time would make every row report a half-century.
+		p.startTime = time.Now()
+	}
 	p.scrolls[paneIdx] = taiui.ScrollState{}
 	p.mu.Unlock()
 	b.currentID = id
+	b.err = ""
+	if err != nil {
+		b.err = err.Error()
+	}
 }
 
 // backToList returns to the record list from an opened record.

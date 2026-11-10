@@ -356,25 +356,35 @@ func TestRecordBrowserTreeSwipe(t *testing.T) {
 	}
 }
 
-// TestRecordBrowserOpenFailureKeepsList verifies that a record without a
-// tree reports the reason and keeps the list view, so a broken record
-// never blanks the browser. See TheoryOfRecordBrowser.
-func TestRecordBrowserOpenFailureKeepsList(t *testing.T) {
+// TestRecordBrowserOpenFailureOpensWithReason verifies that a record whose
+// tree cannot be loaded still opens: the pane states that the record has
+// no nodes and the reason renders at the screen's bottom row, so a listed
+// record always answers a press where the user looked. See
+// TheoryOfRecordOpenFailure.
+func TestRecordBrowserOpenFailureOpensWithReason(t *testing.T) {
 	var out strings.Builder
 	b, _ := recordBrowserFixture(t, &out)
 	b.loadList()
 	// Record 1 has no recorded operations.
 	b.selectRecord(2)
 	b.handleKey("enter")
-	if b.currentID != 0 {
-		t.Fatalf("expected the failed open to keep the list view, got record %d", b.currentID)
+	if b.currentID != 1 {
+		t.Fatalf("expected record 1 opened, got %d", b.currentID)
 	}
 	if b.err == "" {
-		t.Fatal("expected the failed open to report the reason")
+		t.Fatal("expected the load failure to be reported")
 	}
 	b.render()
-	if !strings.Contains(out.String(), "no recorded operations") {
-		t.Fatalf("expected the error in the pane, got %q", out.String())
+	rendered := out.String()
+	for _, want := range []string{"no recorded operations", "no nodes in the recorded tree", "id 1"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("expected %q in the opened record, got %q", want, rendered)
+		}
+	}
+	// Esc returns to the list, so a broken record does not trap the browser.
+	b.handleKey("esc")
+	if b.currentID != 0 {
+		t.Fatalf("expected the list view after esc, got record %d", b.currentID)
 	}
 }
 

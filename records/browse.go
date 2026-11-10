@@ -26,9 +26,12 @@ Session browsing theory:
   record and jumps there. See TheoryOfGlobalRecordSearch.
 - The command-line listing keeps its own rendering; it renders the
   same data the browser reads, so the two views cannot disagree.
-- A session that recorded no operations has no tree: LoadSessionTree
-  reports it as an error instead of returning an empty tree, because
-  an empty tree would hide the reason from the caller.
+- A session row is written with its first operation, so a listed session
+  is replayable (see TheoryOfRecordedSessionLazyStart). A legacy row
+  without operations has no tree: LoadSessionTree reports it as an error
+  instead of returning an empty tree, because an empty tree would hide
+  the reason from the caller, and the browser opens such a record to the
+  pane that states the reason (cmd/tai.TheoryOfRecordOpenFailure).
 `
 
 // sessionInfos reads the recorded sessions, most recent first, with each

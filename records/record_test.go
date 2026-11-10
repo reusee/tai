@@ -114,6 +114,13 @@ func TestRecorderWritesTreeOperations(t *testing.T) {
 func TestRecorderWritesCommandLine(t *testing.T) {
 	withRecorder(t, true, func(recorder *Recorder) {
 		recorder.StartSession("test")
+		// The session's row is written with the first recorded
+		// operation, so the command line joins it there.
+		// See TheoryOfRecordedSessionLazyStart.
+		tr := tree.New().WithOpSink(recorder.Sink())
+		if _, err := tr.Write("root", "user-1", tree.TypeUser, tree.AuthorUser, "hello"); err != nil {
+			t.Fatal(err)
+		}
 		recorder.EndSession(nil)
 		var commandLine string
 		if err := recorder.db.QueryRow(`SELECT command_line FROM sessions LIMIT 1`).Scan(&commandLine); err != nil {
@@ -206,7 +213,14 @@ func TestListSessions(t *testing.T) {
 			t.Fatal(err)
 		}
 		recorder.EndSession(nil)
+		// The second session records a program node but no user input: it
+		// is listed without a chat preview. A session is listed only when
+		// it recorded an operation. See TheoryOfRecordedSessionLazyStart.
 		recorder.StartSession("second")
+		tr = tree.New().WithOpSink(recorder.Sink())
+		if _, err := tr.Write("root", "system-1", tree.TypeSystem, tree.AuthorProgram, "prompt"); err != nil {
+			t.Fatal(err)
+		}
 		recorder.EndSession(nil)
 
 		var buf bytes.Buffer
@@ -228,7 +242,7 @@ func TestListSessions(t *testing.T) {
 			}
 		}
 		for _, want := range []string{
-			"id=2", "command=second", "operations=0",
+			"id=2", "command=second", "operations=1",
 		} {
 			if !strings.Contains(lines[0], want) {
 				t.Fatalf("the second session's line is missing %q: %s", want, lines[0])
@@ -249,7 +263,13 @@ func TestLatestSessionID(t *testing.T) {
 		if id != 0 {
 			t.Fatalf("expected 0 for empty database, got %d", id)
 		}
+		// The session's row is written with its first operation. See
+		// TheoryOfRecordedSessionLazyStart.
 		recorder.StartSession("test")
+		tr := tree.New().WithOpSink(recorder.Sink())
+		if _, err := tr.Write("root", "system-1", tree.TypeSystem, tree.AuthorProgram, "prompt"); err != nil {
+			t.Fatal(err)
+		}
 		recorder.EndSession(nil)
 		id, err = latestSessionID(recorder)
 		if err != nil {

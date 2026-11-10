@@ -13,8 +13,9 @@ import (
 // TestSessionBrowsing verifies the browsing data API: the session list
 // carries every session, most recent first, with its operation count and
 // its chat preview, and the tree load reconstructs the recorded operation
-// stream. A session that recorded no operations has no tree and reports an
-// error instead. See TheoryOfSessionBrowsing.
+// stream. A session is listed only when it recorded an operation; a legacy
+// row without operations reports an error instead of an empty tree. See
+// TheoryOfSessionBrowsing and TheoryOfRecordedSessionLazyStart.
 func TestSessionBrowsing(t *testing.T) {
 	scope := dscope.New(
 		modes.ForTest(t),
@@ -43,7 +44,14 @@ func TestSessionBrowsing(t *testing.T) {
 		t.Fatal(err)
 	}
 	recorder.EndSession(nil)
+	// The second session records a program node but no user input: it is
+	// listed without a chat preview. See
+	// TheoryOfRecordedSessionLazyStart.
 	recorder.StartSession("second")
+	tr = tree.New().WithOpSink(recorder.Sink())
+	if _, err := tr.Write("root", "system-1", tree.TypeSystem, tree.AuthorProgram, "prompt"); err != nil {
+		t.Fatal(err)
+	}
 	recorder.EndSession(nil)
 
 	infos, err := list()
@@ -82,8 +90,22 @@ func TestSessionBrowsing(t *testing.T) {
 		t.Fatalf("expected the recorded model node, got %+v", model)
 	}
 
-	if _, err := load(infos[0].ID); err == nil {
-		t.Fatal("expected an error for a session without recorded operations")
+	// A row written before sessions started lazily — a legacy database —
+	// has no operations: the load reports the reason instead of
+	// replaying to an empty tree. See TheoryOfRecordedSessionLazyStart.
+	res, err := recorder.db.Exec(
+		`INSERT INTO sessions (command, command_line, start_time) VALUES (?, ?, ?)`,
+		"legacy", "", "2026-01-01T00:00:00Z",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyID, err := res.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := load(legacyID); err == nil {
+		t.Fatal("expected an error for a legacy session without recorded operations")
 	}
 }
 

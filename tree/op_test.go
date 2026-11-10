@@ -1,6 +1,10 @@
 package tree
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+	"time"
+)
 
 // opCollector returns an op slice and a sink appending to it.
 func opCollector() (*[]Op, OpSink) {
@@ -306,5 +310,39 @@ func TestReplayRejectsInapplicableOp(t *testing.T) {
 	}
 	if _, err := Replay([]Op{{Kind: OpKind("bogus"), Name: "a"}}); err == nil {
 		t.Fatal("an unknown operation kind did not fail")
+	}
+}
+
+// TestReplayLargeStreamCompletesQuickly pins the reconstruction cost: a
+// recorded session carries every operation of a whole run, and a consumer
+// replays it before it shows anything, so a super-linear reconstruction
+// stalls that consumer until opening a long record appears to do nothing.
+// See TheoryOfOperationLog.
+func TestReplayLargeStreamCompletesQuickly(t *testing.T) {
+	const count = 20000
+	stream := make([]Op, 0, count)
+	for i := 0; i < count; i++ {
+		stream = append(stream, Op{
+			Kind:   OpWrite,
+			Parent: "root",
+			Name:   fmt.Sprintf("recorded-%d", i),
+			Type:   TypeUsage,
+			Author: AuthorProgram,
+		})
+	}
+	start := time.Now()
+	tr, err := Replay(stream)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(tr.Root().Children()); got != count {
+		t.Fatalf("expected %d replayed nodes, got %d", count, got)
+	}
+	// A reconstruction that copies the name index per operation needs
+	// seconds for this stream; the in-place reconstruction stays orders
+	// of magnitude below the bound. See TheoryOfOperationLog.
+	if elapsed > 2*time.Second {
+		t.Fatalf("replaying %d operations took %v; the reconstruction must stay linear", count, elapsed)
 	}
 }

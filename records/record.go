@@ -81,6 +81,25 @@ interferes with the generation pipeline. Node content is recorded in
 full: nothing is omitted or truncated.
 `
 
+const TheoryOfRecordedSessionLazyStart = `
+A session row is written with the first recorded operation: a run that
+records nothing leaves no row, so the record list never shows a record
+without content, and the row's start time is the run's start rather than
+its first operation's. A row is the promise that a record can be opened;
+an empty row breaks that promise, and the browser can only report the
+broken promise after the user pressed a record that cannot answer.
+
+The promise holds only while the stream stays an applied history. A
+failed operation write stops the session at the last recorded operation:
+a hole in the middle — an operation skipped while later ones land —
+would leave every later operation that references the missing node
+unreplayable, so the whole record would fail to open. A truncated
+prefix is still an applied history, so the session ends there with the
+failure recorded in the row. The browser opens such a record to the
+reason, so the promise survives in the one form the record can still
+keep: every press answers.
+`
+
 const TheoryOfEventRecording = `
 Generator-level events are tree nodes. The recording mechanism itself — the
 generator-held EventRecorder, the per-scope EventSink, and the loop's drain
@@ -147,7 +166,10 @@ func (e Enabled) HandleConfig(path string, values []*cue.Value) (any, error) {
 // database. A session spans one recording lifetime — one generation run,
 // or one goal run spanning its loops — and the tree's operations are
 // written in application order; the tree the analysis sees is
-// reconstructed with tree.Replay. See TheoryOfInteractionRecording.
+// reconstructed with tree.Replay. The session's row is written with the
+// first operation, so a run without operations leaves no row, and a write
+// outside StartSession and EndSession records nothing. See
+// TheoryOfInteractionRecording and TheoryOfRecordedSessionLazyStart.
 type Recorder struct {
 	db          *sql.DB
 	commandLine string
@@ -156,6 +178,14 @@ type Recorder struct {
 	enabled   bool
 	sessionID int64
 	seq       int64
+	// pending reports that StartSession registered a session: only a
+	// registered session writes its row and its operations. started
+	// reports that the row exists; command and startedAt carry the
+	// metadata until then. See TheoryOfRecordedSessionLazyStart.
+	pending   bool
+	started   bool
+	command   string
+	startedAt time.Time
 }
 
 const schema = `
@@ -225,7 +255,9 @@ func (r *Recorder) Enabled() bool {
 
 // StartSession begins a recording session for the given command. The
 // recorded command line is the process invocation, so the analysis sees
-// exactly how the session was launched.
+// exactly how the session was launched. The session's row is written by
+// the first recorded operation, so a run without operations leaves no
+// row. See TheoryOfRecordedSessionLazyStart.
 func (r *Recorder) StartSession(command string) {
 	if !r.Enabled() {
 		return
@@ -234,34 +266,40 @@ func (r *Recorder) StartSession(command string) {
 	defer r.mu.Unlock()
 	r.sessionID = 0
 	r.seq = 0
-	res, err := r.db.Exec(
-		`INSERT INTO sessions (command, command_line, start_time) VALUES (?, ?, ?)`,
-		command, r.commandLine, time.Now().Format(time.RFC3339Nano),
-	)
-	if err != nil {
-		return
-	}
-	r.sessionID, _ = res.LastInsertId()
+	r.pending = true
+	r.started = false
+	r.command = command
+	r.startedAt = time.Now()
 }
 
 // EndSession closes the current session with the given outcome. A
-// non-nil error marks the session as failed.
+// non-nil error marks the session as failed. A session that recorded no
+// operation has no row, so there is nothing to close, and the session
+// closes to no pending state so a later stray write records nothing.
+// See TheoryOfRecordedSessionLazyStart.
 func (r *Recorder) EndSession(err error) {
-	if !r.Enabled() || r.sessionID == 0 {
+	if !r.Enabled() {
 		return
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	status := "success"
-	var errMsg string
-	if err != nil {
-		status = "error"
-		errMsg = err.Error()
+	if !r.pending {
+		return
 	}
-	_, _ = r.db.Exec(
-		`UPDATE sessions SET end_time = ?, status = ?, error = ? WHERE id = ?`,
-		time.Now().Format(time.RFC3339Nano), status, errMsg, r.sessionID,
-	)
+	if r.started && r.sessionID != 0 {
+		status := "success"
+		var errMsg string
+		if err != nil {
+			status = "error"
+			errMsg = err.Error()
+		}
+		_, _ = r.db.Exec(
+			`UPDATE sessions SET end_time = ?, status = ?, error = ? WHERE id = ?`,
+			time.Now().Format(time.RFC3339Nano), status, errMsg, r.sessionID,
+		)
+	}
+	r.pending = false
+	r.started = false
 	r.sessionID = 0
 }
 
@@ -279,26 +317,77 @@ func (r *Recorder) Sink() tree.OpSink {
 
 // record writes one operation. Operations that carry no time — a delete,
 // whose mutation moment is not part of the node identity — fall back to
-// the write moment. See TheoryOfInteractionRecording.
+// the write moment. The first recorded operation writes the session's row,
+// so a session without operations leaves none, and a write outside a
+// registered session records nothing. A failed write stops the session at
+// the last recorded operation, so the stream stays an applied history.
+// See TheoryOfRecordedSessionLazyStart and TheoryOfInteractionRecording.
 func (r *Recorder) record(op tree.Op) {
 	if r == nil || !r.enabled {
 		return
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.db == nil || r.sessionID == 0 {
+	if r.db == nil || !r.pending {
 		return
 	}
-	r.seq++
+	if !r.started {
+		startedAt := r.startedAt
+		if startedAt.IsZero() {
+			startedAt = time.Now()
+		}
+		res, err := r.db.Exec(
+			`INSERT INTO sessions (command, command_line, start_time) VALUES (?, ?, ?)`,
+			r.command, r.commandLine, startedAt.Format(time.RFC3339Nano),
+		)
+		if err != nil {
+			r.pending = false
+			return
+		}
+		id, err := res.LastInsertId()
+		if err != nil {
+			r.pending = false
+			return
+		}
+		r.sessionID = id
+		r.started = true
+	}
+	if r.sessionID == 0 {
+		return
+	}
 	t := op.Time
 	if t.IsZero() {
 		t = time.Now()
 	}
-	_, _ = r.db.Exec(
+	seq := r.seq + 1
+	_, err := r.db.Exec(
 		`INSERT INTO tree_ops (session_id, seq, time, kind, parent, name, type, author, content)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		r.sessionID, r.seq, t.Format(time.RFC3339Nano),
+		r.sessionID, seq, t.Format(time.RFC3339Nano),
 		string(op.Kind), op.Parent, op.Name,
 		string(op.Type), string(op.Author), op.Content,
 	)
+	if err != nil {
+		r.stopOnFailure(err)
+		return
+	}
+	r.seq = seq
+}
+
+// stopOnFailure ends the session at the last recorded operation after a
+// write failure: the recorded prefix is the applied history, so the
+// record still replays, while a hole would make every later operation
+// that references the missing node unreplayable and the whole record
+// fail to open. The caller holds the lock. See
+// TheoryOfRecordedSessionLazyStart.
+func (r *Recorder) stopOnFailure(err error) {
+	if r.started && r.sessionID != 0 {
+		_, _ = r.db.Exec(
+			`UPDATE sessions SET end_time = ?, status = ?, error = ? WHERE id = ?`,
+			time.Now().Format(time.RFC3339Nano), "error", "recording stopped: "+err.Error(), r.sessionID,
+		)
+	}
+	r.pending = false
+	r.started = false
+	r.sessionID = 0
 }
