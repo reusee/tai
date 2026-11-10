@@ -84,10 +84,7 @@ FROM sessions s
 WHERE EXISTS (
     SELECT 1 FROM tree_ops o
     WHERE o.session_id = s.id
-      AND (LOWER(o.name) LIKE ? ESCAPE '\'
-        OR LOWER(o.type) LIKE ? ESCAPE '\'
-        OR LOWER(o.author) LIKE ? ESCAPE '\'
-        OR LOWER(o.content) LIKE ? ESCAPE '\')
+      AND `+keywordFilterSQL+`
 )
 ORDER BY s.id DESC`, pattern, pattern, pattern, pattern)
 	if err != nil {
@@ -140,6 +137,17 @@ ORDER BY s.id DESC`, pattern, pattern, pattern, pattern)
 	}
 	return matches, nil
 }
+
+// keywordFilterSQL is the SQL predicate that decides whether one recorded
+// operation carries the keyword: the operation's name, type, author, or
+// content matches. The caller passes the LIKE pattern four times, in that
+// order. Both the keyword search and the structured record query narrow their
+// candidate sessions with it, so the two cannot diverge.
+// See TheoryOfGlobalRecordSearch and TheoryOfRecordQuery.
+const keywordFilterSQL = `(LOWER(o.name) LIKE ? ESCAPE '\'
+        OR LOWER(o.type) LIKE ? ESCAPE '\'
+        OR LOWER(o.author) LIKE ? ESCAPE '\'
+        OR LOWER(o.content) LIKE ? ESCAPE '\')`
 
 // escapeLikePattern escapes the LIKE metacharacters of one keyword, so a
 // "%" or "_" the user typed matches itself instead of every node.

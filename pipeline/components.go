@@ -12,6 +12,7 @@ import (
 	"github.com/reusee/tai/gotools"
 	"github.com/reusee/tai/nets"
 	"github.com/reusee/tai/pipeline/codetypes"
+	"github.com/reusee/tai/records"
 )
 
 const TheoryOfCodesComponents = `
@@ -21,8 +22,8 @@ the ai command's AIComponents).
 
 The pipeline reuses components.CommonComponents for the shell and continue
 component kinds, prepending its codes-specific components (change, go-test,
-go-src, ingest, new-plan, response, and the plan-op component) and
-appending summary, read-only files (prompt-only), skeleton files
+go-src, ingest, query-record, new-plan, response, and the plan-op component)
+and appending summary, read-only files (prompt-only), skeleton files
 (prompt-only), hidden packages (prompt-only, conditional), and extra
 system prompt (prompt-only).
 
@@ -85,10 +86,17 @@ explicit unavailability error part rather than being silently ignored,
 touching the disabled-blocks philosophy (see
 components.TheoryOfDisabledBlocks).
 
-Parse-time prefetch: the go-src and ingest components declare
+The query-record component answers the model's queries over the recorded
+interaction sessions — record id, keyword, node types, authors, names, and
+a limit — and feeds the result back as user content for the next
+generation. It is read-only context fetching like go-src and ingest, so it
+also declares a per-block Compute; the parameters and the result rendering
+are records.TheoryOfRecordQuery's.
+
+Parse-time prefetch: the go-src, ingest, and query-record components declare
 side-effect-free per-block Compute functions, so the generation loop starts
-each block's resolution or fetch in a background goroutine as soon as the
-block is parsed during streaming, overlapping the remainder of the
+each block's resolution, fetch, or query in a background goroutine as soon as
+the block is parsed during streaming, overlapping the remainder of the
 generation; after the response ends the component consumes the prefetched
 outcomes in block order. See components.TheoryOfReadOnlyPrefetch.
 
@@ -270,6 +278,7 @@ func (Module) CodesComponents(
 	resolveGoSymbols gotools.ResolveGoSymbols,
 	hiddenPatterns gotools.HiddenPatterns,
 	lspHandler blocks.LSPHandler,
+	queryRecord records.QueryRecord,
 ) CodesComponents {
 	// The Go-specific extra prompts apply only to Go sessions. The codes
 	// pipeline serves both auto-detected default commands: go_module
@@ -386,6 +395,16 @@ func (Module) CodesComponents(
 	// documentation when one resolves. See NewIngestComponent,
 	// blocks.TheoryOfIngestBlocks, and TheoryOfCodesComponents.
 	comps = append(comps, NewIngestComponent(lspHandler))
+
+	// Query-record component: answers the model's queries over the
+	// recorded interaction sessions — record id, keyword, node types,
+	// authors, names, and a limit — and feeds the result back as user
+	// content for the next generation. Read-only context fetching like
+	// go-src and ingest, so the generation loop prefetches the query at
+	// parse time. The parameters and the result rendering are
+	// records.TheoryOfRecordQuery's. See TheoryOfCodesComponents and
+	// components.TheoryOfReadOnlyPrefetch.
+	comps = append(comps, NewQueryRecordComponent(queryRecord))
 
 	// Named plan and response nodes: the model names the node via
 	// parent/name header parameters and the component writes it;
