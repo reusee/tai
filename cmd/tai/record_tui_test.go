@@ -388,6 +388,53 @@ func TestRecordBrowserOpenFailureOpensWithReason(t *testing.T) {
 	}
 }
 
+// TestRecordBrowserPartialTreeRendersWithReason verifies that a record whose
+// stream holds operations the tree cannot fully apply still renders: the
+// reconstruction carries every operation that applied, and the skipped ones
+// render as the reason at the screen's bottom row. Refusing the record would
+// hide the session the user asked to read. See TheoryOfRecordOpenFailure and
+// tree.TheoryOfReplayTolerance.
+func TestRecordBrowserPartialTreeRendersWithReason(t *testing.T) {
+	tr, err := tree.New().WriteAll(
+		tree.WriteOp{Parent: "root", Name: "api_error-1", Type: tree.TypeAPIError, Author: tree.AuthorProgram, Content: "rate limited"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out strings.Builder
+	b := newRecordBrowserForTest(
+		func() ([]records.SessionInfo, error) {
+			return []records.SessionInfo{{
+				ID: 9, Command: "go_module", StartTime: "2026-01-09T03:04:05Z", Status: "error", OpCount: 2,
+			}}, nil
+		},
+		func(int64) (*tree.Tree, error) {
+			return tr, tree.ReplayProblems{{
+				Index: 1,
+				Op:    tree.Op{Kind: tree.OpWrite, Name: "api_error-2"},
+				Err:   tree.ErrDuplicateName,
+			}}
+		},
+		0,
+		&out,
+	)
+	b.loadList()
+	b.handleKey("enter")
+	if b.currentID != 9 {
+		t.Fatalf("expected record 9 opened, got %d", b.currentID)
+	}
+	b.render()
+	rendered := out.String()
+	for _, want := range []string{"rate limited", "replay skipped 1 operation"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("expected %q in the opened record, got %q", want, rendered)
+		}
+	}
+	if strings.Contains(rendered, "no nodes in the recorded tree") {
+		t.Fatalf("the partial tree must render, got %q", rendered)
+	}
+}
+
 // TestRecordBrowserEnabledFollowsAnalyze verifies the browser marker: the
 // record command's browsing modes select the dedicated browser, and the
 // analysis mode withdraws the marker so the analysis keeps the generation

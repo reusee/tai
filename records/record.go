@@ -89,15 +89,18 @@ its first operation's. A row is the promise that a record can be opened;
 an empty row breaks that promise, and the browser can only report the
 broken promise after the user pressed a record that cannot answer.
 
-The promise holds only while the stream stays an applied history. A
-failed operation write stops the session at the last recorded operation:
-a hole in the middle — an operation skipped while later ones land —
-would leave every later operation that references the missing node
-unreplayable, so the whole record would fail to open. A truncated
-prefix is still an applied history, so the session ends there with the
-failure recorded in the row. The browser opens such a record to the
-reason, so the promise survives in the one form the record can still
-keep: every press answers.
+A failed operation write stops the session at the last recorded
+operation. A hole in the middle — an operation skipped while later ones
+land — would leave every later operation that references the missing
+node unapplied, so the record would open with less of the session than
+it holds; the viewer shows what applies and states what it skipped (see
+tree.TheoryOfReplayTolerance). A truncated prefix is still an applied
+history, so the session ends there with the failure recorded in the row.
+
+The promise survives in the form the record can still keep: every press
+answers. A truncated prefix reconstructs whole; a stream that diverged
+opens to the operations that applied, with the reason at the screen's
+bottom row (see cmd/tai.TheoryOfRecordOpenFailure).
 `
 
 const TheoryOfEventRecording = `
@@ -375,19 +378,19 @@ func (r *Recorder) record(op tree.Op) {
 }
 
 // stopOnFailure ends the session at the last recorded operation after a
-// write failure: the recorded prefix is the applied history, so the
-// record still replays, while a hole would make every later operation
-// that references the missing node unreplayable and the whole record
-// fail to open. The caller holds the lock. See
+// write failure: the recorded prefix is the applied history, so the record
+// still replays whole, while a hole would leave every later operation that
+// references the missing node unapplied and the record would open with less
+// of the session than it holds. The caller holds the lock. See
 // TheoryOfRecordedSessionLazyStart.
 func (r *Recorder) stopOnFailure(err error) {
-	if r.started && r.sessionID != 0 {
-		_, _ = r.db.Exec(
-			`UPDATE sessions SET end_time = ?, status = ?, error = ? WHERE id = ?`,
-			time.Now().Format(time.RFC3339Nano), "error", "recording stopped: "+err.Error(), r.sessionID,
-		)
-	}
 	r.pending = false
 	r.started = false
+	if r.sessionID != 0 && r.db != nil {
+		_, _ = r.db.Exec(
+			`UPDATE sessions SET end_time = ?, status = ?, error = ? WHERE id = ?`,
+			time.Now().Format(time.RFC3339Nano), "error", err.Error(), r.sessionID,
+		)
+	}
 	r.sessionID = 0
 }

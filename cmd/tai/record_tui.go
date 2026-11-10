@@ -100,12 +100,15 @@ Record browser theory (cmd/tai):
 `
 
 const TheoryOfRecordOpenFailure = `
-A listed record always opens. A record whose operation stream cannot be
-replayed — an empty session, a corrupt stream — opens to the pane that
-states the record has no nodes, with the load failure rendered at the
-screen's bottom row, because a press that changes nothing reads as a
-broken key and hides the reason. Stepping back with Esc returns to the
-list, so a broken record never traps the browser.
+A listed record always opens. A corrupt stream still renders: the
+reconstruction carries every operation that applied, and the skipped ones
+render as the reason at the screen's bottom row, because a viewer that
+refused the record would hide the session the user asked to read. Only a
+legacy row without operations has no tree, and it opens to the pane that
+states the record has no nodes with its reason at the bottom row, because
+a press that changes nothing reads as a broken key and hides the reason.
+Stepping back with Esc returns to the list, so a broken record never traps
+the browser.
 `
 
 // The record browser's fixed labels. See TheoryOfRecordBrowser.

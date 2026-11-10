@@ -25,12 +25,14 @@ Global record search theory:
 - The database narrows the sessions and the replay decides. A LIKE over
   the operation stream says only which sessions ever wrote the text, so
   it selects the candidates — one query instead of a replay of every
-  record — while tree.Replay rebuilds each candidate's applied history
-  and the walk reports what the session holds now: a node written and
-  later deleted matches the query and not the search, and a node whose
+  record — while tree.ReplayTolerant rebuilds each candidate's applied
+  history and the walk reports what the session holds now: a node written
+  and later deleted matches the query and not the search, and a node whose
   content changed matches the content it ended with.
-- A session whose operations cannot be replayed is skipped: one corrupt
-  record must not hide every other match. Matches are ordered most
+- A session is never skipped because its stream diverges: the
+  reconstruction carries every operation that applied, so one unusable
+  operation must hide neither the rest of that record nor every other
+  match (see tree.TheoryOfReplayTolerance). Matches are ordered most
   recent session first and, within a session, in tree order, so the
   newest record reads at the top of the list.
 - An empty keyword searches nothing: the answer is an empty list, not
@@ -114,10 +116,11 @@ ORDER BY s.id DESC`, pattern, pattern, pattern, pattern)
 		if err != nil {
 			continue
 		}
-		tr, err := tree.Replay(ops)
-		if err != nil {
-			continue
-		}
+		// The reconstruction is tolerant: one unusable operation must
+		// not hide the rest of the record from the search. The skipped
+		// operations are the loader's diagnosis, not the search's. See
+		// tree.TheoryOfReplayTolerance.
+		tr, _ := tree.ReplayTolerant(ops)
 		for _, n := range tr.Filter(func(n *tree.Node) bool { return n.Type != tree.TypeRoot }) {
 			line, preview, ok := recordNodeMatch(n, folded)
 			if !ok {

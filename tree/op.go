@@ -38,7 +38,9 @@ tree operation log theory:
   consumer long enough that opening a long record reads as nothing
   happening. Replay keeps the live semantics: the same validation, the
   same duplicate and unknown-node failures, and the same insert-time
-  rule.
+  rule. ReplayTolerant shares the same in-place reconstruction and
+  reports the operations it could not apply beside the tree it rebuilt
+  (see TheoryOfReplayTolerance).
 - A projection (Extract) is a view, not the session: it carries no sink.
 `
 

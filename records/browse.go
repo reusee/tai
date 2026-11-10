@@ -12,8 +12,11 @@ Session browsing theory:
   functions, so a browser consumes them without a text rendering in
   between: ListSessionInfos returns the session list as data — every
   session, most recent first — and LoadSessionTree reconstructs one
-  session's tree from its recorded operation stream with tree.Replay,
-  the same tree a live session's Tree tab renders.
+  session's tree from its recorded operation stream with
+  tree.ReplayTolerant, the same tree a live session's Tree tab renders. A
+  stream the tree cannot fully apply still yields every operation that
+  applied, and the skipped ones travel beside the tree as its reason (see
+  tree.TheoryOfReplayTolerance).
 - The session info carries a chat preview, so a record list identifies a
   session by what was asked: the user inputs — the user-authored
   message::user nodes, the program's feedback nodes excluded — reduce to
@@ -27,11 +30,12 @@ Session browsing theory:
 - The command-line listing keeps its own rendering; it renders the
   same data the browser reads, so the two views cannot disagree.
 - A session row is written with its first operation, so a listed session
-  is replayable (see TheoryOfRecordedSessionLazyStart). A legacy row
-  without operations has no tree: LoadSessionTree reports it as an error
-  instead of returning an empty tree, because an empty tree would hide
-  the reason from the caller, and the browser opens such a record to the
-  pane that states the reason (cmd/tai.TheoryOfRecordOpenFailure).
+  carries at least one operation and always reconstructs a tree (see
+  TheoryOfRecordedSessionLazyStart). A legacy row without operations has
+  no tree: LoadSessionTree reports it as an error instead of returning an
+  empty tree, because an empty tree would hide the reason from the
+  caller, and the browser opens such a record to the pane that states the
+  reason (cmd/tai.TheoryOfRecordOpenFailure).
 `
 
 // sessionInfos reads the recorded sessions, most recent first, with each
@@ -92,6 +96,13 @@ func (Module) ListSessionInfos(recorder *Recorder) ListSessionInfos {
 // See TheoryOfSessionBrowsing and tree.TheoryOfOperationLog.
 type LoadSessionTree func(sessionID int64) (*tree.Tree, error)
 
+// LoadSessionTree resolves the reconstructor of one recorded session. A
+// session whose stream holds operations the tree cannot apply still yields a
+// tree: the reconstruction carries every operation that applied, and the
+// skipped operations are returned beside it as the error, so a viewer renders
+// the record and states the reason instead of refusing the whole session. A
+// record without any operation has no tree, and the error states why. See
+// tree.TheoryOfReplayTolerance.
 func (Module) LoadSessionTree(recorder *Recorder) LoadSessionTree {
 	return func(sessionID int64) (*tree.Tree, error) {
 		if recorder == nil || recorder.db == nil {
@@ -104,6 +115,10 @@ func (Module) LoadSessionTree(recorder *Recorder) LoadSessionTree {
 		if len(ops) == 0 {
 			return nil, fmt.Errorf("session %d has no recorded operations", sessionID)
 		}
-		return tree.Replay(ops)
+		tr, problems := tree.ReplayTolerant(ops)
+		if len(problems) > 0 {
+			return tr, problems
+		}
+		return tr, nil
 	}
 }

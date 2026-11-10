@@ -1371,16 +1371,16 @@ func (ls *loopState) endOnDiskChange(err error, phaseState generators.State, att
 // finishWithError fills the result with the final state and yields the
 // terminal error, ending the run. The caller must return immediately
 // after the call. User-prompt inputs still queued join the session
-// parent, keeping the record complete. See TheoryOfSessionTree.
+// parent, keeping the record complete. The result's session tree is
+// published only after the loop's last operation applied — the drained
+// events and the terminal error node — so a continued run adopts every
+// node this loop wrote and the next loop never writes a name this one
+// already holds. See TheoryOfSessionTree and TheoryOfLoopEvents.
 func (ls *loopState) finishWithError(err error, finalState generators.State) {
 	ls.writePendingUserInputs(ls.sessionParent())
 	ls.result.FinalState = finalState
 	ls.result.RemainingBlocks = ls.remainingBlocks
 	ls.result.ParseErrors = ls.uncorrectedParseErrors
-	// The result carries the run's final session tree so callers
-	// outside the loop can extract subtree projections from it. See
-	// TheoryOfSessionTree.
-	ls.result.SessionTree = ls.sessionTree
 	ls.runErr = err
 	// The sink's remaining events (e.g., the failing request's API
 	// error) join the tree before the terminal error node. See
@@ -1395,6 +1395,14 @@ func (ls *loopState) finishWithError(err error, finalState generators.State) {
 			ls.sessionTree = next
 		}
 	}
+	// The result carries the run's final session tree so callers
+	// outside the loop can extract subtree projections from it, and a
+	// goal loop's runner adopts it as the run tree for the next loop.
+	// It is published last, after every operation of the loop applied:
+	// a tree published earlier hides the nodes written after it, and
+	// the next loop's auto-named nodes collide with names it cannot
+	// see. See TheoryOfSessionTree.
+	ls.result.SessionTree = ls.sessionTree
 	ls.emitTerminalTree(err)
 }
 

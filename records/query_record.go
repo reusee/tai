@@ -21,11 +21,13 @@ Record query theory:
   name lists select nodes by structured identity. Every filter is
   conjunctive, and an omitted filter matches everything.
 - The database narrows the candidate sessions with the shared keyword
-  predicate over the operation stream, and tree.Replay rebuilds each
-  candidate's applied history before the node filter decides: a node
+  predicate over the operation stream, and tree.ReplayTolerant rebuilds
+  each candidate's applied history before the node filter decides: a node
   written and later deleted does not match, and a rewritten node matches
-  its final content. The scope and the ordering — every recorded session,
-  most recent first — are TheoryOfGlobalRecordSearch's.
+  its final content. A stream the tree cannot fully apply still
+  contributes the matches of the operations that applied (see
+  tree.TheoryOfReplayTolerance). The scope and the ordering — every
+  recorded session, most recent first — are TheoryOfGlobalRecordSearch's.
 - A type filter matches four ways: the full structured type
   (event::run-error), its name segment (run-error), its prefix (event,
   block, message), and the single-colon spelling (event:run-error). One
@@ -252,10 +254,13 @@ loop:
 		if err != nil {
 			continue
 		}
-		tr, err := tree.Replay(ops)
-		if err != nil {
-			continue
-		}
+		// A stream whose operations the tree cannot all apply still
+		// contributes the matches of the operations that applied: the
+		// reconstruction is tolerant, so one unusable operation cannot
+		// hide the rest of the record from the query. The skipped
+		// operations are the loader's diagnosis, not the query's. See
+		// tree.TheoryOfReplayTolerance.
+		tr, _ := tree.ReplayTolerant(ops)
 		sessionRecorded := false
 		for _, n := range tr.Filter(func(n *tree.Node) bool { return n.Type != tree.TypeRoot }) {
 			if !recordQueryMatches(query, n, folded) {
