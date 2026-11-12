@@ -576,6 +576,104 @@ func TestPingCommandSystemOneRejectsDisabledTools(t *testing.T) {
 	}
 }
 
+func TestPingCommandDecisionsRunsSelectionTest(t *testing.T) {
+	// The Decisions protocol answers typed questions and generates no
+	// text, so the block test cannot apply: a decisions model must run
+	// the selection test. The regression: the dispatch recognized only
+	// the systemone type, so a decisions model received the block
+	// request, which carries no declared question, and the generator
+	// failed with "no questions to ask". See TheoryOfPingCommand.
+	probes := []PingFunctionSpec{
+		{Name: "aaabbb", Description: "summarize the report"},
+		{Name: "cccddd", Description: "summarize the invoice", Target: true},
+		{Name: "eeefff", Description: "summarize the contract"},
+	}
+	var gotOpts pipeline.RunOptions
+	fakeRun := func(ctx context.Context, opts pipeline.RunOptions, result *pipeline.Result) iter.Seq2[*tree.Tree, error] {
+		gotOpts = opts
+		next, err := opts.InitialState.AppendContent(&generators.Content{
+			Role:  generators.RoleModel,
+			Parts: []generators.Part{generators.FuncCall{ID: "cccddd", Name: "cccddd"}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		result.FinalState = next
+		return func(yield func(*tree.Tree, error) bool) {}
+	}
+
+	// PingCommand is an apps.App whose Main field holds the function
+	// value untyped (any); the assertion to the concrete function type
+	// restores the compile-time signature check at the call and fails
+	// loudly here when the main signature changes.
+	mainFn := PingCommand.Main.(func(
+		Output,
+		generators.GetDefaultGenerator,
+		generators.BuildGenerate,
+		pipeline.Run,
+		RandomPingBlocks,
+		RandomPingFunctions,
+		flags.ExtraSystemPrompt,
+		flags.FamilyExtraSystemPrompt,
+		generators.ModelFamily,
+		flags.Thoughts,
+	) apps.MainErr)
+
+	err := mainFn(
+		Output(io.Discard),
+		func() (generators.Generator, error) {
+			return pingMockGenerator{
+				spec: generators.Spec{Type: "decisions", Model: "gemini-decision-1"},
+			}, nil
+		},
+		func(generator generators.Generator, options *generators.GenerateOptions) generators.PhaseBuilder {
+			return func(cont generators.Phase) generators.Phase {
+				return func(ctx context.Context, state generators.State) (generators.Phase, generators.State, error) {
+					return nil, state, nil
+				}
+			}
+		},
+		fakeRun,
+		nil,
+		func() []PingFunctionSpec { return probes },
+		nil,
+		nil,
+		"",
+		flags.Thoughts{},
+	)
+	if err != nil {
+		t.Fatalf("the selection test must pass for a decisions model: %v", err)
+	}
+	if gotOpts.InitialState == nil {
+		t.Fatal("expected non-nil initial state")
+	}
+	systemPrompt := gotOpts.InitialState.SystemPrompt()
+	if !strings.Contains(systemPrompt, "function-selection test") {
+		t.Fatalf("expected the selection system prompt, got %q", systemPrompt)
+	}
+	if strings.Contains(systemPrompt, "uncommon Chinese two-character word") {
+		t.Fatalf("the decisions model must not be asked for blocks, got %q", systemPrompt)
+	}
+	var declared []string
+	for fn := range gotOpts.InitialState.Functions() {
+		declared = append(declared, fn.Decl.Name)
+	}
+	if len(declared) != len(probes) {
+		t.Fatalf("expected the %d probes declared in the initial state, got %v", len(probes), declared)
+	}
+	var request strings.Builder
+	for c := range gotOpts.InitialState.Contents() {
+		for _, p := range c.Parts {
+			if text, ok := p.(generators.Text); ok {
+				request.WriteString(string(text))
+			}
+		}
+	}
+	if want := pingFunctionRequest(probes); !strings.Contains(request.String(), want) {
+		t.Fatalf("expected the request %q in the user content, got %q", want, request.String())
+	}
+}
+
 func TestPingCommandUsesRunLoop(t *testing.T) {
 	// Ping must run through the unified generation loop so it
 	// participates in the TUI mechanism (finish event node, generating

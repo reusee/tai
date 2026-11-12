@@ -22,9 +22,11 @@ const TheoryOfPingCommand = `
 The "ping" subcommand tests whether a model is reachable, responds, and can
 perform the capability test the tai pipeline depends on. The test follows the
 generator's protocol: the spec's Type field is the only protocol selector
-(see TheoryOfSpec), the value "systemone" in any of its spellings selects the
-selection test, and every other generator speaks the text/block protocol and
-runs the block test. See isSystemOneSpec.
+(see TheoryOfSpec). The typed-question protocols — "systemone" and
+"decisions", in any of their spellings — generate no text and answer only
+declared questions, so they run the selection test; every other generator
+speaks the text/block protocol and runs the block test. See
+isTypedQuestionSpec.
 
 The block test (text protocol): the command randomly chooses three block
 specs — each a kind, one to three parameter pairs, and an exact single-line
@@ -45,10 +47,12 @@ block: blocks sharing a delimiter would be mis-parsed as nested (see
 blocks.TheoryOfNestedBlockParsing), so identical delimiters cannot pass the
 test.
 
-The selection test (System One protocol): the protocol streams no text and
-emits no blocks — its whole output is the set of declared functions whose
-noul answers reach the selection threshold (see generators.TheoryOfSystemOne)
-— so the block test cannot apply. Ping asks its capability question instead:
+The selection test (typed-question protocols): System One and Decisions
+stream no text and emit no blocks — their whole output is the set of declared
+functions whose noul answers reach the selection threshold (see
+generators.TheoryOfSystemOne and generators.TheoryOfDecisions) — so the
+block test cannot apply, and a request that asks for blocks carries no
+questions at all. Ping asks its capability question instead:
 RandomPingFunctions declares three probe functions, one target and two
 decoys, and the user message asks for exactly the target's capability. The
 probes share one verb and take distinct objects, so a model that selects by
@@ -341,14 +345,16 @@ func pingAttributesEqual(got, want map[string]string) bool {
 	return true
 }
 
-// isSystemOneSpec reports whether a generator speaks the System One
-// protocol: the spec's Type field is the only protocol selector (see
-// TheoryOfSpec), so the test reads it. The spellings and the case-insensitive
-// comparison mirror the dispatch in generators.Module.GetGenerator. See
-// TheoryOfPingCommand.
-func isSystemOneSpec(spec generators.Spec) bool {
+// isTypedQuestionSpec reports whether a generator speaks a typed-question
+// protocol — System One or Decisions — which streams no text and answers
+// only declared questions: the spec's Type field is the only protocol
+// selector (see TheoryOfSpec), so the test reads it. The spellings and the
+// case-insensitive comparison mirror the dispatch in
+// generators.Module.GetGenerator. See TheoryOfPingCommand.
+func isTypedQuestionSpec(spec generators.Spec) bool {
 	switch strings.ToLower(spec.Type) {
-	case "systemone", "system-one", "system_one":
+	case "systemone", "system-one", "system_one",
+		"decisions", "gemini-decisions", "gemini_decisions":
 		return true
 	}
 	return false
@@ -592,12 +598,13 @@ func runBlockPing(
 	return nil
 }
 
-// runSystemOnePing runs the selection test of the System One protocol: one
-// generation through the unified loop, then the check that the model selected
-// exactly the target probe function. The tools-disabled pre-flight fails
-// before any request is sent: such a generator carries no questions, so the
-// generator's own error would name the wrong cause. See TheoryOfPingCommand.
-func runSystemOnePing(
+// runSelectionPing runs the selection test of a typed-question protocol:
+// one generation through the unified loop, then the check that the model
+// selected exactly the target probe function. The tools-disabled pre-flight
+// fails before any request is sent: such a generator carries no questions,
+// so the generator's own error would name the wrong cause.
+// See TheoryOfPingCommand.
+func runSelectionPing(
 	ctx context.Context,
 	output Output,
 	generator generators.Generator,
@@ -609,7 +616,7 @@ func runSystemOnePing(
 ) apps.MainErr {
 	if spec := generator.Spec(); spec.DisableTools != nil && *spec.DisableTools {
 		return fmt.Errorf(
-			"the generator %q disables tools (disable_tools), so a System One request carries no function questions; enable tools to run the selection test",
+			"the generator %q disables tools (disable_tools), so a typed-question request carries no function questions; enable tools to run the selection test",
 			spec.Model,
 		)
 	}
@@ -666,12 +673,12 @@ var PingCommand = apps.New("ping",
 			showThoughts = *flagThoughts.Value
 		}
 
-		// The test follows the generator's protocol. The System One
-		// protocol streams no text and emits no blocks, so the block test
-		// cannot apply there and the selection test runs instead. See
-		// TheoryOfPingCommand.
-		if isSystemOneSpec(generator.Spec()) {
-			return runSystemOnePing(
+		// The test follows the generator's protocol. The typed-question
+		// protocols — System One and Decisions — stream no text and emit
+		// no blocks, so the block test cannot apply there and the
+		// selection test runs instead. See TheoryOfPingCommand.
+		if isTypedQuestionSpec(generator.Spec()) {
+			return runSelectionPing(
 				ctx,
 				output,
 				generator,
