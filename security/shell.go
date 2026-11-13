@@ -21,16 +21,21 @@ TheoryOfContainerIsolation). A session may carry its own command allowlist,
 which only narrows what runs: the blocks layer checks it before this
 validator, and the validator still applies to every listed command (see
 blocks.TheoryOfShellAllowlist). The validator parses the command with
-mvdan.cc/sh/v3 and walks the syntax tree.
+mvdan.cc/sh/v3 and walks the syntax tree. A command that fails to parse is
+rejected before the walk starts.
 
-Structural rules: only simple commands (CallExpr) and binary commands
-(pipelines, &&, ||) are accepted; every other shell construct (if, while,
-for, case, subshell, block, function definition, arithmetic command, test
-clause, declaration) is rejected, so the walk stays total. Output
-redirections (>, >>, <>, >&, >|, >>|, >&|, >>&, >>&|) are rejected because
-they write files outside the change-block flow; input-only redirections
-(<, <<, <&) are permitted. Background execution, coprocesses, and disown
-are rejected because their output and lifetime cannot be captured.
+Structural rules: only simple commands (CallExpr) and binary commands are
+accepted — pipelines joined by | or |&, and the && and || lists. Every other
+shell construct is rejected, so the walk stays total: the if, while, until,
+for, select, and case clauses, subshells, blocks, function definitions,
+arithmetic commands, test clauses, the time and let clauses, the declaration
+builtins (declare, local, export, readonly, typeset, nameref), and the coproc
+clause. Output redirections (>, >>, <>, >&, >|, >>|, &>, &>>, &>|, &>>|) are
+rejected because they write files outside the change-block flow, and a
+file-descriptor merge such as 2>&1 counts as one of them; input-only
+redirections (<, <<, <<-, <<<, <&) are permitted. Background execution,
+coprocesses, and disown are rejected because their output and lifetime cannot
+be captured.
 
 Command substitutions, process substitutions, heredoc bodies, arithmetic
 expansion, parameter expansion, and brace expansion are recursively
@@ -47,6 +52,12 @@ stays deliberately small — it catches the common catastrophic shapes and lets
 every other command through — because enumerating dangerous commands is the
 same error-prone exercise as the allowlist; the container sandbox remains the
 real containment.
+
+Every rule above is stated in the shell block system prompt as well, so the
+model reads a restriction instead of discovering it through a rejection
+round. blocks.TestShellPromptCoversValidatorRules fails when a rejected
+construct has no matching rule in the prompt: a rule gained here is a rule
+stated there in the same change.
 `
 
 // ValidateShellCommand checks whether a command string is safe to execute.

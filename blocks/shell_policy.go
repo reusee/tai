@@ -149,12 +149,16 @@ Use the "shell" kind to execute shell commands and receive the output as part of
 - When the results arrive as user content in the next round (formatted as "Shell command: <command>" followed by the output), read them before emitting anything else. If another command is needed, emit a new shell block in that round and wait for its results in the following round.
 `
 
-const shellStructuralRules = `  - Output redirection (>, >>) is not allowed.
+const shellStructuralRules = `  - A command must be valid sh syntax; a command that fails to parse is rejected.
+  - A command line contains only simple commands joined by |, |&, && or ||. Every other shell construct is rejected: compound commands (if, while, until, for, select, case), subshells, blocks, function definitions, arithmetic commands, test clauses, the time and let clauses, declaration builtins (declare, local, export, readonly, typeset, nameref), and the coproc clause.
+  - Output redirection is rejected in every form: >, >>, <>, >&, >|, >>|, &>, &>>, &>|, &>>|. A file-descriptor merge such as 2>&1 is an output redirection and is rejected too, so do not silence or merge stderr. Input redirection (<, <<, <<-, <<<, <&) is allowed, and a > inside quotes is a literal. Write files with change blocks instead.
+  - A command must not be empty; a bare variable assignment without a command is rejected. An assignment may only prefix a command.
   - Deleting the filesystem root, a top-level system directory (e.g. /usr, /etc, /home), the whole current directory, or the home directory is rejected, e.g. rm -rf /, rm -rf /*, rm -rf *, rm -rf ~, rm -rf $HOME. Delete named files or directories instead.
-  - Background execution (&) and coprocesses are rejected: their output cannot be captured. Use op=background instead, which captures the output and returns a task number.
+  - Background execution (&), coprocesses, and disown are rejected: their output cannot be captured. Use op=background instead; it captures the output and returns a task number.
+  - Nested commands are checked by the same rules: command substitution, process substitution, heredoc bodies, arithmetic expansion, parameter expansion, and brace expansion are all inspected, so a blocked command hidden inside one of them is still rejected.
 `
 
-const shellAnyProgramPolicy = "**Security policy**: Any program may run. Only common destructive patterns are rejected:\n" + shellStructuralRules
+const shellAnyProgramPolicy = "**Security policy**: Any program may run, but a command that breaks the structural rules below is rejected before execution, with an error that names the broken rule:\n" + shellStructuralRules
 
 const shellPromptTail = `- If a command is rejected, the error message will be returned as user content. Adjust the command and try again.
 - Shell output triggers a new generation round so the model can act on the results.

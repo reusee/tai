@@ -40,7 +40,13 @@ here.
 Two gates precede execution: the allowlist, which is the user's own
 permission decision and never widens what may run, and the structural
 validator (security.ValidateShellCommand), which applies to every command
-including the listed ones. See TheoryOfShellAllowlist and
+including the listed ones. ShellBlockPrompt states the validator's rules
+themselves — the rejected shell constructs, every output redirection form,
+the empty command, the bare assignment, disown, the rejected rm targets,
+and the recursive check of nested substitutions — so the model reads the
+constraints instead of discovering them through rejection rounds. A prompt
+test keeps the two lists in step: a rule the validator gains is a rule the
+prompt states in the same change. See TheoryOfShellAllowlist and
 security.TheoryOfShellSecurity.
 
 The shell block's op parameter extends the kind with background tasks:
