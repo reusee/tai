@@ -57,6 +57,7 @@ func (Module) BuildGenerate(logger logs.Logger) BuildGenerate {
 
 				const maxRetries = 3
 				var lastErr error
+				var partialState State
 				for attempt := range maxRetries {
 					logger.InfoContext(ctx, "generate attempt",
 						"model", spec.Model,
@@ -72,6 +73,10 @@ func (Module) BuildGenerate(logger logs.Logger) BuildGenerate {
 							"retryable", isRetryable(err),
 							"error", err,
 						)
+						hasPartialOutput := newState != nil && CountContents(newState) > CountContents(state)
+						if hasPartialOutput {
+							partialState = newState
+						}
 						// The shared classification decides the retry, not
 						// the ErrRetryable marker alone: an OpenAI-protocol
 						// request has no internal retry, so a transport fault
@@ -84,7 +89,7 @@ func (Module) BuildGenerate(logger logs.Logger) BuildGenerate {
 						// error, return that state so the caller (pipeline.Run)
 						// can detect the content increase and trigger a retry
 						// with summarization. See TheoryOfGenerateRetry.
-						if newState != nil && CountContents(newState) > CountContents(state) {
+						if hasPartialOutput {
 							logger.WarnContext(ctx, "generate phase returns partial state",
 								"model", spec.Model,
 								"content_count", CountContents(newState),
@@ -114,15 +119,19 @@ func (Module) BuildGenerate(logger logs.Logger) BuildGenerate {
 
 				// All retries exhausted. Use %v (not %w) to convert lastErr
 				// to a string, stripping ErrRetryable from the error chain
-				// so callers do not re-trigger retries. Return the input
-				// state (not nil) so callers like pipeline.Run can pass a
-				// valid state to OnPhaseError.
+				// so callers do not re-trigger retries. Preserve partial output
+				// for the pipeline's error handling; retries still start from the
+				// clean input state above. See TheoryOfGenerateRetry.
 				logger.WarnContext(ctx, "generate phase exhausted retries",
 					"model", spec.Model,
 					"max_attempts", maxRetries,
 					"error", lastErr,
 				)
-				return nil, state, fmt.Errorf("generate failed after %d retries: %v", maxRetries, lastErr)
+				finalErr := fmt.Errorf("generate failed after %d retries: %v", maxRetries, lastErr)
+				if partialState != nil {
+					return nil, partialState, finalErr
+				}
+				return nil, state, finalErr
 
 			}
 		}

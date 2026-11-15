@@ -2468,6 +2468,14 @@ func TestListWindow(t *testing.T) {
 	}
 }
 
+func TestApplyBoxModelThreeValues(t *testing.T) {
+	got := applyBoxModel([]int{1, 2, 3})
+	want := [4]int{1, 2, 3, 2}
+	if got != want {
+		t.Fatalf("applyBoxModel(1, 2, 3) = %v, want %v", got, want)
+	}
+}
+
 func TestListItemRendering(t *testing.T) {
 	// A tab in a list item advances to the next tab stop (default 8);
 	// the skipped cells are painted because the selected row is filled.

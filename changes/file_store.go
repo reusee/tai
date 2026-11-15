@@ -657,6 +657,9 @@ func (s *MemoryStore) Rename(oldPath, newPath string) error {
 	if !exists {
 		return &os.PathError{Op: "rename", Path: oldPath, Err: os.ErrNotExist}
 	}
+	if oldPath == newPath {
+		return nil
+	}
 	s.files[newPath] = &memoryFile{content: content, exists: true}
 	s.files[oldPath] = &memoryFile{exists: false}
 	return nil

@@ -83,9 +83,15 @@ func getCgroupPath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	parts := strings.Split(string(content), ":")
-	if len(parts) >= 3 {
-		return parts[2], nil
+	return parseCgroupPath(string(content)), nil
+}
+
+func parseCgroupPath(content string) string {
+	for _, line := range strings.Split(content, "\n") {
+		parts := strings.SplitN(line, ":", 3)
+		if len(parts) == 3 {
+			return parts[2]
+		}
 	}
-	return "", nil
+	return ""
 }

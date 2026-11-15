@@ -372,6 +372,41 @@ func TestMemoryStoreMultipleChangesSameFile(t *testing.T) {
 	}
 }
 
+func TestMemoryStoreRenameSamePath(t *testing.T) {
+	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+
+	const content = "content"
+	if err := root.WriteFile("a.txt", []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	store := NewMemoryStore(NewRootStore(root))
+	if err := store.Rename("a.txt", "a.txt"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.ReadFile("a.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != content {
+		t.Fatalf("content after same-path rename = %q, want %q", got, content)
+	}
+	if err := store.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	got, err = root.ReadFile("a.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != content {
+		t.Fatalf("disk content after flush = %q, want %q", got, content)
+	}
+}
+
 func TestMemoryStoreCreateNewFile(t *testing.T) {
 	applyChangeBlockStore := newTestScope(t).Get[ApplyChangeBlockStore]()
 	dir := t.TempDir()

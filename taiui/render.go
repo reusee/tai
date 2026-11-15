@@ -109,7 +109,7 @@ func applyBoxModel(v []int) (m [4]int) {
 	case 2:
 		m[0], m[1], m[2], m[3] = v[0], v[1], v[0], v[1]
 	case 3:
-		m[0], m[1], m[2], m[3] = v[0], v[1], v[1], v[2]
+		m[0], m[1], m[2], m[3] = v[0], v[1], v[2], v[1]
 	case 4:
 		m[0], m[1], m[2], m[3] = v[0], v[1], v[2], v[3]
 	default:

@@ -137,6 +137,15 @@ func (g *partialOutputGenerator) Generate(ctx context.Context, state State, opti
 	return newState, errors.New("stream error")
 }
 
+type retryablePartialOutputGenerator struct {
+	partialOutputGenerator
+}
+
+func (g *retryablePartialOutputGenerator) Generate(ctx context.Context, state State, options *GenerateOptions) (State, error) {
+	newState, err := g.partialOutputGenerator.Generate(ctx, state, options)
+	return newState, errors.Join(err, ErrRetryable)
+}
+
 func TestBuildGenerateNonRetryableErrorPreservesPartialOutput(t *testing.T) {
 	calls := 0
 	gen := &partialOutputGenerator{calls: &calls}
@@ -171,5 +180,36 @@ func TestBuildGenerateNonRetryableErrorPreservesPartialOutput(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Fatalf("expected 1 call, got %d", calls)
+	}
+}
+
+func TestBuildGenerateRetryExhaustionPreservesPartialOutput(t *testing.T) {
+	calls := 0
+	gen := &retryablePartialOutputGenerator{
+		partialOutputGenerator: partialOutputGenerator{calls: &calls},
+	}
+	buildGenerate := dscope.New(
+		modes.ForTest(t),
+		new(Module),
+	).Get[BuildGenerate]()
+	phase := buildGenerate(gen, nil)(nil)
+
+	_, state, err := phase(context.Background(), NewPrompts("", nil))
+	if err == nil {
+		t.Fatal("expected error after retry exhaustion")
+	}
+	if calls != 3 {
+		t.Fatalf("expected 3 calls, got %d", calls)
+	}
+	found := false
+	for c := range state.Contents() {
+		for _, p := range c.Parts {
+			if text, ok := p.(Text); ok && strings.Contains(string(text), "partial output") {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Fatal("expected partial output in returned state after retry exhaustion")
 	}
 }
