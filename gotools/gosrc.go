@@ -35,6 +35,16 @@ implementation and go-src fetching is unnecessary for focus declarations;
 the kind remains the fetch path for context packages at documentation
 visibility.
 
+A shell command is not a reader either. The go-src prompt states the
+prohibition itself — no cat, head, sed, or grep as a substitute for a
+fetch — and the shell prompt states the same prohibition
+language-neutrally, because the blocks package defines no Go-specific kind:
+it names a dedicated source kind without naming go-src, so a non-Go
+session never reads about a kind it does not provide. Both prompts keep
+the reader set closed: files and discovery go to ingest, Go declarations
+go to go-src, and the shell stays the tool for commands whose output only
+the command can produce.
+
 The block body is opaque to the mechanism. GoSrcBlockSystemPrompt is
 itself the theory text for the body's symbol grammar (the go doc name
 form, package qualifiers, receiver prefixes, generic parameter lists, and
@@ -65,6 +75,7 @@ Use the "go-src" kind to request the source code of Go symbols that were not ful
 **Rules**
 - Use go-src blocks when you need the implementation of a Go symbol that the context shows only as a signature or documentation (e.g., a package included at documentation visibility shows go doc output without function bodies). Only use go-src blocks in Go projects.
 - Prefer go-src over ingest for Go source code and package information: a fetch returns the exact declaration, names its defining file and line (usable as the change block file-path), and appends a references report of the symbol's callers — none of which a whole-file ingest provides. When you need information about a specific package — its symbols and documentation — name the package in a go-src block instead of reading its files with ingest. Use an ingest block only for what go-src cannot fetch: non-Go files, a whole-file view (imports, file layout, adjacent declarations), glob file discovery, or network resources.
+- Do not read source through a shell block: a command such as cat, head, sed, or grep prints raw text and spends a round, while a go-src block returns the declaration with its references report and an ingest block returns the whole file.
 - Focus packages appear in the context as documentation only: the declaration surface (go doc -all -cmd -u output) plus a list of the package's test-function names and a list of the package's source file names. Their implementation source is NOT included initially.
 - Before understanding, modifying, or reviewing any focus declaration, fetch its source with a go-src block naming the declaration. Do not reason about, edit, or review a focus declaration from its documentation alone — fetch the source first, then act.
 - Test functions listed in a focus package block (TestXxx, BenchmarkXxx, FuzzXxx, ExampleXxx) may be fetched by name like any other symbol. Fetch a test's source before modifying it or when checking behavior related to your change.

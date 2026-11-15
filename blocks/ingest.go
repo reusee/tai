@@ -38,6 +38,14 @@ package information, so ingest keeps whole files, glob discovery, and network
 resources. The ingest prompt itself stays language-neutral; see
 gotools.TheoryOfGoSrcBlocks for the division of labor.
 
+The block is also the reader that the other kinds defer to. A shell command
+that prints file content — cat, head, tail, sed, awk, grep — is a misuse:
+shell execution is off by default, so the command may never run, and it
+restates what the ingest tags already do — a file read, a whole-file view,
+and glob discovery — through a mechanism with weaker checks. The preference
+lives in the ingest prompt as a rule and in the shell prompt as a
+prohibition, so the model meets it before it emits either kind.
+
 The lsp tag is ingest's language-server extension point: blocks parses the
 tag and defines the LSPHandler contract language-neutrally, while a session
 with a language server injects a handler — Go sessions attach gopls, see
@@ -91,6 +99,7 @@ Use the "ingest" kind to request additional context needed to complete the task.
 - ` + "`<glob pattern=\"...\" />`" + `: List files matching a glob pattern. The pattern should be relative to the project root or absolute. Returns matching file paths without reading their contents.
 
 **Rules:**
+- Prefer ingest blocks over shell blocks for reading files and source code: the ingest block is the intended reader, so a file read, a source read, and a file discovery belong here. A shell reader such as cat, head, tail, sed, awk, or grep prints raw text one round later and is not a substitute. Reserve shell blocks for commands whose output only the command can produce, such as tests and builds.
 - The order of XML tags determines the order of context parts in the response.
 - Batch requests: put every file, fetch, and glob request you need into a single ingest block — multiple tags, one per line. All tags in one block are fetched together in one round, so plan the complete request list before emitting instead of spreading requests across rounds.
 - This block is strictly read-only. It must not produce any side effects.

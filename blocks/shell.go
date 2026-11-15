@@ -20,8 +20,8 @@ no duration limit is enforced. Legitimate work — a full test suite, a
 large build — may run for a long time, and a deadline would kill it
 mid-run, so the model would read the limit as the command's own failure.
 Only the caller's context cancellation ends a command. This enables the
-model to run tests, check build status, explore the codebase, and verify
-its own changes without human intervention. Shell execution is disabled
+model to run tests, check build status, and verify its own changes
+without human intervention. Shell execution is disabled
 by default for safety: the -shell flag enables it, and a configured
 command allowlist enables it by itself, because the user who lists
 commands has already decided to let the model run them (see
@@ -55,6 +55,15 @@ output or kill block addresses it. The task model, its session binding,
 and its gate semantics live in TheoryOfShellTasks; the bounded capture
 that keeps one command's output from flooding the context lives in
 TheoryOfShellOutputCapture. Neither is repeated here.
+
+Reading files is outside the kind's purpose: learning what a file or a
+symbol contains is context fetching, not command execution. The prompt
+forbids reading a file or a source text through a shell command and names
+the ingest block and the session's source kind instead, without naming a
+language-specific kind, because this package defines none. The shell thus
+stays the tool for commands whose output only the command can produce —
+tests, builds, and their status. See TheoryOfIngestBlocks for the reader
+kinds and the preference rule the two prompts share.
 `
 
 // ShellBlockSystemPrompt is the shell block prompt of a session without a

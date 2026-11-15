@@ -105,3 +105,18 @@ func TestGoSrcPrompts(t *testing.T) {
 		}
 	})
 }
+
+// TestGoSrcPromptDefersReadingToSourceKinds guards the rule that a shell
+// block is not a source reader: the go-src prompt must forbid it and keep
+// go-src and ingest as the readers. The rule keeps a Go session from reading
+// a declaration through cat or grep, which returns raw text without the
+// references report. See TheoryOfGoSrcBlocks and blocks.TheoryOfIngestBlocks.
+func TestGoSrcPromptDefersReadingToSourceKinds(t *testing.T) {
+	prompt := GoSrcBlockSystemPrompt
+	if !strings.Contains(prompt, "Do not read source through a shell block") {
+		t.Fatal("go-src prompt must forbid reading source through a shell block")
+	}
+	if !strings.Contains(prompt, "an ingest block returns the whole file") {
+		t.Fatal("go-src prompt must keep the ingest block as the whole-file reader")
+	}
+}

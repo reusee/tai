@@ -127,10 +127,11 @@ func (Module) AllowedShellCommands() AllowedShellCommands {
 const shellPromptHead = `
 Shell Block Kind:
 
-Use the "shell" kind to execute shell commands and receive the output as part of the next generation round. Use shell blocks to run tests, check build status, explore the codebase, and verify changes autonomously.
+Use the "shell" kind to execute shell commands and receive the output as part of the next generation round. Use shell blocks to run tests, run builds, check the build status, and verify changes autonomously.
 
 **Rules:**
-- Use shell blocks to run tests, check build status, explore the codebase, or verify changes.
+- Use shell blocks to run tests, run builds, check the build status, or verify changes.
+- Do NOT use shell blocks to read files or source code: an ingest block reads a file, and a dedicated source kind, when the session provides one, reads a symbol declaration. A reader such as cat, head, tail, sed, awk, or grep prints raw text and spends a round on work those kinds do better, and file discovery belongs to the ingest glob tag rather than to find or ls.
 - The command is executed with ` + "`" + `sh -c` + "`" + ` in the project root directory.
 - Both stdout and stderr are captured and returned as user content in the next round.
 - The command runs to completion: no duration limit is enforced, so a long command such as a full test suite is fine.

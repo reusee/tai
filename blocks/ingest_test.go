@@ -712,6 +712,21 @@ func TestIngestBlockPromptsEncourageBatching(t *testing.T) {
 	}
 }
 
+// TestIngestBlockPromptsPreferOverShell guards the reader preference: the
+// ingest prompt must state that reading files and source code belongs to the
+// ingest block, not to a shell reader, so the model reaches for the intended
+// kind instead of cat or grep. See TheoryOfIngestBlocks.
+func TestIngestBlockPromptsPreferOverShell(t *testing.T) {
+	if !strings.Contains(IngestBlockSystemPrompt, "Prefer ingest blocks over shell blocks") {
+		t.Fatal("ingest prompt must state the preference over shell blocks for reading files and source code")
+	}
+	for _, reader := range []string{"cat", "grep"} {
+		if !strings.Contains(IngestBlockSystemPrompt, reader) {
+			t.Fatalf("ingest prompt must name %q as a reader the ingest block replaces", reader)
+		}
+	}
+}
+
 func TestReadContextFileAbsolutePath(t *testing.T) {
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)

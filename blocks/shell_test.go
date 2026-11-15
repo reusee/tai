@@ -238,6 +238,38 @@ func TestShellPromptSecurityPolicy(t *testing.T) {
 	}
 }
 
+// TestShellPromptDefersReadingToIngest guards the mirror rule on the shell
+// side: the prompt must forbid reading files and source code through a shell
+// command and point to the ingest block for files, to the ingest glob tag for
+// discovery, and to a dedicated source kind for symbol declarations. The
+// rule lives in shellPromptHead, so the allowlist prompt carries it too. The
+// prompt names no specific source kind: the blocks package defines no
+// Go-specific kind, so a non-Go session must not read about a kind it does
+// not provide. See TheoryOfShellBlocks and TheoryOfIngestBlocks.
+func TestShellPromptDefersReadingToIngest(t *testing.T) {
+	prompts := map[string]string{
+		"ShellBlockSystemPrompt": ShellBlockSystemPrompt,
+		"allowlist prompt":       ShellBlockPrompt(AllowedShellCommands{"ls -la"}),
+	}
+	for name, prompt := range prompts {
+		if !strings.Contains(prompt, "Do NOT use shell blocks to read files or source code") {
+			t.Fatalf("%s must forbid reading files and source code through a shell block", name)
+		}
+		if !strings.Contains(prompt, "an ingest block reads a file") {
+			t.Fatalf("%s must point to the ingest block as the file reader", name)
+		}
+		if !strings.Contains(prompt, "a dedicated source kind") {
+			t.Fatalf("%s must point to a dedicated source kind as the symbol reader", name)
+		}
+		if !strings.Contains(prompt, "ingest glob tag") {
+			t.Fatalf("%s must point to the ingest glob tag for file discovery", name)
+		}
+		if strings.Contains(prompt, "go-src") {
+			t.Fatalf("%s must not name a specific source kind: the blocks package defines no Go-specific kind", name)
+		}
+	}
+}
+
 func TestShellPromptsNoTimeout(t *testing.T) {
 	// A shell command runs to completion: no duration limit is enforced,
 	// because legitimate work — a full test suite, a large build — may run
