@@ -419,6 +419,7 @@ func TestRunReviewSkipsWhenNoDiffs(t *testing.T) {
 		true,
 		nil,
 		flags.ModelName("test-model"),
+		nil,
 	)
 
 	// nil diffs (the actual case when no change blocks were applied).
@@ -460,6 +461,7 @@ func TestRunReviewRunsWhenDiffsExist(t *testing.T) {
 		true,
 		nil,
 		flags.ModelName("test-model"),
+		nil,
 	)
 	if err := runReview(context.Background(), io.Discard, []changes.FileDiff{
 		{
@@ -508,6 +510,7 @@ func TestRunReviewUsesModelFlagValue(t *testing.T) {
 		true,
 		nil,
 		flags.ModelName("gemini-flash"),
+		nil,
 	)
 	if err := runReview(context.Background(), io.Discard, []changes.FileDiff{
 		{
