@@ -94,7 +94,7 @@ commands (the auto-detected default, ai, next). The core pattern:
 
 Run is exposed as a tree iterator: func(ctx, opts, result *Result)
 iter.Seq2[*tree.Tree, error]. The result is filled incrementally as
-the run progresses; every notable occurrence — attempt lifecycle
+the run proceeds; every notable occurrence — attempt lifecycle
 (start, completion, truncation), retry decisions and handoffs,
 synthesized completion summaries, per-attempt token usage,
 component-triggered and idle continuations — is first recorded as an
@@ -112,6 +112,18 @@ a missing completion (no summary block) or an error after content
 output; each re-execution is a new attempt, numbered 1-based within the
 generation, up to the retry budget. Retries count as attempts in attempt
 statistics.
+
+A goal loop enables the first-attempt abandonment policy (see
+TheoryOfFirstAttemptAbandonment): an attempt that needs a handoff, a
+retry, or a correction round is abandoned when it is the run's first
+attempt — no handoff request, no retry attempt, no correction round —
+the run ends at once, and the caller retries the whole task from a
+fresh context. The terminal error is FirstAttemptAbandonedError, or the
+cause's own terminal type when it has one — a disk change keeps
+DiskChangeHandoffError, an exceeded context window keeps
+ContextExceededError — so the caller applies that cause's own feedback
+and counting rule. Attempts after the first keep every recovery path
+below.
 
 Retry on missing completion and handoff: an attempt without a summary
 block — whether the generation limit truncated the model mid-stream
@@ -597,6 +609,19 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 		ls.drainEventSink()
 
 		if generationErr != nil {
+			// The first-attempt policy abandons the run before any
+			// recovery request: no handoff, no retry attempt, and no
+			// disk-change or context-exceeded handoff wrapping. The
+			// next goal loop retries from a freshly assembled context.
+			// See TheoryOfFirstAttemptAbandonment.
+			if ls.abortsOnFirstAttempt() {
+				return generationResult{state: phaseState}, ls.abandonFirstAttempt(
+					phaseState,
+					attemptBase,
+					"the first attempt failed with an error",
+					generationErr,
+				)
+			}
 			// A disk-change failure cannot be repaired by retrying
 			// the attempt: the in-memory snapshot no longer matches
 			// the disk, so the retry would compute changes against
@@ -793,6 +818,21 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 
 		if hasCompletion && !isAbnormalFinish {
 			break
+		}
+		// The first-attempt policy abandons the run instead of
+		// summarizing the incomplete output and retrying it on the
+		// same context. See TheoryOfFirstAttemptAbandonment.
+		if ls.abortsOnFirstAttempt() {
+			reason := "the response ended without the summary block"
+			if isAbnormalFinish {
+				reason = fmt.Sprintf("the response ended with abnormal finish reason %q", finishReason)
+			}
+			return generationResult{state: phaseState}, ls.abandonFirstAttempt(
+				phaseState,
+				attemptBase,
+				reason,
+				nil,
+			)
 		}
 		if retry >= ls.maxRetries {
 			break
@@ -1015,6 +1055,21 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 	ls.namingErrs = nil
 	if len(generationUncorrected) > 0 {
 		ls.uncorrectedParseErrors = appendUncorrectedParseErrors(ls.uncorrectedParseErrors, generationUncorrected)
+	}
+
+	// The first-attempt policy abandons the run instead of running a
+	// correction round: a correction round re-sends the same large
+	// context to repair a format fault, while a fresh loop produces a
+	// conforming response instead. The unprocessable blocks stay in
+	// the record: their error nodes were written above.
+	// See TheoryOfFirstAttemptAbandonment.
+	if len(correctionParts) > 0 && ls.abortsOnFirstAttempt() {
+		return generationResult{state: phaseState}, ls.abandonFirstAttempt(
+			phaseState,
+			attemptBase,
+			"the output carried blocks that need a correction round",
+			nil,
+		)
 	}
 
 	// No components: blocks are not processed between generations.
@@ -1335,14 +1390,30 @@ func (ls *loopState) recordAttemptUsage(state generators.State, attemptBaseCount
 // into a handoff when one is available, records the failed attempt, and
 // returns the handoff for the caller's terminal error. It is the shared
 // core of the loop's handoff terminations (disk change, context
-// exceeded), so both carry identical bookkeeping. See
-// TheoryOfDiskChangeHandoff and TheoryOfContextExceededHandoff.
+// exceeded), so both carry identical bookkeeping. A run whose
+// first-attempt policy applies requests no handoff: the caller still
+// wraps the cause in its handoff error, so the next loop receives the
+// recovery notice the cause needs — a filesystem reload for a disk
+// change, a smaller context for an exceeded window — without a request
+// that condenses the interrupted output. See
+// TheoryOfFirstAttemptAbandonment, TheoryOfDiskChangeHandoff and
+// TheoryOfContextExceededHandoff.
 func (ls *loopState) endWithHandoff(err error, phaseState generators.State, attemptBase int) *Handoff {
 	// The terminated attempt's produced content joins the tree before
 	// the handoff request is sent, so the record keeps the attempt's
 	// thoughts and body text beside its handoff. See
 	// TheoryOfSessionTree.
 	ls.recordFailedAttemptTree(phaseState, attemptBase)
+	// The first-attempt policy abandons the run instead of requesting a
+	// handoff; the caller's error keeps the cause's type, so the next
+	// loop still receives the recovery notice.
+	// See TheoryOfFirstAttemptAbandonment.
+	if ls.abortsOnFirstAttempt() {
+		ls.writeEventNode("abandoned", fmt.Sprintf(
+			"attempt %d abandoned by the first-attempt policy: the attempt failed while committing its changes", ls.attempt))
+		ls.recordAttemptUsage(phaseState, attemptBase, "abandoned")
+		return nil
+	}
 	var handoff *Handoff
 	if ls.opts.Handoff != nil {
 		incompleteText := ExtractIncompleteOutput(phaseState, attemptBase)
@@ -1532,6 +1603,21 @@ type RunOptions struct {
 	// RetryOnMissingCompletion or RetryOnError is true. Defaults to 3
 	// when either is true and MaxRetries is 0.
 	MaxRetries int
+	// AbortOnFirstAttemptFailure abandons the run when its FIRST attempt
+	// needs recovery — a truncated or abnormal response without the
+	// summary block, an error after content was produced, or
+	// unprocessable blocks that would need a correction round — instead
+	// of recovering it: no handoff request is sent, no retry attempt
+	// runs, no correction round follows, and the in-memory changes of an
+	// uncommitted attempt are never flushed. The run ends at once; its
+	// error carries the cause's own terminal type when one exists — a
+	// disk change keeps DiskChangeHandoffError, an exceeded context
+	// window keeps ContextExceededError — so the caller applies that
+	// cause's own feedback and counting rule, and it is
+	// FirstAttemptAbandonedError otherwise. Either way the caller starts
+	// the next loop with a fresh context. Attempts after the first keep
+	// the ordinary recovery paths. See TheoryOfFirstAttemptAbandonment.
+	AbortOnFirstAttemptFailure bool
 	// Handoff summarizes incomplete output into a self-contained handoff
 	// before retrying. If output is below the threshold or handoff is nil,
 	// retry proceeds directly.
@@ -1642,6 +1728,11 @@ func (Module) RunDecorators() RunDecorators {
 // the session root: the judgment runs during prompt assembly in the
 // same scope, so the decision's material waits in the scope's
 // TaskDecisionSink until the tree opens. See TheoryOfTaskDecision.
+// The scope's GoalLoop enables the first-attempt abandonment policy: a
+// positive loop number means this run is one goal loop, whose first
+// attempt runs on the largest context the loop assembles, so an attempt
+// that needs recovery is abandoned instead of recovered and the next
+// loop retries from scratch. See TheoryOfFirstAttemptAbandonment.
 // See records.TheoryOfInteractionRecording and TheoryOfGoalMode.
 func (Module) Run(
 	recorder *records.Recorder,
@@ -1650,6 +1741,7 @@ func (Module) Run(
 	temperatureFlag generators.TemperatureFlag,
 	effortFlag generators.EffortFlag,
 	continuation SessionTreeContinuation,
+	goalLoop GoalLoop,
 	decorators RunDecorators,
 	treeSink *gotools.TreeEventSink,
 	decisionSink *TaskDecisionSink,
@@ -1657,6 +1749,13 @@ func (Module) Run(
 	run := Run(func(ctx context.Context, opts RunOptions, result *Result) iter.Seq2[*tree.Tree, error] {
 		if result == nil {
 			result = &Result{}
+		}
+		// The first-attempt policy belongs to goal loops: the scope's
+		// GoalLoop is positive inside a goal loop and zero otherwise,
+		// so an attended session keeps the ordinary recovery paths.
+		// See TheoryOfFirstAttemptAbandonment.
+		if goalLoop > 0 {
+			opts.AbortOnFirstAttemptFailure = true
 		}
 		return func(yield func(*tree.Tree, error) bool) {
 			// The loop state carries the mutable state of the run. Every

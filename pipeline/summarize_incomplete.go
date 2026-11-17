@@ -47,6 +47,12 @@ indicate severe model failure; unbounded retries would burn the loop's
 budget on a hopeless generation, while attended sessions keep the
 unbounded policy.
 
+A goal loop's first attempt never reaches the handoff path: the
+first-attempt abandonment policy ends the loop before any handoff request
+is sent (see TheoryOfFirstAttemptAbandonment), so the bounded policy above
+governs the loop's later attempts, which run on a context that already
+produced conforming output.
+
 The handoff request runs outside the loop's state chain, so it joins the
 session tree from the outside: the loop writes a handoff-start event node
 carrying the incomplete output immediately before the handoff request is

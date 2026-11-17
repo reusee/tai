@@ -155,6 +155,38 @@ func TestRunGoalCarriesErrorFeedback(t *testing.T) {
 	}
 }
 
+// TestRunGoalFirstAttemptAbandonedRetriesNextLoop verifies that an
+// abandonment reaches the next loop as ordinary corrective feedback: the
+// runner folds the error and the next loop retries the whole task from
+// scratch. See TheoryOfFirstAttemptAbandonment and TheoryOfGoalMode.
+func TestRunGoalFirstAttemptAbandonedRetriesNextLoop(t *testing.T) {
+	calls := 0
+	var feedbacks []GoalFeedback
+	result := RunGoal(context.Background(), GoalOptions{
+		Output: &bytes.Buffer{},
+		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries, _ string, _ SessionTreeContinuation) (Result, []AttemptStat, error) {
+			calls++
+			feedbacks = append(feedbacks, feedback)
+			if calls == 1 {
+				return Result{}, nil, &FirstAttemptAbandonedError{
+					Reason: "the response ended without the summary block",
+				}
+			}
+			return doneResult(), nil, nil
+		},
+		Review: noopReview,
+	})
+	if calls != 2 {
+		t.Fatalf("ran %d loops, want 2: the abandoned loop must be retried by the next loop", calls)
+	}
+	if !result.Achieved {
+		t.Fatal("the retrying loop must achieve the goal")
+	}
+	if !strings.Contains(string(feedbacks[1]), "first attempt abandoned") {
+		t.Fatalf("the retrying loop's feedback must carry the abandonment, got %q", feedbacks[1])
+	}
+}
+
 func TestRunGoalCarriesPreviousLoopSummaries(t *testing.T) {
 	calls := 0
 	var summaries []GoalLoopSummaries

@@ -30,6 +30,17 @@ default command inside a Go module always enables it (see
 cmd/tai.TheoryOfGoModuleDefault), so every Go-project invocation runs the
 multi-loop mechanism.
 
+Every goal loop abandons its first failed attempt (see
+TheoryOfFirstAttemptAbandonment): the loop's scope carries a positive
+GoalLoop, Module.Run turns that into AbortOnFirstAttemptFailure, and a
+first attempt that needs a handoff, a retry, or a correction round ends
+the loop at once. The runner carries the outcome into the next loop's
+feedback and the next loop retries the whole task from scratch on a
+freshly assembled context. The abandoned loop sends no handoff request
+and runs no retry attempt, because a first attempt that needs recovery
+shows an output that broke the format rules, not thinking that ran too
+long: the next loop's clean start is the better retry.
+
 The run ends only on a loop that applied no change blocks and emitted a
 done block; that block is the run's only exit. A loop that applied
 change blocks never ends the run — even when it also emits a done

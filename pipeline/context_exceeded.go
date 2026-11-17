@@ -25,6 +25,13 @@ disk-change handoff, the over-limit context is accumulated by the loop
 itself, so the failure counts toward the consecutive-error bound: three
 identical failures stop the run with a diagnostic. See
 TheoryOfDiskChangeHandoff, TheoryOfGoalMode and TheoryOfLoops.
+
+A goal loop's first attempt requests no handoff for an exceeded window
+either: the first-attempt policy suppresses the request while keeping the
+error type (see TheoryOfFirstAttemptAbandonment), so the run still ends
+with ContextExceededError — with a nil handoff — and the runner still
+counts the cause toward the consecutive-error bound and still asks the
+next loop for a smaller, freshly assembled context.
 `
 
 // ContextExceededError terminates a generation loop whose request

@@ -17,6 +17,14 @@ into the next loop's feedback as GoalFeedback; the next loop re-reads the
 current filesystem state and restarts the work from scratch. The
 consecutive-error counter does not count a disk-change handoff: its cause
 is external to the model. See TheoryOfGoalMode and TheoryOfLoops.
+
+A goal loop's first attempt requests no handoff for a disk change: the
+first-attempt policy suppresses the request while keeping the error type
+(see TheoryOfFirstAttemptAbandonment), so the run still ends with
+DiskChangeHandoffError — with a nil handoff — and the runner still sends
+the next loop the reload notice and still exempts the cause from the
+consecutive-error bound. The disk change may arrive as a change-block
+apply failure or as a flush failure; both end the loop the same way.
 `
 
 // DiskChangeHandoffError terminates a generation loop whose disk state
