@@ -373,14 +373,6 @@ type GoalOptions struct {
 	// empty, post-done loops keep the default model. See
 	// TheoryOfGoalReviewModel.
 	ReviewModels []string
-	// Discussion, when non-nil, runs one interactive discussion session
-	// after the run is achieved, so the user can keep talking about the
-	// finished work instead of starting another goal: no further goal
-	// loop runs, and the session ends when the user quits. The
-	// discussion hangs under the last achieved loop node, so it works
-	// on that loop's context alone. A run that ends unachieved starts
-	// no discussion. See TheoryOfGoalDiscussion.
-	Discussion GoalDiscussion
 	// Recorder records the whole run as one session: the recorder's sink
 	// is attached to the run's session tree before the first loop, so
 	// every loop's operations join one session's operation stream, and
@@ -430,10 +422,6 @@ type GoalResult struct {
 	// Achieved reports whether the run ended on a loop that emitted a
 	// done block while applying no change blocks.
 	Achieved bool
-	// Discussed reports whether the post-goal discussion session ran:
-	// it runs only when the run is achieved and a discussion is
-	// configured. See TheoryOfGoalDiscussion.
-	Discussed bool
 	// LoopsRun is the number of loops executed, including any extra
 	// verification loop beyond the iteration budget.
 	LoopsRun int
@@ -443,9 +431,7 @@ type GoalResult struct {
 	// Tree carries the run's one session tree: each loop is a loop-N
 	// child (tree.TypeLoop) and each loop's session nodes hang under
 	// it, so callers extract per-loop subtree projections from the
-	// single tree. The post-goal discussion session's nodes hang under
-	// the last achieved loop node. See TheoryOfGoalMode,
-	// TheoryOfGoalDiscussion, TheoryOfSessionTree and
+	// single tree. See TheoryOfGoalMode, TheoryOfSessionTree and
 	// tree.TheoryOfSubtree.
 	Tree *tree.Tree
 }
@@ -494,6 +480,12 @@ func GoalSystemPromptText(
 	return SystemPrompt(prompt)
 }
 
+// goalLoopState carries the mutable state of a goal run across loops: the
+// feedback for the next loop's system prompt, the attempt summaries of
+// previous loops, the pending done-block declaration, whether the review
+// phase has begun (doneCount), the review-phase loop count that selects the
+// review models in rotation (reviewLoops), repeated-error tracking, and the
+// terminal flags. See TheoryOfGoalMode and TheoryOfGoalReviewModel.
 type goalLoopState struct {
 	feedback                GoalFeedback
 	summaries               GoalLoopSummaries
@@ -511,9 +503,6 @@ type goalLoopState struct {
 	consecutiveErrors int
 	achieved          bool
 	stopRequested     bool
-	// discussed records that the post-goal discussion session ran. See
-	// TheoryOfGoalDiscussion.
-	discussed bool
 }
 
 // goalLoopNodeName names the session-tree node of one goal loop. The
@@ -917,33 +906,11 @@ func RunGoal(ctx context.Context, opts GoalOptions) GoalResult {
 		reporter.failure(fmt.Sprintf("Review failed: %v\n", err))
 	}
 
-	// Post-goal discussion: an achieved run may continue as a
-	// conversation about the finished work. The discussion is not
-	// another goal loop: it runs one interactive session whose nodes
-	// hang under the last achieved loop node, so the loop's context is
-	// the whole discussion context, and it ends when the user quits.
-	// The review above already ran, so the conversation starts from the
-	// reviewed state. See TheoryOfGoalDiscussion.
-	if state.achieved && !state.stopRequested && opts.Discussion != nil && runTree != nil {
-		nextTree, derr := opts.Discussion(ctx, runTree, goalLoopNodeName(loopsRun))
-		if derr != nil {
-			reporter.failure(fmt.Sprintf("Discussion ended with an error: %v\n", derr))
-			if runErr == nil {
-				runErr = derr
-			}
-		}
-		if nextTree != nil {
-			runTree = nextTree
-		}
-		state.discussed = true
-	}
-
 	return GoalResult{
-		Achieved:  state.achieved,
-		Discussed: state.discussed,
-		LoopsRun:  loopsRun,
-		Stats:     allStats,
-		Tree:      runTree,
+		Achieved: state.achieved,
+		LoopsRun: loopsRun,
+		Stats:    allStats,
+		Tree:     runTree,
 	}
 }
 
@@ -1027,6 +994,19 @@ func makeGoalLoopGenerator(reset dscope.Reset, decision TaskDecision) GoalLoopGe
 	}
 }
 
+// GoalRun provider: runs the goal loop mechanism with the scope-backed
+// per-loop generator and the review pass. Each GoalRun resolution binds
+// reset to the resolving scope, so the command's forks (parts provider,
+// goal system prompt) apply to every loop. The task decision is judged once
+// per run and forked into every loop, so the base prompt and the change
+// component stay stable across the run (see TheoryOfTaskDecision). The goal
+// tree observer is resolved from the scope, so a display front-end's fork
+// receives the goal verdicts as goal structure nodes in the run's tree. The
+// recorder is resolved from the scope too: when recording is enabled, the
+// whole run is one recorded session — the recorder's sink attached to the
+// run's tree and the session ended after the last loop — so every loop's
+// operations join one session's stream. The post-done verification loops
+// run on the review-model rotation (see TheoryOfGoalReviewModel).
 func (Module) GoalRun(
 	reset dscope.Reset,
 	runReview RunReview,
@@ -1042,11 +1022,10 @@ func (Module) GoalRun(
 	}
 	return func(ctx context.Context, output io.Writer) GoalResult {
 		// The task judgment is made once per run: the task does not change
-		// between loops and the post-goal discussion, so re-judging could
-		// flip the introductions mid-run. The judgment is forked into every
-		// loop's scope and into the discussion's scope, and the record it
-		// leaves in that scope's decision sink joins the run tree under the
-		// root. See TheoryOfTaskDecision and TheoryOfGoalDiscussion.
+		// between loops, so re-judging could flip the introductions
+		// mid-run. The judgment is forked into every loop's scope, and the
+		// record it leaves in that scope's decision sink joins the run tree
+		// under the root. See TheoryOfTaskDecision.
 		scope := reset()
 		decision := scope.Get[TaskDecision]()
 		return RunGoal(ctx, GoalOptions{
@@ -1055,7 +1034,6 @@ func (Module) GoalRun(
 			Review:       runReview,
 			GoalTree:     observeGoal,
 			ReviewModels: models,
-			Discussion:   makeGoalDiscussion(reset, decision),
 			Recorder:     recorder,
 			TaskDecision: scope.Get[*TaskDecisionSink]().Drain(),
 		})

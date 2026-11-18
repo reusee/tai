@@ -320,28 +320,19 @@ const logsMaxBoxHeight = 2
 const TheoryOfTUIChatInput = `
 TUI mode replaces the liner-based chat prompt with the TUI's own input
 bar: forkTUIDisplay forks pipeline.ChatInput to TUI.ChatInput, so both
-interactive chat paths (the ai command's OnIdle handler, the next
-command's chat phase, and the Go module command's post-goal discussion)
-get the bar in TUI mode while plain command-line mode keeps the liner
-default. The one-reader-per-terminal rationale lives in
-pipeline.TheoryOfChatInput.
+interactive chat paths (the ai command's OnIdle handler and the next
+command's chat phase) get the bar in TUI mode while plain command-line
+mode keeps the liner default. The one-reader-per-terminal rationale
+lives in pipeline.TheoryOfChatInput.
 
-The bar is rendered on demand. An app that reads interactive input
-declares itself with apps.Interactive(true), and runWithTUI reads the
-declaration into TUI.interactive, so the bar is visible from the first
-frame. An app that may read interactive input later — the Go module
-command, whose goal loops never prompt and whose post-goal discussion
-does (see pipeline.TheoryOfGoalDiscussion) — does not declare itself, so
-the first ChatInput call raises the bar instead, by setting the same
-TUI.interactive flag under the display lock. From that frame on the
-Output pane gives up the bar's row (tuiPaneHeight), the help overlay
-gains the bar's entries, and a click on the bar's row focuses it — the
-same paths an interactive session uses, with no separate mode to keep in
-sync. A session whose ChatInput never runs keeps the bar hidden and the
-Output pane at full height, so the goal-only run, the ping, patch, and
-record sessions look exactly as before.
-
-In an interactive session the bar
+Only interactive sessions render the bar: apps that call
+pipeline.ChatInput while running fork apps.Interactive(true) into their
+Defs, and runWithTUI reads it from the app's scope into TUI.interactive.
+The other commands (goal
+mode, any, ping, patch, record) never read interactive input, so their
+TUI omits the bar entirely — the Output pane keeps its full height, a
+press on the bottom row drives ordinary tab interaction, and the help
+overlay drops the input-bar entries. In an interactive session the bar
 is non-modal and rendered as the bottom row of the Output tab — part of
 the tab's layout, never a screen-wide overlay — so the rest of the
 interface stays operable while typing: pointer
@@ -1059,13 +1050,6 @@ func (t *TUI) ChatInput(prompt string) (string, error) {
 	// submitted with the first Enter. See TheoryOfTUIChatInput.
 	t.inputBar.Prompt = prompt
 	t.inputResult = ch
-	// A session that started without the bar — a goal run, whose loops
-	// read no interactive input — raises it here: the post-goal
-	// discussion reads the user's lines through this call, so the bar
-	// must render, reserve its row, and take clicks like an interactive
-	// session's. See TheoryOfTUIChatInput and
-	// pipeline.TheoryOfGoalDiscussion.
-	t.interactive = true
 	t.mu.Unlock()
 	t.notify()
 	res := <-ch
