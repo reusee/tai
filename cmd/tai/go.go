@@ -54,12 +54,31 @@ var GoModuleCommand = apps.New("go_module", "",
 		feedback pipeline.GoalFeedback,
 		summaries pipeline.GoalLoopSummaries,
 		programmingTask pipeline.ProgrammingTask,
+		discussMode pipeline.DiscussMode,
 	) pipeline.SystemPrompt {
-		return pipeline.GoalSystemPromptText(comps, feedback, summaries, programmingTask)
+		return goSystemPrompt(comps, feedback, summaries, programmingTask, discussMode)
 	},
 )
 
 type InGoModule bool
+
+// goSystemPrompt selects the system prompt of a Go session: a post-goal
+// discussion session runs on the discussion prompt, because the goal
+// prompt would teach a done block and loop rules the discussion must not
+// apply, and every other session runs on the goal prompt. See
+// TheoryOfGoModuleDefault and pipeline.TheoryOfGoalDiscussion.
+func goSystemPrompt(
+	comps pipeline.CodesComponents,
+	feedback pipeline.GoalFeedback,
+	summaries pipeline.GoalLoopSummaries,
+	programmingTask pipeline.ProgrammingTask,
+	discussMode pipeline.DiscussMode,
+) pipeline.SystemPrompt {
+	if bool(discussMode) {
+		return pipeline.DiscussSystemPromptText(comps, programmingTask)
+	}
+	return pipeline.GoalSystemPromptText(comps, feedback, summaries, programmingTask)
+}
 
 func (Module) InGoModule() InGoModule {
 	dir, err := os.Getwd()
