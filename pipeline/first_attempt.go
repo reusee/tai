@@ -19,7 +19,9 @@ the interrupted output, no retry attempt re-sends the same context, and
 no correction round follows. The run ends; the goal runner folds the
 outcome into the next loop's feedback like any other loop outcome, and
 the next loop retries from scratch with a freshly assembled context and
-the current filesystem state.
+the current filesystem state. The retry runs on the same review model
+the interrupted loop used, because a loop that ended on an error did not
+complete its verification (see TheoryOfGoalReviewModel).
 
 The reason is the meaning of the failure. A first attempt that needs a
 handoff or a correction round shows that its output did not meet the

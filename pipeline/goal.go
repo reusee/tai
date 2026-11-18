@@ -184,13 +184,17 @@ consecutive review loops run on different models when more than one model
 is configured, so a model never reviews the corrections it made in the
 previous loop, and the first review model is generally different from the
 main model, so the first verification is already independent. The rotation
-advances once per review-phase loop, whatever the loop's outcome: a loop
-whose done declaration is overturned — by its own plan still carrying
-pending entries, by an error, or by malformed blocks — keeps the run in
-the review phase and lets the next loop take the next model, so the
-independence holds however the corrections unfold. When no review model is
-configured, post-done loops keep the default model. The post-run review
-sessions consume the same ordered list, one session per model (see
+advances once per review-phase loop that completed normally. A loop that
+ended on an error did not complete — a first attempt abandoned by the
+first-attempt policy, a disk change, or an exceeded context window — so the
+selection holds and the next loop retries on the same review model, which
+keeps the interrupted verification with the model that began it. A loop
+whose done declaration is overturned by its own plan still carrying
+pending entries or by malformed blocks completed normally, so it advances
+the rotation and keeps the run in the review phase, and the independence
+holds however the corrections unfold. When no review model is configured,
+post-done loops keep the default model. The post-run review sessions
+consume the same ordered list, one session per model (see
 TheoryOfReviewLoop).
 `
 
@@ -369,7 +373,9 @@ type GoalOptions struct {
 	// The first loop after a done declaration runs on the first model,
 	// each later review-phase loop takes the next model, and the
 	// selection wraps around to the first after the last, so
-	// consecutive verification loops run on different models. When
+	// consecutive verification loops run on different models. A
+	// review-phase loop that ends on an error leaves the selection
+	// unchanged, so the retrying loop runs on the same model. When
 	// empty, post-done loops keep the default model. See
 	// TheoryOfGoalReviewModel.
 	ReviewModels []string
@@ -483,9 +489,9 @@ func GoalSystemPromptText(
 // goalLoopState carries the mutable state of a goal run across loops: the
 // feedback for the next loop's system prompt, the attempt summaries of
 // previous loops, the pending done-block declaration, whether the review
-// phase has begun (doneCount), the review-phase loop count that selects the
-// review models in rotation (reviewLoops), repeated-error tracking, and the
-// terminal flags. See TheoryOfGoalMode and TheoryOfGoalReviewModel.
+// phase has begun (doneCount), the review-model selection the review-phase
+// loops share (reviewLoops), repeated-error tracking, and the terminal
+// flags. See TheoryOfGoalMode and TheoryOfGoalReviewModel.
 type goalLoopState struct {
 	feedback                GoalFeedback
 	summaries               GoalLoopSummaries
@@ -494,10 +500,12 @@ type goalLoopState struct {
 	// applied changes: a non-zero count opens the review phase, so every
 	// later loop runs on a review model. See TheoryOfGoalReviewModel.
 	doneCount int
-	// reviewLoops counts the review-phase loops already started. Each
-	// review loop takes the next review model, so consecutive loops run
-	// on different models and the selection wraps around after the last
-	// model. See TheoryOfGoalReviewModel.
+	// reviewLoops counts the review-phase loops that completed normally.
+	// The next review-phase loop takes the model after that count, so
+	// consecutive completed loops run on different models and the
+	// selection wraps around after the last model; a loop that ended on
+	// an error leaves the count unchanged, so the retrying loop runs on
+	// the same review model. See TheoryOfGoalReviewModel.
 	reviewLoops       int
 	lastErrMsg        string
 	consecutiveErrors int
@@ -684,11 +692,12 @@ func (s *goalLoopState) applyLoopSuccess(loopsRun int, result Result, reporter g
 	// it also emits a done block: the changes must be verified by the
 	// next loop, which re-reads the current filesystem state. The done
 	// block emitted here is a declaration the next loop challenges; it
-	// opens the review phase, and every loop of that phase runs on the
-	// next review model in the configured order, wrapping around to the
-	// first model after the last, so successive verification loops run
-	// on different models. See TheoryOfGoalMode and
-	// TheoryOfGoalReviewModel.
+	// opens the review phase, and every loop of that phase that
+	// completes normally runs on the next review model in the
+	// configured order, wrapping around to the first model after the
+	// last, so successive completed verification loops run on different
+	// models while a loop retrying after an error keeps its model. See
+	// TheoryOfGoalMode and TheoryOfGoalReviewModel.
 	if foundDone {
 		s.pendingDoneVerification = true
 		s.doneCount++
@@ -760,9 +769,11 @@ var ErrNoTask = errors.New("no task provided; describe the task with chat")
 // reviewModelAt returns the review model a review-phase loop runs on: the
 // models are taken in the configured order and the selection wraps around to
 // the first model after the last, so consecutive verification loops run on
-// different models. round is the 1-based number of the review-phase loop; a
-// non-positive round or an empty list selects no model, so the loop keeps
-// the default model. See TheoryOfGoalReviewModel.
+// different models. round is the 1-based review-model slot of the loop: the
+// number of review-phase loops that completed normally plus one, so a loop
+// retrying an interrupted one keeps its slot; a non-positive round or an
+// empty list selects no model, so the loop keeps the default model. See
+// TheoryOfGoalReviewModel.
 func reviewModelAt(models []string, round int) string {
 	if round <= 0 || len(models) == 0 {
 		return ""
@@ -826,19 +837,21 @@ func RunGoal(ctx context.Context, opts GoalOptions) GoalResult {
 
 	// runOneLoop executes one generation loop and folds its outcome into
 	// the runner state. It reports whether the run should stop after the
-	// loop. Every loop of the review phase runs on the next review model
-	// in the configured order, so consecutive verification loops run on
-	// different models. See TheoryOfGoalReviewModel.
+	// loop. Every loop of the review phase runs on the model the phase's
+	// completed loops select, so consecutive verification loops run on
+	// different models, while a loop retried after an error keeps its
+	// model. See TheoryOfGoalReviewModel.
 	runOneLoop := func() bool {
 		loopStart := len(allStats)
 		// The post-done loops verify whether the declared goal is
-		// genuinely achieved; each of them takes the next review model,
-		// so the model verifying a loop's corrections differs from the
-		// model that made them. See TheoryOfGoalReviewModel.
+		// genuinely achieved; each of them takes the review model at the
+		// slot the phase's completed loops select, so the model verifying
+		// a loop's corrections differs from the model that made them.
+		// See TheoryOfGoalReviewModel.
+		reviewing := state.doneCount > 0 && len(opts.ReviewModels) > 0
 		loopModel := ""
-		if state.doneCount > 0 && len(opts.ReviewModels) > 0 {
-			state.reviewLoops++
-			loopModel = reviewModelAt(opts.ReviewModels, state.reviewLoops)
+		if reviewing {
+			loopModel = reviewModelAt(opts.ReviewModels, state.reviewLoops+1)
 		}
 		// The loop node is written before the loop runs, so every session
 		// node of the loop hangs under it. The node carries a "goal loop
@@ -879,7 +892,17 @@ func RunGoal(ctx context.Context, opts GoalOptions) GoalResult {
 		}
 		state.summaries = appendLoopSummaries(state.summaries, loopsRun, allStats[loopStart:])
 		allDiffs = append(allDiffs, result.Diffs...)
-		return state.applyLoopResult(loopsRun, result, err, reporter)
+		stop := state.applyLoopResult(loopsRun, result, err, reporter)
+		// The rotation advances only after a loop that completed
+		// normally: a loop that ended on an error — a first attempt
+		// abandoned by the first-attempt policy, a disk change, or an
+		// exceeded context window — leaves the selection unchanged, so
+		// the next loop retries on the same review model. See
+		// TheoryOfGoalReviewModel.
+		if reviewing && err == nil {
+			state.reviewLoops++
+		}
+		return stop
 	}
 
 	for loopsRun < maxGoalIterations {

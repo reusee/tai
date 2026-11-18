@@ -84,6 +84,53 @@ func TestRunGoalRotatesReviewModelsPerReviewLoop(t *testing.T) {
 	}
 }
 
+// TestRunGoalAbandonedLoopKeepsReviewModel verifies that a review-phase
+// loop abandoned by the first-attempt policy does not advance the
+// review-model rotation: the retrying loop runs on the same review model,
+// and only a normally completed loop steps the selection. See
+// TheoryOfGoalReviewModel.
+func TestRunGoalAbandonedLoopKeepsReviewModel(t *testing.T) {
+	calls := 0
+	var reviewModels []string
+	result := RunGoal(context.Background(), GoalOptions{
+		Output:       &bytes.Buffer{},
+		ReviewModels: []string{"review-a", "review-b"},
+		Generate: func(ctx context.Context, _ int, _ GoalFeedback, _ GoalLoopSummaries, reviewModel string, _ SessionTreeContinuation) (Result, []AttemptStat, error) {
+			calls++
+			reviewModels = append(reviewModels, reviewModel)
+			switch calls {
+			case 1:
+				// The default model declares done with changes; the next
+				// loop opens the review phase.
+				return doneWithChangesResult(), nil, nil
+			case 2:
+				// The first review loop abandons its first attempt, so the
+				// rotation must not step.
+				return Result{}, nil, &FirstAttemptAbandonedError{
+					Reason: "the response ended without the summary block",
+				}
+			case 3:
+				// The retrying loop completes normally and declares the
+				// goal again; the following review loop takes the second
+				// model.
+				return doneWithChangesResult(), nil, nil
+			}
+			return doneResult(), nil, nil
+		},
+		Review: noopReview,
+	})
+	if !result.Achieved {
+		t.Fatal("goal must be achieved by the final change-free done loop")
+	}
+	if calls != 4 {
+		t.Fatalf("ran %d loops, want 4", calls)
+	}
+	want := []string{"", "review-a", "review-a", "review-b"}
+	if !slices.Equal(reviewModels, want) {
+		t.Fatalf("review models = %v, want %v", reviewModels, want)
+	}
+}
+
 func TestRunGoalConfirmsDoneAfterVerificationLoop(t *testing.T) {
 	output := &bytes.Buffer{}
 	calls := 0
