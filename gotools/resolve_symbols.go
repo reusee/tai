@@ -17,8 +17,12 @@ ResolveGoSymbols turns the symbol names collected from go-src blocks into
 declaration source parts (see TheoryOfGoSrcBlocks). The resolver
 searches the Go files collected by GetFiles — the same file set the context
 pipeline loaded, with raw content and parsed ASTs already cached — so a
-loaded declaration resolves without a Go toolchain subprocess. The
-symbol forms follow
+loaded declaration resolves without a Go toolchain subprocess. The set is
+bounded to the root packages and their direct imports
+(TheoryOfDirectDependencyContext in files.go), so a declaration in a
+transitive dependency is not resolvable as source: naming that dependency's
+package path returns its declaration surface through go doc, and an ingest
+block reads the file itself. The symbol forms follow
 go doc: [<pkg>.][<sym>.][<methodOrField>]. A package qualifier — the
 full import path, a proper suffix of it (e.g., "pkg" for "a/b/pkg"), or
 a loaded package's declared name — restricts matching to that package,
@@ -53,7 +57,8 @@ go doc, and a package name may match several packages, all of which are
 returned. The loaded set alone would tie package references to the
 session's load patterns, so a package the session never loaded — a
 standard-library package such as fmt or net/http, a focus package
-excluded by -pkg — resolves through the module context. The package
+excluded by -pkg, or a transitive dependency outside the direct-import
+walk — resolves through the module context. The package
 reference is decided by one check, not by the argument's shape: a short
 go doc render is accepted as a package only when the opening package
 header carries the argument itself as its import path, while a symbol

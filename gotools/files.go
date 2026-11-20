@@ -50,12 +50,12 @@ rationale and the modification-time tiebreaker.
 
 const TheoryOfFileLoadingPerformance = `
 Go file reading and parsing in Files is parallelized to reduce wall-clock
-latency on multi-core machines: each file in the dependency graph is read
-and parsed independently, with a bounded worker pool so file descriptors
-are not exhausted on large trees. token.FileSet methods are synchronized
-(Go 1.9+), so a shared fset can be passed to parser.ParseFile from multiple
-goroutines safely. Results are collected in an indexed slice that preserves
-the deterministic input order.
+latency on multi-core machines: each collected file is read and parsed
+independently, with a bounded worker pool so file descriptors are not
+exhausted on large trees. token.FileSet methods are synchronized (Go 1.9+),
+so a shared fset can be passed to parser.ParseFile from multiple goroutines
+safely. Results are collected in an indexed slice that preserves the
+deterministic input order.
 
 The raw content of every Go file is cached in File.Content at load time.
 The simplification pipeline renders files from this cached content instead
@@ -76,6 +76,28 @@ Standard library packages explicitly requested via -pkg or -ctx remain
 available: root and context packages are added to the collected set directly,
 bypassing the import walk, so -pkg fmt includes fmt as a focus package even
 though its transitive standard library dependencies are still excluded.
+`
+
+const TheoryOfDirectDependencyContext = `
+The initial context covers the root and context packages and the packages
+they import directly, and nothing deeper: the import walk never follows an
+import of an import. The default load pattern selects the project's own
+module, so the project's code enters the context in full; the bound removes
+the transitive closure of external dependencies, whose declarations a task
+rarely reads.
+
+A transitive package is deferred, not lost: naming its import path in a
+go-src block returns its declaration surface through go doc, and an ingest
+block reads its files. The bound keeps the context budget focused — the
+budget is the same, but it buys deeper visibility on the packages the
+project imports directly instead of shallow documentation across the whole
+closure — and it cuts collection cost: fewer files are read, parsed, and
+token-counted, and fewer go doc subprocesses run.
+
+The distance key in TheoryOfFileOrdering still separates a focus package
+(distance 0) from its direct imports (distance 1). See
+TheoryOfLightweightPackageLoading in packages.go and
+TheoryOfGoSrcResolution in resolve_symbols.go.
 `
 
 type File struct {
@@ -141,19 +163,23 @@ func (Module) Files(
 		// See TheoryOfHiddenPackages.
 		isHidden := newHiddenPackageMatcher(hidden)
 
-		// Collect all packages from the dependency graph by walking imports.
-		// Standard library packages (Module == nil) are skipped so their
-		// files never enter the file set: the model already knows the
-		// standard library, and its source would only consume context
-		// budget. Packages explicitly requested via -pkg or -ctx are added
-		// directly below as root/context packages and bypass this skip.
-		// No distance limit; the visibility system in visibility.go
-		// determines which packages are visible based on the 32K context
-		// budget. See TheoryOfStdLibExclusion and
+		// Collect the root and context packages together with the
+		// packages they import directly. The walk never follows an import
+		// of an import: a package reached only through another dependency
+		// stays out of the initial context, and the model fetches it on
+		// demand with go-src and ingest blocks when a task needs it. The
+		// default load pattern selects the project's own module, so the
+		// project's code enters the context in full while the transitive
+		// closure of an external dependency stays out. Standard library
+		// packages (Module == nil) are skipped so their files never enter
+		// the file set: the model already knows the standard library, and
+		// its source would only consume context budget. Packages
+		// explicitly requested via -pkg or -ctx are added directly as
+		// root/context packages and bypass this skip. See
+		// TheoryOfDirectDependencyContext, TheoryOfStdLibExclusion, and
 		// TheoryOfLightweightPackageLoading in packages.go.
 		allPkgsSet := make(map[*packages.Package]bool)
-		var walkImports func(pkg *packages.Package)
-		walkImports = func(pkg *packages.Package) {
+		addDirectImports := func(pkg *packages.Package) {
 			for _, imp := range pkg.Imports {
 				if imp == nil || allPkgsSet[imp] {
 					continue
@@ -164,17 +190,16 @@ func (Module) Files(
 					continue
 				}
 				allPkgsSet[imp] = true
-				walkImports(imp)
 			}
 		}
 		for _, pkg := range rootPkgs {
 			allPkgsSet[pkg] = true
-			walkImports(pkg)
+			addDirectImports(pkg)
 		}
 		for _, pkg := range contextPkgs {
 			if !allPkgsSet[pkg] {
 				allPkgsSet[pkg] = true
-				walkImports(pkg)
+				addDirectImports(pkg)
 			}
 		}
 
@@ -235,10 +260,11 @@ func (Module) Files(
 		}
 
 		// Discover Go files from pkg.goFiles and parse individually.
-		// All non-standard-library packages in the dependency graph are
-		// included; the visibility system determines which are visible
-		// based on the 32K context budget.
-		// See TheoryOfLightweightPackageLoading in packages.go.
+		// Every collected package — a root package, a context package, or a
+		// direct import — contributes its Go files; the visibility system
+		// determines which are visible based on the 32K context budget.
+		// See TheoryOfDirectDependencyContext and
+		// TheoryOfLightweightPackageLoading in packages.go.
 		seenFilePaths := make(map[string]bool)
 		type goFileEntry struct {
 			path string

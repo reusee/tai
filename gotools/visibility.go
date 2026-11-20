@@ -17,14 +17,16 @@ import (
 
 const TheoryOfLazyPackageDoc = `
 Package documentation (go doc output) is computed lazily, only for packages
-that actually reach a documentation level: most packages in a dependency
-graph end up invisible or at the code/full levels, where the doc output is
-never used, so eager computation would spawn one go doc subprocess per
-package — hundreds of processes for a typical project — for nothing.
-There are two documentation levels — short doc (go doc without -all) and
-full doc (go doc -all -cmd) — and each is produced by its own subprocess
-invocation, cached independently on the package (shortDocComputed,
-ShortDocContent; docComputed, DocContent). The allocation algorithm only
+that actually reach a documentation level: the collected set is bounded to
+the root packages and their direct imports (TheoryOfDirectDependencyContext
+in files.go), a package left invisible by the budget never emits its doc,
+and eager serial computation would also fold one go doc subprocess per
+package — hundreds of processes for a typical project — into a single
+blocking wait. There are two documentation levels — short doc (go doc
+without -all) and full doc (go doc -all -cmd) — and each is produced by
+its own subprocess invocation, cached independently on the package
+(shortDocComputed, ShortDocContent; docComputed, DocContent). The
+allocation algorithm only
 requires a package's doc cost when it considers placing the package at that
 level: in the minimum-visibility allocation (whose minimum is full doc),
 when pinning focus packages at their documentation level, and in the
@@ -91,16 +93,19 @@ what the model does not search for never surfaces.
 The project's context strategy is a middle path that keeps the
 strengths of both poles. The initial context is documentation: focus
 packages enter as go doc output carrying the complete declaration
-surface — every symbol, every test function name — at a fraction of
-the full-source token cost, and the supporting package graph fills a
-deterministic budget (TheoryOfVisibilityAllocation). Implementation
-source is fetched on demand with go-src blocks, resolved against the
-declaration surface the model already sees, so a fetch is a targeted
-pull from a known index rather than a search in the dark. No detail is
-unreachable, because the full surface precedes every fetch; no token is
-spent on bodies the task never reads. Start from the whole picture, and
-descend into detail on demand. TheoryOfGoSrcResolution describes the
-fetch mechanism.
+surface — every symbol, every test function name — at a fraction of the
+full-source token cost, and the supporting package graph fills a
+deterministic budget (TheoryOfVisibilityAllocation). The graph is
+bounded to the root packages and their direct imports
+(TheoryOfDirectDependencyContext in files.go): a transitive dependency
+is deferred, not lost, and returns through go-src or ingest when a task
+names it. Implementation source is fetched on demand with go-src
+blocks, resolved against the declaration surface the model already
+sees, so a fetch is a targeted pull from a known index rather than a
+search in the dark. No detail is unreachable, because the full surface
+precedes every fetch; no token is spent on bodies the task never reads.
+Start from the whole picture, and descend into detail on demand.
+TheoryOfGoSrcResolution describes the fetch mechanism.
 
 Descending is a round of the run, not a side query: fetched content
 arrives as user content in the next generation, and one response may
@@ -231,9 +236,9 @@ at full documentation, their budget contribution is their documentation
 size, so focus files are never rendered or token-counted unless a file
 is explicitly requested via -file. Every other package computes its
 costs on demand, exactly when the allocation probes it for a level that
-needs the file costs. Packages that receive no visibility — typically
-the long tail of external dependencies and standard library packages —
-never run the tokenizer, and packages that stop at a documentation
+needs the file costs. Packages that receive no visibility — a collected
+package the budget cannot afford at its minimum — never run the
+tokenizer, and packages that stop at a documentation
 level never pay the cost of counting their source files. The eagerly
 computed and on-demand values are identical because token counting is
 deterministic, so the allocation outcome is unchanged; laziness only
@@ -242,10 +247,11 @@ avoids the work.
 The water-fill's probe sequence bounds the on-demand computes
 automatically: a package whose predecessor is stuck at invisible is
 never probed for documentation, and file costs are only probed for
-packages that actually crossed the documentation levels. In a typical
-session with a 32K-96K context budget and a large dependency graph, only
-the project's own packages and a few high-priority dependencies are ever
-token-counted.
+packages that actually crossed the documentation levels. Because the
+collected set is the project's own packages and their direct imports
+(TheoryOfDirectDependencyContext in files.go), the tokenizer runs only
+on direct imports that the budget upgrades to code or full, plus —
+under -all-src — the focus packages themselves.
 `
 
 const TheoryOfRenderedFileCache = `

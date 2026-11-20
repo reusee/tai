@@ -15,7 +15,8 @@ appear as "foo" (main) and "foo [foo.test]" (test variant). These are merged
 into a single logical package with PkgPath "foo". The external test package
 "foo_test" is a separate logical package. VisibilityAll includes _test.go
 files; all lower levels exclude them. The distance graph uses merged logical
-packages.
+packages (see TheoryOfDirectDependencyContext in files.go for the collection
+bound).
 
 Package categorization determines the minimum visibility and priority:
 - Focus packages (from -pkg): VisibilityDoc (go doc -u plus test names), pinned

@@ -201,13 +201,13 @@ func TestPartsProviderMatchFlagFiltersFiles(t *testing.T) {
 
 func TestDependencyModuleNotMarkedAsRootModule(t *testing.T) {
 	// Only the modules of root and context packages are root modules.
-	// Dependency packages discovered via the BFS over Imports within
-	// MaxPackageDistanceFromRoot may belong to external modules; marking
-	// those modules as root would classify dependency files as root-module
-	// files, causing them to bypass the non-root-module simplification
-	// transforms (comment stripping, function body deletion) and the
-	// deletion transforms that enforce the context token budget. See
-	// TheoryOfFileOrdering.
+	// Dependency packages discovered by the direct-import walk may belong
+	// to external modules; marking those modules as root would classify
+	// dependency files as root-module files, causing them to bypass the
+	// non-root-module simplification transforms (comment stripping,
+	// function body deletion) and the deletion transforms that enforce the
+	// context token budget. See TheoryOfFileOrdering and
+	// TheoryOfDirectDependencyContext.
 	root := t.TempDir()
 	// Clear GOWORK so workspace detection relies on walking up from the
 	// load directory, independent of the host environment.
@@ -388,5 +388,101 @@ func main() {
 	}
 	if !fmtFile.PackageIsRoot {
 		t.Fatal("explicitly requested standard library package must be a root package")
+	}
+}
+
+func TestTransitiveDependencyNotCollected(t *testing.T) {
+	// The initial context covers the root packages and their direct
+	// imports. The import walk never follows an import of an import, so a
+	// transitive dependency stays out of the file set and the model fetches
+	// it on demand with go-src and ingest blocks.
+	// See TheoryOfDirectDependencyContext.
+	root := t.TempDir()
+	t.Setenv("GOWORK", "")
+
+	appDir := filepath.Join(root, "app")
+	if err := os.MkdirAll(appDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(appDir, "go.mod"), []byte(`module example.com/app
+
+go 1.21
+
+require example.com/dep v0.0.0
+
+replace example.com/dep => ../dep
+
+replace example.com/dep2 => ../dep2
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(appDir, "main.go"), []byte(`package main
+
+import "example.com/dep"
+
+func main() { dep.Foo() }
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	depDir := filepath.Join(root, "dep")
+	if err := os.MkdirAll(depDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(depDir, "go.mod"), []byte(`module example.com/dep
+
+go 1.21
+
+require example.com/dep2 v0.0.0
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(depDir, "dep.go"), []byte(`package dep
+
+import "example.com/dep2"
+
+func Foo() { dep2.Bar() }
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	dep2Dir := filepath.Join(root, "dep2")
+	if err := os.MkdirAll(dep2Dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dep2Dir, "go.mod"), []byte("module example.com/dep2\n\ngo 1.21\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dep2Dir, "dep2.go"), []byte("package dep2\n\nfunc Bar() {}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	scope := dscope.New(
+		modes.ForTest(t),
+		new(Module),
+	)
+	getFiles := scope.Fork(
+		func() LoadDir {
+			return LoadDir(appDir)
+		},
+	).Get[GetFiles]()
+	files, err := getFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var depFile, dep2File *File
+	for _, f := range files {
+		switch f.Path {
+		case filepath.Join(depDir, "dep.go"):
+			depFile = f
+		case filepath.Join(dep2Dir, "dep2.go"):
+			dep2File = f
+		}
+	}
+	if depFile == nil {
+		t.Fatal("direct dependency file not collected")
+	}
+	if dep2File != nil {
+		t.Fatal("transitive dependency file must not be collected")
 	}
 }

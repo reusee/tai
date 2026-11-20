@@ -16,16 +16,16 @@ const TheoryOfLightweightPackageLoading = `
 The packages loader deliberately avoids the heaviest analysis modes. NeedSyntax,
 NeedTypesInfo, and NeedTypes are omitted so go/packages never retains full ASTs,
 per-identifier types, or complete type-checking results for any dependency.
-NeedDeps is used so go/packages resolves the full dependency graph in a single
-go list invocation. Distances from root packages are computed via BFS over the
-Imports graph populated by NeedDeps. All non-standard-library packages in the
-dependency graph have their files discovered and parsed, with no distance limit
-by default; the water-filling algorithm in visibility.go determines which
-packages are visible based on the 32K context budget. Standard library packages
-are resolved by the loader (they appear in the dependency graph) but their files
-are excluded at collection time in GetFiles, because the model already knows the
-standard library; see TheoryOfStdLibExclusion in files.go. Go file ASTs are
-parsed in files.go via parser.ParseFile.
+NeedDeps is used so go/packages resolves the dependency graph in a single go list
+invocation and populates the module, file, and embed fields of every direct
+import of a root package. The file collection in GetFiles reads exactly that one
+level: the root and context packages plus their direct imports, never an import
+of an import; see TheoryOfDirectDependencyContext in files.go. Distances from
+root packages are computed via BFS over the Imports graph populated by NeedDeps.
+Standard library packages are resolved by the loader (they appear in the
+dependency graph) but their files are excluded at collection time in GetFiles,
+because the model already knows the standard library; see TheoryOfStdLibExclusion
+in files.go. Go file ASTs are parsed in files.go via parser.ParseFile.
 `
 
 // packages returned by the loader
@@ -62,12 +62,13 @@ func (Module) Packages(
 		// the type-checked reference loader. See TheoryOfWorkspace and
 		// TheoryOfModModEnv.
 		dir, patterns, loadEnvs := resolveLoadContext(loadDir, loadPatterns, workspace, envs)
-		// NeedDeps loads the full dependency graph in a single go list
-		// invocation. Packages beyond MaxPackageDistanceFromRoot are still
-		// filtered out in Files() via BFS distance computation, but loading
-		// them all at once avoids the go.mod overhead of multiple
-		// packages.Load calls with explicit PkgPath.
-		// See TheoryOfLightweightPackageLoading.
+		// NeedDeps loads the dependency graph in a single go list
+		// invocation, so every direct import of a root package carries its
+		// module, file, and embed fields. Files() reads exactly one level
+		// of that graph — the root and context packages plus their direct
+		// imports — and never follows an import of an import. See
+		// TheoryOfDirectDependencyContext in files.go and
+		// TheoryOfLightweightPackageLoading.
 		config := &packages.Config{
 			Mode: packages.NeedName |
 				packages.NeedFiles |
