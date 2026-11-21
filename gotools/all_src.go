@@ -17,13 +17,15 @@ var (
 // documentation. When true, focus packages are pinned at VisibilityAll:
 // every focus file is emitted at full content, the synthetic focus
 // documentation block is not produced, and go-src blocks are unnecessary
-// for focus declarations. The flag also raises the water-fill ceiling to
-// VisibilityAll, so non-focus packages may be upgraded into test and
-// other files as well; without it the ceiling is VisibilityCode and the
-// initial context never carries the full level. The context budget still
-// derives from the focus tokens at their pinned level. The overflow
-// downgrade does not apply: the full-source pin is never downgraded to a
-// documentation level, so an oversized focus surface proceeds oversized.
+// for focus declarations. The flag also raises the water-fill ceiling
+// from the documentation level to VisibilityAll, so non-focus packages
+// may be upgraded from documentation into Go source, test files, and
+// other files as well; without it the ceiling is VisibilityDoc and the
+// initial context carries no Go source unless a package is explicitly
+// requested via -ctx or -dep. The context budget still derives from the
+// focus tokens at their pinned level. The overflow downgrade does not
+// apply: the full-source pin is never downgraded to a documentation
+// level, so an oversized focus surface proceeds oversized.
 // See TheoryOfVisibilityAllocation and TheoryOfWaterFillCeiling.
 type AllSrc bool
 

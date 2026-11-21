@@ -45,24 +45,26 @@ func TestSimplify(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Focus packages are pinned at documentation level: the output is
-	// the dep1 context file and the focus package's go doc block.
-	// main.go and the non-Go focus file a.txt are never emitted as
-	// files — every focus file is present by name in the focus
-	// documentation block's file list. See TheoryOfNonGoFiles in
-	// module_root.go.
+	// The initial context is documentation by default: the focus package
+	// and the package it imports directly both enter as go doc blocks,
+	// and no Go source is emitted. main.go and the non-Go focus file
+	// a.txt are never emitted as files — every focus file is present by
+	// name in the focus documentation block's file list. See
+	// TheoryOfWaterFillCeiling and TheoryOfNonGoFiles in module_root.go.
 	if len(files) < 2 {
 		t.Fatalf("got %v", len(files))
 	}
 	t.Logf("num files: %v", len(files))
-	var foundDep1, foundFocusDoc bool
+	var foundDep1Doc, foundFocusDoc bool
 	for _, f := range files {
 		switch f.Path {
-		case filepath.Join(dir, "..", "dep1", "dep1.go"):
-			foundDep1 = true
-			if !strings.Contains(f.Confirmed.What, "visibility level") {
-				t.Fatalf("dep1.go should be at a code visibility level, got %q", f.Confirmed.What)
+		case "github.com/reusee/tai/gotools/testdata/dep1":
+			foundDep1Doc = true
+			if !strings.Contains(f.Confirmed.What, "go doc") {
+				t.Fatalf("dep1 should be at a documentation level by default, got %q", f.Confirmed.What)
 			}
+		case filepath.Join(dir, "..", "dep1", "dep1.go"):
+			t.Fatalf("dep1.go must not be emitted at full content by default")
 		case filepath.Join(dir, "a.txt"):
 			t.Fatalf("a.txt must not be emitted at full content; non-Go focus files are listed by name only")
 		case filepath.Join(dir, "main.go"):
@@ -79,8 +81,8 @@ func TestSimplify(t *testing.T) {
 			}
 		}
 	}
-	if !foundDep1 {
-		t.Fatal("dep1.go not found in output")
+	if !foundDep1Doc {
+		t.Fatal("dep1 documentation block not found in output")
 	}
 	if !foundFocusDoc {
 		t.Fatal("focus package documentation block not found in output")
@@ -412,13 +414,14 @@ func TestAllocateVisibilityUnaffordablePackageDoesNotBlockOthers(t *testing.T) {
 		}
 	})
 
-	t.Run("failed doc falls back to code visibility", func(t *testing.T) {
+	t.Run("failed doc falls back to the documentation level", func(t *testing.T) {
 		// When go doc fails for a package, the doc is treated as empty
 		// (zero cost, nothing emitted) rather than unaffordable, so the
-		// water-fill can still upgrade the package to code using the
-		// precomputed code costs. The water-fill stops at the code level,
-		// the default ceiling, so the fallback lands exactly there. See
-		// TheoryOfLazyPackageDoc and TheoryOfWaterFillCeiling.
+		// minimum-visibility allocation still places the package at the
+		// documentation level. The water-fill cannot go further: the
+		// default ceiling is the documentation level, so no Go source is
+		// spent on the package. See TheoryOfLazyPackageDoc and
+		// TheoryOfWaterFillCeiling.
 		pkgs := []*LogicalPackage{
 			{
 				PkgPath:             "focus",
@@ -448,8 +451,8 @@ func TestAllocateVisibilityUnaffordablePackageDoesNotBlockOthers(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if pkgs[1].Visibility != VisibilityCode {
-			t.Fatalf("dep should reach code visibility via the failed-doc fallback, got %d", pkgs[1].Visibility)
+		if pkgs[1].Visibility != VisibilityDoc {
+			t.Fatalf("dep should reach the documentation level via the failed-doc fallback, got %d", pkgs[1].Visibility)
 		}
 	})
 }
@@ -519,8 +522,8 @@ func TestAllocateVisibilityLazyDocComputation(t *testing.T) {
 	// packages that actually reach a documentation level. The eager approach
 	// ran go doc for every non-focus package in the dependency graph — one
 	// Go toolchain subprocess per package — even though most packages end
-	// invisible or at the code/full levels, where the doc output is never
-	// used. See TheoryOfLazyPackageDoc.
+	// invisible or, under -all-src, at the code/full levels, where the doc
+	// output is never used. See TheoryOfLazyPackageDoc.
 
 	t.Run("ComputesDocForLevelOnePackages", func(t *testing.T) {
 		var docCalls []string
@@ -590,11 +593,11 @@ func TestAllocateVisibilityLazyDocComputation(t *testing.T) {
 				BudgetTokensByLevel: [5]int{0, 0, 0, 0, 100},
 			},
 			{
-				// Direct-import package whose doc AND code costs exceed
-				// the budget: it stays invisible and is probed exactly
-				// once — the single unavoidable go doc invocation needed
-				// to learn its real doc cost during the minimum
-				// visibility allocation.
+				// Direct-import package whose doc cost exceeds the
+				// budget: it stays invisible and is probed exactly once —
+				// the single unavoidable go doc invocation needed to
+				// learn its real doc cost during the minimum visibility
+				// allocation.
 				PkgPath:             "directimport",
 				Category:            CategoryDirectImport,
 				MinVisibility:       VisibilityDoc,
@@ -613,8 +616,8 @@ func TestAllocateVisibilityLazyDocComputation(t *testing.T) {
 			},
 			{
 				// Same-module package: affordable at full doc, probed
-				// once, and water-filled all the way to the code level,
-				// the default ceiling.
+				// once, and settled at the documentation level, the
+				// default ceiling.
 				PkgPath:             "samemodule",
 				Category:            CategorySameModule,
 				MinVisibility:       VisibilityDoc,
@@ -654,11 +657,11 @@ func TestAllocateVisibilityLazyDocComputation(t *testing.T) {
 				t.Fatalf("doc must not be computed for a package blocked by its predecessor: %v", docCalls)
 			}
 		}
-		// samemodule is probed once and reaches the code level — the
-		// water-fill ceiling by default — despite the unaffordable
-		// packages ahead of it. See TheoryOfWaterFillCeiling.
-		if pkgs[3].Visibility != VisibilityCode {
-			t.Fatalf("expected samemodule at the code level, got %d", pkgs[3].Visibility)
+		// samemodule is probed once and settles at the documentation
+		// level — the water-fill ceiling by default — despite the
+		// unaffordable packages ahead of it. See TheoryOfWaterFillCeiling.
+		if pkgs[3].Visibility != VisibilityDoc {
+			t.Fatalf("expected samemodule at the documentation level, got %d", pkgs[3].Visibility)
 		}
 	})
 }
@@ -727,12 +730,13 @@ func TestAllocateVisibilityLazyCostComputation(t *testing.T) {
 }
 
 func TestAllocateVisibilityWaterFillCeiling(t *testing.T) {
-	// The water-fill ceiling is the code level by default: even when the
-	// remaining budget affords the full level, a non-focus package is
-	// never upgraded into test files, non-Go files, or embed files. The
-	// full level is reached only under the explicit -all-src opt-in,
-	// whose marker in the allocation is the focus pin at VisibilityAll.
-	// See TheoryOfWaterFillCeiling.
+	// The water-fill ceiling is the documentation level by default: even
+	// when the remaining budget affords the code or full level, a
+	// same-module package is never upgraded into Go source, test files,
+	// non-Go files, or embed files. The code level is reached only by an
+	// explicitly requested context package, and the full level only under
+	// the explicit -all-src opt-in, whose marker in the allocation is the
+	// focus pin at VisibilityAll. See TheoryOfWaterFillCeiling.
 	newPkgs := func(focusMin VisibilityLevel) []*LogicalPackage {
 		return []*LogicalPackage{
 			{
@@ -753,6 +757,16 @@ func TestAllocateVisibilityWaterFillCeiling(t *testing.T) {
 				BudgetTokensByLevel: [5]int{0, 10, 20, 30, 40},
 				TokensByLevel:       [5]int{0, 10, 20, 30, 40},
 			},
+			{
+				// An explicitly requested context package keeps its
+				// guaranteed code-level minimum.
+				PkgPath:             "context",
+				Category:            CategoryContext,
+				MinVisibility:       VisibilityCode,
+				Visibility:          VisibilityInvisible,
+				BudgetTokensByLevel: [5]int{0, 10, 20, 30, 40},
+				TokensByLevel:       [5]int{0, 10, 20, 30, 40},
+			},
 		}
 	}
 
@@ -763,10 +777,14 @@ func TestAllocateVisibilityWaterFillCeiling(t *testing.T) {
 	if pkgs[0].Visibility != VisibilityDoc {
 		t.Fatalf("focus should be pinned at full doc, got %d", pkgs[0].Visibility)
 	}
-	// The 40-token full level is affordable, yet the default ceiling
-	// stops the upgrade at the code level.
-	if pkgs[1].Visibility != VisibilityCode {
-		t.Fatalf("water-fill must stop at the code level by default, got %d", pkgs[1].Visibility)
+	// The 30-token code level is affordable, yet the default ceiling
+	// stops the upgrade at the documentation level.
+	if pkgs[1].Visibility != VisibilityDoc {
+		t.Fatalf("water-fill must stop at the documentation level by default, got %d", pkgs[1].Visibility)
+	}
+	// The explicit request keeps its code-level guarantee.
+	if pkgs[2].Visibility != VisibilityCode {
+		t.Fatalf("context package must keep the code level by default, got %d", pkgs[2].Visibility)
 	}
 
 	pkgs = newPkgs(VisibilityAll)
@@ -1343,6 +1361,13 @@ func Foo() {
 	scope = scope.Fork(
 		func() LoadDir {
 			return LoadDir(dir)
+		},
+		// An explicit -ctx request is the one way to bring Go source into
+		// the initial context by default, so the test can still assert
+		// that a small context package is never simplified. See
+		// TheoryOfWaterFillCeiling.
+		func() ContextPatterns {
+			return ContextPatterns{"test/dep1"}
 		},
 	)
 	provider := scope.Get[PartsProvider]()

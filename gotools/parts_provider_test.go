@@ -33,18 +33,16 @@ func TestContextPrompt(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Focus packages are pinned at documentation level: dep1.go is
-	// loaded as a context file and the focus package appears as a
-	// documentation block. main.go's full content must not appear,
-	// and the non-Go focus file a.txt is present by name in the
-	// documentation block's file list only.
-	// See TheoryOfVisibilityAllocation and TheoryOfNonGoFiles in
-	// module_root.go.
+	// The initial context is documentation by default: the focus package
+	// and the package it imports directly both enter as package
+	// documentation blocks, never as Go source. The model fetches
+	// implementation source on demand with go-src blocks. See
+	// TheoryOfWaterFillCeiling.
 	if len(parts) < 2 {
 		t.Fatalf("got %v", len(parts))
 	}
 
-	var foundDep1, foundATxtName, foundFocusDoc bool
+	var foundDep1Doc, foundATxtName, foundFocusDoc bool
 	for _, part := range parts {
 		t.Logf("%s\n", part)
 		text, ok := part.(generators.Text)
@@ -52,8 +50,14 @@ func TestContextPrompt(t *testing.T) {
 			t.Fatalf("got %#v", part)
 		}
 		s := string(text)
-		if strings.Contains(s, filepath.Join(dir, "..", "dep1", "dep1.go")) {
-			foundDep1 = true
+		if strings.Contains(s, "begin of context package github.com/reusee/tai/gotools/testdata/dep1") {
+			foundDep1Doc = true
+			if !strings.Contains(s, `var Foo = "foo"`) {
+				t.Fatalf("dep1 documentation block must carry the declaration surface:\n%s", s)
+			}
+		}
+		if strings.Contains(s, "begin of context file "+filepath.Join(dir, "..", "dep1", "dep1.go")) {
+			t.Fatalf("dep1.go must not appear at full content by default:\n%s", s)
 		}
 		if strings.Contains(s, "begin of focus file "+filepath.Join(dir, "main.go")) {
 			t.Fatalf("main.go must not appear at full content; focus packages are documentation-only:\n%s", s)
@@ -68,8 +72,8 @@ func TestContextPrompt(t *testing.T) {
 			}
 		}
 	}
-	if !foundDep1 {
-		t.Errorf("dep1.go not found")
+	if !foundDep1Doc {
+		t.Errorf("dep1 documentation block not found")
 	}
 	if !foundFocusDoc {
 		t.Errorf("focus package documentation not found")

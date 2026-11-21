@@ -66,12 +66,14 @@ the context budget — the water-fill phase is skipped entirely: no upgrade
 is affordable, and probing the documentation transitions would only spawn
 go doc subprocesses whose output could not be shown.
 
-When go doc fails for a package, the doc is treated as empty rather than
-unaffordable: the level's cost is zero and its content is empty (nothing
-is emitted at that level), and the water-fill can still upgrade the
-package to code, whose costs are precomputed. This turns a systemic go
-doc failure into a graceful degradation to code visibility instead of
-making every such package permanently invisible. A focus package is the
+When go doc fails for a package, the doc is treated as empty rather
+than unaffordable: the level's cost is zero and its content is empty
+(nothing is emitted at that level), so the minimum-visibility allocation
+still places the package at the documentation level. Under -all-src the
+water-fill may still upgrade such a package into source, whose costs are
+precomputed. This turns a systemic go doc failure into a graceful
+degradation instead of making every such package permanently invisible. A
+focus package is the
 exception: it is pinned at full documentation and never upgraded, so
 its block is still emitted with a failure note, the test-function names,
 and the file names, keeping the package discoverable for go-src fetches.
@@ -139,9 +141,11 @@ level. A package that cannot afford a level is skipped rather than
 blocking lower-priority packages, so a single unaffordable package
 cannot blank out the entire context: the budget is shared, and every
 package gets an independent chance to reach its minimum visibility. The
-water-fill stops at its ceiling — the code level by default — so the
-initial context never carries test files, non-Go files, or embed files
-unless the user opts in with -all-src. See TheoryOfWaterFillCeiling.
+water-fill stops at its ceiling — the documentation level by default —
+so the initial context carries package documentation and no Go source at
+all; the code level is reached only by an explicitly requested context
+package, and the full level — test files, non-Go files, and embed files —
+only when the user opts in with -all-src. See TheoryOfWaterFillCeiling.
 
 Short doc is the cheapest documentation level: go doc without -all, the
 package overview and the top-level symbol index without per-symbol
@@ -175,14 +179,18 @@ The water-fill upgrade phase retains one predecessor gate: the upgrades
 into the documentation levels — from invisible to short doc and from
 short doc to full doc — are blocked when the immediately preceding
 package is at a lower level, because those transitions require expensive
-go doc subprocess probes (see TheoryOfLazyPackageDoc). Upgrades to the
-code level — and, under -all-src, to the full level — use precomputed
-costs and are never gated, so packages behind an unaffordable one can
-still be upgraded all the way up to the ceiling. This means the
+go doc subprocess probes (see TheoryOfLazyPackageDoc). The default
+ceiling leaves the code level to the guaranteed minimum allocation
+above, which uses precomputed costs and is never gated. Under -all-src
+the ceiling rises to the full level, and those upgrades use precomputed
+costs and are never gated either, so packages behind an unaffordable one
+can still be upgraded all the way up to the ceiling. This means the
 construction principle — higher-priority packages have at least as much
 visibility as lower-priority ones — holds when every package is
 affordable at its minimum, and degrades gracefully otherwise: visibility
-may be non-monotonic only in the presence of unaffordable packages.
+may be non-monotonic only in the presence of unaffordable packages, or
+through an explicit request that places a context package above the
+default ceiling.
 
 Focus packages are pinned at full documentation: their initial context is
 the declaration surface — go doc -all -cmd -u output plus the package's
@@ -228,20 +236,22 @@ focus surface proceeds as is.
 `
 
 const TheoryOfWaterFillCeiling = `
-The water-fill's ceiling is the code level: the initial context carries
-full Go code without test files, and no package is upgraded into the full
-level — test files, non-Go files, and embed files — by default, even when
-the budget would afford it. The default therefore never spends initial
-context tokens on test bodies, static assets, or embed blobs, which a task
-usually never reads; a task that needs such a file fetches it with an
-ingest block.
+The water-fill's ceiling is the documentation level: the initial context
+carries package documentation only, and no package is upgraded into the
+code level — full Go source without test files — by default, even when
+the budget would afford it. The default therefore spends no initial
+context tokens on Go source: the model reads a declaration's
+implementation with a go-src block and any other file with an ingest
+block, exactly when the task needs it.
 
-The full level is reached only under the explicit -all-src opt-in, whose
-marker in the allocation is the focus pin at VisibilityAll: there the
-ceiling becomes VisibilityAll and the water-fill may upgrade non-focus
-packages into test and other files too. A package explicitly requested
-via -ctx keeps its code-level guarantee, so a requested package is fully
-visible without tests either way. See TheoryOfVisibilityAllocation.
+The code level is reached only on an explicit request: a package named
+via -ctx or -dep is a context package, and its guaranteed minimum
+visibility is VisibilityCode, so the requested package is fully visible
+as source. The full level — test files, non-Go files, and embed files —
+is reached only under the explicit -all-src opt-in, whose marker in the
+allocation is the focus pin at VisibilityAll: there the ceiling becomes
+VisibilityAll and the water-fill may upgrade every package into test and
+other files too. See TheoryOfVisibilityAllocation.
 `
 
 const TheoryOfLazyVisibilityCosts = `
@@ -258,20 +268,21 @@ is explicitly requested via -file. Every other package computes its
 costs on demand, exactly when the allocation probes it for a level that
 needs the file costs. Packages that receive no visibility — a collected
 package the budget cannot afford at its minimum — never run the
-tokenizer, and packages that stop at a documentation
-level never pay the cost of counting their source files. The eagerly
-computed and on-demand values are identical because token counting is
-deterministic, so the allocation outcome is unchanged; laziness only
-avoids the work.
+tokenizer, and packages that stop at a documentation level never pay the
+cost of counting their source files. The eagerly computed and on-demand
+values are identical because token counting is deterministic, so the
+allocation outcome is unchanged; laziness only avoids the work.
 
 The water-fill's probe sequence bounds the on-demand computes
 automatically: a package whose predecessor is stuck at invisible is
-never probed for documentation, and file costs are only probed for
-packages that actually crossed the documentation levels. Because the
+never probed for documentation, and file costs are probed only for a
+package that can reach the code or full level — an explicitly requested
+context package at its guaranteed minimum, or a package the -all-src
+water-fill upgrades past the documentation ceiling. Because the
 collected set is the project's own packages and their direct imports
-(TheoryOfDirectDependencyContext in files.go), the tokenizer runs only
-on direct imports that the budget upgrades to code or full, plus —
-under -all-src — the focus packages themselves.
+(TheoryOfDirectDependencyContext in files.go), the default
+documentation-only context never runs the tokenizer on a supporting
+package at all.
 `
 
 const TheoryOfRenderedFileCache = `
@@ -1113,17 +1124,20 @@ func allocateVisibility(
 		lp.Visibility = VisibilityDoc
 	}
 
-	// The water-fill ceiling is the code level: the initial context
-	// carries full Go code without test files, and no package is upgraded
-	// into the full level — test files, non-Go files, and embed files —
-	// by default, even when the budget would afford it. The full level is
-	// reached only under the explicit -all-src opt-in, whose marker in
-	// the allocation is the focus pin at VisibilityAll (allSrcPin above).
-	// A package explicitly requested via -ctx keeps its code-level
-	// guarantee, so it is fully visible without tests either way. A task
-	// that needs a test or an embed file fetches it with an ingest block.
+	// The water-fill ceiling is the documentation level: the initial
+	// context carries package documentation, and no package is upgraded
+	// into the code level — full Go source — by default, even when the
+	// budget would afford it. The code level is reached only by a package
+	// the user explicitly requests via -ctx or -dep, whose guaranteed
+	// minimum visibility is VisibilityCode and which the minimum
+	// allocation below places at that level. The full level — test files,
+	// non-Go files, and embed files — is reached only under the explicit
+	// -all-src opt-in, whose marker in the allocation is the focus pin at
+	// VisibilityAll (allSrcPin above). A task that needs a declaration's
+	// implementation fetches it with a go-src block; a task that needs a
+	// test or an embed file fetches it with an ingest block.
 	// See TheoryOfWaterFillCeiling.
-	ceiling := VisibilityCode
+	ceiling := VisibilityDoc
 	if allSrcPin {
 		ceiling = VisibilityAll
 	}
@@ -1245,14 +1259,16 @@ func allocateVisibility(
 	// Water-fill: upgrade from high to low priority, one level at a time.
 	// Each iteration finds the leftmost (highest priority) affordable
 	// package and upgrades it by one level, never past the ceiling — the
-	// code level by default, the full level only under -all-src (see
-	// TheoryOfWaterFillCeiling). The predecessor gate applies only to the
-	// two documentation transitions (invisible→short doc and short doc→
-	// full doc), which require expensive go doc probes; upgrades to the
-	// code and full levels use precomputed costs and may proceed even
-	// when the predecessor is stuck at a lower level, so an unaffordable
-	// package cannot waste the remaining budget.
-	// See TheoryOfVisibilityAllocation.
+	// documentation level by default, the full level only under -all-src
+	// (see TheoryOfWaterFillCeiling). Packages already above the ceiling,
+	// namely context packages placed at the code level by their
+	// guaranteed minimum, are left as is. The predecessor gate applies
+	// only to the documentation transitions (invisible→short doc and
+	// short doc→full doc), which require expensive go doc probes. Under
+	// -all-src the upgrades past the documentation levels use precomputed
+	// costs and may proceed even when the predecessor is stuck at a lower
+	// level, so an unaffordable package cannot waste the remaining
+	// budget. See TheoryOfVisibilityAllocation.
 	for {
 		// When the minimum-visibility allocation exhausted the budget
 		// (remaining <= 0, which happens when a guaranteed context
@@ -1294,10 +1310,11 @@ func allocateVisibility(
 
 			// Entering a documentation level requires the package's doc
 			// cost at that level; compute it lazily, once per package.
-			// Entering the code or full level requires the package's file
-			// costs, computed lazily only when probed; packages that
-			// receive no visibility never run the tokenizer.
-			// See TheoryOfLazyPackageDoc and TheoryOfLazyVisibilityCosts.
+			// Entering the full level under -all-src requires the
+			// package's file costs, computed lazily only when probed;
+			// packages that receive no visibility never run the
+			// tokenizer. See TheoryOfLazyPackageDoc and
+			// TheoryOfLazyVisibilityCosts.
 			if nextLevel == VisibilityShortDoc {
 				computeShortDoc(lp)
 			} else if nextLevel == VisibilityDoc {
