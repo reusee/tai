@@ -28,23 +28,26 @@ its own subprocess invocation, cached independently on the package
 (shortDocComputed, ShortDocContent; docComputed, DocContent). The
 allocation algorithm only
 requires a package's doc cost when it considers placing the package at that
-level: in the minimum-visibility allocation (whose minimum is full doc),
-when pinning focus packages at their documentation level, and in the
-water-filling upgrades into a documentation level. At exactly those decision
-points allocateVisibility invokes computeShortDoc or computeDoc, which runs
-go doc once, caches the result on the package, and sets that level's token
-costs. Until a package's doc at a level is computed, that level's budget
-cost carries the sentinel 1<<30, which makes the level unaffordable; the
-sentinel is never read by a decision because the computation runs first
-whenever the level is considered.
+level: in the minimum-visibility allocation, when pinning focus packages at
+their documentation level, and in the water-filling upgrades into a
+documentation level. At exactly those decision points allocateVisibility
+invokes computeShortDoc or computeDoc, which runs go doc once, caches the
+result on the package, and sets that level's token costs. Until a
+package's doc at a level is computed, that level's budget cost carries the
+sentinel 1<<30, which makes the level unaffordable; the sentinel is never
+read by a decision because the computation runs first whenever the level is
+considered.
 
-The minimum-visibility allocation probes every package whose minimum
-visibility includes full documentation (focus, context, same-module, and
-direct-import packages): the doc cost must be known before affordability
-can be decided. A context package — one named via -ctx or -dep — is probed
-through the same path as every other package, because those flags decide
-inclusion, not visibility. These unconditional probes are launched
-concurrently by prefetchPackageDocs with bounded concurrency, hiding the
+The minimum-visibility allocation probes every package whose
+ceiling-capped minimum visibility includes full documentation (focus,
+context, same-module, and direct-import packages): the doc cost must be
+known before affordability can be decided. A package whose full
+documentation is unaffordable is lowered to short doc, so the same
+allocation also probes that level before placing the package there. A
+context package — one named via -ctx or -dep — is probed through the same
+path as every other package, because those flags decide inclusion and
+precedence, not visibility. The full-doc probes are launched concurrently
+by prefetchPackageDocs with bounded concurrency, hiding the
 per-subprocess latency that a serial probe loop would incur; the
 allocation's own computeDoc calls then short-circuit via the docComputed
 guard. Short doc has no category minimum, so the water-fill probes it
@@ -55,7 +58,8 @@ unconditionally — so when its condition already holds (the pinned focus
 tokens, computed by the earlier phases, exceed the generator budget),
 prefetchFocusShortDocs launches those probes concurrently before the
 allocation and the downgrade loop short-circuits via the
-shortDocComputed guard.
+shortDocComputed guard. The short-doc fallback of the minimum allocation
+probes on demand, once per package.
 
 The water-fill phase gates both documentation upgrades (invisible→short
 doc and short doc→full doc) on the immediate predecessor: a package whose
@@ -63,10 +67,10 @@ predecessor is still at a lower level is not probed, because its doc could
 not be shown without violating the priority ordering. This keeps the
 number of go doc subprocesses proportional to the number of packages that
 can actually benefit from documentation, rather than the size of the
-dependency graph. When the minimum-visibility allocation exhausts the
-budget — which happens when a guaranteed context package costs more than
-the context budget — the water-fill phase is skipped entirely: no upgrade
-is affordable, and probing the documentation transitions would only spawn
+dependency graph. When the generator budget leaves no context share after
+the focus block, the allocation places no package at a documentation
+level and the water-fill phase is skipped entirely: no upgrade is
+affordable, and probing the documentation transitions would only spawn
 go doc subprocesses whose output could not be shown.
 
 When go doc fails for a package, the doc is treated as empty rather
@@ -121,81 +125,110 @@ the same generation loop.
 `
 
 const TheoryOfVisibilityAllocation = `
-The context token budget for non-focus packages is dynamic: it is derived
-from the total token count of the focus packages at their pinned level —
-documentation by default, full source under -all-src — so that large
-focus surfaces receive a proportionally larger context budget. The budget
-is focusTokens / 4, rounded to the nearest multiple of
-contextTokenBudgetUnit (32K), with a floor at one unit. A repository
-whose focus packages total 128K documentation tokens gets a 32K context
-budget; a 200K documentation surface gets a 64K budget. This scaling
-prevents a large focus package from starving its dependencies and
-supporting packages, which would degrade the model's ability to reason
-about cross-package interactions. Small projects stay at the 32K floor.
-The computation is deterministic: identical focus packages always produce
-an identical budget, so context files are simplified to the same level
+The visibility allocation follows one principle: more important content
+has at least as much visibility, and when the budget is short, the least
+important content gives up its visibility first, until the content fits
+the budget.
+
+Importance follows the package category order: focus packages first,
+then context packages (explicitly requested via -ctx or -dep), then
+same-module packages, then direct imports. The allocation grants
+visibility in that order, so the most important content is placed before
+the budget runs out, and the first content lowered is the content with
+the lowest priority.
+
+The generator token budget — the user-prompt budget Parts derives from
+the model's context window and passes to SimplifyFiles as maxTokens —
+bounds the focus block and every context block together. The context
+share of that budget is the dynamic budget derived from the focus
+tokens — focusTokens / 4, rounded to the nearest multiple of
+contextTokenBudgetUnit (32K), floored at one unit — capped by what the
+generator budget leaves after the focus block. A repository whose focus
+packages total 128K documentation tokens gets a 32K context share; a
+200K documentation surface gets a 64K share; and when the focus block
+consumes the generator budget, the share falls to zero instead of adding
+context blocks on top of an already oversized focus block. The least
+important content is therefore lowered — down to nothing — before the
+focus block is lowered. The computation is deterministic: identical
+focus packages and an identical generator budget always produce an
+identical share, so context files are simplified to the same level
 across requests with the same focus, preserving the LLM prefix cache.
 
-The visibility allocation uses a water-filling algorithm that upgrades
-packages from their minimum visibility to higher levels as the budget
-allows. Packages are processed in priority order (highest first). Each
-step upgrades the leftmost (highest priority) affordable package by one
-level. A package that cannot afford a level is skipped rather than
-blocking lower-priority packages, so a single unaffordable package
-cannot blank out the entire context: the budget is shared, and every
-package gets an independent chance to reach its minimum visibility. The
-water-fill stops at its ceiling — the documentation level by default —
-so the initial context carries package documentation and no Go source at
-all. No flag raises the ceiling: a package named via -ctx or -dep is
-included under the same default rules. The full level — test files,
-non-Go files, and embed files — is reached only when the user opts in
-with -all-src. See TheoryOfWaterFillCeiling.
+The non-focus ceiling is the documentation level by default and the full
+level under -all-src (see TheoryOfWaterFillCeiling), and it never
+exceeds the focus visibility. When the focus pin is downgraded to short
+doc, the ceiling falls with it, so no context or same-module package
+keeps full documentation while the focus block is short doc: the focus
+block is the more important content. A package whose minimum is above
+the ceiling enters at the ceiling level at most.
+
+The minimum allocation places packages in priority order at their
+minimum visibility — capped by the ceiling and by the ordering cap (see
+below) — when the remaining budget affords that level. A package whose
+requested level is unaffordable is lowered one level at a time: full
+documentation to short doc, then to invisible. An explicitly requested
+context package is therefore shown at the best level the budget allows
+instead of being forced over the budget, and it is dropped only when no
+level fits. A package the budget cannot afford at any level does NOT
+block lower-priority packages: the budget is shared, and every package
+gets an independent chance to enter. This avoids the cascade where a
+single unaffordable package — for example a direct dependency whose go
+doc output exceeds the budget, or whose go doc fails — blanks out the
+entire context.
+
+The ordering cap keeps the importance ordering when a package is shown
+below its requested minimum: once a package is placed at a level below
+its requested minimum, no lower-priority package may be shown more
+fully. For example, when a requested context package does not afford
+full documentation and enters at short doc, the same-module and direct
+import packages behind it may reach short doc but never full
+documentation. A package dropped to invisible imposes no cap, so a
+package the budget cannot afford at all does not blank out the rest of
+the context. The importance ordering therefore holds along the whole
+priority chain, and can break only where a package is dropped entirely.
+
+The water-fill then upgrades packages from high to low priority, one
+level at a time. Each iteration finds the leftmost (highest priority)
+affordable package and upgrades it by one level, never past the ceiling.
+A package that cannot afford a level is skipped rather than blocking
+lower-priority packages, so a single unaffordable package cannot blank
+out the entire context. The water-fill stops at its ceiling — the
+documentation level by default — so the initial context carries package
+documentation and no Go source at all. No flag raises the ceiling: a
+package named via -ctx or -dep is included under the same default rules.
+The full level — test files, non-Go files, and embed files — is reached
+only when the user opts in with -all-src.
 
 Short doc is the cheapest documentation level: go doc without -all, the
 package overview and the top-level symbol index without per-symbol
 documentation. No category has short doc as its minimum visibility; it
-exists as the water-fill's first upgrade step from invisible, so a tight
-budget yields many briefly-documented packages instead of a few
-fully-documented ones.
-
-The minimum-visibility allocation processes packages in priority order
-and gives each package its minimum visibility if it fits in the
-remaining budget; unaffordable packages are left invisible and do not
-affect subsequent packages. Priority still governs the order of
-allocation, so high-priority packages are allocated before the budget
-is exhausted.
-
-Context packages — those explicitly requested via -ctx or -dep — are
-guaranteed their minimum visibility, the default documentation level:
-the flag decides inclusion, never visibility. The minimum allocation
-deducts their documentation cost from the budget unconditionally, even
-when it exceeds the remaining budget, so an explicitly requested package
-is never dropped in favor of its own dependencies, which are discovered
-automatically. Without the guarantee, a large context package could not
-afford its documentation at minimum allocation and would be
-out-prioritized by its smaller dependencies during water-fill, leaving
-the requested package invisible while its dependencies show their
-declaration surfaces. A context package never reaches the code level by
-its request alone; implementation source is fetched with go-src blocks
-like any other package. When a guaranteed context package exhausts the
-budget, the water-fill phase is skipped entirely: no upgrade is
-affordable, and probing packages would only spawn go doc subprocesses
-whose results could not be shown.
+is the water-fill's first upgrade step from invisible and the fallback
+level of the minimum allocation when full documentation is
+unaffordable, so a tight budget yields many briefly-documented packages
+instead of a few fully-documented ones.
 
 The water-fill upgrade phase retains one predecessor gate: the upgrades
 into the documentation levels — from invisible to short doc and from
 short doc to full doc — are blocked when the immediately preceding
 package is at a lower level, because those transitions require expensive
-go doc subprocess probes (see TheoryOfLazyPackageDoc). The default
-ceiling leaves no package above the documentation level, and the focus
-pin is skipped by the upgrade loop. Under -all-src the ceiling rises to
-the full level, and those upgrades use precomputed costs and are never
-gated, so packages behind an unaffordable one can still be upgraded all
-the way up to the ceiling. This means the construction principle —
-higher-priority packages have at least as much visibility as
-lower-priority ones — holds when every package is affordable at its
-minimum, and degrades gracefully otherwise: visibility may be
-non-monotonic only in the presence of unaffordable packages.
+go doc subprocess probes (see TheoryOfLazyPackageDoc). Under -all-src
+the ceiling rises to the full level, and those upgrades past the
+documentation levels use precomputed costs and are never gated, so
+packages behind an unaffordable one can still be upgraded all the way up
+to the ceiling. The construction principle therefore holds when every
+package is affordable at its minimum, and the ordering cap keeps it in
+the other cases as far as the packages are shown at all.
+
+Context packages — those explicitly requested via -ctx or -dep — are
+allocated first among non-focus packages, at the best level the budget
+affords: the flag decides inclusion and gives the package precedence,
+never an over-budget detail. Without the precedence, a large context
+package could not afford its documentation at the minimum allocation and
+would be out-prioritized by its smaller dependencies during water-fill.
+The ordering cap keeps the requested package at least as visible as
+every package behind it as long as it is shown at all. A context package
+never reaches the code level by its request alone; implementation source
+is fetched with go-src blocks like any other package.
 
 Focus packages are pinned at full documentation: their initial context is
 the declaration surface — go doc -all -cmd -u output plus the package's
@@ -207,37 +240,39 @@ go-src fetching is unnecessary for focus declarations. Pinning bounds
 the initial context of large projects without sacrificing detail: the
 model pulls exactly the declarations it needs. The water-fill never
 upgrades pinned focus packages (upgrading would reintroduce the
-full-source initial context), focus never counts against the context
-budget, and the budget derives from the focus tokens at the pinned
-level, so the same focus packages always produce the same budget. Focus
-files reach the context at full content only when explicitly requested
-via -file (DoNotSimplify); non-Go focus files — embed and markdown
-files — are listed by name in the focus documentation block's
-file-names section and fetched on demand with ingest blocks (see
-TheoryOfNonGoFiles in module_root.go). The focus documentation block
-carries the writable-dir read-only annotation in its begin marker,
-because focus Go files are no longer emitted individually. The
-construction principle therefore holds among non-focus packages; the
-pinned focus level is independent of it by design.
+full-source initial context), the focus block is not part of the context
+share, and the share derives from the focus tokens at the pinned level,
+so the same focus packages always produce the same share. Focus files
+reach the context at full content only when explicitly requested via
+-file (DoNotSimplify); non-Go focus files — embed and markdown files —
+are listed by name in the focus documentation block's file-names section
+and fetched on demand with ingest blocks (see TheoryOfNonGoFiles in
+module_root.go). The focus documentation block carries the writable-dir
+read-only annotation in its begin marker, because focus Go files are no
+longer emitted individually.
 
 Focus overflow downgrade: when the pinned focus tokens exceed the
-generator token budget — the user-prompt budget Parts derives from the
-model's context window and passes to SimplifyFiles — the focus block
-alone overflows the model's window and no context trimming can save the
-request. allocateVisibility downgrades focus packages to the short-doc
-level and re-derives the context budget from the downgraded tokens: the
-focus block becomes the package overview and top-level symbol index
-(unexported symbols included, matching the focus -u convention) plus the
+generator token budget, the focus block alone overflows the model's
+window. The context share falls to zero first, so no context block is
+added on top of an already oversized focus block, and allocateVisibility
+then downgrades focus packages to the short-doc level: the focus block
+becomes the package overview and top-level symbol index (unexported
+symbols included, matching the focus -u convention) plus the
 test-function and file names, so every symbol and file name stays
-discoverable for go-src and ingest fetching at a fraction of the full-doc
-cost. The downgrade is a single step — full documentation down to short
-doc — applies only when the budget is positive, and if the short-doc
-surface still exceeds it the request proceeds oversized rather than
-dropping focus packages entirely; files explicitly requested via -file
-keep their full content regardless. Under -all-src the downgrade is
-disabled: the user explicitly opted into the full-source focus context,
-so the pin is never replaced by a documentation block and the oversized
-focus surface proceeds as is.
+discoverable for go-src and ingest fetching at a fraction of the
+full-doc cost. The non-focus ceiling falls to short doc with the pin, so
+no context package is more detailed than the focus block; the
+re-derived context share then funds context and same-module packages at
+short doc only. The downgrade is a single step — full documentation down
+to short doc — applies only when the budget is positive, and if the
+short-doc surface still exceeds it the request proceeds oversized rather
+than dropping focus packages entirely; files explicitly requested via
+-file keep their full content regardless. Under -all-src the downgrade
+is disabled: the user explicitly opted into the full-source focus
+context, so the pin is never replaced by a documentation block and the
+oversized focus surface proceeds as is; the context share is still
+capped by the generator budget, so the least important content is
+trimmed first.
 `
 
 const TheoryOfWaterFillCeiling = `
@@ -248,6 +283,12 @@ the budget would afford it. The default therefore spends no initial
 context tokens on Go source: the model reads a declaration's
 implementation with a go-src block and any other file with an ingest
 block, exactly when the task needs it.
+
+The ceiling also never exceeds the focus visibility. When the focus pin
+is downgraded to short doc because the focus block alone exceeds the
+generator budget, the ceiling falls to short doc with it, so no context
+or same-module package is more detailed than the focus block: the focus
+block is the more important content. See TheoryOfVisibilityAllocation.
 
 No flag raises the ceiling. A package named via -ctx or -dep is included
 in the allocation and follows the same default rules: the flag decides
@@ -1110,11 +1151,11 @@ func allocateVisibility(
 	// water-fill never upgrades pinned focus packages — upgrading would
 	// reintroduce the full-source initial context this scheme exists to
 	// avoid. The documentation cost is computed here because the context
-	// budget derives from it (a no-op when prefetchPackageDocs already
+	// share derives from it (a no-op when prefetchPackageDocs already
 	// computed it). Under -all-src (MinVisibility raised to VisibilityAll
-	// by SimplifyFiles), focus packages are instead pinned at full source
+	// by SimplifyFiles) focus packages are instead pinned at full source
 	// including tests; the full-level costs are computed here because the
-	// budget derives from them. When the pinned tokens exceed the
+	// share derives from them. When the pinned tokens exceed the
 	// generator budget, the documentation pin is downgraded to short doc
 	// below; the -all-src pin is never downgraded.
 	// See TheoryOfVisibilityAllocation.
@@ -1134,6 +1175,10 @@ func allocateVisibility(
 		computeDoc(lp)
 		lp.Visibility = VisibilityDoc
 	}
+	focusVisibility := VisibilityDoc
+	if allSrcPin {
+		focusVisibility = VisibilityAll
+	}
 
 	// The water-fill ceiling is the documentation level: the initial
 	// context carries package documentation, and no package is upgraded
@@ -1150,15 +1195,15 @@ func allocateVisibility(
 		ceiling = VisibilityAll
 	}
 
-	// The context token budget is dynamic: it is derived from the total
+	// The context token share is dynamic: it is derived from the total
 	// token count of the focus packages at their pinned level —
 	// documentation by default, full source under -all-src — as
 	// focusTokens / 4, rounded to the nearest multiple of
-	// contextTokenBudgetUnit, floored at one unit, so large focus surfaces
-	// allocate proportionally larger budgets for context packages. The
-	// computation is deterministic — identical focus packages produce an
-	// identical budget — preserving the LLM prefix cache. See
-	// TheoryOfVisibilityAllocation.
+	// contextTokenBudgetUnit, floored at one unit, so large focus
+	// surfaces allocate proportionally larger shares for context
+	// packages. The computation is deterministic — identical focus
+	// packages produce an identical share — preserving the LLM prefix
+	// cache. See TheoryOfVisibilityAllocation.
 	focusTokens := 0
 	for _, lp := range logicalPkgs {
 		if lp.Category == CategoryFocus {
@@ -1169,12 +1214,12 @@ func allocateVisibility(
 	// Focus overflow downgrade: when the pinned focus tokens exceed the
 	// generator token budget (the user-prompt budget Parts derives from
 	// the model's context window and passes to SimplifyFiles), the focus
-	// block alone overflows the model's window and no context trimming
-	// can save the request. Focus packages are downgraded to the
-	// short-doc level — the package overview and top-level symbol index
-	// plus the test-function and file names — and the context budget is
-	// re-derived from the downgraded tokens, so the context allocation
-	// below runs against the smaller budget. The downgrade is a single
+	// block alone overflows the model's window. The context share falls
+	// to zero below, so no context block is added on top of the oversized
+	// focus block first, and the focus packages are then downgraded to
+	// the short-doc level — the package overview and top-level symbol
+	// index plus the test-function and file names — and the context share
+	// is re-derived from the downgraded tokens. The downgrade is a single
 	// step and applies only when maxTokens > 0; a maxTokens of 0 disables
 	// the check. Under -all-src the downgrade is disabled: the user
 	// explicitly opted into the full-source focus context, so the pin is
@@ -1194,6 +1239,7 @@ func allocateVisibility(
 				focusTokens += lp.TokensByLevel[lp.Visibility]
 			}
 		}
+		focusVisibility = VisibilityShortDoc
 		if debug {
 			logger.Info("focus visibility downgraded to short doc",
 				"max tokens", maxTokens,
@@ -1201,10 +1247,41 @@ func allocateVisibility(
 			)
 		}
 	}
-	remaining := calculateMaxContextTokens(focusTokens)
 
-	// Start all non-focus packages at invisible, then upgrade to min
-	// visibility in priority order as budget allows.
+	// The non-focus ceiling never exceeds the focus visibility: more
+	// important content has at least as much visibility. When the focus
+	// pin is downgraded to short doc, the ceiling falls with it, so no
+	// context or same-module package keeps full documentation while the
+	// focus block is short doc. See TheoryOfVisibilityAllocation.
+	if focusVisibility < ceiling {
+		ceiling = focusVisibility
+	}
+
+	// The generator budget bounds the focus block and the context blocks
+	// together: the context share is the derived dynamic budget capped by
+	// what the generator budget leaves after the focus block, down to
+	// zero. The least important content therefore gives up its visibility
+	// first, and the focus block is lowered only when it alone exceeds
+	// the budget. See TheoryOfVisibilityAllocation.
+	remaining := calculateMaxContextTokens(focusTokens)
+	if maxTokens > 0 {
+		if left := maxTokens - focusTokens; left < remaining {
+			if left < 0 {
+				left = 0
+			}
+			remaining = left
+		}
+	}
+	if debug {
+		logger.Info("context share after focus allocation",
+			"focus tokens", focusTokens,
+			"remaining", remaining,
+			"ceiling", ceiling,
+		)
+	}
+
+	// Start all non-focus packages at invisible, then upgrade to the
+	// requested visibility in priority order as the budget allows.
 	for _, lp := range logicalPkgs {
 		if lp.Category == CategoryFocus {
 			continue
@@ -1213,46 +1290,79 @@ func allocateVisibility(
 	}
 
 	// Allocate minimum visibility in priority order. Every collected
-	// category has the documentation level as its minimum, so this step
-	// decides which packages enter the context at all. Context packages
-	// (explicitly requested via -ctx or -dep) are guaranteed their
-	// minimum visibility: their documentation cost is deducted from the
-	// budget unconditionally, even when it exceeds the remaining budget.
-	// The flag decides inclusion, and an explicitly requested package
-	// must never be dropped in favor of its own dependencies, which are
-	// discovered automatically. A package that cannot afford its minimum
-	// visibility is left invisible but does NOT block lower-priority
-	// packages: the budget is shared, and every package gets an
-	// independent chance to reach its minimum. This avoids the cascade
-	// where a single unaffordable package (e.g., a direct dependency
-	// whose go doc output exceeds the budget, or whose go doc fails)
-	// blanks out the entire context. Priority still governs the order of
-	// allocation: higher-priority packages are processed first, so the
-	// most important packages are allocated before the budget is
-	// exhausted. See TheoryOfVisibilityAllocation.
+	// category requests the documentation level, capped by the ceiling
+	// and by the ordering cap, so this step decides which packages enter
+	// the context at all. Packages are processed highest priority first:
+	// the explicitly requested context packages come before the
+	// automatically discovered same-module and direct-import packages, so
+	// the least important content is lowered first when the share is
+	// tight. A package whose requested level is unaffordable is lowered
+	// one level at a time — full documentation to short doc, then to
+	// invisible — so a context package is shown as fully as the budget
+	// allows and dropped only when no level fits. A package the budget
+	// cannot afford at any level does NOT block lower-priority packages:
+	// the budget is shared, and every package gets an independent chance
+	// to enter. This avoids the cascade where a single unaffordable
+	// package (for example a direct dependency whose go doc output
+	// exceeds the share, or whose go doc fails) blanks out the entire
+	// context. See TheoryOfVisibilityAllocation.
+	orderingCap := ceiling
 	for _, lp := range logicalPkgs {
 		if lp.Category == CategoryFocus {
 			continue
 		}
-		minVis := lp.MinVisibility
-		if minVis == VisibilityInvisible {
+		// The generator budget is already exhausted: no level with a
+		// positive cost fits, and probing documentation would only spawn
+		// go doc subprocesses whose output could not be shown.
+		if remaining <= 0 {
 			continue
 		}
-		// Placing the package at full documentation requires its go doc
-		// cost; compute it lazily, once per package. Packages that never
-		// reach a documentation level skip the expensive go doc
-		// subprocess entirely. No category has the code or full level as
-		// its minimum, so this step never needs file costs. No category
-		// has short doc as its minimum either, so the
-		// minimum-visibility allocation never computes short doc.
-		// See TheoryOfLazyPackageDoc and TheoryOfLazyVisibilityCosts.
-		if minVis == VisibilityDoc {
-			computeDoc(lp)
+		requested := lp.MinVisibility
+		if requested == VisibilityInvisible {
+			continue
 		}
-		cost := lp.BudgetTokensByLevel[minVis]
-		if lp.Category == CategoryContext || cost <= remaining {
-			lp.Visibility = minVis
-			remaining -= cost
+		if requested > ceiling {
+			requested = ceiling
+		}
+		if requested > orderingCap {
+			requested = orderingCap
+		}
+		if requested == VisibilityInvisible {
+			continue
+		}
+		// A documentation level requires the package's go doc cost;
+		// compute it lazily, once per package. Entering the code or full
+		// level requires the file costs. See TheoryOfLazyPackageDoc and
+		// TheoryOfLazyVisibilityCosts.
+		granted := VisibilityInvisible
+		for level := requested; level > VisibilityInvisible; level-- {
+			switch level {
+			case VisibilityShortDoc:
+				computeShortDoc(lp)
+			case VisibilityDoc:
+				computeDoc(lp)
+			case VisibilityCode, VisibilityAll:
+				if err := ensureCosts(lp); err != nil {
+					return err
+				}
+			}
+			if cost := lp.BudgetTokensByLevel[level]; cost <= remaining {
+				granted = level
+				break
+			}
+		}
+		if granted == VisibilityInvisible {
+			continue
+		}
+		lp.Visibility = granted
+		remaining -= lp.BudgetTokensByLevel[granted]
+		if granted < requested {
+			// A package shown below its requested level caps every
+			// lower-priority package, so the more important content
+			// keeps at least as much visibility. A package dropped to
+			// invisible imposes no cap: a package the budget cannot
+			// afford at all must not blank out the rest of the context.
+			orderingCap = granted
 		}
 	}
 
@@ -1265,10 +1375,11 @@ func allocateVisibility(
 	// Water-fill: upgrade from high to low priority, one level at a time.
 	// Each iteration finds the leftmost (highest priority) affordable
 	// package and upgrades it by one level, never past the ceiling — the
-	// documentation level by default, the full level only under -all-src
-	// (see TheoryOfWaterFillCeiling). The focus pin is skipped here, so
-	// no package starts above the ceiling by default. The predecessor
-	// gate applies only to the documentation transitions
+	// documentation level by default, the focus visibility under a
+	// downgraded pin, and the full level only under -all-src (see
+	// TheoryOfWaterFillCeiling). The focus pin is skipped here, so no
+	// package starts above the ceiling by default. The predecessor gate
+	// applies only to the documentation transitions
 	// (invisible→short doc and short doc→full doc), which require
 	// expensive go doc probes. Under -all-src the upgrades past the
 	// documentation levels use precomputed costs and may proceed even
@@ -1276,12 +1387,11 @@ func allocateVisibility(
 	// package cannot waste the remaining budget. See
 	// TheoryOfVisibilityAllocation.
 	for {
-		// When the minimum-visibility allocation exhausted the budget
-		// (remaining <= 0, which happens when a guaranteed context
-		// package costs more than the budget), no upgrade is affordable:
-		// probing packages would only spawn go doc subprocesses whose
-		// results could not be shown. See TheoryOfVisibilityAllocation
-		// and TheoryOfLazyPackageDoc.
+		// When the context share is exhausted (remaining <= 0, which
+		// happens when the focus block consumes the generator budget),
+		// no upgrade is affordable: probing packages would only spawn go
+		// doc subprocesses whose results could not be shown. See
+		// TheoryOfVisibilityAllocation and TheoryOfLazyPackageDoc.
 		if remaining <= 0 {
 			break
 		}

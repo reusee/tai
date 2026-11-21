@@ -458,15 +458,23 @@ func TestAllocateVisibilityUnaffordablePackageDoesNotBlockOthers(t *testing.T) {
 }
 
 func TestAllocateVisibilityGuaranteesContextPackages(t *testing.T) {
-	// A package explicitly requested via -ctx (CategoryContext) must be
-	// included at its minimum visibility — the default documentation
-	// level — even when its documentation cost exceeds the context token
-	// budget. The flag decides inclusion, never visibility: without the
-	// guarantee, the requested package could not afford its
-	// documentation at minimum allocation, so it stayed invisible while
-	// its smaller dependencies — discovered automatically — were
-	// water-filled to the documentation level. See
+	// A package explicitly requested via -ctx (CategoryContext) is
+	// allocated before the automatically discovered packages, at the best
+	// level the context share affords: full documentation when it fits,
+	// short doc when only that fits, and invisible only when no level
+	// fits. The flag decides inclusion and precedence, never an
+	// over-budget detail. A package shown below its requested minimum
+	// caps every lower-priority package, so the requested package is
+	// never less visible than its own dependencies. See
 	// TheoryOfVisibilityAllocation.
+	computeShortDoc := func(lp *LogicalPackage) {
+		if lp.shortDocComputed {
+			return
+		}
+		lp.ShortDocContent = "short doc"
+		lp.ShortDocTokens = lp.BudgetTokensByLevel[VisibilityShortDoc]
+		lp.shortDocComputed = true
+	}
 	pkgs := []*LogicalPackage{
 		{
 			PkgPath:             "focus",
@@ -478,8 +486,8 @@ func TestAllocateVisibilityGuaranteesContextPackages(t *testing.T) {
 		},
 		{
 			// The explicitly requested context package: its documentation
-			// costs 60000 tokens, exceeding the 32K context budget. It
-			// must still be allocated, at the documentation level.
+			// costs 60000 tokens, exceeding the 32K context share, so it
+			// enters at short doc instead of full doc.
 			PkgPath:             "requested",
 			Category:            CategoryContext,
 			MinVisibility:       VisibilityDoc,
@@ -489,7 +497,9 @@ func TestAllocateVisibilityGuaranteesContextPackages(t *testing.T) {
 		},
 		{
 			// A dependency of the requested package, discovered
-			// automatically: small, so it would fit the budget easily.
+			// automatically: its own full doc fits the share, but the
+			// ordering cap holds it at the level the requested package
+			// reached, so it never overtakes the requested package.
 			PkgPath:             "dependency",
 			Category:            CategorySameModule,
 			MinVisibility:       VisibilityDoc,
@@ -499,21 +509,19 @@ func TestAllocateVisibilityGuaranteesContextPackages(t *testing.T) {
 		},
 	}
 
-	if err := allocateVisibility(pkgs, logs.Logger{}, false, 0, nil, nil, nil); err != nil {
+	if err := allocateVisibility(pkgs, logs.Logger{}, false, 0, computeShortDoc, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 
 	if pkgs[0].Visibility != VisibilityDoc {
 		t.Fatalf("focus should be pinned at full doc, got %d", pkgs[0].Visibility)
 	}
-	if pkgs[1].Visibility != VisibilityDoc {
-		t.Fatalf("context package must be guaranteed at the documentation level, got %d", pkgs[1].Visibility)
+	if pkgs[1].Visibility != VisibilityShortDoc {
+		t.Fatalf("context package should enter at short doc when full doc exceeds the share, got %d", pkgs[1].Visibility)
 	}
-	// The dependency must not be included: the context package exhausted
-	// the budget. Before the guarantee, the dependency would have been
-	// allocated instead, inverting the user's intent.
-	if pkgs[2].Visibility != VisibilityInvisible {
-		t.Fatalf("dependency should be invisible when the context package exhausts the budget, got %d", pkgs[2].Visibility)
+	if pkgs[2].Visibility > pkgs[1].Visibility {
+		t.Fatalf("dependency (%d) must not be more visible than the requested context package (%d)",
+			pkgs[2].Visibility, pkgs[1].Visibility)
 	}
 }
 
@@ -804,6 +812,73 @@ func TestAllocateVisibilityWaterFillCeiling(t *testing.T) {
 	}
 }
 
+func TestAllocateVisibilityContextNotMoreVisibleThanFocus(t *testing.T) {
+	// When the focus pin is downgraded to short doc because the focus
+	// block alone exceeds the generator budget, the non-focus ceiling
+	// falls with it: no context or same-module package keeps full
+	// documentation, because the focus block is the more important
+	// content. The reported inconsistency — a context package at full
+	// documentation while the focus block is short doc — is what this
+	// test guards against. See TheoryOfVisibilityAllocation.
+	computeShortDoc := func(lp *LogicalPackage) {
+		if lp.shortDocComputed {
+			return
+		}
+		lp.ShortDocContent = "short doc"
+		lp.ShortDocTokens = 1 << 10
+		lp.BudgetTokensByLevel[VisibilityShortDoc] = 1 << 10
+		lp.TokensByLevel[VisibilityShortDoc] = 1 << 10
+		lp.shortDocComputed = true
+	}
+	computeDoc := func(lp *LogicalPackage) {
+		if lp.docComputed {
+			return
+		}
+		tokens := 200 << 10
+		if lp.Category != CategoryFocus {
+			tokens = 1000
+		}
+		lp.DocContent = "doc"
+		lp.DocTokens = tokens
+		lp.BudgetTokensByLevel[VisibilityDoc] = tokens
+		lp.TokensByLevel[VisibilityDoc] = tokens
+		lp.docComputed = true
+	}
+	pkgs := []*LogicalPackage{
+		{
+			PkgPath:             "focus",
+			Category:            CategoryFocus,
+			MinVisibility:       VisibilityDoc,
+			Visibility:          VisibilityInvisible,
+			BudgetTokensByLevel: [5]int{0, 1 << 30, 1 << 30, 1 << 30, 1 << 30},
+		},
+		{
+			// Full documentation fits the re-derived 32K share on its own;
+			// without the ceiling it would stay at full doc while the
+			// focus block is short doc.
+			PkgPath:             "context",
+			Category:            CategoryContext,
+			MinVisibility:       VisibilityDoc,
+			Visibility:          VisibilityInvisible,
+			BudgetTokensByLevel: [5]int{0, 1 << 30, 1 << 30, 1 << 30, 1 << 30},
+		},
+	}
+
+	// The pinned focus documentation (200<<10) exceeds the generator
+	// budget (150<<10): the focus pin is downgraded to short doc.
+	if err := allocateVisibility(pkgs, logs.Logger{}, false, 150<<10, computeShortDoc, computeDoc, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	if pkgs[0].Visibility != VisibilityShortDoc {
+		t.Fatalf("focus should be downgraded to short doc, got %d", pkgs[0].Visibility)
+	}
+	if pkgs[1].Visibility > pkgs[0].Visibility {
+		t.Fatalf("context package (%d) must not be more visible than the focus block (%d)",
+			pkgs[1].Visibility, pkgs[0].Visibility)
+	}
+}
+
 func TestAllocateVisibilityShortDoc(t *testing.T) {
 	// Short doc is the water-fill's first documentation step from
 	// invisible: a package whose full doc exceeds the budget but whose
@@ -860,6 +935,50 @@ func TestAllocateVisibilityShortDoc(t *testing.T) {
 	}
 	if len(shortDocCalls) != 1 || shortDocCalls[0] != "directimport" {
 		t.Fatalf("expected short doc computed exactly once for directimport, got %v", shortDocCalls)
+	}
+}
+
+func TestAllocateVisibilityContextShareCappedByGeneratorBudget(t *testing.T) {
+	// The generator budget bounds the focus block and the context blocks
+	// together. When the focus block leaves only a small remainder, the
+	// context share shrinks below the 32K floor derived from the focus
+	// tokens, so the least important content gives up its visibility
+	// first and the context package is trimmed instead of pushing the
+	// request over the model's window. See TheoryOfVisibilityAllocation.
+	pkgs := []*LogicalPackage{
+		{
+			PkgPath:             "focus",
+			Category:            CategoryFocus,
+			MinVisibility:       VisibilityDoc,
+			Visibility:          VisibilityInvisible,
+			BudgetTokensByLevel: [5]int{0, 1 << 30, 200 << 10, 1 << 30, 1 << 30},
+			TokensByLevel:       [5]int{0, 0, 200 << 10, 0, 0},
+		},
+		{
+			// Its 30000-token documentation fits the 65536-token share
+			// derived from the focus tokens but not the 10240-token
+			// remainder the generator budget leaves after the focus block.
+			PkgPath:             "samemodule",
+			Category:            CategorySameModule,
+			MinVisibility:       VisibilityDoc,
+			Visibility:          VisibilityInvisible,
+			BudgetTokensByLevel: [5]int{0, 100, 30000, 30000, 30000},
+			TokensByLevel:       [5]int{0, 100, 30000, 30000, 30000},
+		},
+	}
+
+	// The focus documentation is 200<<10 tokens, so the derived context
+	// share is 65536; the generator budget (210<<10) leaves only 10240
+	// after the focus block, which is the effective share.
+	if err := allocateVisibility(pkgs, logs.Logger{}, false, 210<<10, nil, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	if pkgs[0].Visibility != VisibilityDoc {
+		t.Fatalf("focus should stay pinned at full doc, got %d", pkgs[0].Visibility)
+	}
+	if pkgs[1].Visibility > VisibilityShortDoc {
+		t.Fatalf("samemodule must be trimmed by the generator remainder, got %d", pkgs[1].Visibility)
 	}
 }
 
@@ -1097,11 +1216,28 @@ func TestAllocateVisibilityAllSrcSkipsFocusDowngrade(t *testing.T) {
 	// Under -all-src the focus pin is VisibilityAll and the overflow
 	// downgrade is disabled: even when the full-source focus tokens
 	// exceed the generator budget, focus stays at full source and no
-	// short doc is computed. The context budget still derives from the
-	// full-source tokens, so a same-module package affordable only under
-	// that budget (65536 from 200<<10) is allocated at full doc; under a
-	// downgraded short-doc-derived floor (32768) it would not fit. See
-	// TheoryOfVisibilityAllocation.
+	// short doc is computed. The context share still derives from the
+	// full-source tokens, capped by what the generator budget leaves
+	// after the focus block. See TheoryOfVisibilityAllocation.
+	newPkgs := func() []*LogicalPackage {
+		return []*LogicalPackage{
+			{
+				PkgPath:             "focus",
+				Category:            CategoryFocus,
+				MinVisibility:       VisibilityAll,
+				Visibility:          VisibilityInvisible,
+				TokensByLevel:       [5]int{0, 0, 0, 0, 200 << 10},
+				BudgetTokensByLevel: [5]int{0, 1 << 30, 1 << 30, 1 << 30, 200 << 10},
+			},
+			{
+				PkgPath:             "samemodule",
+				Category:            CategorySameModule,
+				MinVisibility:       VisibilityDoc,
+				Visibility:          VisibilityInvisible,
+				BudgetTokensByLevel: [5]int{0, 1 << 30, 40000, 1 << 30, 1 << 30},
+			},
+		}
+	}
 	var shortDocCalls []string
 	computeShortDoc := func(lp *LogicalPackage) {
 		shortDocCalls = append(shortDocCalls, lp.PkgPath)
@@ -1119,38 +1255,36 @@ func TestAllocateVisibilityAllSrcSkipsFocusDowngrade(t *testing.T) {
 		lp.BudgetTokensByLevel[VisibilityDoc] = 40000
 		lp.TokensByLevel[VisibilityDoc] = 40000
 	}
-	pkgs := []*LogicalPackage{
-		{
-			PkgPath:             "focus",
-			Category:            CategoryFocus,
-			MinVisibility:       VisibilityAll,
-			Visibility:          VisibilityInvisible,
-			TokensByLevel:       [5]int{0, 0, 0, 0, 200 << 10},
-			BudgetTokensByLevel: [5]int{0, 1 << 30, 1 << 30, 1 << 30, 200 << 10},
-		},
-		{
-			PkgPath:             "samemodule",
-			Category:            CategorySameModule,
-			MinVisibility:       VisibilityDoc,
-			Visibility:          VisibilityInvisible,
-			BudgetTokensByLevel: [5]int{0, 1 << 30, 40000, 1 << 30, 1 << 30},
-		},
-	}
 
-	// The full-source focus tokens (200<<10) exceed the generator budget
-	// (150<<10): without the all-src skip the pin would be downgraded.
-	if err := allocateVisibility(pkgs, logs.Logger{}, false, 150<<10, computeShortDoc, computeDoc, nil); err != nil {
+	// With room in the generator budget, no downgrade happens and the
+	// context share derives from the 200<<10 full-source tokens (65536),
+	// which affords samemodule's 40000-token documentation.
+	pkgs := newPkgs()
+	if err := allocateVisibility(pkgs, logs.Logger{}, false, 400<<10, computeShortDoc, computeDoc, nil); err != nil {
 		t.Fatal(err)
 	}
-
 	if pkgs[0].Visibility != VisibilityAll {
 		t.Fatalf("focus must stay at full source under -all-src, got %d", pkgs[0].Visibility)
 	}
-	if len(shortDocCalls) != 0 {
-		t.Fatalf("no short doc may be computed when the downgrade is skipped, got %v", shortDocCalls)
-	}
 	if pkgs[1].Visibility != VisibilityDoc {
 		t.Fatalf("samemodule should be at full doc under the full-source-derived budget, got %d", pkgs[1].Visibility)
+	}
+
+	// When the focus block alone exceeds the generator budget, the
+	// downgrade is still skipped, and the context share falls to zero:
+	// the least important content is trimmed before the focus block.
+	pkgs = newPkgs()
+	if err := allocateVisibility(pkgs, logs.Logger{}, false, 150<<10, computeShortDoc, computeDoc, nil); err != nil {
+		t.Fatal(err)
+	}
+	if pkgs[0].Visibility != VisibilityAll {
+		t.Fatalf("focus must stay at full source under -all-src, got %d", pkgs[0].Visibility)
+	}
+	if pkgs[1].Visibility != VisibilityInvisible {
+		t.Fatalf("samemodule should be invisible when the focus block exceeds the generator budget, got %d", pkgs[1].Visibility)
+	}
+	if len(shortDocCalls) != 0 {
+		t.Fatalf("no short doc may be computed when the downgrade is skipped, got %v", shortDocCalls)
 	}
 }
 
@@ -1320,8 +1454,10 @@ func TestSimplifyContextBudget(t *testing.T) {
 	// A small explicitly requested context package enters the context as
 	// its declaration surface, never as simplified source: -ctx decides
 	// inclusion only, and the default visibility is the documentation
-	// level. See TheoryOfVisibilityAllocation and
-	// TheoryOfWaterFillCeiling.
+	// level. The generator budget leaves a full context share after the
+	// focus block; a tiny budget would lower the context package before
+	// the focus block, down to dropping it. See
+	// TheoryOfVisibilityAllocation and TheoryOfWaterFillCeiling.
 	scope := dscope.New(
 		modes.ForTest(t),
 		new(Module),
@@ -1376,7 +1512,7 @@ func Foo() {
 	)
 	provider := scope.Get[PartsProvider]()
 	countTokens := scope.Get[generators.BPETokenCounter]()
-	parts, err := provider.Parts(1, countTokens, nil)
+	parts, err := provider.Parts(1<<20, countTokens, nil)
 	if err != nil {
 		t.Fatalf("Parts returned error: %v", err)
 	}
