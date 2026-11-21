@@ -104,8 +104,8 @@ func (c ContextPatterns) Handle(key string, args []string) (newDef any, remainAr
 
 func (c ContextPatterns) Keys() map[string]string {
 	return map[string]string{
-		"-ctx": "Add a context package pattern for dependency analysis",
-		"-dep": "Alias for -ctx: add a context package pattern",
+		"-ctx": "Add a package to the context; the default visibility rules decide how much of it appears",
+		"-dep": "Alias for -ctx: add a package to the context",
 	}
 }
 

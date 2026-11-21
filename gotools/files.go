@@ -74,8 +74,11 @@ dependencies.
 
 Standard library packages explicitly requested via -pkg or -ctx remain
 available: root and context packages are added to the collected set directly,
-bypassing the import walk, so -pkg fmt includes fmt as a focus package even
-though its transitive standard library dependencies are still excluded.
+bypassing the import walk, so -pkg fmt includes fmt as a focus package and
+-ctx fmt includes it as a context package, even though its transitive
+standard library dependencies are still excluded. The flag decides inclusion
+only: -pkg pins the package at the focus documentation level, while -ctx puts
+it under the same default visibility rules as every other non-focus package.
 `
 
 const TheoryOfDirectDependencyContext = `

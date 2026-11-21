@@ -315,16 +315,18 @@ func TestPartsOrdersFocusPackagesByGitChanges(t *testing.T) {
 }
 
 func TestPartsOrdersContextPackagesByGitChanges(t *testing.T) {
-	// Context files in the root module are ordered by recent git activity
-	// just like focus packages: the change-count key applies to all
-	// root-module files, so volatile context content settles at the end of
-	// the context block instead of sitting in the stable prefix region.
+	// Context packages in the root module are ordered by recent git
+	// activity just like focus packages: the change-count key applies to
+	// all root-module files, so volatile context content settles at the end
+	// of the context block instead of sitting in the stable prefix region.
 	// Alphabetically, example.com/mod/actx precedes example.com/mod/bctx;
 	// the git change counts must override that. The focus package is
-	// pinned at documentation level; its block carries the package's
-	// change count and interleaves with the context files under the same
-	// ordering, so only the context ordering (bctx before actx) and the
-	// block's presence are asserted. See TheoryOfGitChangeOrdering.
+	// pinned at documentation level; a context package enters at the
+	// documentation level too, because -ctx decides inclusion only. Its
+	// block carries the package's change count and interleaves with the
+	// focus block under the same ordering, so only the context ordering
+	// (bctx before actx) and the blocks' presence are asserted. See
+	// TheoryOfGitChangeOrdering.
 	root := t.TempDir()
 	t.Setenv("GOWORK", "")
 	git := initGitRepo(t, root)
@@ -384,18 +386,22 @@ func TestPartsOrdersContextPackagesByGitChanges(t *testing.T) {
 			continue
 		}
 		s := string(text)
-		if strings.Contains(s, "begin of context file "+filepath.Join(root, "actx", "actx.go")) {
+		if strings.Contains(s, "begin of context package example.com/mod/actx") {
 			posActx = i
 		}
-		if strings.Contains(s, "begin of context file "+filepath.Join(root, "bctx", "bctx.go")) {
+		if strings.Contains(s, "begin of context package example.com/mod/bctx") {
 			posBctx = i
 		}
 		if strings.Contains(s, "begin of focus package example.com/mod/focus") {
 			posFocus = i
 		}
+		if strings.Contains(s, "begin of context file "+filepath.Join(root, "actx", "actx.go")) ||
+			strings.Contains(s, "begin of context file "+filepath.Join(root, "bctx", "bctx.go")) {
+			t.Fatalf("context packages must not enter as source:\n%s", s)
+		}
 	}
 	if posActx == -1 || posBctx == -1 || posFocus == -1 {
-		t.Fatalf("context files or focus package documentation not found in parts (posActx=%d posBctx=%d posFocus=%d)", posActx, posBctx, posFocus)
+		t.Fatalf("context package or focus package documentation not found in parts (posActx=%d posBctx=%d posFocus=%d)", posActx, posBctx, posFocus)
 	}
 	if posBctx >= posActx {
 		t.Fatalf("bctx (1 commit) must appear before actx (3 commits), got posBctx=%d posActx=%d", posBctx, posActx)

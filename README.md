@@ -133,7 +133,7 @@ Gemini, OpenAI, DeepSeek, Volcano Engine (Huoshan), Baidu, Tencent, Alibaba Clou
 | `-summary-language` | Set the output language for summary blocks |
 | `-confidential` | Restrict model selection to zero-data-retention models |
 | `-pkg` / `-load` | Add a Go package loading pattern (focus packages) |
-| `-ctx` / `-dep` | Add a context package pattern for dependency analysis |
+| `-ctx` / `-dep` | Add a package to the context; the default visibility rules decide how much of it appears |
 | `-match` | Match files by regex pattern for inclusion |
 | `-tui` | Force the terminal UI (the default when stdout is a terminal; a redirected stdout defaults to CLI) |
 | `-cli` | Use the plain command-line interface, disabling the TUI |
@@ -186,7 +186,7 @@ Every operation of a run — user input, model response, summary, blocks, block 
 1. Go packages are loaded via `go/packages` with lightweight modes (no type checking)
 2. Files are sorted by module → package → distance → path for cache stability
 3. Focus packages are included as `go doc -all -cmd -u` documentation with their test-function names and source file names; implementation source is fetched on demand via go-src blocks. Non-Go focus files (embed, markdown) are listed by name in the package's file list and fetched on demand via `ingest` blocks; markdown files at the module root are listed in a separate part. Files explicitly requested via `-file` are appended at full content last. With `-all-src`, focus packages are included as full source code, including tests, instead of documentation
-4. Context packages are assigned a package-level visibility (invisible, short documentation, or package documentation) to fit a dynamic token budget derived from the focus documentation size: focusTokens / 4, rounded to the nearest 32K multiple, floored at 32K. The documentation level is the default ceiling: the initial context carries no Go source at all. The code level is reached only by a package explicitly requested via `-ctx` or `-dep`, and full content — test files, non-Go files, embed files — only under the explicit `-all-src` opt-in
+4. Context packages are assigned a package-level visibility (invisible, short documentation, or package documentation) to fit a dynamic token budget derived from the focus documentation size: focusTokens / 4, rounded to the nearest 32K multiple, floored at 32K. The documentation level is the default ceiling: the initial context carries no Go source at all. No flag raises a package into source: a package named via `-ctx` or `-dep` is included and then follows the same default rules. Full content — test files, non-Go files, embed files — is reached only under the explicit `-all-src` opt-in
 5. Extra files from `-file` patterns are appended after focus files
 
 ### Generation Loop

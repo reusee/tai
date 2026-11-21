@@ -20,13 +20,18 @@ bound).
 
 Package categorization determines the minimum visibility and priority:
 - Focus packages (from -pkg): VisibilityDoc (go doc -u plus test names), pinned
-- Context packages (from -ctx, -dep): VisibilityCode, always visible
+- Context packages (from -ctx, -dep): VisibilityDoc, always visible
 - Same-module non-focus packages: VisibilityDoc
 - Direct imports of focus packages: VisibilityDoc
 - Other module packages: VisibilityInvisible
 - Standard library: excluded at collection time, so it never forms a logical
   package unless explicitly requested via -pkg or -ctx (in which case it is
   categorized as focus or context). See TheoryOfStdLibExclusion in files.go.
+
+The -ctx and -dep flags decide inclusion only: they add a package to the
+collection and to the visibility allocation, and the package then follows the
+same rules as every other non-focus package. Neither flag raises a package
+above the default documentation level.
 
 Priority ordering: category (higher first), distance (shorter first),
 package path (ascending). The water-filling algorithm upgrades packages
@@ -60,13 +65,14 @@ const (
 )
 
 // categoryMinVisibility returns the minimum visibility for a category.
+// Every collected category enters at the documentation level; only the
+// budget decides whether the package stays visible. A package named via
+// -ctx or -dep is an ordinary context package here: the flag decides
+// inclusion, not visibility.
+// See TheoryOfVisibilityAllocation.
 func categoryMinVisibility(c PackageCategory) VisibilityLevel {
 	switch c {
-	case CategoryFocus:
-		return VisibilityDoc
-	case CategoryContext:
-		return VisibilityCode
-	case CategorySameModule, CategoryDirectImport:
+	case CategoryFocus, CategoryContext, CategorySameModule, CategoryDirectImport:
 		return VisibilityDoc
 	default:
 		return VisibilityInvisible

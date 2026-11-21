@@ -27,10 +27,10 @@ complete surface of the packages it edits, alongside the package's
 test-function names and file names). Level VisibilityCode: full Go code
 without test files (raw file content). Level VisibilityAll: all files
 including tests, non-Go files, and embed files (raw file content).
-The code level is the water-fill's ceiling by default: the full level is
-reached only under the explicit -all-src opt-in, so the initial context
-never carries test files, non-Go files, or embed files unless the user
-asks for them. See TheoryOfWaterFillCeiling in visibility.go.
+The documentation level is the water-fill's ceiling by default: the full
+level is reached only under the explicit -all-src opt-in, so the initial
+context never carries test files, non-Go files, or embed files unless the
+user asks for them. See TheoryOfWaterFillCeiling in visibility.go.
 `
 
 const TheoryOfTokenComposition = `
@@ -159,14 +159,15 @@ func (Module) SimplifyFiles(
 		sortPackagesByPriority(logicalPkgs)
 
 		// 5. Pre-compute per-file token counts at the code and full
-		// visibility levels for the packages whose costs the allocation
-		// requires up front, concurrently: context packages, any package
-		// containing files always emitted at full content (DoNotSimplify
-		// files), and — under -all-src — focus packages themselves, whose
-		// full-level costs the focus pin consumes immediately. Focus
-		// packages pinned at full documentation need no file costs. All
-		// other packages have their costs computed lazily only when the
-		// allocation probes them; packages that receive no visibility
+		// visibility levels, concurrently, for the packages whose costs
+		// the allocation requires up front: any package containing files
+		// always emitted at full content (DoNotSimplify files,
+		// explicitly requested via -file), and — under -all-src — focus
+		// packages themselves, whose full-level costs the focus pin
+		// consumes immediately. A package named via -ctx or -dep needs
+		// its documentation cost alone, so it is never precomputed here.
+		// All other packages have their costs computed lazily only when
+		// the allocation probes them; packages that receive no visibility
 		// never run the tokenizer.
 		// See TheoryOfLazyVisibilityCosts in visibility.go.
 		if err := precomputeTokenCounts(logicalPkgs, bool(allSrc), countTokens); err != nil {

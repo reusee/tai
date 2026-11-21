@@ -324,7 +324,7 @@ func TestAllocateVisibilityUnaffordablePackageDoesNotBlockOthers(t *testing.T) {
 	//
 	// Context packages are excluded from this scenario: they are
 	// explicitly requested via -ctx and are guaranteed their minimum
-	// visibility (code) regardless of the budget. See
+	// visibility, the documentation level, regardless of the budget. See
 	// TestAllocateVisibilityGuaranteesContextPackages.
 	t.Run("allocates lower priority when higher priority unaffordable", func(t *testing.T) {
 		pkgs := []*LogicalPackage{
@@ -374,9 +374,9 @@ func TestAllocateVisibilityUnaffordablePackageDoesNotBlockOthers(t *testing.T) {
 		// The construction principle — higher-priority packages have at
 		// least as much visibility as lower-priority ones — now holds
 		// among non-focus packages. Focus packages are pinned at full
-		// documentation by design and may sit below context packages; the
-		// pinned focus level is independent of the principle. See
-		// TheoryOfVisibilityAllocation.
+		// documentation by design and may sit at the same level as
+		// context packages; the pinned focus level is independent of the
+		// principle. See TheoryOfVisibilityAllocation.
 		pkgs := []*LogicalPackage{
 			{
 				PkgPath:             "focus",
@@ -388,7 +388,7 @@ func TestAllocateVisibilityUnaffordablePackageDoesNotBlockOthers(t *testing.T) {
 			{
 				PkgPath:             "context",
 				Category:            CategoryContext,
-				MinVisibility:       VisibilityCode,
+				MinVisibility:       VisibilityDoc,
 				Visibility:          VisibilityInvisible,
 				BudgetTokensByLevel: [5]int{0, 50, 100, 200, 300},
 			},
@@ -459,13 +459,13 @@ func TestAllocateVisibilityUnaffordablePackageDoesNotBlockOthers(t *testing.T) {
 
 func TestAllocateVisibilityGuaranteesContextPackages(t *testing.T) {
 	// A package explicitly requested via -ctx (CategoryContext) must be
-	// included at its minimum visibility (code, full Go code without test
-	// files) even when its code cost exceeds the context token budget.
-	// Without the guarantee, the context package could not afford its code
-	// cost at minimum allocation, so it stayed invisible or doc-only while
+	// included at its minimum visibility — the default documentation
+	// level — even when its documentation cost exceeds the context token
+	// budget. The flag decides inclusion, never visibility: without the
+	// guarantee, the requested package could not afford its
+	// documentation at minimum allocation, so it stayed invisible while
 	// its smaller dependencies — discovered automatically — were
-	// water-filled to full code: the explicitly requested package was
-	// absent from the context while its dependencies were present. See
+	// water-filled to the documentation level. See
 	// TheoryOfVisibilityAllocation.
 	pkgs := []*LogicalPackage{
 		{
@@ -477,15 +477,15 @@ func TestAllocateVisibilityGuaranteesContextPackages(t *testing.T) {
 			TokensByLevel:       [5]int{0, 0, 0, 0, 100},
 		},
 		{
-			// The explicitly requested context package: its code costs
-			// 60000 tokens, exceeding the 32K context budget. It must
-			// still be allocated.
+			// The explicitly requested context package: its documentation
+			// costs 60000 tokens, exceeding the 32K context budget. It
+			// must still be allocated, at the documentation level.
 			PkgPath:             "requested",
 			Category:            CategoryContext,
-			MinVisibility:       VisibilityCode,
+			MinVisibility:       VisibilityDoc,
 			Visibility:          VisibilityInvisible,
-			BudgetTokensByLevel: [5]int{0, 1000, 2000, 60000, 60000},
-			TokensByLevel:       [5]int{0, 1000, 2000, 60000, 60000},
+			BudgetTokensByLevel: [5]int{0, 1000, 60000, 60000, 60000},
+			TokensByLevel:       [5]int{0, 1000, 60000, 60000, 60000},
 		},
 		{
 			// A dependency of the requested package, discovered
@@ -506,8 +506,8 @@ func TestAllocateVisibilityGuaranteesContextPackages(t *testing.T) {
 	if pkgs[0].Visibility != VisibilityDoc {
 		t.Fatalf("focus should be pinned at full doc, got %d", pkgs[0].Visibility)
 	}
-	if pkgs[1].Visibility != VisibilityCode {
-		t.Fatalf("context package must be guaranteed at code level, got %d", pkgs[1].Visibility)
+	if pkgs[1].Visibility != VisibilityDoc {
+		t.Fatalf("context package must be guaranteed at the documentation level, got %d", pkgs[1].Visibility)
 	}
 	// The dependency must not be included: the context package exhausted
 	// the budget. Before the guarantee, the dependency would have been
@@ -581,8 +581,9 @@ func TestAllocateVisibilityLazyDocComputation(t *testing.T) {
 		// See TheoryOfLazyPackageDoc.
 		//
 		// Context packages are excluded from this scenario: they are
-		// guaranteed their minimum visibility (code) and never sit at
-		// invisible. See TestAllocateVisibilityGuaranteesContextPackages.
+		// guaranteed their minimum visibility, the documentation level,
+		// and never sit at invisible.
+		// See TestAllocateVisibilityGuaranteesContextPackages.
 		var docCalls []string
 		pkgs := []*LogicalPackage{
 			{
@@ -670,12 +671,11 @@ func TestAllocateVisibilityLazyCostComputation(t *testing.T) {
 	// File token costs (rendered content and token counts at the code and
 	// full visibility levels) are computed lazily, driven by the visibility
 	// allocation: only packages the allocation actually probes run the
-	// tokenizer. Context packages are always probed (their minimum
-	// visibility is code); focus packages are pinned at full documentation
-	// and never need file costs. A package that receives no visibility —
-	// here, an other-module package whose doc and code costs exceed the
-	// budget — must never have its costs computed. See
-	// TheoryOfLazyVisibilityCosts.
+	// tokenizer. A context package needs its documentation cost only, and
+	// focus packages are pinned at full documentation and never need file
+	// costs. A package that receives no visibility — here, an other-module
+	// package whose doc and code costs exceed the budget — must never have
+	// its costs computed. See TheoryOfLazyVisibilityCosts.
 	var costCalls []string
 	computed := make(map[string]bool)
 	computeCosts := func(lp *LogicalPackage) error {
@@ -699,10 +699,10 @@ func TestAllocateVisibilityLazyCostComputation(t *testing.T) {
 		{
 			PkgPath:             "context",
 			Category:            CategoryContext,
-			MinVisibility:       VisibilityCode,
+			MinVisibility:       VisibilityDoc,
 			Visibility:          VisibilityInvisible,
-			BudgetTokensByLevel: [5]int{0, 0, 0, 100, 1 << 30},
-			TokensByLevel:       [5]int{0, 0, 0, 100, 1 << 30},
+			BudgetTokensByLevel: [5]int{0, 0, 100, 100, 1 << 30},
+			TokensByLevel:       [5]int{0, 0, 100, 100, 1 << 30},
 		},
 		{
 			PkgPath:             "othermodule",
@@ -718,11 +718,11 @@ func TestAllocateVisibilityLazyCostComputation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if len(costCalls) != 1 || costCalls[0] != "context" {
-		t.Fatalf("expected costs computed for context only (focus is pinned at full documentation), got %v", costCalls)
+	if len(costCalls) != 0 {
+		t.Fatalf("no package needs file costs by default, got %v", costCalls)
 	}
-	if pkgs[1].Visibility != VisibilityCode {
-		t.Fatalf("expected context at code level, got %d", pkgs[1].Visibility)
+	if pkgs[1].Visibility != VisibilityDoc {
+		t.Fatalf("expected context at the documentation level, got %d", pkgs[1].Visibility)
 	}
 	if pkgs[2].Visibility != VisibilityInvisible {
 		t.Fatalf("expected othermodule invisible, got %d", pkgs[2].Visibility)
@@ -733,10 +733,11 @@ func TestAllocateVisibilityWaterFillCeiling(t *testing.T) {
 	// The water-fill ceiling is the documentation level by default: even
 	// when the remaining budget affords the code or full level, a
 	// same-module package is never upgraded into Go source, test files,
-	// non-Go files, or embed files. The code level is reached only by an
-	// explicitly requested context package, and the full level only under
-	// the explicit -all-src opt-in, whose marker in the allocation is the
-	// focus pin at VisibilityAll. See TheoryOfWaterFillCeiling.
+	// non-Go files, or embed files. No flag raises the ceiling: a package
+	// named via -ctx or -dep follows the same default rules. The full
+	// level is reached only under the explicit -all-src opt-in, whose
+	// marker in the allocation is the focus pin at VisibilityAll. See
+	// TheoryOfWaterFillCeiling.
 	newPkgs := func(focusMin VisibilityLevel) []*LogicalPackage {
 		return []*LogicalPackage{
 			{
@@ -758,11 +759,12 @@ func TestAllocateVisibilityWaterFillCeiling(t *testing.T) {
 				TokensByLevel:       [5]int{0, 10, 20, 30, 40},
 			},
 			{
-				// An explicitly requested context package keeps its
-				// guaranteed code-level minimum.
+				// An explicitly requested context package: it is included
+				// like any other non-focus package and never enters at the
+				// code level.
 				PkgPath:             "context",
 				Category:            CategoryContext,
-				MinVisibility:       VisibilityCode,
+				MinVisibility:       VisibilityDoc,
 				Visibility:          VisibilityInvisible,
 				BudgetTokensByLevel: [5]int{0, 10, 20, 30, 40},
 				TokensByLevel:       [5]int{0, 10, 20, 30, 40},
@@ -782,9 +784,10 @@ func TestAllocateVisibilityWaterFillCeiling(t *testing.T) {
 	if pkgs[1].Visibility != VisibilityDoc {
 		t.Fatalf("water-fill must stop at the documentation level by default, got %d", pkgs[1].Visibility)
 	}
-	// The explicit request keeps its code-level guarantee.
-	if pkgs[2].Visibility != VisibilityCode {
-		t.Fatalf("context package must keep the code level by default, got %d", pkgs[2].Visibility)
+	// The explicit request keeps the default documentation level: it
+	// never asks for source.
+	if pkgs[2].Visibility != VisibilityDoc {
+		t.Fatalf("context package must stay at the documentation level by default, got %d", pkgs[2].Visibility)
 	}
 
 	pkgs = newPkgs(VisibilityAll)
@@ -1314,6 +1317,11 @@ func TestLogTokenComposition(t *testing.T) {
 }
 
 func TestSimplifyContextBudget(t *testing.T) {
+	// A small explicitly requested context package enters the context as
+	// its declaration surface, never as simplified source: -ctx decides
+	// inclusion only, and the default visibility is the documentation
+	// level. See TheoryOfVisibilityAllocation and
+	// TheoryOfWaterFillCeiling.
 	scope := dscope.New(
 		modes.ForTest(t),
 		new(Module),
@@ -1362,48 +1370,102 @@ func Foo() {
 		func() LoadDir {
 			return LoadDir(dir)
 		},
-		// An explicit -ctx request is the one way to bring Go source into
-		// the initial context by default, so the test can still assert
-		// that a small context package is never simplified. See
-		// TheoryOfWaterFillCeiling.
 		func() ContextPatterns {
 			return ContextPatterns{"test/dep1"}
 		},
 	)
 	provider := scope.Get[PartsProvider]()
 	countTokens := scope.Get[generators.BPETokenCounter]()
-	// Simplification stops when the context fits within the dynamic
-	// context token budget, so small context files are never
-	// simplified, preserving the LLM prefix cache. With the small
-	// focus package in this test, the budget is the 32K floor.
-	// See TheoryOfVisibilityAllocation.
 	parts, err := provider.Parts(1, countTokens, nil)
 	if err != nil {
 		t.Fatalf("Parts returned error: %v", err)
 	}
 
-	var dep1Content string
+	var dep1Doc string
 	for _, part := range parts {
 		text, ok := part.(generators.Text)
 		if !ok {
 			continue
 		}
 		s := string(text)
-		if strings.Contains(s, "dep1.go") {
-			dep1Content = s
+		if strings.Contains(s, "begin of context file "+filepath.Join(root, "dep1", "dep1.go")) {
+			t.Fatalf("dep1.go must not enter as source: -ctx decides inclusion only:\n%s", s)
+		}
+		if strings.Contains(s, "begin of context package test/dep1") {
+			dep1Doc = s
 		}
 	}
-	if dep1Content == "" {
-		t.Fatal("dep1.go not found in parts")
+	if dep1Doc == "" {
+		t.Fatal("dep1 documentation block not found in parts")
+	}
+	if !strings.Contains(dep1Doc, "func Foo()") {
+		t.Errorf("dep1 documentation block must carry the declaration surface:\n%s", dep1Doc)
+	}
+}
+
+func TestContextPatternKeepsDefaultVisibility(t *testing.T) {
+	// -ctx and -dep decide inclusion only: a package brought in by the
+	// flag follows the default visibility rules and lands at the
+	// documentation level, never at source. Without the flag the package
+	// is not collected at all, because the focus pattern covers only the
+	// focus directory. See TheoryOfVisibilityAllocation.
+	root := t.TempDir()
+	t.Setenv("GOWORK", "")
+
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/ctxvis\n\ngo 1.21\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "focus"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "focus", "focus.go"), []byte("package focus\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "ctxpkg"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "ctxpkg", "ctxpkg.go"), []byte(`package ctxpkg
+
+// Foo is the declaration surface.
+func Foo() int { return 1 }
+`), 0644); err != nil {
+		t.Fatal(err)
 	}
 
-	if strings.Contains(dep1Content, `panic("function body omitted")`) {
-		t.Errorf("dep1.go was simplified despite context being within budget:\n%s", dep1Content)
+	scope := dscope.New(
+		modes.ForTest(t),
+		new(Module),
+	).Fork(
+		func() LoadDir { return LoadDir(root) },
+		func() LoadPatterns { return LoadPatterns{"./focus/..."} },
+		func() ContextPatterns { return ContextPatterns{"./ctxpkg"} },
+	)
+	provider := scope.Get[PartsProvider]()
+	countTokens := scope.Get[generators.BPETokenCounter]()
+	parts, err := provider.Parts(1<<20, countTokens, nil)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(dep1Content, `println("hello from dep1")`) {
-		t.Errorf("dep1.go function body was removed:\n%s", dep1Content)
+	found := false
+	for _, part := range parts {
+		text, ok := part.(generators.Text)
+		if !ok {
+			continue
+		}
+		s := string(text)
+		if strings.Contains(s, "begin of context file "+filepath.Join(root, "ctxpkg", "ctxpkg.go")) {
+			t.Fatalf("a context package must not enter as source:\n%s", s)
+		}
+		if strings.Contains(s, "begin of context package example.com/ctxvis/ctxpkg") {
+			found = true
+			if !strings.Contains(s, "func Foo() int") {
+				t.Fatalf("context package block must carry the declaration surface:\n%s", s)
+			}
+		}
 	}
-
+	if !found {
+		t.Fatal("context package documentation block not found")
+	}
 }
 
 func TestPackagesLoadOmitsNeedTypes(t *testing.T) {
