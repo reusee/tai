@@ -27,6 +27,10 @@ complete surface of the packages it edits, alongside the package's
 test-function names and file names). Level VisibilityCode: full Go code
 without test files (raw file content). Level VisibilityAll: all files
 including tests, non-Go files, and embed files (raw file content).
+The code level is the water-fill's ceiling by default: the full level is
+reached only under the explicit -all-src opt-in, so the initial context
+never carries test files, non-Go files, or embed files unless the user
+asks for them. See TheoryOfWaterFillCeiling in visibility.go.
 `
 
 const TheoryOfTokenComposition = `

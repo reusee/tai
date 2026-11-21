@@ -119,7 +119,7 @@ Gemini, OpenAI, DeepSeek, Volcano Engine (Huoshan), Baidu, Tencent, Alibaba Clou
 | `-decision-model` | Set the model that judges the session's task: whether it is a programming task and whether it is a read-only task |
 | `-file` | Add a file to the context |
 | `-doc` | Add a package whose documentation (go doc -all -cmd) is included in the context |
-| `-all-src` | Include full source of focus packages, including tests, in the context |
+| `-all-src` | Include full source of focus packages, including tests, in the context, and raise the visibility ceiling of context packages to full content |
 | `-shell` | Enable shell block execution |
 | `-stdin` | Add standard input content to the chat messages |
 | `clean` | Add the code cleanup prompt to the chat messages |
@@ -186,7 +186,7 @@ Every operation of a run — user input, model response, summary, blocks, block 
 1. Go packages are loaded via `go/packages` with lightweight modes (no type checking)
 2. Files are sorted by module → package → distance → path for cache stability
 3. Focus packages are included as `go doc -all -cmd -u` documentation with their test-function names and source file names; implementation source is fetched on demand via go-src blocks. Non-Go focus files (embed, markdown) are listed by name in the package's file list and fetched on demand via `ingest` blocks; markdown files at the module root are listed in a separate part. Files explicitly requested via `-file` are appended at full content last. With `-all-src`, focus packages are included as full source code, including tests, instead of documentation
-4. Context packages are assigned a package-level visibility (invisible, short documentation, package documentation, code without tests, or full content) to fit a dynamic token budget derived from the focus documentation size: focusTokens / 4, rounded to the nearest 32K multiple, floored at 32K
+4. Context packages are assigned a package-level visibility (invisible, short documentation, package documentation, or code without tests) to fit a dynamic token budget derived from the focus documentation size: focusTokens / 4, rounded to the nearest 32K multiple, floored at 32K. The code level is the default ceiling: the initial context never carries test files, non-Go files, or embed files, and full content is reached only under the explicit `-all-src` opt-in
 5. Extra files from `-file` patterns are appended after focus files
 
 ### Generation Loop

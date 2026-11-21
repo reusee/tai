@@ -138,7 +138,10 @@ step upgrades the leftmost (highest priority) affordable package by one
 level. A package that cannot afford a level is skipped rather than
 blocking lower-priority packages, so a single unaffordable package
 cannot blank out the entire context: the budget is shared, and every
-package gets an independent chance to reach its minimum visibility.
+package gets an independent chance to reach its minimum visibility. The
+water-fill stops at its ceiling — the code level by default — so the
+initial context never carries test files, non-Go files, or embed files
+unless the user opts in with -all-src. See TheoryOfWaterFillCeiling.
 
 Short doc is the cheapest documentation level: go doc without -all, the
 package overview and the top-level symbol index without per-symbol
@@ -172,14 +175,14 @@ The water-fill upgrade phase retains one predecessor gate: the upgrades
 into the documentation levels — from invisible to short doc and from
 short doc to full doc — are blocked when the immediately preceding
 package is at a lower level, because those transitions require expensive
-go doc subprocess probes (see TheoryOfLazyPackageDoc). Upgrades to code
-and full content use precomputed costs and are never gated, so packages
-behind an unaffordable one can still be upgraded all the way to full
-code. This means the construction principle — higher-priority packages
-have at least as much visibility as lower-priority ones — holds when
-every package is affordable at its minimum, and degrades gracefully
-otherwise: visibility may be non-monotonic only in the presence of
-unaffordable packages.
+go doc subprocess probes (see TheoryOfLazyPackageDoc). Upgrades to the
+code level — and, under -all-src, to the full level — use precomputed
+costs and are never gated, so packages behind an unaffordable one can
+still be upgraded all the way up to the ceiling. This means the
+construction principle — higher-priority packages have at least as much
+visibility as lower-priority ones — holds when every package is
+affordable at its minimum, and degrades gracefully otherwise: visibility
+may be non-monotonic only in the presence of unaffordable packages.
 
 Focus packages are pinned at full documentation: their initial context is
 the declaration surface — go doc -all -cmd -u output plus the package's
@@ -222,6 +225,23 @@ keep their full content regardless. Under -all-src the downgrade is
 disabled: the user explicitly opted into the full-source focus context,
 so the pin is never replaced by a documentation block and the oversized
 focus surface proceeds as is.
+`
+
+const TheoryOfWaterFillCeiling = `
+The water-fill's ceiling is the code level: the initial context carries
+full Go code without test files, and no package is upgraded into the full
+level — test files, non-Go files, and embed files — by default, even when
+the budget would afford it. The default therefore never spends initial
+context tokens on test bodies, static assets, or embed blobs, which a task
+usually never reads; a task that needs such a file fetches it with an
+ingest block.
+
+The full level is reached only under the explicit -all-src opt-in, whose
+marker in the allocation is the focus pin at VisibilityAll: there the
+ceiling becomes VisibilityAll and the water-fill may upgrade non-focus
+packages into test and other files too. A package explicitly requested
+via -ctx keeps its code-level guarantee, so a requested package is fully
+visible without tests either way. See TheoryOfVisibilityAllocation.
 `
 
 const TheoryOfLazyVisibilityCosts = `
@@ -1093,6 +1113,21 @@ func allocateVisibility(
 		lp.Visibility = VisibilityDoc
 	}
 
+	// The water-fill ceiling is the code level: the initial context
+	// carries full Go code without test files, and no package is upgraded
+	// into the full level — test files, non-Go files, and embed files —
+	// by default, even when the budget would afford it. The full level is
+	// reached only under the explicit -all-src opt-in, whose marker in
+	// the allocation is the focus pin at VisibilityAll (allSrcPin above).
+	// A package explicitly requested via -ctx keeps its code-level
+	// guarantee, so it is fully visible without tests either way. A task
+	// that needs a test or an embed file fetches it with an ingest block.
+	// See TheoryOfWaterFillCeiling.
+	ceiling := VisibilityCode
+	if allSrcPin {
+		ceiling = VisibilityAll
+	}
+
 	// The context token budget is dynamic: it is derived from the total
 	// token count of the focus packages at their pinned level —
 	// documentation by default, full source under -all-src — as
@@ -1209,12 +1244,14 @@ func allocateVisibility(
 
 	// Water-fill: upgrade from high to low priority, one level at a time.
 	// Each iteration finds the leftmost (highest priority) affordable
-	// package and upgrades it by one level. The predecessor gate applies
-	// only to the two documentation transitions (invisible→short doc and
-	// short doc→full doc), which require expensive go doc probes;
-	// upgrades to the code and full levels use precomputed costs and may
-	// proceed even when the predecessor is stuck at a lower level, so an
-	// unaffordable package cannot waste the remaining budget.
+	// package and upgrades it by one level, never past the ceiling — the
+	// code level by default, the full level only under -all-src (see
+	// TheoryOfWaterFillCeiling). The predecessor gate applies only to the
+	// two documentation transitions (invisible→short doc and short doc→
+	// full doc), which require expensive go doc probes; upgrades to the
+	// code and full levels use precomputed costs and may proceed even
+	// when the predecessor is stuck at a lower level, so an unaffordable
+	// package cannot waste the remaining budget.
 	// See TheoryOfVisibilityAllocation.
 	for {
 		// When the minimum-visibility allocation exhausted the budget
@@ -1228,7 +1265,7 @@ func allocateVisibility(
 		}
 
 		upgraded := false
-		predecessorLevel := VisibilityAll
+		predecessorLevel := ceiling
 
 		for _, lp := range logicalPkgs {
 			if lp.Category == CategoryFocus {
@@ -1239,7 +1276,7 @@ func allocateVisibility(
 			currentLevel := lp.Visibility
 			nextLevel := currentLevel + 1
 
-			if nextLevel > VisibilityAll {
+			if nextLevel > ceiling {
 				predecessorLevel = currentLevel
 				continue
 			}

@@ -416,7 +416,9 @@ func TestAllocateVisibilityUnaffordablePackageDoesNotBlockOthers(t *testing.T) {
 		// When go doc fails for a package, the doc is treated as empty
 		// (zero cost, nothing emitted) rather than unaffordable, so the
 		// water-fill can still upgrade the package to code using the
-		// precomputed code costs. See TheoryOfLazyPackageDoc.
+		// precomputed code costs. The water-fill stops at the code level,
+		// the default ceiling, so the fallback lands exactly there. See
+		// TheoryOfLazyPackageDoc and TheoryOfWaterFillCeiling.
 		pkgs := []*LogicalPackage{
 			{
 				PkgPath:             "focus",
@@ -446,8 +448,8 @@ func TestAllocateVisibilityUnaffordablePackageDoesNotBlockOthers(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if pkgs[1].Visibility != VisibilityAll {
-			t.Fatalf("dep should reach full visibility via the failed-doc fallback, got %d", pkgs[1].Visibility)
+		if pkgs[1].Visibility != VisibilityCode {
+			t.Fatalf("dep should reach code visibility via the failed-doc fallback, got %d", pkgs[1].Visibility)
 		}
 	})
 }
@@ -611,7 +613,8 @@ func TestAllocateVisibilityLazyDocComputation(t *testing.T) {
 			},
 			{
 				// Same-module package: affordable at full doc, probed
-				// once, and water-filled all the way to full content.
+				// once, and water-filled all the way to the code level,
+				// the default ceiling.
 				PkgPath:             "samemodule",
 				Category:            CategorySameModule,
 				MinVisibility:       VisibilityDoc,
@@ -651,10 +654,11 @@ func TestAllocateVisibilityLazyDocComputation(t *testing.T) {
 				t.Fatalf("doc must not be computed for a package blocked by its predecessor: %v", docCalls)
 			}
 		}
-		// samemodule is probed once and reaches full visibility despite
-		// the unaffordable packages ahead of it.
-		if pkgs[3].Visibility != VisibilityAll {
-			t.Fatalf("expected samemodule at full visibility, got %d", pkgs[3].Visibility)
+		// samemodule is probed once and reaches the code level — the
+		// water-fill ceiling by default — despite the unaffordable
+		// packages ahead of it. See TheoryOfWaterFillCeiling.
+		if pkgs[3].Visibility != VisibilityCode {
+			t.Fatalf("expected samemodule at the code level, got %d", pkgs[3].Visibility)
 		}
 	})
 }
@@ -719,6 +723,63 @@ func TestAllocateVisibilityLazyCostComputation(t *testing.T) {
 	}
 	if pkgs[2].Visibility != VisibilityInvisible {
 		t.Fatalf("expected othermodule invisible, got %d", pkgs[2].Visibility)
+	}
+}
+
+func TestAllocateVisibilityWaterFillCeiling(t *testing.T) {
+	// The water-fill ceiling is the code level by default: even when the
+	// remaining budget affords the full level, a non-focus package is
+	// never upgraded into test files, non-Go files, or embed files. The
+	// full level is reached only under the explicit -all-src opt-in,
+	// whose marker in the allocation is the focus pin at VisibilityAll.
+	// See TheoryOfWaterFillCeiling.
+	newPkgs := func(focusMin VisibilityLevel) []*LogicalPackage {
+		return []*LogicalPackage{
+			{
+				PkgPath:             "focus",
+				Category:            CategoryFocus,
+				MinVisibility:       focusMin,
+				Visibility:          VisibilityInvisible,
+				BudgetTokensByLevel: [5]int{0, 0, 0, 0, 100},
+				TokensByLevel:       [5]int{0, 0, 0, 0, 100},
+			},
+			{
+				// A same-module package whose every level fits the
+				// 32K context budget with room to spare.
+				PkgPath:             "samemodule",
+				Category:            CategorySameModule,
+				MinVisibility:       VisibilityDoc,
+				Visibility:          VisibilityInvisible,
+				BudgetTokensByLevel: [5]int{0, 10, 20, 30, 40},
+				TokensByLevel:       [5]int{0, 10, 20, 30, 40},
+			},
+		}
+	}
+
+	pkgs := newPkgs(VisibilityDoc)
+	if err := allocateVisibility(pkgs, logs.Logger{}, false, 0, nil, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if pkgs[0].Visibility != VisibilityDoc {
+		t.Fatalf("focus should be pinned at full doc, got %d", pkgs[0].Visibility)
+	}
+	// The 40-token full level is affordable, yet the default ceiling
+	// stops the upgrade at the code level.
+	if pkgs[1].Visibility != VisibilityCode {
+		t.Fatalf("water-fill must stop at the code level by default, got %d", pkgs[1].Visibility)
+	}
+
+	pkgs = newPkgs(VisibilityAll)
+	if err := allocateVisibility(pkgs, logs.Logger{}, false, 0, nil, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if pkgs[0].Visibility != VisibilityAll {
+		t.Fatalf("focus must be pinned at full source under -all-src, got %d", pkgs[0].Visibility)
+	}
+	// Under the explicit opt-in the ceiling is raised, so the same
+	// package reaches the full level.
+	if pkgs[1].Visibility != VisibilityAll {
+		t.Fatalf("water-fill may reach the full level under -all-src, got %d", pkgs[1].Visibility)
 	}
 }
 
