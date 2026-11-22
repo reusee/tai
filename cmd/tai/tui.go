@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"iter"
@@ -436,6 +437,41 @@ retention is accepted in exchange for a complete browsable session
 record.
 `
 
+const TheoryOfTUIExit = `
+Exit theory (cmd/tai): a confirmed quit ends the session without losing
+the record of the generation in flight.
+- Every run derives a cancellable context through the
+  withTUICancellation decorator, which records the run's cancel
+  function in one process-wide handle while the run is in flight; one
+  process runs one TUI session, so the handle needs no per-instance
+  slot. The quit key and the Logs toolbar's quit button both run
+  finishQuit, which releases a waiting chat input, cancels the run, and
+  returns.
+- The handle latches a quit that arrives while no run is in flight —
+  during scope resolution or context assembly between loops — and
+  cancels the next registered run at once, so work that began before
+  the quit never runs on after the user left. The registration consumes
+  the latch, so only the run the quit interrupted is stopped. A quit
+  that cancels an in-flight run does not latch.
+- taiui.Session then waits for the generation goroutine before it
+  restores the terminal (taiui.TheoryOfSession), so every write of the
+  run — the session tree, the recorder's session end — lands before
+  the display closes and runWithTUI restores the process streams.
+- The cancelled run ends through the loop's failed-attempt path: the
+  attempt's already-received output becomes a model node and a thoughts
+  node under the attempt, so the record carries the partial output the
+  model had produced (pipeline.TheoryOfRunCancellation). The display
+  treats the cancellation as a normal exit: no error line is written
+  and the process exits with status 0. No recovery request follows the
+  quit either: the phase-error hook that would condense the interrupted
+  output through a handoff model request is skipped while the run's
+  context is cancelled. The record browser shows the partial output
+  when the session is opened later.
+- A quit stops a goal run at once: the goal runner starts no further
+  loop and no review request, because both are model work the user
+  ended (pipeline.TheoryOfGoalCancellation).
+`
+
 const TheoryOfMouseSupport = `
 Mouse support extends the TUI's keyboard model with wheel scrolling,
 click-based tab switching, and drag scrolling; the wheel/press/drag
@@ -737,6 +773,59 @@ func (w logsWriter) Write(p []byte) (int, error) {
 	w.t.notify()
 	return len(p), nil
 }
+
+// runCancellation is the display's handle on the generation run in
+// flight: the withTUICancellation decorator records the run's cancel
+// function, and the confirmed quit invokes it. One process runs one TUI
+// session, so one package-level handle suffices. The handle latches the
+// quit: a quit confirmed before a run registers its cancel function —
+// during scope resolution or context assembly — must not be lost, so the
+// registration cancels that run at once. See TheoryOfTUIExit.
+type runCancellation struct {
+	mu     sync.Mutex
+	cancel context.CancelFunc
+	// cancelled records that the user confirmed the quit; every later
+	// registration cancels its run at once, so work that began before
+	// the quit never runs on after it. See TheoryOfTUIExit.
+	cancelled bool
+}
+
+// set records the cancel function of the run that just started, or clears
+// the handle when the run ends (cancel == nil). A quit latched while no
+// run was in flight — during scope resolution or context assembly —
+// cancels the next registered run at once, so work that began before the
+// quit never runs on after it; the latch is consumed by that registration,
+// so a later run is unaffected. See TheoryOfTUIExit.
+func (c *runCancellation) set(cancel context.CancelFunc) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.cancel = cancel
+	if cancel != nil && c.cancelled {
+		c.cancelled = false
+		cancel()
+	}
+}
+
+// cancelRun cancels the run in flight. When no run is in flight it latches
+// the quit, so the next run — started during scope resolution or context
+// assembly after the quit — is cancelled at once instead of running on.
+// A quit that stops an in-flight run does not latch: the run it stopped is
+// the one the user ended. See TheoryOfTUIExit.
+func (c *runCancellation) cancelRun() {
+	c.mu.Lock()
+	cancel := c.cancel
+	if cancel == nil {
+		c.cancelled = true
+	}
+	c.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+}
+
+// tuiRunCancel is the display's handle on the run in flight. See
+// TheoryOfTUIExit.
+var tuiRunCancel runCancellation
 
 type TUI struct {
 	mu     sync.Mutex
@@ -1323,7 +1412,10 @@ func (t *TUI) HandoffEnd() {
 // run is over, and the current loop's Plan tab is destroyed with it. See
 // TheoryOfTUI and TheoryOfTUIDynamicPlanTab.
 func (t *TUI) genEnd(err error) {
-	if err != nil {
+	// The cancellation is the quit path's normal end, not a failure: the
+	// loop recorded the attempt's partial output and the display stays
+	// quiet. See TheoryOfTUIExit.
+	if err != nil && !errors.Is(err, context.Canceled) {
 		t.write([]byte(err.Error() + "\n"))
 	}
 	t.mu.Lock()
@@ -1629,7 +1721,15 @@ func (t *TUI) Run(gen func()) error {
 	stopTick := make(chan struct{})
 	defer close(stopTick)
 	go t.tickBlockProcessing(stopTick)
-	return sess.Run()
+	err := sess.Run()
+	// A run that ended because the user quit is a normal exit: the quit
+	// path cancelled the generation, the loop recorded the attempt's
+	// already-received output, and the session closed. See
+	// TheoryOfTUIExit.
+	if errors.Is(err, context.Canceled) {
+		return nil
+	}
+	return err
 }
 
 func (t *TUI) handleMouseKey(key string) bool {
@@ -1973,6 +2073,73 @@ func withTUIOutputObserver(run pipeline.Run, tui *TUI) pipeline.Run {
 	}
 }
 
+// withTUICancellation makes every run cancellable from the display: the
+// run derives a cancellable context whose cancel function the quit path
+// invokes, so the session can end without losing the record of what the
+// model already produced. While the context is cancelled the recovery
+// steps that would extend the session are suppressed — the handoff
+// request, the retry loop, and the phase-error recovery hook — and the
+// terminal error is normalized to the cancellation, so a quit ends the
+// session as a clean exit instead of a failure. The partially produced
+// output is recorded by the loop's ordinary failed-attempt path; a goal
+// run stops at once (see pipeline.TheoryOfGoalCancellation). See
+// TheoryOfTUIExit and pipeline.TheoryOfRunCancellation.
+func withTUICancellation(run pipeline.Run) pipeline.Run {
+	return func(ctx context.Context, opts pipeline.RunOptions, result *pipeline.Result) iter.Seq2[*tree.Tree, error] {
+		runCtx, cancel := context.WithCancel(ctx)
+		tuiRunCancel.set(cancel)
+		if handoff := opts.Handoff; handoff != nil {
+			opts.Handoff = func(incompleteText string) (*pipeline.Handoff, error) {
+				if err := runCtx.Err(); err != nil {
+					return nil, err
+				}
+				return handoff(incompleteText)
+			}
+		}
+		if truncated := opts.OnAttemptTruncated; truncated != nil {
+			opts.OnAttemptTruncated = func(truncatedState, retryBaseState generators.State, summary string) error {
+				if err := runCtx.Err(); err != nil {
+					return err
+				}
+				return truncated(truncatedState, retryBaseState, summary)
+			}
+		} else {
+			opts.OnAttemptTruncated = func(generators.State, generators.State, string) error {
+				return runCtx.Err()
+			}
+		}
+		// The phase-error hook condenses the interrupted output through
+		// a handoff model request. A cancelled run has no successor, and
+		// the user ended the session, so the hook is skipped instead of
+		// asking for a recovery request. See TheoryOfTUIExit and
+		// pipeline.TheoryOfRunCancellation.
+		if onPhaseError := opts.OnPhaseError; onPhaseError != nil {
+			opts.OnPhaseError = func(state generators.State, err error) generators.State {
+				if ctxErr := runCtx.Err(); ctxErr != nil {
+					return state
+				}
+				return onPhaseError(state, err)
+			}
+		}
+		inner := run(runCtx, opts, result)
+		return func(yield func(*tree.Tree, error) bool) {
+			// The run's context is released when its sequence ends, so a
+			// completed run leaves no registration behind. See
+			// TheoryOfTUIExit.
+			defer cancel()
+			defer tuiRunCancel.set(nil)
+			inner(func(tr *tree.Tree, err error) bool {
+				if err != nil {
+					if ctxErr := runCtx.Err(); ctxErr != nil {
+						err = ctxErr
+					}
+				}
+				return yield(tr, err)
+			})
+		}
+	}
+}
+
 // tuiShowThoughts returns whether the TUI's Output tab displays raw reasoning
 // thoughts. Only the -thoughts flag governs it: -summarize-thoughts adds
 // periodic summaries in the Tree tab but never suppresses the raw stream,
@@ -2029,6 +2196,10 @@ func forkTUIDisplay(scope dscope.Scope, tui *TUI) dscope.Scope {
 	// loop and one run owns one tree. A static Run wrapper would shadow
 	// the provider and freeze the continuation at zero. See
 	// TheoryOfTUIDisplayFork and pipeline.TheoryOfRunDecorators.
+	// The cancellation decorator is applied last, so it is outermost:
+	// every run derives its cancellable context before any other
+	// decorator observes it, and the quit path stops the whole chain.
+	// See TheoryOfTUIExit.
 	return scope.Fork(func() pipeline.RunDecorators {
 		return pipeline.RunDecorators{
 			func(run pipeline.Run) pipeline.Run {
@@ -2036,6 +2207,9 @@ func forkTUIDisplay(scope dscope.Scope, tui *TUI) dscope.Scope {
 			},
 			func(run pipeline.Run) pipeline.Run {
 				return withTUIBlockProcessing(run, tui)
+			},
+			func(run pipeline.Run) pipeline.Run {
+				return withTUICancellation(run)
 			},
 		}
 	})

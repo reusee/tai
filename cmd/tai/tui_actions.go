@@ -108,6 +108,11 @@ func (t *TUI) finishQuit() bool {
 	// generation loop can wind down as the session ends. See
 	// TheoryOfTUIChatInput.
 	t.cancelChatInput()
+	// Cancel the run in flight: the generation stops at its next
+	// cancellation point, the loop records the attempt's already-received
+	// output, and taiui.Session waits for that record before the terminal
+	// closes. See TheoryOfTUIExit.
+	tuiRunCancel.cancelRun()
 	t.mu.Lock()
 	height := t.height
 	t.mu.Unlock()

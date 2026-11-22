@@ -168,6 +168,18 @@ Goal no-task theory:
   TheoryOfGoalMode.
 `
 
+const TheoryOfGoalCancellation = `
+Goal cancellation theory: a cancelled context ends the whole run, not one
+loop. The user confirmed a quit, so no further loop may start — each would
+reassemble the context and fail the same way — and no review request may
+follow: both are model work the user ended. The runner reports the
+cancellation, marks the run unachieved, and skips the review. The loop that
+was in flight already recorded the attempt's received output through the
+failed-attempt path, so the session's record keeps the partial output (see
+TheoryOfRunCancellation); the cancellation is therefore a clean exit, not a
+retryable error, and the consecutive-error counter does not apply.
+`
+
 // TheoryOfGoalReviewModel documents the model used by the goal loops after a
 // done block has been emitted. See TheoryOfGoalMode.
 const TheoryOfGoalReviewModel = `
@@ -486,12 +498,6 @@ func GoalSystemPromptText(
 	return SystemPrompt(prompt)
 }
 
-// goalLoopState carries the mutable state of a goal run across loops: the
-// feedback for the next loop's system prompt, the attempt summaries of
-// previous loops, the pending done-block declaration, whether the review
-// phase has begun (doneCount), the review-model selection the review-phase
-// loops share (reviewLoops), repeated-error tracking, and the terminal
-// flags. See TheoryOfGoalMode and TheoryOfGoalReviewModel.
 type goalLoopState struct {
 	feedback                GoalFeedback
 	summaries               GoalLoopSummaries
@@ -511,6 +517,10 @@ type goalLoopState struct {
 	consecutiveErrors int
 	achieved          bool
 	stopRequested     bool
+	// cancelled reports that the run ended on a cancelled context, so no
+	// review request starts after the user quit. See
+	// TheoryOfGoalCancellation.
+	cancelled bool
 }
 
 // goalLoopNodeName names the session-tree node of one goal loop. The
@@ -577,11 +587,23 @@ func (s *goalLoopState) applyDiskChangeHandoff(
 	return false
 }
 
-// applyLoopError folds a failed loop into the runner state: a failure
-// overturns a pending done declaration and carries corrective feedback
-// into the next loop; the same error repeated maxConsecutiveGoalErrors
-// times in a row stops the run. See TheoryOfGoalMode.
+// applyLoopError folds a failed loop into the runner state: a cancellation
+// ends the whole run at once — the user confirmed a quit, so no further
+// loop and no review request may start; any other failure overturns a
+// pending done declaration and carries corrective feedback into the next
+// loop, and the same error repeated maxConsecutiveGoalErrors times in a row
+// stops the run. See TheoryOfGoalMode and TheoryOfGoalCancellation.
 func (s *goalLoopState) applyLoopError(loopsRun int, err error, reporter goalReporter) bool {
+	// A cancelled context ends the run, not only the loop: the exit path
+	// cancelled the run, and every later loop would reassemble the
+	// context and fail the same way. The in-flight loop already recorded
+	// the attempt's received output. See TheoryOfGoalCancellation.
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		reporter.message(fmt.Sprintf("\n[Goal Run Cancelled after %d loop(s)]\n", loopsRun))
+		s.cancelled = true
+		s.stopRequested = true
+		return true
+	}
 	reporter.failure(fmt.Sprintf("Goal loop %d failed: %v\n", loopsRun, err))
 
 	errMsg := err.Error()
@@ -925,8 +947,14 @@ func RunGoal(ctx context.Context, opts GoalOptions) GoalResult {
 		reporter.message(fmt.Sprintf("\n[Goal Not Achieved after %d loops]\n", loopsRun))
 	}
 
-	if err := opts.Review(ctx, os.Stdout, allDiffs); err != nil {
-		reporter.failure(fmt.Sprintf("Review failed: %v\n", err))
+	// A cancelled run ends without a review request: the user confirmed
+	// the quit, so no model request may start after it. The session's
+	// record already carries the interrupted loop's received output. See
+	// TheoryOfGoalCancellation.
+	if !state.cancelled {
+		if err := opts.Review(ctx, os.Stdout, allDiffs); err != nil {
+			reporter.failure(fmt.Sprintf("Review failed: %v\n", err))
+		}
 	}
 
 	return GoalResult{

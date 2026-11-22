@@ -110,6 +110,41 @@ func TestSessionLifecycleAndQuit(t *testing.T) {
 	}
 }
 
+// TestSessionWaitsForGenOnQuit pins the exit protocol: a quit waits for
+// the Gen goroutine — its GenEnd call included — before the session
+// returns and restores the terminal, so the work's record completes
+// before the display closes. See TheoryOfSession.
+func TestSessionWaitsForGenOnQuit(t *testing.T) {
+	ttyDev := &sessionTty{in: make(chan string, 4)}
+	genEnded := make(chan struct{})
+	sess := &Session{
+		Tty:    ttyDev,
+		Screen: NewTerminalScreen(ttyDev, 40, 10),
+		Update: make(chan struct{}, 1),
+		Key:    func(key string) bool { return key == "q" },
+		Gen: func() {
+			time.Sleep(20 * time.Millisecond)
+		},
+		GenEnd: func(error) { close(genEnded) },
+	}
+	done := make(chan error, 1)
+	go func() { done <- sess.Run() }()
+	ttyDev.in <- "q"
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("expected a clean quit, got %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for the session to quit")
+	}
+	select {
+	case <-genEnded:
+	default:
+		t.Fatal("the session returned before the generation finished recording")
+	}
+}
+
 func TestSessionHandleKeyBatchDrainsReadyKeys(t *testing.T) {
 	keyCh := make(chan string, 3)
 	for _, key := range []string{"second", "third", "fourth"} {

@@ -235,6 +235,36 @@ summing intermediate usage snapshots that may be emitted by streaming
 providers (e.g., Gemini's streaming UsageMetadata).
 `
 
+const TheoryOfRunCancellation = `
+Cancellation theory: the run's context is the cancellation channel of
+an exiting session. A cancelled generation fails its phase chain with
+the context error, and the loop ends the run through its ordinary
+failed-attempt path: the attempt's already-received output — the text
+and reasoning the generation appended before the cancellation — joins
+the session tree as the attempt's model and thoughts nodes, the
+attempt usage is recorded with the error outcome, and the run's
+terminal error is the context error. The record therefore holds what
+the model had produced when the user quit, and the recorder closes the
+session on the same error.
+
+The loop does not special-case cancellation: the recovery steps — the
+retry attempt, the handoff request, the correction round — serve a
+session that continues, and a cancelled session has no successor. The
+canceller suppresses them outside the loop by wrapping the options:
+while the context is cancelled, RunOptions.Handoff returns the context
+error instead of requesting a summary,
+RunOptions.OnAttemptTruncated returns it to break the retry loop after
+the interrupted attempt, and RunOptions.OnPhaseError returns the state
+unchanged instead of condensing the interrupted output through a
+recovery handoff request. The display normalizes the terminal error to
+the cancellation itself, so a quit is distinguishable from a failure.
+
+The exit order matters: the display front-end keeps the process alive
+until the run's iterator returns, so the tree, the recorder's session
+end, and the terminal teardown happen in that order. See
+cmd/tai.TheoryOfTUIExit.
+`
+
 const errorRetryPrefix = "[System note: An error occurred: %s. This is retry attempt %d of %d. The failed attempt's output was discarded — its structured blocks were NOT applied. If the intended modifications are extensive, partition the work across multiple rounds using continue blocks rather than emitting all changes at once. Re-emit every block you intend to take effect, then correct the issue and continue the ORIGINAL task: the retry exists only to repair this error, not to restart the work — resume the original task exactly where the failed attempt stopped, continue the remaining plan, and do not treat the correction itself as the task's completion.]\n\n"
 
 const defaultMaxRetries = 3

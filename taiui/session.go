@@ -28,10 +28,18 @@ taiui session theory:
   drains the keys already queued in order and applies them before that
   render, so wheel and auto-repeat bursts do not produce one frame per
   queued key.
+- A quit does not abandon the work. When the Key callback quits the
+  session while Gen runs, the session waits for Gen to return — its
+  GenEnd call included — before it restores the terminal and stops the
+  Tty, and it draws the final state once more. The caller stops Gen
+  through its own cancellation; the session cannot stop the work, but
+  it withholds the teardown until the work has recorded what it
+  received.
 - A panic in Gen is recovered into the session error and reported
   through GenEnd (which is also called with nil on normal return), so
   the display stays up and the user can read the failure; the error is
-  returned when the session quits.
+  returned when the session quits. A recovered error value keeps its
+  chain, so the caller can tell a cancellation from a failure.
 - The loop performs no locking: the application synchronizes its state
   (typically one mutex), and the callbacks acquire it as needed.
 `
@@ -118,13 +126,28 @@ func (s *Session) Run() error {
 	keyCh := make(chan string, 16)
 	go ReadKeys(s.Tty, keyCh)
 
+	// genDone closes when the Gen goroutine returns, its GenEnd call
+	// included. A session without Gen closes it at once, so the quit
+	// path's wait never blocks. The wait is what lets the work record
+	// what it received before the terminal closes. See
+	// TheoryOfSession.
+	var genDone chan struct{}
 	if s.Gen != nil {
+		genDone = make(chan struct{})
 		go func() {
+			defer close(genDone)
 			var runErr error
 			func() {
 				defer func() {
 					if r := recover(); r != nil {
-						runErr = fmt.Errorf("panic: %v", r)
+						// A recovered error value keeps its chain, so
+						// the caller can tell a cancellation from a
+						// failure. See TheoryOfSession.
+						if err, ok := r.(error); ok {
+							runErr = fmt.Errorf("panic: %w", err)
+						} else {
+							runErr = fmt.Errorf("panic: %v", r)
+						}
 					}
 				}()
 				s.Gen()
@@ -147,6 +170,15 @@ func (s *Session) Run() error {
 		select {
 		case key := <-keyCh:
 			if s.handleKeyBatch(keyCh, key) {
+				// The quit ends the session: wait for the work to finish
+				// recording, draw the final state once, and only then
+				// restore the terminal. See TheoryOfSession.
+				if genDone != nil {
+					<-genDone
+				}
+				if s.Render != nil {
+					s.Render()
+				}
 				return s.Err()
 			}
 		case <-s.Update:

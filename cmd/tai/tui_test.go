@@ -17,6 +17,10 @@ import (
 )
 
 func newTUIForTest() *TUI {
+	// The exit path's cancellation handle is process-wide; reset it so one
+	// test's confirmed quit never cancels the next test's run. See
+	// TheoryOfTUIExit.
+	tuiRunCancel = runCancellation{}
 	tabs := taiui.NewTabs(3)
 	// Tests exercise the production layout, including the Logs tab's
 	// unfocused height cap. See logsMaxBoxHeight.

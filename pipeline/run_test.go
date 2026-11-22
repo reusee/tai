@@ -754,6 +754,48 @@ func TestRunPhaseError(t *testing.T) {
 	})
 }
 
+// TestRunCancellationRecordsPartialOutput pins the exit contract: a run
+// whose context is cancelled ends through the failed-attempt path, so
+// the output the generation had already received joins the session tree
+// and the session record keeps it. See TheoryOfRunCancellation.
+func TestRunCancellationRecordsPartialOutput(t *testing.T) {
+	withRun(t, func(run Run) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		var result Result
+		var runErr error
+		for _, e := range run(ctx, RunOptions{
+			InitialState: generators.NewPrompts("", nil),
+			PhaseBuilder: func(_ generators.Generator) generators.Phase {
+				return func(ctx context.Context, state generators.State) (generators.Phase, generators.State, error) {
+					newState, err := state.AppendContent(&generators.Content{
+						Role:  generators.RoleModel,
+						Parts: []generators.Part{generators.Text("partial output")},
+					})
+					if err != nil {
+						return nil, state, err
+					}
+					return nil, newState, ctx.Err()
+				}
+			},
+		}, &result) {
+			if e != nil {
+				runErr = e
+			}
+		}
+		if !errors.Is(runErr, context.Canceled) {
+			t.Fatalf("expected the cancellation error, got %v", runErr)
+		}
+		if result.SessionTree == nil {
+			t.Fatal("expected the session tree")
+		}
+		outline := result.SessionTree.RenderSubtree("root", 120)
+		if !strings.Contains(outline, "partial output") {
+			t.Fatalf("expected the partial output in the session tree, got %q", outline)
+		}
+	})
+}
+
 func TestRunRetryOnMissingCompletion(t *testing.T) {
 	withRun(t, func(run Run) {
 		callCount := 0
