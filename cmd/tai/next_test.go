@@ -420,7 +420,7 @@ func TestUserPromptRestateThreshold(t *testing.T) {
 				return getDefaultGenerator
 			},
 			func() flags.Files { return flags.Files{"test.md": true} },
-			func() flags.MaxTokens { return flags.MaxTokens(1 << 20) },
+			func() flags.MaxInitTokens { return flags.MaxInitTokens(1 << 20) },
 		)
 		userPrompt = scope.Get[UserPrompt]()
 		systemPrompt = scope.Get[SystemPrompt]()

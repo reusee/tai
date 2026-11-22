@@ -1320,9 +1320,9 @@ func (ls *loopState) drainEventSink() {
 // which records the spec's effort even when the flag overrides it.
 // Max generate tokens come from the spec: every built-in command
 // passes nil GenerateOptions, so the spec field is the effective
-// limit; flags.MaxTokens bounds only the input budget and is not part
-// of the request. Unset values are omitted from the detail. See
-// TheoryOfLoopEvents.
+// limit; flags.MaxInitTokens bounds only the initial input budget and
+// is not part of the request. Unset values are omitted from the detail.
+// See TheoryOfLoopEvents.
 func describeGenerator(
 	spec generators.Spec,
 	temperatureFlag generators.TemperatureFlag,

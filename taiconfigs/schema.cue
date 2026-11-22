@@ -36,12 +36,8 @@ decision_model?: string
 // decision_model_name is an alias for decision_model.
 decision_model_name?: string
 
-// max_tokens limits the total context tokens (input + output).
-// Deprecated in favor of max_context_tokens.
-max_tokens?: int
-
-// max_context_tokens limits the total context tokens (input + output).
-max_context_tokens?: int
+// max_init_tokens limits the initial input token budget.
+max_init_tokens?: int
 
 // extra_system_prompt provides additional instructions to the AI.
 // Accepts a single string or a list of strings; values from multiple

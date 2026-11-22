@@ -324,8 +324,8 @@ Accurate token budgeting preserves the prefix cache by ensuring deterministic
 file inclusion across requests. Function declarations from all sources — state
 layers, code/diff providers, and configuration files — are counted together
 and sorted by name before measuring their token cost. The input token budget
-is the full context window (or configured max tokens) without reserving space
-for max generate tokens: the generate limit is a separate parameter of the
+is the full context window (or configured initial input limit) without reserving
+space for max generate tokens: the generate limit is a separate parameter of the
 generator request, so reserving output space in the input budget would shrink
 the outline the model starts from without changing what it may generate. See
 TheoryOfContextPhilosophy.
@@ -692,7 +692,7 @@ func (Module) GenerateWithResultWithStats(
 	getDefaultSummarizer GetDefaultSummarizer,
 	getHandoffGenerator GetHandoffGenerator,
 	buildGenerate generators.BuildGenerate,
-	maxTokens flags.MaxTokens,
+	maxInitTokens flags.MaxInitTokens,
 	buildChangeBlockHandler changes.BuildChangeBlockHandler,
 	patterns Patterns,
 	flagThoughts flags.Thoughts,
@@ -758,7 +758,7 @@ func (Module) GenerateWithResultWithStats(
 		// See TheoryOfTokenBudgetStability.
 		maxInputTokens := min(
 			spec.ContextTokens,
-			int(maxTokens),
+			int(maxInitTokens),
 		)
 
 		// Count tokens for fixed parts

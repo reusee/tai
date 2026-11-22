@@ -48,7 +48,7 @@ func (Module) UserPrompt(
 	partsProvider anytexts.PartsProvider,
 	getDefaultGenerator generators.GetDefaultGenerator,
 	systemPrompt SystemPrompt,
-	maxTokens flags.MaxTokens,
+	maxInitTokens flags.MaxInitTokens,
 	flagFiles flags.Files,
 	flagChats flags.Chats,
 	directoryFallback UserPromptDirectoryFallback,
@@ -81,7 +81,7 @@ func (Module) UserPrompt(
 		args := generator.Spec()
 		maxInputTokens := min(
 			args.ContextTokens,
-			int(maxTokens),
+			int(maxInitTokens),
 		)
 		maxGenerateTokens := 8192
 		if args.MaxGenerateTokens != nil {

@@ -1255,7 +1255,7 @@ func TestGenerateChatInputBracketsContext(t *testing.T) {
 	).Fork(
 		func() codetypes.PartsProvider { return chatBracketPartsProvider{} },
 		func() flags.Chats { return flags.Chats{"do the task"} },
-		func() flags.MaxTokens { return flags.MaxTokens(1 << 20) },
+		func() flags.MaxInitTokens { return flags.MaxInitTokens(1 << 20) },
 		func() *records.Recorder { return nil },
 		func() generators.GetDefaultGenerator {
 			return func() (generators.Generator, error) {

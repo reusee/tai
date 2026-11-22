@@ -134,6 +134,24 @@ func TestParseEffort(t *testing.T) {
 	}
 }
 
+func TestParseMaxInitTokens(t *testing.T) {
+	scope := dscope.New(Module{})
+	result, err := Parse(scope, []string{"-max-init-tokens", "123"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := result.Get[MaxInitTokens](); got != 123 {
+		t.Fatalf("expected 123, got %v", got)
+	}
+	if _, err := Parse(scope, []string{"-max-tokens", "123"}); err == nil {
+		t.Fatal("old flag name must be rejected")
+	}
+	paths := MaxInitTokens(0).ConfigPaths()
+	if len(paths) != 1 || paths[0] != "max_init_tokens" {
+		t.Fatalf("expected only max_init_tokens, got %v", paths)
+	}
+}
+
 func TestParseFiles(t *testing.T) {
 	scope := dscope.New(Module{})
 	result, err := Parse(scope, []string{"-file", "a.go", "-file", "b.go"})
