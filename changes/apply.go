@@ -599,16 +599,27 @@ func applyTextEdit(src []byte, h ChangeBlock) ([]byte, error) {
 		content = content[:idx] + h.Body + content[idx+len(find):]
 	case "INSERT_BEFORE":
 		body := h.Body
-		if body != "" && !strings.HasSuffix(body, "\n") {
-			body += "\n"
+		if body != "" {
+			if idx > 0 && content[idx-1] != '\n' && !strings.HasPrefix(body, "\n") {
+				body = "\n" + body
+			}
+			if !strings.HasSuffix(body, "\n") {
+				body += "\n"
+			}
 		}
 		content = content[:idx] + body + content[idx:]
 	case "INSERT_AFTER":
 		body := h.Body
-		if body != "" && !strings.HasPrefix(body, "\n") {
-			body = "\n" + body
+		end := idx + len(find)
+		if body != "" {
+			if !strings.HasPrefix(body, "\n") {
+				body = "\n" + body
+			}
+			if end < len(content) && content[end] != '\n' && !strings.HasSuffix(body, "\n") {
+				body += "\n"
+			}
 		}
-		content = content[:idx+len(find)] + body + content[idx+len(find):]
+		content = content[:end] + body + content[end:]
 	default:
 		return nil, fmt.Errorf("unknown text-level operation: %s", h.Op)
 	}

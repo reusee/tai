@@ -1147,6 +1147,21 @@ func TestFormatUnifiedDiffNoChanges(t *testing.T) {
 	}
 }
 
+func TestFormatUnifiedDiffEmptySideStartsAtZero(t *testing.T) {
+	t.Run("creation", func(t *testing.T) {
+		diff := formatUnifiedDiff("test.txt", nil, []byte("first\n"))
+		if !strings.Contains(diff, "@@ -0,0 +1,1 @@\n") {
+			t.Fatalf("expected an empty old side to start at line 0:\n%s", diff)
+		}
+	})
+	t.Run("deletion", func(t *testing.T) {
+		diff := formatUnifiedDiff("test.txt", []byte("first\n"), nil)
+		if !strings.Contains(diff, "@@ -1,1 +0,0 @@\n") {
+			t.Fatalf("expected an empty new side to start at line 0:\n%s", diff)
+		}
+	})
+}
+
 // TestFormatUnifiedDiffSeparateHunks verifies that changes more than
 // 2*diffContextLines apart render as separate hunks with their own context
 // windows. See TheoryOfReviewDiffContext.

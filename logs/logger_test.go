@@ -37,3 +37,22 @@ func TestParseCgroupPath(t *testing.T) {
 		})
 	}
 }
+
+func TestToJournalKey(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "letters", in: "message", want: "MESSAGE"},
+		{name: "leading digit", in: "9lives", want: "_9LIVES"},
+		{name: "empty", in: "", want: "_"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := toJournalKey(tt.in); got != tt.want {
+				t.Fatalf("toJournalKey(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}

@@ -75,6 +75,9 @@ func toJournalKey(str string) string {
 		}
 		return '_'
 	}, str)
+	if str == "" || (str[0] >= '0' && str[0] <= '9') {
+		return "_" + str
+	}
 	return str
 }
 

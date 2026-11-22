@@ -1473,6 +1473,40 @@ func TestApplyChangeBlockInsertKeepsLinesSeparated(t *testing.T) {
 
 }
 
+func TestApplyTextEditInsertMidlineKeepsInsertedLinesSeparate(t *testing.T) {
+	tests := []struct {
+		name string
+		op   string
+		want string
+	}{
+		{
+			name: "before",
+			op:   "INSERT_BEFORE",
+			want: "before \ninserted\nanchor after\n",
+		},
+		{
+			name: "after",
+			op:   "INSERT_AFTER",
+			want: "before anchor\ninserted\n after\n",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := applyTextEdit([]byte("before anchor after\n"), ChangeBlock{
+				Op:   tt.op,
+				Find: "anchor",
+				Body: "inserted",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != tt.want {
+				t.Fatalf("applyTextEdit() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestApplyChangeBlockNewFileEndsWithNewline(t *testing.T) {
 	applyChangeBlock := newTestScope(t).Get[ApplyChangeBlock]()
 	dir := t.TempDir()

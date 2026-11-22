@@ -81,16 +81,39 @@ func WritableDirs() []string {
 	return dirs
 }
 
+// resolvePathSymlinks resolves every existing path component. When the
+// final path does not exist, it resolves the nearest existing ancestor and
+// reattaches the missing suffix.
+func resolvePathSymlinks(path string) string {
+	path = filepath.Clean(path)
+	current := path
+	var missing []string
+	for {
+		if resolved, err := filepath.EvalSymlinks(current); err == nil {
+			for i := len(missing) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, missing[i])
+			}
+			return resolved
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return path
+		}
+		missing = append(missing, filepath.Base(current))
+		current = parent
+	}
+}
+
 // IsWritablePath reports whether the given path is within a writable
 // directory. A path is writable if it is inside one of the directories
 // that the container filesystem makes writable: the current working
 // directory, Go toolchain directories (GOCACHE, GOMODCACHE, GOPATH/pkg),
 // the user config directory, /tmp, or /dev/shm. Both the path and each
 // writable directory are canonicalized via filepath.EvalSymlinks before
-// comparison, so symlinked components are handled correctly. If the path
-// itself cannot be resolved (e.g., it does not exist yet), the original
-// path is used. An error is returned only if the current working
-// directory cannot be determined or canonicalized.
+// comparison, so symlinked components are handled correctly. For a path
+// that does not exist yet, the nearest existing ancestor is resolved and
+// the missing suffix is reattached. An error is returned only if the
+// current working directory cannot be determined or canonicalized.
 // See TheoryOfContainerIsolation in container_linux.go and
 // TheoryOfWritableDirs.
 func IsWritablePath(path string) (bool, error) {
@@ -106,9 +129,7 @@ func IsWritablePath(path string) (bool, error) {
 	if !filepath.IsAbs(path) {
 		path = filepath.Join(cwd, path)
 	}
-	if resolved, err := filepath.EvalSymlinks(path); err == nil {
-		path = resolved
-	}
+	path = resolvePathSymlinks(path)
 
 	// Check CWD first (resolved fresh, not cached, because CWD can
 	// change during execution — e.g., tests that os.Chdir).

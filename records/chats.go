@@ -84,17 +84,24 @@ func sessionChatPreview(contents []string) string {
 }
 
 // chatInputLine extracts the user's own words from one recorded user input:
-// the fenced chat the ai command writes, or the input's first non-blank
-// line. See TheoryOfSessionBrowsing.
+// the first non-blank line inside the fenced chat the ai command writes, or
+// the input's first non-blank line. See TheoryOfSessionBrowsing.
 func chatInputLine(content string) string {
 	lines := recordContentLines(content)
 	for i, line := range lines {
 		if strings.TrimSpace(line) != chatInputFence || i+1 >= len(lines) {
 			continue
 		}
-		if text := strings.TrimSpace(lines[i+1]); text != "" {
-			return text
+		for _, chatLine := range lines[i+1:] {
+			text := strings.TrimSpace(chatLine)
+			if text == "``` end of user input" {
+				break
+			}
+			if text != "" {
+				return text
+			}
 		}
+		return ""
 	}
 	for _, line := range lines {
 		if text := strings.TrimSpace(line); text != "" {

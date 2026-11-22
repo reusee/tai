@@ -609,6 +609,17 @@ func TestIsExcludedPathMatchesBasename(t *testing.T) {
 	}
 }
 
+func TestIsAncestorRecognizesDoubleDotDirectory(t *testing.T) {
+	root := t.TempDir()
+	parent := filepath.Join(root, "..hidden", "child")
+	if err := os.MkdirAll(parent, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if !isAncestor(root, filepath.Join(parent, "link")) {
+		t.Fatalf("isAncestor(%q, %q) = false, want true", root, filepath.Join(parent, "link"))
+	}
+}
+
 func TestBinaryFileTokenBudget(t *testing.T) {
 	dir := t.TempDir()
 	oldWd, err := os.Getwd()

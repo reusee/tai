@@ -420,7 +420,7 @@ func isAncestor(ancestor, path string) bool {
 	if err != nil {
 		return false
 	}
-	return !strings.HasPrefix(rel, "..")
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // isOutsideWritableDirs reports whether the given path is outside all

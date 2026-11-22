@@ -188,3 +188,10 @@ func TestSessionChatPreview(t *testing.T) {
 		})
 	}
 }
+
+func TestChatInputLineSkipsBlankLinesAfterFence(t *testing.T) {
+	content := "``` begin of user input\n\n  \nactual task\n``` end of user input\n"
+	if got := chatInputLine(content); got != "actual task" {
+		t.Fatalf("chatInputLine() = %q, want %q", got, "actual task")
+	}
+}

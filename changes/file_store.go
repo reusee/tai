@@ -487,6 +487,12 @@ func buildDiffHunks(oldLines, newLines []string, ops []diffOp) []diffHunk {
 				hunk.newCount++
 			}
 		}
+		if hunk.oldCount == 0 {
+			hunk.oldStart--
+		}
+		if hunk.newCount == 0 {
+			hunk.newStart--
+		}
 		hunks = append(hunks, hunk)
 	}
 	return hunks
