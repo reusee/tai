@@ -2047,6 +2047,19 @@ func TestWrapLinePreservesWhitespace(t *testing.T) {
 	}
 }
 
+func TestWrapLineLimitedIterPreservesWhitespaceOnlyLine(t *testing.T) {
+	got := WrapLines([]string{"    "}, 2)
+	want := []string{"  ", "  "}
+	if len(got) != len(want) {
+		t.Fatalf("WrapLines returned %q, want %q", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("line %d = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
 func TestWrapCJKBreakAtAnyCluster(t *testing.T) {
 	options := displaywidth.Options{}
 	// Han characters have display width 2. A Han sequence is breakable

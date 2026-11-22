@@ -122,3 +122,26 @@ func TestMakeFunc(t *testing.T) {
 		t.Errorf("expected missing argument error, got %v", err)
 	}
 }
+
+func TestMakeFuncPassesNilPointer(t *testing.T) {
+	f, err := MakeFunc("is_nil", func(p *int) bool { return p == nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := f.Func(map[string]any{"arg0": nil})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result["result0"] != true {
+		t.Fatalf("nil argument produced %#v; want a nil pointer", result["result0"])
+	}
+}
+
+func TestMakeFuncRejectsNilFunction(t *testing.T) {
+	var typedNil func()
+	for _, fn := range []any{nil, typedNil} {
+		if _, err := MakeFunc("invalid", fn); err == nil {
+			t.Errorf("MakeFunc(%T) returned no error", fn)
+		}
+	}
+}

@@ -745,6 +745,28 @@ func wrapLineLimitedIter(line string, width, limit int, options displaywidth.Opt
 		word = append(word, cluster)
 		wordWidth += w
 	}
+	// A whitespace-only line has no word to flush the pending
+	// whitespace. Preserve and wrap that whitespace instead of
+	// collapsing the whole line to an empty string.
+	if len(cur) == 0 && len(word) == 0 && len(ws) > 0 {
+		for _, cluster := range ws {
+			w := 1
+			if cluster == "\t" {
+				w = nextTabStop(curWidth, 0, tabWidth) - curWidth
+			}
+			if curWidth > 0 && curWidth+w > width {
+				if !flushLine() {
+					return lines
+				}
+				if cluster == "\t" {
+					w = nextTabStop(curWidth, 0, tabWidth) - curWidth
+				}
+			}
+			cur = append(cur, cluster)
+			curWidth += w
+		}
+		ws = ws[:0]
+	}
 	if !packWord() {
 		return lines
 	}

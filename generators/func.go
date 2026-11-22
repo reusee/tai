@@ -13,10 +13,10 @@ type Function struct {
 
 func MakeFunc(name string, fn any) (*Function, error) {
 	fnVal := reflect.ValueOf(fn)
-	fnType := fnVal.Type()
-	if fnType.Kind() != reflect.Func {
-		return nil, fmt.Errorf("MakeFunc: expected a function, got %T", fn)
+	if !fnVal.IsValid() || fnVal.Kind() != reflect.Func || fnVal.IsNil() {
+		return nil, fmt.Errorf("MakeFunc: expected a non-nil function, got %T", fn)
 	}
+	fnType := fnVal.Type()
 
 	var params Vars
 	paramNames := make([]string, fnType.NumIn())
@@ -144,17 +144,9 @@ func convertMapValue(val any, targetType reflect.Type) (reflect.Value, error) {
 	if err != nil {
 		return reflect.Value{}, err
 	}
-	var targetPtr reflect.Value
-	if targetType.Kind() == reflect.Pointer {
-		targetPtr = reflect.New(targetType.Elem())
-	} else {
-		targetPtr = reflect.New(targetType)
-	}
+	targetPtr := reflect.New(targetType)
 	if err := json.Unmarshal(data, targetPtr.Interface()); err != nil {
 		return reflect.Value{}, err
-	}
-	if targetType.Kind() == reflect.Pointer {
-		return targetPtr, nil
 	}
 	return targetPtr.Elem(), nil
 }

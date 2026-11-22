@@ -1162,6 +1162,23 @@ func TestFormatUnifiedDiffEmptySideStartsAtZero(t *testing.T) {
 	})
 }
 
+func TestFormatUnifiedDiffSingleBlankLine(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		original []byte
+		current  []byte
+	}{
+		{name: "added", current: []byte("\n")},
+		{name: "removed", original: []byte("\n")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if diff := formatUnifiedDiff("blank.txt", tc.original, tc.current); diff == "" {
+				t.Fatal("a change between an empty file and one blank line produced no diff")
+			}
+		})
+	}
+}
+
 // TestFormatUnifiedDiffSeparateHunks verifies that changes more than
 // 2*diffContextLines apart render as separate hunks with their own context
 // windows. See TheoryOfReviewDiffContext.

@@ -421,9 +421,6 @@ func splitLines(content []byte) []string {
 		return nil
 	}
 	s := strings.TrimSuffix(string(content), "\n")
-	if s == "" {
-		return nil
-	}
 	return strings.Split(s, "\n")
 }
 

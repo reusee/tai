@@ -51,7 +51,7 @@ func toStarlarkValue(v any) starlark.Value {
 		return starlark.MakeUint(uint(value.Uint()))
 	case reflect.Uint32:
 		return starlark.MakeUint(uint(value.Uint()))
-	case reflect.Uint64:
+	case reflect.Uint64, reflect.Uintptr:
 		return starlark.MakeUint64(value.Uint())
 
 	case reflect.Float32:

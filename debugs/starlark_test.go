@@ -111,6 +111,12 @@ func TestToStarlarkValue(t *testing.T) {
 	})
 }
 
+func TestToStarlarkValueUintptr(t *testing.T) {
+	if got := toStarlarkValue(uintptr(42)); got.String() != "42" {
+		t.Fatalf("toStarlarkValue(uintptr(42)) = %s, want 42", got)
+	}
+}
+
 func TestToStarlarkValueMapKeyError(t *testing.T) {
 	type key struct{ Name string }
 	defer func() {
