@@ -14,9 +14,9 @@ type OpenAIParser struct {
 
 func (o *OpenAIParser) Input(delta ChatCompletionStreamChoiceDelta) (ret []*Content, err error) {
 	if deltaIsEmpty(delta) {
-		if err := o.checkAndEmitCall(); err != nil {
-			return nil, err
-		}
+		// Empty deltas are legal between arbitrary stream fragments. In
+		// particular, one must not finish a tool call whose arguments are
+		// still incomplete; the next content, role, call, or End does that.
 		return nil, nil
 	}
 
@@ -98,7 +98,7 @@ func (o *OpenAIParser) Input(delta ChatCompletionStreamChoiceDelta) (ret []*Cont
 			}
 
 		default:
-			panic(fmt.Errorf("unknown tool type: %+v", call))
+			return nil, fmt.Errorf("unknown tool type %q", call.Type)
 		}
 	}
 

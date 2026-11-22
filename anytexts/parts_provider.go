@@ -255,8 +255,7 @@ func (c PartsProvider) IterFiles(patterns []string) iter.Seq2[FileInfo, error] {
 			// resolved target is an ancestor of the current path would create
 			// an infinite loop and is skipped. Additionally, a visited set of
 			// resolved real paths breaks cycles that do not involve an ancestor
-			// relationship. Broken symlinks are silently skipped rather than
-			// aborting the traversal.
+			// relationship.
 			if info.Mode()&os.ModeSymlink != 0 {
 				realPath, err := filepath.EvalSymlinks(path)
 				if err != nil {

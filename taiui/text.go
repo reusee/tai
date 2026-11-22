@@ -369,14 +369,15 @@ func renderText(t _Text, box Box, style Style, draw drawFunc, cursor cursorFunc,
 	lastLineStart := contentLeft
 	for _, ln := range lines {
 		left = contentLeft
+		width := lineWidthWithTabs(options, ln, iter, tabWidth)
 		switch t.align {
 		case AlignRight:
-			left = right - lineWidth(options, ln, iter)
+			left = right - width
 		case AlignCenter:
 			// Centering is relative to the padded content area and
 			// rounds with the conventional (width-len)/2 rule, so an
 			// odd-width line places the extra column on the right.
-			left = (contentLeft + right - lineWidth(options, ln, iter)) / 2
+			left = (contentLeft + right - width) / 2
 		}
 		lastLineStart = left
 		if t.fill {

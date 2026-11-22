@@ -247,11 +247,16 @@ func modulePathOfGoMod(path string) string {
 	}
 	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
-		rest, ok := strings.CutPrefix(line, "module ")
-		if !ok {
+		const directive = "module"
+		if !strings.HasPrefix(line, directive) || len(line) == len(directive) {
 			continue
 		}
-		rest = strings.TrimSpace(rest)
+		// The go.mod lexer separates a directive from its argument with
+		// spaces or tabs, not with one literal space only.
+		if line[len(directive)] != ' ' && line[len(directive)] != '\t' {
+			continue
+		}
+		rest := strings.TrimSpace(line[len(directive):])
 		// A module path holds no spaces, so the first token drops a
 		// trailing comment on the directive line.
 		if index := strings.IndexAny(rest, " \t"); index >= 0 {

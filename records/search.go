@@ -28,7 +28,9 @@ Global record search theory:
   record — while tree.ReplayTolerant rebuilds each candidate's applied
   history and the walk reports what the session holds now: a node written
   and later deleted matches the query and not the search, and a node whose
-  content changed matches the content it ended with.
+  content changed matches the content it ended with. SQLite folds ASCII
+  only, so an operation with non-ASCII text also stays a candidate; the
+  replay's Unicode case folding, not SQLite, decides whether it matches.
 - A session is never skipped because its stream diverges: the
   reconstruction carries every operation that applied, so one unusable
   operation must hide neither the rest of that record nor every other
@@ -142,15 +144,22 @@ ORDER BY s.id DESC`, pattern, pattern, pattern, pattern)
 }
 
 // keywordFilterSQL is the SQL predicate that decides whether one recorded
-// operation carries the keyword: the operation's name, type, author, or
-// content matches. The caller passes the LIKE pattern four times, in that
-// order. Both the keyword search and the structured record query narrow their
-// candidate sessions with it, so the two cannot diverge.
+// operation can carry the keyword: the operation's name, type, author, or
+// content matches, or one of those fields contains non-ASCII text. The caller
+// passes the LIKE pattern four times, in name, type, author, and content order.
+// SQLite's LOWER folds ASCII only, while replay applies Go's Unicode case
+// folding. Keeping every non-ASCII operation as a candidate prevents that
+// difference from hiding a match; the replayed node filter remains decisive.
+// Both keyword search and structured record query use this same predicate.
 // See TheoryOfGlobalRecordSearch and TheoryOfRecordQuery.
 const keywordFilterSQL = `(LOWER(o.name) LIKE ? ESCAPE '\'
         OR LOWER(o.type) LIKE ? ESCAPE '\'
         OR LOWER(o.author) LIKE ? ESCAPE '\'
-        OR LOWER(o.content) LIKE ? ESCAPE '\')`
+        OR LOWER(o.content) LIKE ? ESCAPE '\'
+        OR LENGTH(o.name) <> LENGTH(CAST(o.name AS BLOB))
+        OR LENGTH(o.type) <> LENGTH(CAST(o.type AS BLOB))
+        OR LENGTH(o.author) <> LENGTH(CAST(o.author AS BLOB))
+        OR LENGTH(o.content) <> LENGTH(CAST(o.content AS BLOB)))`
 
 // escapeLikePattern escapes the LIKE metacharacters of one keyword, so a
 // "%" or "_" the user typed matches itself instead of every node.

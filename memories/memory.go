@@ -241,6 +241,7 @@ type memoryUpdate struct {
 }
 
 func parseMemoryUpdate(text string) (memoryUpdate, error) {
+	var update memoryUpdate
 	content := []byte(text)
 	for {
 		block, _, end, ok, err := blocks.ParseFirstBlock(content)
@@ -254,17 +255,15 @@ func parseMemoryUpdate(text string) (memoryUpdate, error) {
 			return memoryUpdate{}, err
 		}
 		if !ok {
-			return memoryUpdate{}, nil
+			return update, nil
 		}
 		if block.Kind == "memory" {
 			var mem memoryRoot
 			if err := xml.Unmarshal([]byte(block.Body), &mem); err != nil {
 				return memoryUpdate{}, err
 			}
-			return memoryUpdate{
-				Adds:    mem.Items,
-				Deletes: mem.Deletes,
-			}, nil
+			update.Adds = append(update.Adds, mem.Items...)
+			update.Deletes = append(update.Deletes, mem.Deletes...)
 		}
 		// Skip non-memory blocks (e.g., continue, shell, summary) and
 		// continue scanning for a memory block. Without this, a memory

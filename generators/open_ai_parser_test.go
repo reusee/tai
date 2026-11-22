@@ -41,6 +41,21 @@ func TestOpenAIParserEmptyDelta(t *testing.T) {
 	}
 }
 
+func TestOpenAIParserUnknownToolTypeReturnsError(t *testing.T) {
+	parser := new(OpenAIParser)
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			t.Fatalf("unknown external input caused a panic: %v", recovered)
+		}
+	}()
+	_, err := parser.Input(ChatCompletionStreamChoiceDelta{
+		ToolCalls: []ToolCall{{Type: "custom"}},
+	})
+	if err == nil {
+		t.Fatal("expected an unknown tool type error")
+	}
+}
+
 func TestOpenAIParserEmptyRole(t *testing.T) {
 	parser := new(OpenAIParser)
 	contents, err := parser.Input(ChatCompletionStreamChoiceDelta{
@@ -209,6 +224,41 @@ func TestOpenAIParserToolCallStreamedArgs(t *testing.T) {
 	expectedArgs := map[string]any{"arg1": "value"}
 	if !reflect.DeepEqual(funcCall.Arguments, expectedArgs) {
 		t.Errorf("wrong args: got %+v, want %+v", funcCall.Arguments, expectedArgs)
+	}
+}
+
+func TestOpenAIParserEmptyDeltaDuringToolCall(t *testing.T) {
+	parser := new(OpenAIParser)
+	deltas := []ChatCompletionStreamChoiceDelta{
+		{
+			Role: string(RoleAssistant),
+			ToolCalls: []ToolCall{
+				{
+					ID:       "call_1",
+					Type:     "function",
+					Function: FunctionCall{Name: "fn"},
+				},
+			},
+		},
+		{ToolCalls: []ToolCall{{Function: FunctionCall{Arguments: `{"arg":`}}}},
+		{},
+		{ToolCalls: []ToolCall{{Function: FunctionCall{Arguments: `"value"}`}}}},
+	}
+	for i, delta := range deltas {
+		if _, err := parser.Input(delta); err != nil {
+			t.Fatalf("delta %d: an empty delta must not interrupt streamed arguments: %v", i, err)
+		}
+	}
+	contents, err := parser.End()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(contents) != 1 || len(contents[0].Parts) != 1 {
+		t.Fatalf("unexpected contents: %+v", contents)
+	}
+	call, ok := contents[0].Parts[0].(FuncCall)
+	if !ok || call.Arguments["arg"] != "value" {
+		t.Fatalf("unexpected function call: %+v", contents[0].Parts[0])
 	}
 }
 

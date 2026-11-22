@@ -53,6 +53,16 @@ func TestNewHiddenPackageMatcher(t *testing.T) {
 	}
 }
 
+func TestModulePathOfGoModAcceptsTab(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "go.mod")
+	if err := os.WriteFile(path, []byte("module\texample.com/tabbed\n\ngo 1.21\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if got := modulePathOfGoMod(path); got != "example.com/tabbed" {
+		t.Fatalf("modulePathOfGoMod() = %q, want %q", got, "example.com/tabbed")
+	}
+}
+
 func TestHiddenPackagesSystemPrompt(t *testing.T) {
 	if got := HiddenPackagesSystemPrompt(nil); got != "" {
 		t.Errorf("no patterns must produce an empty prompt, got %q", got)

@@ -94,6 +94,44 @@ func TestSearchRecordNodes(t *testing.T) {
 	}
 }
 
+func TestRecordSearchUnicodeCaseFolding(t *testing.T) {
+	scope := dscope.New(
+		modes.ForTest(t),
+		new(Module),
+		stubGetDefaultGenerator,
+		stubBuildGenerate,
+	).Fork(
+		func() DBPath {
+			return DBPath(filepath.Join(t.TempDir(), "test.db"))
+		},
+		func() Enabled {
+			return Enabled(true)
+		},
+	)
+	recorder := scope.Get[*Recorder]()
+	recorder.StartSession("unicode")
+	tr := tree.New().WithOpSink(recorder.Sink())
+	if _, err := tr.Write("root", "unicode", tree.TypeModel, tree.AuthorModel, "Ärger"); err != nil {
+		t.Fatal(err)
+	}
+	recorder.EndSession(nil)
+
+	matches, err := scope.Get[SearchRecordNodes]()("ärger")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 1 || matches[0].NodeName != "unicode" {
+		t.Fatalf("Unicode case-folded search missed the node: %+v", matches)
+	}
+	result, err := scope.Get[QueryRecord]()(RecordQuery{Keyword: "ärger"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Nodes) != 1 || result.Nodes[0].Name != "unicode" {
+		t.Fatalf("Unicode case-folded query missed the node: %+v", result.Nodes)
+	}
+}
+
 // TestQueryRecord verifies the structured record query: the type filter
 // narrows by full type, name segment, prefix, and single-colon spelling; the
 // keyword filter matches content and metadata; the session filter selects one

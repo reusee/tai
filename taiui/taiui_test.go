@@ -494,6 +494,30 @@ func TestTextTabWidth(t *testing.T) {
 	}
 }
 
+func TestTextAlignsExpandedTabs(t *testing.T) {
+	tests := []struct {
+		name         string
+		align        Align
+		width        int
+		wantA, wantB int
+	}{
+		{name: "right", align: AlignRight, width: 5, wantA: 0, wantB: 4},
+		{name: "center", align: AlignCenter, width: 9, wantA: 2, wantB: 4},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			screen := newFakeScreen(tc.width, 1)
+			Render(Text("a\tb", tc.align, TabWidth(4)), screen)
+			if r := screen.cell(tc.wantA, 0); r != 'a' {
+				t.Fatalf("expected 'a' at column %d, got %v", tc.wantA, r)
+			}
+			if r := screen.cell(tc.wantB, 0); r != 'b' {
+				t.Fatalf("expected 'b' at column %d, got %v", tc.wantB, r)
+			}
+		})
+	}
+}
+
 func TestTextTabExpansionFill(t *testing.T) {
 	screen := newFakeScreen(80, 25)
 	Render(Text("a\tb", Fill(true)), screen)

@@ -84,6 +84,21 @@ func TestParseMemoryUpdate(t *testing.T) {
 	}
 }
 
+func TestParseMemoryUpdateCombinesMemoryBlocks(t *testing.T) {
+	text := "《龘靐 memory\n<memory><memory-item>first</memory-item></memory>\n龘靐\n" +
+		"《齉爩 memory\n<memory><memory-item>second</memory-item><memory-delete>old</memory-delete></memory>\n齉爩\n"
+	update, err := parseMemoryUpdate(text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(update.Adds) != 2 || update.Adds[0] != "first" || update.Adds[1] != "second" {
+		t.Fatalf("adds = %v, want [first second]", update.Adds)
+	}
+	if len(update.Deletes) != 1 || update.Deletes[0] != "old" {
+		t.Fatalf("deletes = %v, want [old]", update.Deletes)
+	}
+}
+
 func TestParsePseudoCallItems(t *testing.T) {
 	tests := []struct {
 		name     string
