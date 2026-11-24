@@ -94,10 +94,7 @@ record?: bool
 // models when enabled.
 confidential_mode?: bool
 
-// review enables a review loop after generation to review and fix changes.
-review?: bool
-
-// review_models lists the models used for the review loop, in order.
+// review_models lists the models the goal run's review phase runs on, in order.
 review_models?: [...string]
 
 // ignore excludes files or patterns from the context.

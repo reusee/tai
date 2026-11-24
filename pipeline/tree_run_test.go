@@ -485,7 +485,6 @@ func TestRunGoalCarriesOneSessionTree(t *testing.T) {
 			result.SessionTree = next
 			return result, nil, nil
 		},
-		Review: noopReview,
 	})
 	if calls != 2 {
 		t.Fatalf("ran %d loops, want 2", calls)

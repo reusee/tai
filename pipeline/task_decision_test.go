@@ -161,7 +161,6 @@ func TestRunGoalRecordsTaskDecisionNode(t *testing.T) {
 		Generate: func(context.Context, int, GoalFeedback, GoalLoopSummaries, string, SessionTreeContinuation) (Result, []AttemptStat, error) {
 			return doneResult(), nil, nil
 		},
-		Review: noopReview,
 		TaskDecision: &TaskDecisionRecord{
 			Model:       "decision-test",
 			Input:       "Task:\nfix the parser bug",
@@ -204,7 +203,6 @@ func TestRunGoalRecordsTaskDecisionNode(t *testing.T) {
 		Generate: func(context.Context, int, GoalFeedback, GoalLoopSummaries, string, SessionTreeContinuation) (Result, []AttemptStat, error) {
 			return doneResult(), nil, nil
 		},
-		Review: noopReview,
 	})
 	if got := len(plain.Tree.ByType(tree.TypeDecisionTask)); got != 0 {
 		t.Fatalf("a run without a task decision must write no node, got %d", got)

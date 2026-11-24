@@ -22,22 +22,17 @@ are skipped: mimetype magic on the file header identifies them, and they
 are neither read fully, parsed, nor rendered into the context, while
 binary files named via -file are attached with begin and end markers (see
 anytexts.TheoryOfBinaryFileSkipping). It runs the unified generation
-loop — a chain of generations until the task is done — followed by review
-of the applied changes, reusing the full generation pipeline — dynamic
-context, immediate apply, shell and continue blocks, and round statistics
-— wired through pipeline.Module in the dscope scope.
+loop — a chain of generations until the task is done — reusing the full
+generation pipeline — dynamic context, immediate apply, shell and continue
+blocks, and round statistics — wired through pipeline.Module in the dscope
+scope.
 `
 
 var AnyTextCommand = apps.New("any_text", "",
 	func(
 		generateWithResult pipeline.GenerateWithResult,
-		runReview pipeline.RunReview,
 	) apps.MainErr {
-		result, err := generateWithResult(context.Background(), os.Stdout)
-		if err != nil {
-			return err
-		}
-		if err := runReview(context.Background(), os.Stdout, result.Diffs); err != nil {
+		if _, err := generateWithResult(context.Background(), os.Stdout); err != nil {
 			return err
 		}
 		return nil

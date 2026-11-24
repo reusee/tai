@@ -127,7 +127,6 @@ Gemini, OpenAI, DeepSeek, Volcano Engine (Huoshan), Baidu, Tencent, Alibaba Clou
 | `-apply` / `-no-apply` | Control whether change blocks are applied |
 | `-no-memory` | Disable user profile memory persistence |
 | `-record` | Record interaction sessions for self-improvement analysis |
-| `-review` | Run a review loop after generation to review and fix changes |
 | `-thoughts` / `-no-thoughts` | Control reasoning thought visibility |
 | `-summarize-thoughts` | Enable periodic summarization of thoughts |
 | `-summary-language` | Set the output language for summary blocks |

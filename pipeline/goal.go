@@ -154,14 +154,14 @@ per-loop subtree projections from it (see TheoryOfSessionTree and
 tree.TheoryOfSubtree).
 
 RunGoal is the plain implementation so tests exercise the loop logic with
-fake per-loop generators; Module.GoalRun is the dscope provider that injects
-the scope-backed per-loop generator and the review pass. Generation and
-review stream to os.Stdout so a TUI's state decorators capture the output
-without duplication. Verdicts and failure notes are routed through
-goalReporter: recorded as goal structure nodes (tree.TypeGoal) in the
-run's session tree and forwarded through GoalTreeObserver when one is set
-(a display front-end's Tree tab), or written to the output writer
-(failure notes to stderr) otherwise.
+fake per-loop generators; Module.GoalRun is the dscope provider that
+injects the scope-backed per-loop generator. Generation streams to
+os.Stdout so a TUI's state decorators capture the output without
+duplication. Verdicts and failure notes are routed through goalReporter:
+recorded as goal structure nodes (tree.TypeGoal) in the run's session tree
+and forwarded through GoalTreeObserver when one is set (a display
+front-end's Tree tab), or written to the output writer (failure notes to
+stderr) otherwise.
 `
 
 const TheoryOfGoalNoTask = `
@@ -178,43 +178,38 @@ Goal no-task theory:
 const TheoryOfGoalCancellation = `
 Goal cancellation theory: a cancelled context ends the whole run, not one
 loop. The user confirmed a quit, so no further loop may start — each would
-reassemble the context and fail the same way — and no review request may
-follow: both are model work the user ended. The runner reports the
-cancellation, marks the run unachieved, and skips the review. The loop that
-was in flight already recorded the attempt's received output through the
-failed-attempt path, so the session's record keeps the partial output (see
+reassemble the context and fail the same way. The runner reports the
+cancellation and marks the run unachieved. The loop that was in flight
+already recorded the attempt's received output through the failed-attempt
+path, so the session's record keeps the partial output (see
 TheoryOfRunCancellation); the cancellation is therefore a clean exit, not a
 retryable error, and the consecutive-error counter does not apply.
 `
 
-// TheoryOfGoalReviewModel documents the model used by the goal loops after a
-// done block has been emitted. See TheoryOfGoalMode.
 const TheoryOfGoalReviewModel = `
 The loops after the first done block emitted together with change blocks
 run on the review models: the first such loop runs on the first review
 model, every later loop of the review phase runs on the next model in the
 configured order, and the selection wraps around to the first model after
 the last. The goal runner forks the selected model into each review-phase
-loop's scope as flags.ModelName — the same fork Module.RunReview uses for
-its review sessions — so the model that verifies and corrects the declared
-goal is independent of the model that made the changes. The first done
-block itself is emitted by the default model. The order is significant:
-consecutive review loops run on different models when more than one model
-is configured, so a model never reviews the corrections it made in the
-previous loop, and the first review model is generally different from the
-main model, so the first verification is already independent. The rotation
-advances once per review-phase loop that completed normally. A loop that
-ended on an error did not complete — a first attempt abandoned by the
-first-attempt policy, a disk change, or an exceeded context window — so the
-selection holds and the next loop retries on the same review model, which
-keeps the interrupted verification with the model that began it. A loop
-whose done declaration is overturned by its own plan still carrying
-pending entries or by malformed blocks completed normally, so it advances
-the rotation and keeps the run in the review phase, and the independence
-holds however the corrections unfold. When no review model is configured,
-post-done loops keep the default model. The post-run review sessions
-consume the same ordered list, one session per model (see
-TheoryOfReviewLoop).
+loop's scope as flags.ModelName, so the model that verifies and corrects
+the declared goal is independent of the model that made the changes. The
+first done block itself is emitted by the default model. The order is
+significant: consecutive review loops run on different models when more
+than one model is configured, so a model never reviews the corrections it
+made in the previous loop, and the first review model is generally
+different from the main model, so the first verification is already
+independent. The rotation advances once per review-phase loop that
+completed normally. A loop that ended on an error did not complete — a
+first attempt abandoned by the first-attempt policy, a disk change, or an
+exceeded context window — so the selection holds and the next loop retries
+on the same review model, which keeps the interrupted verification with
+the model that began it. A loop whose done declaration is overturned by
+its own plan still carrying pending entries or by malformed blocks
+completed normally, so it advances the rotation and keeps the run in the
+review phase, and the independence holds however the corrections unfold.
+When no review model is configured, post-done loops keep the default
+model.
 `
 
 // GoalSystemPrompt teaches the model the goal-directed multi-loop protocol:
@@ -377,9 +372,9 @@ func (Module) GoalTreeObserver() GoalTreeObserver {
 
 type GoalOptions struct {
 	// Output receives verdicts and failure notes when no GoalTree
-	// observer is set. Generation and review output do not go here:
-	// they stream to os.Stdout so a TUI's state decorators capture
-	// them without duplication.
+	// observer is set. Generation output does not go here: it streams to
+	// os.Stdout so a TUI's state decorators capture it without
+	// duplication.
 	Output io.Writer
 	// GoalTree, when non-nil, receives the run's session tree after
 	// each progress message is recorded as a goal structure node, so a
@@ -392,8 +387,6 @@ type GoalOptions struct {
 	// number, feedback, the previous loops' summaries, and the model
 	// the loop should run on (empty keeps the default model).
 	Generate GoalLoopGenerator
-	// Review reviews the accumulated session diffs after the run.
-	Review RunReview
 	// ReviewModels lists the models the review phase runs on, in order.
 	// The first loop after a done declaration runs on the first model,
 	// each later review-phase loop takes the next model, and the
@@ -484,10 +477,10 @@ type GoalResult struct {
 
 // GoalRun runs the goal loop mechanism: repeated fresh generation loops
 // until a change-free loop emits a done block — the run's only exit — the
-// iteration budget is exhausted, or the same error repeats, followed by a
-// review of the accumulated diffs. Verdicts and failure notes are recorded
-// as goal structure nodes in the run's session tree and forwarded to the
-// goal tree observer; with no observer they go to output. See TheoryOfGoalMode.
+// iteration budget is exhausted, or the same error repeats. Verdicts and
+// failure notes are recorded as goal structure nodes in the run's session
+// tree and forwarded to the goal tree observer; with no observer they go to
+// output. See TheoryOfGoalMode.
 type GoalRun func(ctx context.Context, output io.Writer) GoalResult
 
 // GoalSystemPromptText assembles the goal-mode system prompt: the codes base
@@ -568,10 +561,6 @@ type goalLoopState struct {
 	consecutiveErrors int
 	achieved          bool
 	stopRequested     bool
-	// cancelled reports that the run ended on a cancelled context, so no
-	// review request starts after the user quit. See
-	// TheoryOfGoalCancellation.
-	cancelled bool
 }
 
 // goalLoopNodeName names the session-tree node of one goal loop. The
@@ -640,10 +629,10 @@ func (s *goalLoopState) applyDiskChangeHandoff(
 
 // applyLoopError folds a failed loop into the runner state: a cancellation
 // ends the whole run at once — the user confirmed a quit, so no further
-// loop and no review request may start; any other failure overturns a
-// pending done declaration and carries corrective feedback into the next
-// loop, and the same error repeated maxConsecutiveGoalErrors times in a row
-// stops the run. See TheoryOfGoalMode and TheoryOfGoalCancellation.
+// loop may start; any other failure overturns a pending done declaration
+// and carries corrective feedback into the next loop, and the same error
+// repeated maxConsecutiveGoalErrors times in a row stops the run. See
+// TheoryOfGoalMode and TheoryOfGoalCancellation.
 func (s *goalLoopState) applyLoopError(loopsRun int, err error, reporter goalReporter) bool {
 	// A cancelled context ends the run, not only the loop: the exit path
 	// cancelled the run, and every later loop would reassemble the
@@ -651,7 +640,6 @@ func (s *goalLoopState) applyLoopError(loopsRun int, err error, reporter goalRep
 	// the attempt's received output. See TheoryOfGoalCancellation.
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		reporter.message(fmt.Sprintf("\n[Goal Run Cancelled after %d loop(s)]\n", loopsRun))
-		s.cancelled = true
 		s.stopRequested = true
 		return true
 	}
@@ -910,7 +898,6 @@ func RunGoal(ctx context.Context, opts GoalOptions) GoalResult {
 
 	state := &goalLoopState{}
 	var allStats []AttemptStat
-	var allDiffs []changes.FileDiff
 
 	if opts.Recorder != nil && opts.Recorder.Enabled() {
 		defer func() {
@@ -978,7 +965,6 @@ func RunGoal(ctx context.Context, opts GoalOptions) GoalResult {
 			allStats[i].Loop = loopsRun
 		}
 		state.summaries = appendLoopSummaries(state.summaries, loopsRun, allStats[loopStart:])
-		allDiffs = append(allDiffs, result.Diffs...)
 		stop := state.applyLoopResult(loopsRun, result, err, reporter)
 		// The rotation advances only after a loop that completed
 		// normally: a loop that ended on an error — a first attempt
@@ -1010,16 +996,6 @@ func RunGoal(ctx context.Context, opts GoalOptions) GoalResult {
 
 	if !state.achieved && !state.stopRequested {
 		reporter.message(fmt.Sprintf("\n[Goal Not Achieved after %d loops]\n", loopsRun))
-	}
-
-	// A cancelled run ends without a review request: the user confirmed
-	// the quit, so no model request may start after it. The session's
-	// record already carries the interrupted loop's received output. See
-	// TheoryOfGoalCancellation.
-	if !state.cancelled {
-		if err := opts.Review(ctx, os.Stdout, allDiffs); err != nil {
-			reporter.failure(fmt.Sprintf("Review failed: %v\n", err))
-		}
 	}
 
 	return GoalResult{
@@ -1111,21 +1087,20 @@ func makeGoalLoopGenerator(reset dscope.Reset, decision TaskDecision) GoalLoopGe
 }
 
 // GoalRun provider: runs the goal loop mechanism with the scope-backed
-// per-loop generator and the review pass. Each GoalRun resolution binds
-// reset to the resolving scope, so the command's forks (parts provider,
-// goal system prompt) apply to every loop. The task decision is judged once
-// per run and forked into every loop, so the base prompt and the change
-// component stay stable across the run (see TheoryOfTaskDecision). The goal
-// tree observer is resolved from the scope, so a display front-end's fork
-// receives the goal verdicts as goal structure nodes in the run's tree. The
-// recorder is resolved from the scope too: when recording is enabled, the
-// whole run is one recorded session — the recorder's sink attached to the
-// run's tree and the session ended after the last loop — so every loop's
-// operations join one session's stream. The post-done verification loops
-// run on the review-model rotation (see TheoryOfGoalReviewModel).
+// per-loop generator. Each GoalRun resolution binds reset to the resolving
+// scope, so the command's forks (parts provider, goal system prompt) apply
+// to every loop. The task decision is judged once per run and forked into
+// every loop, so the base prompt and the change component stay stable
+// across the run (see TheoryOfTaskDecision). The goal tree observer is
+// resolved from the scope, so a display front-end's fork receives the goal
+// verdicts as goal structure nodes in the run's tree. The recorder is
+// resolved from the scope too: when recording is enabled, the whole run is
+// one recorded session — the recorder's sink attached to the run's tree
+// and the session ended after the last loop — so every loop's operations
+// join one session's stream. The post-done verification loops run on the
+// review-model rotation (see TheoryOfGoalReviewModel).
 func (Module) GoalRun(
 	reset dscope.Reset,
-	runReview RunReview,
 	observeGoal GoalTreeObserver,
 	reviewModels ReviewModels,
 	recorder *records.Recorder,
@@ -1147,7 +1122,6 @@ func (Module) GoalRun(
 		return RunGoal(ctx, GoalOptions{
 			Output:       output,
 			Generate:     makeGoalLoopGenerator(reset, decision),
-			Review:       runReview,
 			GoalTree:     observeGoal,
 			ReviewModels: models,
 			Recorder:     recorder,

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"io"
 	"slices"
 	"strings"
 	"testing"
@@ -32,11 +31,6 @@ func doneWithChangesResult() Result {
 	ret := doneResult()
 	ret.Diffs = []changes.FileDiff{{Path: "a.go"}}
 	return ret
-}
-
-// noopReview is a review stub for goal tests.
-func noopReview(ctx context.Context, output io.Writer, diffs []changes.FileDiff) error {
-	return nil
 }
 
 // TestRunGoalRotatesReviewModelsPerReviewLoop verifies the review-model
@@ -70,7 +64,6 @@ func TestRunGoalRotatesReviewModelsPerReviewLoop(t *testing.T) {
 			}
 			return doneResult(), nil, nil
 		},
-		Review: noopReview,
 	})
 	if !result.Achieved {
 		t.Fatal("goal must be achieved by the final change-free done loop")
@@ -117,7 +110,6 @@ func TestRunGoalAbandonedLoopKeepsReviewModel(t *testing.T) {
 			}
 			return doneResult(), nil, nil
 		},
-		Review: noopReview,
 	})
 	if !result.Achieved {
 		t.Fatal("goal must be achieved by the final change-free done loop")
@@ -151,7 +143,6 @@ func TestRunGoalConfirmsDoneAfterVerificationLoop(t *testing.T) {
 			}
 			return doneResult(), nil, nil
 		},
-		Review: noopReview,
 	})
 	if !result.Achieved {
 		t.Fatal("goal must be achieved when the verification loop emits a change-free done block")
@@ -195,7 +186,6 @@ func TestRunGoalCarriesErrorFeedback(t *testing.T) {
 			}
 			return doneResult(), nil, nil
 		},
-		Review: noopReview,
 	})
 	if !strings.Contains(string(feedbacks[1]), "previous goal loop failed") {
 		t.Fatalf("feedback after failure must carry the failure note, got %q", feedbacks[1])
@@ -221,7 +211,6 @@ func TestRunGoalFirstAttemptAbandonedRetriesNextLoop(t *testing.T) {
 			}
 			return doneResult(), nil, nil
 		},
-		Review: noopReview,
 	})
 	if calls != 2 {
 		t.Fatalf("ran %d loops, want 2: the abandoned loop must be retried by the next loop", calls)
@@ -257,7 +246,6 @@ func TestRunGoalCarriesPreviousLoopSummaries(t *testing.T) {
 			}
 			return doneResult(), nil, nil
 		},
-		Review: noopReview,
 	})
 	if calls != 3 {
 		t.Fatalf("ran %d loops, want 3", calls)
@@ -285,7 +273,6 @@ func TestRunGoalStopsAfterConsecutiveSameErrors(t *testing.T) {
 			calls++
 			return Result{}, nil, errors.New("persistent failure")
 		},
-		Review: noopReview,
 	})
 	if calls != maxConsecutiveGoalErrors {
 		t.Fatalf("ran %d loops, want %d", calls, maxConsecutiveGoalErrors)
@@ -322,7 +309,6 @@ func TestRunGoalDiskChangeHandoffFeedsNextLoop(t *testing.T) {
 			}
 			return doneResult(), nil, nil
 		},
-		Review: noopReview,
 	})
 	if !result.Achieved {
 		t.Fatal("goal should be achieved")
@@ -365,7 +351,6 @@ func TestRunGoalParseErrorsOverturnDoneDeclaration(t *testing.T) {
 			// TheoryOfGoalMode.
 			return doneWithChangesResult(), nil, nil
 		},
-		Review: noopReview,
 	})
 	if !strings.Contains(string(feedbacks[2]), "malformed block(s)") {
 		t.Fatalf("feedback after parse errors must carry the re-emit note, got %q", feedbacks[2])
@@ -398,7 +383,6 @@ func TestRunGoalChangeFreeLoopWithoutDoneContinues(t *testing.T) {
 			}
 			return doneResult(), nil, nil
 		},
-		Review: noopReview,
 	})
 	if calls != 2 {
 		t.Fatalf("ran %d loops, want 2: the silent loop must continue into the next loop", calls)
@@ -436,7 +420,6 @@ func TestRunGoalVerifiesCorrectionsUntilChangeFreeDone(t *testing.T) {
 			}
 			return doneResult(), nil, nil
 		},
-		Review: noopReview,
 	})
 	if !result.Achieved {
 		t.Fatal("goal must be achieved after the corrections are verified")
@@ -473,7 +456,6 @@ func TestRunGoalDoneWithoutChangesEndsRun(t *testing.T) {
 			calls++
 			return doneResult(), nil, nil
 		},
-		Review: noopReview,
 	})
 	if calls != 1 {
 		t.Fatalf("ran %d loops, want 1: a done block without applied changes must not trigger a verification loop", calls)
@@ -524,7 +506,6 @@ func TestRunGoalDoneIgnoredWhilePlanPending(t *testing.T) {
 			}
 			return doneResult(), nil, nil
 		},
-		Review: noopReview,
 	})
 	if calls != 2 {
 		t.Fatalf("ran %d loops, want 2: a done block while the plan is pending must not end the run", calls)
@@ -615,7 +596,6 @@ func TestRunGoalDoneWithChangesDoesNotEndRun(t *testing.T) {
 			}
 			return doneResult(), nil, nil
 		},
-		Review: noopReview,
 	})
 	if !result.Achieved {
 		t.Fatal("goal must be achieved by the final change-free done loop")
@@ -649,7 +629,6 @@ func TestRunGoalContinuesWhenLoopAppliesChanges(t *testing.T) {
 			}
 			return doneResult(), nil, nil
 		},
-		Review: noopReview,
 	})
 	// Loop 1 applies changes and continues; loop 2 declares done; loop
 	// 3 confirms.
@@ -684,7 +663,6 @@ func TestRunGoalSilentVerificationLoopContinues(t *testing.T) {
 			}
 			return doneResult(), nil, nil
 		},
-		Review: noopReview,
 	})
 	if calls != 3 {
 		t.Fatalf("ran %d loops, want 3: the silent verification loop must continue", calls)
@@ -715,7 +693,6 @@ func TestRunGoalAggregatesStatsWithLoopNumbers(t *testing.T) {
 			}
 			return doneResult(), stats, nil
 		},
-		Review: noopReview,
 	})
 	if !result.Achieved {
 		t.Fatal("goal must be achieved")
@@ -741,7 +718,6 @@ func TestRunGoalReportsTreeThroughObserver(t *testing.T) {
 		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries, _ string, _ SessionTreeContinuation) (Result, []AttemptStat, error) {
 			return doneResult(), []AttemptStat{{Attempt: 1, PromptTokens: 10}}, nil
 		},
-		Review: noopReview,
 		GoalTree: func(tr *tree.Tree) {
 			trees = append(trees, tr)
 		},
@@ -797,7 +773,6 @@ func TestRunGoalReviewModelStickyAfterOverturnedDeclaration(t *testing.T) {
 			// TheoryOfGoalMode.
 			return doneWithChangesResult(), nil, nil
 		},
-		Review: noopReview,
 	})
 	// Loop 1 declares done with changes, loop 2's parse errors force a
 	// re-emit, loop 3 declares again with changes, loop 4 emits the
@@ -834,7 +809,6 @@ func TestRunGoalPostDoneLoopsKeepDefaultModelWithoutReviewModel(t *testing.T) {
 			}
 			return doneResult(), nil, nil
 		},
-		Review: noopReview,
 	})
 	if !result.Achieved {
 		t.Fatal("goal must be achieved when the verification loop emits a change-free done block")

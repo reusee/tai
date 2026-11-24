@@ -11,25 +11,13 @@ import (
 
 var _ configs.Config = ReviewModels(nil)
 var _ flags.Flag = ReviewModels(nil)
-var _ configs.Config = Review(false)
-var _ flags.Flag = Review(true)
 
-// Review controls whether a review loop runs after the main generation
-// loop (or after a goal run completes). When enabled, the changes
-// made during generation are reviewed and corrected by one or more
-// independent models. See TheoryOfReviewLoop.
-type Review bool
-
-// ReviewModels lists the models used for review, in order. Each model runs
-// a separate review generation session with a fresh scope after a run. The
-// post-done verification loops of a goal run take the same ordered list in
-// rotation, one model per loop, wrapping around to the first model after
-// the last, so consecutive verification loops run on different models (see
-// TheoryOfGoalReviewModel). When empty, the model selected by the -model
-// flag is reused: the resolved generator's
-// Spec is not reusable because built-in shortcuts (flash, gemini, ...) and
-// the ollama shorthand do not set Spec.Name, and their Spec.Model values are
-// not resolvable model names. See TheoryOfReviewLoop.
+// ReviewModels lists the models the goal run's review phase runs on, in
+// order: the first loop after a done declaration runs on the first model,
+// each later review-phase loop takes the next model, and the selection
+// wraps around to the first model after the last, so consecutive
+// verification loops run on different models. When empty, post-done loops
+// keep the default model. See TheoryOfGoalReviewModel.
 type ReviewModels []string
 
 func (m ReviewModels) Handle(key string, args []string) (newDef any, remainArgs []string, err error) {
@@ -42,7 +30,7 @@ func (m ReviewModels) Handle(key string, args []string) (newDef any, remainArgs 
 
 func (m ReviewModels) Keys() map[string]string {
 	return map[string]string{
-		"-review-model": "Set a review model to use for the review loop (repeatable, run in order)",
+		"-review-model": "Set the model a goal review-phase loop runs on (repeatable, run in rotation)",
 	}
 }
 
@@ -62,29 +50,6 @@ func (m ReviewModels) HandleConfig(path string, values []*cue.Value) (any, error
 	return &ret, nil
 }
 
-func (r Review) Handle(key string, args []string) (newDef any, remainArgs []string, err error) {
-	ret := Review(true)
-	return &ret, args, nil
-}
-
-func (r Review) Keys() map[string]string {
-	return map[string]string{
-		"-review": "Run a review loop after generation to review and fix changes",
-	}
-}
-
-func (r Review) ConfigPaths() []string {
-	return []string{"review"}
-}
-
-func (r Review) HandleConfig(path string, values []*cue.Value) (any, error) {
-	return configs.DecodeConfig[Review](values)
-}
-
 func (Module) ReviewModels() ReviewModels {
 	return nil
-}
-
-func (Module) Review() Review {
-	return false
 }

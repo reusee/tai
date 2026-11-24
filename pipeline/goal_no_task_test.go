@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/reusee/dscope"
-	"github.com/reusee/tai/changes"
 	"github.com/reusee/tai/flags"
 )
 
@@ -50,9 +49,6 @@ func TestRunGoalNoTaskStopsRun(t *testing.T) {
 		Generate: func(ctx context.Context, loop int, feedback GoalFeedback, summaries GoalLoopSummaries, reviewModel string, _ SessionTreeContinuation) (Result, []AttemptStat, error) {
 			calls++
 			return Result{}, nil, ErrNoTask
-		},
-		Review: func(ctx context.Context, output io.Writer, diffs []changes.FileDiff) error {
-			return nil
 		},
 	})
 	if calls != 1 {

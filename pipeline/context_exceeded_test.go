@@ -70,7 +70,6 @@ func TestRunGoalContextExceededFeedsNextLoop(t *testing.T) {
 			}
 			return doneResult(), nil, nil
 		},
-		Review: noopReview,
 	})
 	if !result.Achieved {
 		t.Fatal("goal should be achieved")
@@ -96,7 +95,6 @@ func TestRunGoalContextExceededStopsAfterConsecutive(t *testing.T) {
 				Err: errors.New("maximum context length exceeded"),
 			}
 		},
-		Review: noopReview,
 	})
 	// The over-limit context is accumulated by the loop itself, so the
 	// failure counts toward the consecutive-error bound: three

@@ -1706,9 +1706,9 @@ type Result struct {
 	// projections from it. See TheoryOfSessionTree.
 	SessionTree *tree.Tree
 	// Diffs are the session diffs of all changes applied through the
-	// in-memory file store during this run. They are used by the review
-	// loop to present the changes to a second model. See
-	// TheoryOfReviewLoop in generate.go.
+	// in-memory file store during this run. The goal runner carries
+	// them in the next loop's feedback so a verification loop sees what
+	// the previous loop changed (see goalReviewDiffPrompt).
 	Diffs []changes.FileDiff
 }
 
