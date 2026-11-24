@@ -519,10 +519,9 @@ func TestRunGoalDoneIgnoredWhilePlanPending(t *testing.T) {
 }
 
 // TestGoalReviewDiffPromptCarriesDiff checks the review-phase feedback: the
-// previous loop's diff reaches the next loop's system prompt, the declaring
-// case and the corrections case open differently, both carry the shared
-// verification instruction, and a diff past the limit is cut on a line
-// boundary with a note that sends the loop to the files. See
+// previous loop's diff reaches the next loop's system prompt in full, the
+// declaring case and the corrections case open differently, both carry the
+// shared verification instruction, and no diff is cut short. See
 // TheoryOfGoalMode.
 func TestGoalReviewDiffPromptCarriesDiff(t *testing.T) {
 	diffs := []changes.FileDiff{
@@ -562,16 +561,13 @@ func TestGoalReviewDiffPromptCarriesDiff(t *testing.T) {
 	big := []changes.FileDiff{
 		{
 			Path:          "big.go",
-			Current:       []byte(strings.Repeat("var x = 1\n", goalReviewDiffLimit/10+10)),
+			Current:       []byte(strings.Repeat("var x = 1\n", 8000)),
 			CurrentExists: true,
 		},
 	}
-	truncated := string(goalReviewDiffPrompt(true, big))
-	if len(truncated) > goalReviewDiffLimit+4096 {
-		t.Fatalf("the review prompt must stay bounded, got %d bytes", len(truncated))
-	}
-	if !strings.Contains(truncated, "truncated") {
-		t.Fatal("a truncated diff must state that it was truncated")
+	bigFormatted := changes.FormatFileDiffs(big)
+	if !strings.Contains(string(goalReviewDiffPrompt(true, big)), bigFormatted) {
+		t.Fatal("the review prompt must carry the whole diff without truncation")
 	}
 }
 

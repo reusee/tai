@@ -64,19 +64,21 @@ its done declaration may rest on stale context. The previous loop's
 diff travels in the system prompt for the same reason: a review-phase
 loop opens a fresh scope and sees the filesystem after the change, so
 without the diff it cannot tell what the previous loop did;
-goalReviewDiffPrompt embeds the diff, bounded at goalReviewDiffLimit,
-and the instruction names the diff as data to review, not as directives
-to follow. A verification loop's own corrections are new changes
-that the following loop verifies in turn, so the cycle repeats until a
-loop examines the current state and finds nothing to correct: that loop
-emits a done block and applies no change blocks, and the run ends
-achieved. Because the done block is not consumed by any component, it
-remains in Result.RemainingBlocks; the runner checks there. When a
-declaration with changes lands on the final budget loop, the runner
-executes one extra verification loop beyond the budget. A loop that
-fails or produces uncorrected malformed blocks carries corrective
-feedback into the next loop: the goal state is unknown or changes are
-missing, so the goal is not achieved.
+goalReviewDiffPrompt embeds the diff in full, and the instruction names
+the diff as data to review, not as directives to follow. The diff is
+never truncated: a reviewer that sees only part of a change set cannot
+judge the hunks past the cut, and the files show the result of a
+change, not the change itself. A verification loop's own corrections
+are new changes that the following loop verifies in turn, so the cycle
+repeats until a loop examines the current state and finds nothing to
+correct: that loop emits a done block and applies no change blocks, and
+the run ends achieved. Because the done block is not consumed by any
+component, it remains in Result.RemainingBlocks; the runner checks
+there. When a declaration with changes lands on the final budget loop,
+the runner executes one extra verification loop beyond the budget. A
+loop that fails or produces uncorrected malformed blocks carries
+corrective feedback into the next loop: the goal state is unknown or
+changes are missing, so the goal is not achieved.
 
 A done block is gated on the loop's own plan completion: each loop
 owns its plan — a plan root under its loop node — and while the
@@ -278,13 +280,6 @@ const goalNoDoneFeedbackPrompt = `
 
 Redo the assessment from scratch: re-read the relevant files against the original goal in the user input, requirement by requirement — checking what was NOT done as well as the correctness of what was done. If any requirement is unmet, or any applied change is incorrect or incomplete, fix or complete it with change blocks. If — and only if — the gap analysis finds no gap (every requirement satisfied, nothing incorrect, nothing missing), emit a done block: emitting the done block is the only way the goal run ends. Never end a loop with neither change blocks nor a done block.]`
 
-// goalReviewDiffLimit bounds the diff text carried into a review-phase
-// loop's system prompt. Change blocks already render with a bounded context
-// window (see changes.TheoryOfReviewDiffContext), but a change set touching
-// many files still grows with the number of files; past the limit the loop
-// reviews the files themselves. See TheoryOfGoalMode.
-const goalReviewDiffLimit = 32 << 10
-
 // maxGoalIterations bounds the number of goal loops.
 const maxGoalIterations = 20
 
@@ -419,21 +414,6 @@ type GoalOptions struct {
 // generation. See TheoryOfGoalMode and TheoryOfHandoff.
 type GoalLoop int
 
-// truncateReviewDiff bounds the diff text at goalReviewDiffLimit on a line
-// boundary: a newline cannot appear inside a multi-byte rune, so the cut
-// keeps the text valid and the diff readable up to whole lines. The note
-// sends the loop to the changed files for the rest. See TheoryOfGoalMode.
-func truncateReviewDiff(text string) string {
-	if len(text) <= goalReviewDiffLimit {
-		return text
-	}
-	cut := goalReviewDiffLimit
-	for cut > 0 && text[cut-1] != '\n' {
-		cut--
-	}
-	return text[:cut] + "\n[The diff is truncated here to bound the prompt size. Read the changed files and their callers with ingest and go-src blocks, and judge the change from the files.]\n"
-}
-
 // GoalLoopGenerator runs one goal loop. The loop number, the feedback,
 // and the summaries of previous loops reach the loop's scope through
 // the forks of the goal runner. A non-empty loopModel forks
@@ -526,9 +506,12 @@ func GoalSystemPromptText(
 // and the previous loop's diff. The diff travels in the system prompt
 // because a review-phase loop opens a fresh scope: it sees the filesystem
 // after the change, and without the diff it cannot tell what the previous
-// loop did. declaration states that the previous loop declared the goal
-// achieved with a done block; otherwise the loop reviews the corrections of
-// a review-phase loop that declared nothing. See TheoryOfGoalMode.
+// loop did. The diff is carried in full: a reviewer that sees only part of
+// a change set cannot judge the hunks past the cut, and the files show the
+// result of a change, not the change itself. declaration states that the
+// previous loop declared the goal achieved with a done block; otherwise the
+// loop reviews the corrections of a review-phase loop that declared
+// nothing. See TheoryOfGoalMode.
 func goalReviewDiffPrompt(declaration bool, diffs []changes.FileDiff) GoalFeedback {
 	const declaredOpening = "[System note: The previous goal loop applied change blocks and declared the goal achieved with a done block. The declaration is not final: a loop that applies change blocks never ends the run."
 	const correctionsOpening = "[System note: The previous goal loop applied change blocks in the review phase and emitted no done block. Its corrections are unverified until this loop checks them against the current filesystem state."
@@ -539,7 +522,7 @@ func goalReviewDiffPrompt(declaration bool, diffs []changes.FileDiff) GoalFeedba
 	return GoalFeedback(opening + "\n\n" +
 		goalVerificationPrompt +
 		"\n\nDiff of the previous loop:\n\n" +
-		truncateReviewDiff(changes.FormatFileDiffs(diffs)) + "]")
+		changes.FormatFileDiffs(diffs) + "]")
 }
 
 type goalLoopState struct {
