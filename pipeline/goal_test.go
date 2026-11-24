@@ -520,8 +520,9 @@ func TestRunGoalDoneIgnoredWhilePlanPending(t *testing.T) {
 
 // TestGoalReviewDiffPromptCarriesDiff checks the review-phase feedback: the
 // previous loop's diff reaches the next loop's system prompt in full, the
-// declaring case and the corrections case open differently, both carry the
-// shared verification instruction, and no diff is cut short. See
+// declaring case and the corrections case open differently, both name the
+// diff's design errors and implementation errors as the review target, both
+// carry the shared verification instruction, and no diff is cut short. See
 // TheoryOfGoalMode.
 func TestGoalReviewDiffPromptCarriesDiff(t *testing.T) {
 	diffs := []changes.FileDiff{
@@ -555,6 +556,9 @@ func TestGoalReviewDiffPromptCarriesDiff(t *testing.T) {
 	for _, prompt := range []string{declared, corrections} {
 		if !strings.Contains(prompt, goalVerificationPrompt) {
 			t.Fatal("both cases must carry the shared verification instruction")
+		}
+		if !strings.Contains(prompt, "design errors and implementation errors") {
+			t.Fatal("both cases must name design errors and implementation errors as the review target")
 		}
 	}
 
@@ -847,6 +851,9 @@ func TestGoalSystemPromptContent(t *testing.T) {
 	if !strings.Contains(GoalSystemPrompt, "a summary block alone never ends the run") {
 		t.Fatal("GoalSystemPrompt must state that a summary alone never ends the run for inquiry work")
 	}
+	if !strings.Contains(GoalSystemPrompt, "reviews the previous loop's diff for design errors and implementation errors") {
+		t.Fatal("GoalSystemPrompt must state that the verifying loop reviews the previous loop's diff for design and implementation errors")
+	}
 	if strings.Contains(GoalSystemPrompt, "second consecutive loop") {
 		t.Fatal("GoalSystemPrompt must not describe the removed two-done confirmation")
 	}
@@ -891,6 +898,27 @@ func TestGoalVerificationPromptContent(t *testing.T) {
 	}
 	if !strings.Contains(goalVerificationPrompt, "removed protection") {
 		t.Fatal("the verification prompt must treat a removed protection as a defect")
+	}
+	if !strings.Contains(goalVerificationPrompt, "review the previous loop's diff") {
+		t.Fatal("the verification prompt must name the previous loop's diff as the review subject")
+	}
+	if !strings.Contains(goalVerificationPrompt, "design error") {
+		t.Fatal("the verification prompt must make design errors a primary review target")
+	}
+	if !strings.Contains(goalVerificationPrompt, "implementation error") {
+		t.Fatal("the verification prompt must make implementation errors a primary review target")
+	}
+	if !strings.Contains(goalVerificationPrompt, "system theory") {
+		t.Fatal("the verification prompt must point the design review at the system theory")
+	}
+	if !strings.Contains(goalVerificationPrompt, "Fix every design error and implementation error") {
+		t.Fatal("the verification prompt must require correcting the errors the review uncovers")
+	}
+	if !strings.Contains(goalVerificationPrompt, "Correct the design errors first") {
+		t.Fatal("the verification prompt must order the corrections: a design correction rewrites the code that carries an implementation error")
+	}
+	if !strings.Contains(goalVerificationPrompt, "an implementation fix made before the design is settled is wasted") {
+		t.Fatal("the verification prompt must state why the design corrections come first")
 	}
 }
 
