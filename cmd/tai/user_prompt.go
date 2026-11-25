@@ -83,7 +83,7 @@ func (Module) UserPrompt(
 		// See generators.TheoryOfSpec.
 		args := generator.Spec()
 		maxInputTokens := min(
-			args.ContextTokens,
+			args.MaxTokens,
 			args.EffectiveMaxInitTokens(int(maxInitTokens)),
 		)
 		maxGenerateTokens := 8192

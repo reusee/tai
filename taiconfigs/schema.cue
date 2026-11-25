@@ -186,8 +186,8 @@ _gen: {
 	model?: string
 	// family is the model name without version information.
 	family?: string
-	// context_tokens is the maximum context window size for the model.
-	context_tokens?: int
+	// max_tokens is the maximum context window size for the model.
+	max_tokens?: int
 	// max_generate_tokens is the maximum number of tokens to generate.
 	max_generate_tokens?: int
 // max_thinking_tokens is the maximum number of tokens for reasoning/thinking.

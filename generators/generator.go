@@ -224,8 +224,8 @@ func resolveSpec(name string, roots []Spec) (Spec, error) {
 			if spec.Family != "" {
 				merged.Family = spec.Family
 			}
-			if spec.ContextTokens != 0 {
-				merged.ContextTokens = spec.ContextTokens
+			if spec.MaxTokens != 0 {
+				merged.MaxTokens = spec.MaxTokens
 			}
 			if spec.MaxInitTokens != nil {
 				merged.MaxInitTokens = spec.MaxInitTokens
@@ -417,7 +417,7 @@ func (Module) GetGenerator(
 				"type", resolvedSpec.Type,
 				"model", resolvedSpec.Model,
 				"base_url", resolvedSpec.BaseURL,
-				"context_tokens", resolvedSpec.ContextTokens,
+				"max_tokens", resolvedSpec.MaxTokens,
 				"family", resolvedSpec.Family,
 			)
 			if err := confidential.check(resolvedSpec, name); err != nil {
@@ -521,7 +521,7 @@ func (Module) GetGenerator(
 		case "flash", "gemini-flash":
 			spec := Spec{
 				Model:             "models/gemini-flash-latest",
-				ContextTokens:     192 * K,
+				MaxTokens:         192 * K,
 				MaxGenerateTokens: new(32 * K),
 				Temperature:       new(float32(0.1)),
 			}
@@ -541,7 +541,7 @@ func (Module) GetGenerator(
 		case "gemini", "pro", "gemini-pro":
 			spec := Spec{
 				Model:             "models/gemini-pro-latest",
-				ContextTokens:     192 * K,
+				MaxTokens:         192 * K,
 				MaxGenerateTokens: new(32 * K),
 				Temperature:       new(float32(0.1)),
 			}

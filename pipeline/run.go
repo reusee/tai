@@ -1318,11 +1318,14 @@ func (ls *loopState) drainEventSink() {
 // OpenAI.Generate) — so the node's content reports the values the
 // request actually carries, unlike the generators' "generating" log,
 // which records the spec's effort even when the flag overrides it.
-// Max generate tokens come from the spec: every built-in command
-// passes nil GenerateOptions, so the spec field is the effective
-// limit; flags.MaxInitTokens bounds only the initial input budget and
-// is not part of the request. Unset values are omitted from the detail.
-// See TheoryOfLoopEvents.
+// Each token label names its config key so the rendered value is
+// unambiguous: "max tokens" is MaxTokens (the context window),
+// "max generate tokens" is MaxGenerateTokens, and "thinking tokens" is
+// MaxThinkingTokens; see TheoryOfSpec. Max generate tokens come from
+// the spec: every built-in command passes nil GenerateOptions, so the
+// spec field is the effective limit; flags.MaxInitTokens bounds only
+// the initial input budget and is not part of the request. Unset
+// values are omitted from the detail. See TheoryOfLoopEvents.
 func describeGenerator(
 	spec generators.Spec,
 	temperatureFlag generators.TemperatureFlag,
@@ -1347,13 +1350,13 @@ func describeGenerator(
 		parts = append(parts, fmt.Sprintf("effort %s", spec.ReasoningEffort))
 	}
 	if spec.MaxGenerateTokens != nil {
-		parts = append(parts, fmt.Sprintf("max tokens %d", *spec.MaxGenerateTokens))
+		parts = append(parts, fmt.Sprintf("max generate tokens %d", *spec.MaxGenerateTokens))
 	}
 	if spec.MaxThinkingTokens != nil {
 		parts = append(parts, fmt.Sprintf("thinking tokens %d", *spec.MaxThinkingTokens))
 	}
-	if spec.ContextTokens > 0 {
-		parts = append(parts, fmt.Sprintf("context %d", spec.ContextTokens))
+	if spec.MaxTokens > 0 {
+		parts = append(parts, fmt.Sprintf("max tokens %d", spec.MaxTokens))
 	}
 	return strings.Join(parts, ", ")
 }

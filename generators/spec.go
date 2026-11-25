@@ -29,6 +29,11 @@ the System One protocol (see TheoryOfSystemOne) and "decisions" the Gemini typed
 TheoryOfDecisions), so no separate marker field exists. Type is merged from parent to child when non-empty,
 so a variant inherits its parent's protocol.
 
+MaxTokens names the model's maximum context window, covering input and output tokens together. It is the
+ceiling every context assembly site caps against: the initial input budget starts from
+min(MaxTokens, EffectiveMaxInitTokens), and each site then subtracts its own fixed and reserved parts.
+The field merges from parent to child when non-zero, like the other scalars.
+
 Provider holds routing preferences forwarded to OpenRouter in the request
 body; see TheoryOfProviderRouting for the routing model and the field-wise
 parent-to-child merge.
@@ -49,7 +54,7 @@ type Spec struct {
 	APIKey            string         `json:"api_key"`
 	Model             string         `json:"model"`
 	Family            string         `json:"family"`
-	ContextTokens     int            `json:"context_tokens"`
+	MaxTokens         int            `json:"max_tokens"`
 	MaxInitTokens     *int           `json:"max_init_tokens,omitempty"`
 	MaxGenerateTokens *int           `json:"max_generate_tokens"`
 	MaxThinkingTokens *int           `json:"max_thinking_tokens,omitempty"`

@@ -1020,7 +1020,7 @@ func (f *fakeHandoffObserver) HandoffEnd() { f.ended++ }
 func (f *fakeHandoffObserver) HandoffStart() { f.started++ }
 
 func (debugOutputMockGenerator) Spec() generators.Spec {
-	return generators.Spec{ContextTokens: 100000}
+	return generators.Spec{MaxTokens: 100000}
 }
 
 // chatBracketPartsProvider is a codetypes.PartsProvider returning one fixed
@@ -1054,7 +1054,7 @@ type restateThresholdGenerator struct {
 func (restateThresholdGenerator) Spec() generators.Spec {
 	maxGenerateTokens := 1024
 	return generators.Spec{
-		ContextTokens:     1 << 20,
+		MaxTokens:         1 << 20,
 		MaxGenerateTokens: &maxGenerateTokens,
 	}
 }

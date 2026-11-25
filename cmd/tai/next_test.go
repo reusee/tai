@@ -477,7 +477,7 @@ type userPromptMockGenerator struct {
 func (userPromptMockGenerator) Spec() generators.Spec {
 	maxGenerate := 1024
 	return generators.Spec{
-		ContextTokens:     1 << 20,
+		MaxTokens:         1 << 20,
 		MaxGenerateTokens: &maxGenerate,
 	}
 }

@@ -24,7 +24,7 @@ func TestGemini(t *testing.T) {
 	) Generator {
 		generator := newGemini(Spec{
 			Model:             "models/gemini-flash-latest",
-			ContextTokens:     1 * M,
+			MaxTokens:         1 * M,
 			MaxGenerateTokens: new(64 * K),
 			Temperature:       new(float32(0.1)),
 			DisableSearch:     new(true),

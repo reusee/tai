@@ -129,7 +129,7 @@ func (g requestEventGenerator) Generate(ctx context.Context, state generators.St
 func TestRunGeneratorNodeContent(t *testing.T) {
 	withRun(t, func(run Run) {
 		temperature := float32(0.5)
-		maxTokens := 4096
+		maxGenerateTokens := 4096
 		generator := requestEventGenerator{
 			spec: generators.Spec{
 				Name:              "test",
@@ -137,8 +137,8 @@ func TestRunGeneratorNodeContent(t *testing.T) {
 				Family:            "family-a",
 				Temperature:       &temperature,
 				ReasoningEffort:   "low",
-				MaxGenerateTokens: &maxTokens,
-				ContextTokens:     100000,
+				MaxGenerateTokens: &maxGenerateTokens,
+				MaxTokens:         100000,
 			},
 		}
 		opts := RunOptions{
@@ -188,8 +188,8 @@ func TestRunGeneratorNodeContent(t *testing.T) {
 			"family family-a",
 			"temperature 0.5",
 			"effort low",
-			"max tokens 4096",
-			"context 100000",
+			"max generate tokens 4096",
+			"max tokens 100000",
 		} {
 			if !strings.Contains(generatorNode.Content, want) {
 				t.Fatalf("generator node content %q missing %q", generatorNode.Content, want)
@@ -208,13 +208,14 @@ func TestRunGeneratorNodeContent(t *testing.T) {
 // spec. See TheoryOfLoopEvents.
 func TestDescribeGenerator(t *testing.T) {
 	specTemperature := float32(0.2)
-	maxTokens := 8192
+	maxGenerateTokens := 8192
 	spec := generators.Spec{
 		Name:              "provider/model-b",
 		Model:             "model-b",
+		MaxTokens:         192000,
 		Temperature:       &specTemperature,
 		ReasoningEffort:   "low",
-		MaxGenerateTokens: &maxTokens,
+		MaxGenerateTokens: &maxGenerateTokens,
 	}
 	detail := describeGenerator(spec, generators.TemperatureFlag{}, generators.EffortFlag(""))
 	for _, want := range []string{
@@ -222,7 +223,8 @@ func TestDescribeGenerator(t *testing.T) {
 		"model model-b",
 		"temperature 0.2",
 		"effort low",
-		"max tokens 8192",
+		"max generate tokens 8192",
+		"max tokens 192000",
 	} {
 		if !strings.Contains(detail, want) {
 			t.Fatalf("detail %q missing %q", detail, want)
@@ -251,7 +253,8 @@ func TestDescribeGenerator(t *testing.T) {
 
 	// A spec with no optional fields set renders the model identity
 	// alone: every default value is omitted, including the spec path
-	// when the spec was constructed without one.
+	// when the spec was constructed without one and the context window
+	// when it is zero.
 	bare := describeGenerator(generators.Spec{Model: "model-bare"},
 		generators.TemperatureFlag{}, generators.EffortFlag(""))
 	if want := "model model-bare"; bare != want {

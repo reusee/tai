@@ -45,7 +45,7 @@ func TestOpenAI(t *testing.T) {
 	) Generator {
 		return newOpenRouter(Spec{
 			Model:             "openai/gpt-oss-120b:free",
-			ContextTokens:     128 << 10,
+			MaxTokens:         128 << 10,
 			MaxGenerateTokens: new(8 << 10),
 		})
 	})

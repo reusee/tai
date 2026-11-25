@@ -516,7 +516,7 @@ func (Module) GenerateWithResultWithStats(
 		// and the context window still caps the result.
 		// See TheoryOfTokenBudgetStability.
 		maxInputTokens := min(
-			spec.ContextTokens,
+			spec.MaxTokens,
 			spec.EffectiveMaxInitTokens(int(maxInitTokens)),
 		)
 

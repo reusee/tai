@@ -245,12 +245,11 @@ func TestNonStreaming(t *testing.T) {
 
 func TestResolveSpec(t *testing.T) {
 	base := Spec{
-		Name:          "base",
-		Type:          "gemini",
-		Model:         "base-model",
-		ContextTokens: 100,
-		Temperature:   new(float32(0.5)),
-		DisableSearch: new(true),
+		Name:        "base",
+		Type:        "gemini",
+		Model:       "base-model",
+		MaxTokens:   100,
+		Temperature: new(float32(0.5)),
 		Variants: []Spec{
 			{
 				Name:              "variant1",
@@ -260,14 +259,15 @@ func TestResolveSpec(t *testing.T) {
 				Aliases:           []string{"myvariant"},
 				Variants: []Spec{
 					{
-						Name:          "sub",
-						ContextTokens: 200,
-						Temperature:   new(float32(0.8)),
+						Name:        "sub",
+						MaxTokens:   200,
+						Temperature: new(float32(0.8)),
 					},
 				},
 			},
 		},
 	}
+	base.DisableSearch = new(true)
 	roots := []Spec{base}
 
 	t.Run("resolve base", func(t *testing.T) {
@@ -284,8 +284,8 @@ func TestResolveSpec(t *testing.T) {
 		if s.Model != "base-model" {
 			t.Errorf("expected model base-model, got %q", s.Model)
 		}
-		if s.ContextTokens != 100 {
-			t.Errorf("expected context tokens 100, got %d", s.ContextTokens)
+		if s.MaxTokens != 100 {
+			t.Errorf("expected max tokens 100, got %d", s.MaxTokens)
 		}
 		if s.Temperature == nil || *s.Temperature != 0.5 {
 			t.Errorf("expected temperature 0.5, got %v", s.Temperature)
@@ -312,8 +312,8 @@ func TestResolveSpec(t *testing.T) {
 		if s.Model != "base-model" {
 			t.Errorf("expected model base-model, got %q", s.Model)
 		}
-		if s.ContextTokens != 100 {
-			t.Errorf("expected context tokens 100, got %d", s.ContextTokens)
+		if s.MaxTokens != 100 {
+			t.Errorf("expected max tokens 100, got %d", s.MaxTokens)
 		}
 		if s.Temperature == nil || *s.Temperature != 0.5 {
 			t.Errorf("expected temperature 0.5, got %v", s.Temperature)
@@ -343,8 +343,8 @@ func TestResolveSpec(t *testing.T) {
 		if s.Model != "base-model" {
 			t.Errorf("expected model base-model, got %q", s.Model)
 		}
-		if s.ContextTokens != 200 {
-			t.Errorf("expected context tokens 200, got %d", s.ContextTokens)
+		if s.MaxTokens != 200 {
+			t.Errorf("expected max tokens 200, got %d", s.MaxTokens)
 		}
 		if s.Temperature == nil || *s.Temperature != 0.8 {
 			t.Errorf("expected temperature 0.8, got %v", s.Temperature)
@@ -428,8 +428,8 @@ func TestResolveSpec(t *testing.T) {
 		if s.Model != "base-model" {
 			t.Errorf("expected model base-model, got %q", s.Model)
 		}
-		if s.ContextTokens != 200 {
-			t.Errorf("expected context tokens 200, got %d", s.ContextTokens)
+		if s.MaxTokens != 200 {
+			t.Errorf("expected max tokens 200, got %d", s.MaxTokens)
 		}
 		if s.Temperature == nil || *s.Temperature != 0.8 {
 			t.Errorf("expected temperature 0.8, got %v", s.Temperature)
@@ -675,11 +675,11 @@ func TestResolveSpecRedirect(t *testing.T) {
 	t.Run("redirect preserves inherited fields", func(t *testing.T) {
 		localRoots := []Spec{
 			{
-				Name:          "base",
-				Type:          "gemini",
-				ContextTokens: 100,
-				Temperature:   new(float32(0.5)),
-				Redirect:      "child",
+				Name:        "base",
+				Type:        "gemini",
+				MaxTokens:   100,
+				Temperature: new(float32(0.5)),
+				Redirect:    "child",
 				Variants: []Spec{
 					{
 						Name:  "child",
@@ -698,8 +698,8 @@ func TestResolveSpecRedirect(t *testing.T) {
 		if s.Type != "gemini" {
 			t.Errorf("expected type gemini, got %q", s.Type)
 		}
-		if s.ContextTokens != 100 {
-			t.Errorf("expected context tokens 100, got %d", s.ContextTokens)
+		if s.MaxTokens != 100 {
+			t.Errorf("expected max tokens 100, got %d", s.MaxTokens)
 		}
 		if s.Temperature == nil || *s.Temperature != 0.5 {
 			t.Errorf("expected temperature 0.5, got %v", s.Temperature)
@@ -805,10 +805,10 @@ func TestResolveSpecRedirect(t *testing.T) {
 	t.Run("absolute redirect does not inherit parent fields", func(t *testing.T) {
 		localRoots := []Spec{
 			{
-				Name:          "base",
-				Type:          "gemini",
-				ContextTokens: 100,
-				Redirect:      "/target",
+				Name:      "base",
+				Type:      "gemini",
+				MaxTokens: 100,
+				Redirect:  "/target",
 			},
 			{
 				Name:  "target",
@@ -825,8 +825,8 @@ func TestResolveSpecRedirect(t *testing.T) {
 		}
 		// Absolute redirect starts fresh from root, so parent fields
 		// are NOT inherited — only the target path's specs are merged.
-		if s.ContextTokens != 0 {
-			t.Errorf("expected context tokens 0 for absolute redirect, got %d", s.ContextTokens)
+		if s.MaxTokens != 0 {
+			t.Errorf("expected max tokens 0 for absolute redirect, got %d", s.MaxTokens)
 		}
 		if s.Type != "openai" {
 			t.Errorf("expected type openai, got %q", s.Type)
@@ -982,7 +982,7 @@ func TestResolveSpecRandomRedirect(t *testing.T) {
 			{
 				Name:           "base",
 				Type:           "gemini",
-				ContextTokens:  100,
+				MaxTokens:      100,
 				Temperature:    new(float32(0.5)),
 				RandomRedirect: []string{"child"},
 				Variants: []Spec{
@@ -1001,8 +1001,8 @@ func TestResolveSpecRandomRedirect(t *testing.T) {
 		if s.Name != "base/child" {
 			t.Errorf("expected name 'base/child', got %q", s.Name)
 		}
-		if s.ContextTokens != 100 {
-			t.Errorf("expected context tokens 100, got %d", s.ContextTokens)
+		if s.MaxTokens != 100 {
+			t.Errorf("expected max tokens 100, got %d", s.MaxTokens)
 		}
 		if s.Temperature == nil || *s.Temperature != 0.5 {
 			t.Errorf("expected temperature 0.5, got %v", s.Temperature)
@@ -1048,7 +1048,7 @@ func TestResolveSpecRandomRedirect(t *testing.T) {
 			{
 				Name:           "base",
 				Type:           "gemini",
-				ContextTokens:  100,
+				MaxTokens:      100,
 				RandomRedirect: []string{"/target"},
 			},
 			{
@@ -1064,8 +1064,8 @@ func TestResolveSpecRandomRedirect(t *testing.T) {
 		if s.Name != "target" {
 			t.Errorf("expected name 'target', got %q", s.Name)
 		}
-		if s.ContextTokens != 0 {
-			t.Errorf("expected context tokens 0 for absolute redirect, got %d", s.ContextTokens)
+		if s.MaxTokens != 0 {
+			t.Errorf("expected max tokens 0 for absolute redirect, got %d", s.MaxTokens)
 		}
 		if s.Type != "openai" {
 			t.Errorf("expected type openai, got %q", s.Type)

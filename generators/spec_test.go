@@ -179,6 +179,36 @@ func TestSpecMaxInitTokensJSON(t *testing.T) {
 	}
 }
 
+func TestSpecMaxTokensJSON(t *testing.T) {
+	spec := Spec{
+		Name:      "test",
+		Type:      "gemini",
+		MaxTokens: 192000,
+	}
+	data, err := json.Marshal(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := raw["max_tokens"]; !ok || v != float64(192000) {
+		t.Fatalf("max_tokens not found or wrong: %v", raw)
+	}
+	if _, ok := raw["context_tokens"]; ok {
+		t.Fatalf("the retired context_tokens key must not appear: %v", raw)
+	}
+
+	var restored Spec
+	if err := json.Unmarshal(data, &restored); err != nil {
+		t.Fatal(err)
+	}
+	if restored.MaxTokens != 192000 {
+		t.Fatalf("MaxTokens not restored correctly: %+v", restored)
+	}
+}
+
 func TestSpecEffectiveMaxInitTokens(t *testing.T) {
 	configured := Spec{MaxInitTokens: new(64000)}
 	if got := configured.EffectiveMaxInitTokens(200000); got != 64000 {
