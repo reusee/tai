@@ -53,3 +53,11 @@ func TestDistillPromptReadsExistingTheoryFirst(t *testing.T) {
 		t.Fatalf("distill prompt still names the Go theory file: %s", distillPrompt)
 	}
 }
+
+func TestDistillPromptDistillsFromImplementation(t *testing.T) {
+	for _, want := range []string{"implementation", "comments", "no theory text"} {
+		if !strings.Contains(distillPrompt, want) {
+			t.Fatalf("distill prompt misses %q: %s", want, distillPrompt)
+		}
+	}
+}
