@@ -53,10 +53,17 @@ messages (Chats). The prompt instructs the model to distill the project's
 theory — ideas, models, decisions, logical interfaces, and constraints —
 from the whole down to its parts, in great detail, so that the theory text
 alone is sufficient to rebuild the entire project, and to write the result
-to _theory.go. File and directory structure are excluded: the theory is the
-design rationale, not a tree listing. The work is split into steps: the
-model first produces the overall skeleton and writes it to the file, then
-refines it step by step. See TheoryOfChatPromptFlags.
+to _theory.md. File and directory structure are excluded: the theory is the
+design rationale, not a tree listing. The markdown form separates the
+distilled document from the program: theory that belongs in the code lives
+in Go constants, while _theory.md is a standalone artifact that a later run
+reads by path with an ingest block. Distillation is incremental: the prompt
+directs the model to read an existing _theory.md first and treat its content
+as the basis — keeping what stays true, correcting what the code
+contradicts, adding what is missing — so a repeated run refines one growing
+theory instead of discarding the accumulated understanding. A missing file
+starts from the overall skeleton and is refined step by step. See
+TheoryOfChatPromptFlags.
 `
 
 const TheoryOfFixFlag = `
@@ -81,7 +88,7 @@ const alignPrompt = "Check whether the system theory (theory constants and speci
 
 // distillPrompt is the fixed task directive the distill flag appends to the
 // chat messages. See TheoryOfDistillFlag.
-const distillPrompt = "Distill the project's theory, from the whole down to its parts, in great detail, so that a model can rebuild the entire project from the theory text alone. Capture ideas, models, decisions, logical interfaces, and constraints; do not describe files or directory structures. Write the result to _theory.go. Work in steps: first produce the overall skeleton and write it to the file, then refine it step by step."
+const distillPrompt = "Distill the project's theory, from the whole down to its parts, in great detail, so that a model can rebuild the entire project from the theory text alone. Capture ideas, models, decisions, logical interfaces, and constraints; do not describe files or directory structures. When _theory.md already exists, read it first with an ingest block and take its content as the basis: keep what stays true, correct what the code contradicts, and add what is missing. When the file is absent, start from the overall skeleton. Write the theory to _theory.md and refine it step by step."
 
 // fixPrompt is the fixed task directive the fix flag appends to the chat
 // messages. See TheoryOfFixFlag.

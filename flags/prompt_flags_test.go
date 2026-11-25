@@ -1,6 +1,7 @@
 package flags
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/reusee/dscope"
@@ -39,5 +40,16 @@ func TestParsePromptFlags(t *testing.T) {
 				t.Fatalf("expected [hello %s], got %v", tt.prompt, chats)
 			}
 		})
+	}
+}
+
+func TestDistillPromptReadsExistingTheoryFirst(t *testing.T) {
+	for _, want := range []string{"_theory.md", "ingest block", "basis", "Write"} {
+		if !strings.Contains(distillPrompt, want) {
+			t.Fatalf("distill prompt misses %q: %s", want, distillPrompt)
+		}
+	}
+	if strings.Contains(distillPrompt, "_theory.go") {
+		t.Fatalf("distill prompt still names the Go theory file: %s", distillPrompt)
 	}
 }
