@@ -190,8 +190,12 @@ _gen: {
 	context_tokens?: int
 	// max_generate_tokens is the maximum number of tokens to generate.
 	max_generate_tokens?: int
-	// max_thinking_tokens is the maximum number of tokens for reasoning/thinking.
+// max_thinking_tokens is the maximum number of tokens for reasoning/thinking.
 	max_thinking_tokens?: int
+	// max_init_tokens overrides the global max_init_tokens budget for this
+	// generator: when set on the resolved spec, it replaces the session-wide
+	// value.
+	max_init_tokens?: int
 	// temperature controls the randomness of the output.
 	temperature?: float
 	// disable_search, if true, disables search capabilities for the model.

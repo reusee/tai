@@ -78,10 +78,13 @@ func (Module) UserPrompt(
 		generator, err := getDefaultGenerator()
 		ce(err)
 
+		// The generator's own MaxInitTokens replaces the session-wide
+		// flag value when set; the context window still caps the result.
+		// See generators.TheoryOfSpec.
 		args := generator.Spec()
 		maxInputTokens := min(
 			args.ContextTokens,
-			int(maxInitTokens),
+			args.EffectiveMaxInitTokens(int(maxInitTokens)),
 		)
 		maxGenerateTokens := 8192
 		if args.MaxGenerateTokens != nil {

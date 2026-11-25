@@ -120,6 +120,7 @@ Gemini, OpenAI, DeepSeek, Volcano Engine (Huoshan), Baidu, Tencent, Alibaba Clou
 | `-file` | Add a file to the context |
 | `-doc` | Add a package whose documentation (go doc -all -cmd) is included in the context |
 | `-all-src` | Include full source of focus packages, including tests, in the context, and raise the visibility ceiling of context packages to full content |
+| `-max-init-tokens` | Cap the initial input token budget; a generator's own `max_init_tokens` takes precedence over it |
 | `-shell` | Enable shell block execution |
 | `-stdin` | Add standard input content to the chat messages |
 | `clean` | Add the code cleanup prompt to the chat messages |

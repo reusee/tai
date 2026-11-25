@@ -227,6 +227,9 @@ func resolveSpec(name string, roots []Spec) (Spec, error) {
 			if spec.ContextTokens != 0 {
 				merged.ContextTokens = spec.ContextTokens
 			}
+			if spec.MaxInitTokens != nil {
+				merged.MaxInitTokens = spec.MaxInitTokens
+			}
 			if spec.MaxGenerateTokens != nil {
 				merged.MaxGenerateTokens = spec.MaxGenerateTokens
 			}

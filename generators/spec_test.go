@@ -152,3 +152,40 @@ func TestSpecRandomRedirectJSON(t *testing.T) {
 		t.Errorf("RandomRedirect not restored correctly: %+v", restored)
 	}
 }
+func TestSpecMaxInitTokensJSON(t *testing.T) {
+	spec := Spec{
+		Name:          "test",
+		Type:          "gemini",
+		MaxInitTokens: new(64000),
+	}
+	data, err := json.Marshal(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := raw["max_init_tokens"]; !ok || v != float64(64000) {
+		t.Errorf("max_init_tokens not found or wrong: %v", raw)
+	}
+
+	var restored Spec
+	if err := json.Unmarshal(data, &restored); err != nil {
+		t.Fatal(err)
+	}
+	if restored.MaxInitTokens == nil || *restored.MaxInitTokens != 64000 {
+		t.Errorf("MaxInitTokens not restored correctly: %+v", restored)
+	}
+}
+
+func TestSpecEffectiveMaxInitTokens(t *testing.T) {
+	configured := Spec{MaxInitTokens: new(64000)}
+	if got := configured.EffectiveMaxInitTokens(200000); got != 64000 {
+		t.Errorf("configured generator must win, got %d", got)
+	}
+	unconfigured := Spec{}
+	if got := unconfigured.EffectiveMaxInitTokens(200000); got != 200000 {
+		t.Errorf("unconfigured generator must fall back to the global value, got %d", got)
+	}
+}

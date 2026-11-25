@@ -77,11 +77,15 @@ Accurate token budgeting preserves the prefix cache by ensuring deterministic
 file inclusion across requests. Function declarations from all sources — state
 layers, code/diff providers, and configuration files — are counted together
 and sorted by name before measuring their token cost. The input token budget
-is the full context window (or configured initial input limit) without reserving
-space for max generate tokens: the generate limit is a separate parameter of the
-generator request, so reserving output space in the input budget would shrink
-the outline the model starts from without changing what it may generate. See
-TheoryOfContextPhilosophy.
+is the full context window (or the configured initial input limit) without
+reserving space for max generate tokens: the generate limit is a separate
+parameter of the generator request, so reserving output space in the input
+budget would shrink the outline the model starts from without changing what it
+may generate. The initial input limit is the session-wide -max-init-tokens
+value, and a generator's own max_init_tokens field replaces that value for the
+generator's own prompts; the context window still caps the result, so a spec
+can lower the budget but never raise it past the model's window. See
+TheoryOfContextPhilosophy and generators.TheoryOfSpec.
 `
 
 func countFuncsTokens(funcs []generators.FuncDecl, count func(string) (int, error)) (int, error) {
@@ -507,11 +511,13 @@ func (Module) GenerateWithResultWithStats(
 		// Calculate basic limits. The full context window is available for
 		// input without reserving max generate tokens: most tasks complete
 		// in a single generation pass, so reserving output space wastes
-		// context budget that could carry more file context.
+		// context budget that could carry more file context. The generator's
+		// own MaxInitTokens replaces the session-wide flag value when set,
+		// and the context window still caps the result.
 		// See TheoryOfTokenBudgetStability.
 		maxInputTokens := min(
 			spec.ContextTokens,
-			int(maxInitTokens),
+			spec.EffectiveMaxInitTokens(int(maxInitTokens)),
 		)
 
 		// Count tokens for fixed parts

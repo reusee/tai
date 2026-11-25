@@ -32,6 +32,14 @@ so a variant inherits its parent's protocol.
 Provider holds routing preferences forwarded to OpenRouter in the request
 body; see TheoryOfProviderRouting for the routing model and the field-wise
 parent-to-child merge.
+
+MaxInitTokens overrides the global -max-init-tokens budget for one generator:
+the resolved spec's non-nil value replaces the session-wide flag value at
+every context assembly site, so a model with a small context window carries a
+proportionally smaller initial prompt without lowering the budget of the other
+generators. EffectiveMaxInitTokens owns that precedence rule, so no call site
+repeats it. The field merges from parent to child like the other optional
+integers.
 `
 
 type Spec struct {
@@ -42,6 +50,7 @@ type Spec struct {
 	Model             string         `json:"model"`
 	Family            string         `json:"family"`
 	ContextTokens     int            `json:"context_tokens"`
+	MaxInitTokens     *int           `json:"max_init_tokens,omitempty"`
 	MaxGenerateTokens *int           `json:"max_generate_tokens"`
 	MaxThinkingTokens *int           `json:"max_thinking_tokens,omitempty"`
 	Temperature       *float32       `json:"temperature"`
@@ -61,4 +70,17 @@ type Spec struct {
 	ZeroDataRetention *bool          `json:"zero_data_retention,omitempty"`
 	Provider          *Provider      `json:"provider,omitempty"`
 	Variants          []Spec         `json:"variants,omitempty"`
+}
+
+// EffectiveMaxInitTokens resolves the initial input token budget for this
+// generator: the spec's own MaxInitTokens when configured, otherwise the
+// global budget passed in from the -max-init-tokens flag. The generator
+// value wins over the global one, so a single model can declare a smaller
+// initial context than the session default. The context window of the model
+// still caps the result at the call site. See TheoryOfSpec.
+func (s Spec) EffectiveMaxInitTokens(global int) int {
+	if s.MaxInitTokens != nil {
+		return *s.MaxInitTokens
+	}
+	return global
 }

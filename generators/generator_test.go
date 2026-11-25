@@ -1189,6 +1189,64 @@ func TestResolveSpecMaxThinkingTokens(t *testing.T) {
 	})
 }
 
+func TestResolveSpecMaxInitTokens(t *testing.T) {
+	t.Run("inherited from parent", func(t *testing.T) {
+		localRoots := []Spec{
+			{
+				Name:          "base",
+				Type:          "gemini",
+				MaxInitTokens: new(64000),
+			},
+		}
+		s, err := resolveSpec("base", localRoots)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s.MaxInitTokens == nil || *s.MaxInitTokens != 64000 {
+			t.Errorf("expected MaxInitTokens 64000, got %v", s.MaxInitTokens)
+		}
+	})
+
+	t.Run("overridden by child", func(t *testing.T) {
+		localRoots := []Spec{
+			{
+				Name:          "base",
+				Type:          "gemini",
+				MaxInitTokens: new(64000),
+				Variants: []Spec{
+					{
+						Name:          "child",
+						MaxInitTokens: new(32000),
+					},
+				},
+			},
+		}
+		s, err := resolveSpec("base/child", localRoots)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s.MaxInitTokens == nil || *s.MaxInitTokens != 32000 {
+			t.Errorf("expected MaxInitTokens 32000, got %v", s.MaxInitTokens)
+		}
+	})
+
+	t.Run("not set", func(t *testing.T) {
+		localRoots := []Spec{
+			{
+				Name: "base",
+				Type: "gemini",
+			},
+		}
+		s, err := resolveSpec("base", localRoots)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s.MaxInitTokens != nil {
+			t.Errorf("expected nil MaxInitTokens, got %v", s.MaxInitTokens)
+		}
+	})
+}
+
 func TestResolveSpecZeroDataRetention(t *testing.T) {
 	t.Run("inherited from parent", func(t *testing.T) {
 		localRoots := []Spec{

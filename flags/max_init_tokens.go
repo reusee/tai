@@ -41,6 +41,6 @@ func (m MaxInitTokens) Handle(key string, args []string) (newDef any, remainArgs
 
 func (m MaxInitTokens) Keys() map[string]string {
 	return map[string]string{
-		"-max-init-tokens": "Set the maximum token budget for initial input",
+		"-max-init-tokens": "Set the maximum token budget for initial input (a generator's own max_init_tokens overrides it)",
 	}
 }
