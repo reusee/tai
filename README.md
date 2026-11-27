@@ -161,6 +161,7 @@ Gemini, OpenAI, DeepSeek, Volcano Engine (Huoshan), Baidu, Tencent, Alibaba Clou
 | `logs` | Structured logging |
 | `debugs` | Debug tap (Starlark REPL) |
 | `memories` | Per-model user profile persistence |
+| `selfprompts` | Model-maintained system prompt (self-prompt blocks) |
 | `records` | Interaction recording and self-improvement analysis |
 
 ### Block Format
@@ -175,7 +176,7 @@ func Foo() {
 貞觀
 ```
 
-Block kinds: `change`, `shell`, `go-test`, `go-src`, `continue`, `summary`, `ingest`, `memory`, `done`, `new-plan`, `response`, `plan-op`.
+Block kinds: `change`, `shell`, `go-test`, `go-src`, `continue`, `summary`, `ingest`, `memory`, `self-prompt`, `done`, `new-plan`, `response`, `plan-op`.
 
 ### Session Tree
 
