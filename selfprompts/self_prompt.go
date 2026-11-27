@@ -13,7 +13,6 @@ import (
 	"io/fs"
 	"maps"
 	"os"
-	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -38,14 +37,15 @@ the directive text. A batch is atomic: every operation is validated against a
 copy of the map, and one invalid operation discards the whole batch with
 every problem fed back, so the model corrects the batch in the next round.
 
-The location is the tai dir, not the working directory: the nearest go.mod
-directory, else the git worktree root, else the working directory itself (see
-pathutil.TheoryOfTaiDir). Every subdirectory of a module or repository
-therefore edits the same file, and no session leaves a private .tai behind —
-the rule go.mod and .git already follow. The write names a constant path, not
-model output, so it goes straight to the state file instead of through the
-session's filesystem root; the container layer is told the state directory so
-the sandbox permits the write from below the tai dir.
+The location is the tai dir, not the working directory: pathutil.TaiDir, a
+value the dscope scope resolves once per process and hands to this package
+(see pathutil.TheoryOfTaiDir). Every package that persists state takes that
+value instead of resolving a directory of its own, so every subdirectory of a
+module or repository edits the same file and no session leaves a private .tai
+behind. The write names a constant path, not model output, so it goes
+straight to the state file instead of through the session's filesystem root;
+the container layer is told the state directory so the sandbox permits the
+write from below the tai dir.
 
 Timing defines the mechanism. The entries are read once, when the component
 set is constructed: once per session for the ai command, and once per goal
@@ -112,11 +112,6 @@ Rules:
 const Kind = "self-prompt"
 
 const (
-	// selfPromptDir is the state directory, relative to the tai dir.
-	selfPromptDir = pathutil.StateDirName
-	// selfPromptPath is the file path, relative to the tai dir.
-	selfPromptPath = selfPromptDir + "/self-prompt"
-
 	// maxNameRunes bounds an entry name: it is a map key the model types
 	// in a block header.
 	maxNameRunes = 64
@@ -174,44 +169,22 @@ func (e *RejectedError) Error() string {
 	return sb.String()
 }
 
-// taiDirOf resolves an empty dir to the process's tai dir. A working
-// directory that cannot be determined keeps the relative path of the
-// working directory itself. See TheoryOfSelfPrompt and
-// pathutil.TheoryOfTaiDir.
-func taiDirOf(dir string) string {
-	if dir != "" {
-		return dir
-	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return "."
-	}
-	return pathutil.FindTaiDir(cwd)
-}
-
-// Content renders the self-prompt of the process's tai dir for the system
-// prompt. A missing file renders nothing; an unreadable or malformed file
-// renders nothing too, so a broken file never breaks a session. The entries
-// are read at call time, so the caller decides when an update becomes
-// visible. See TheoryOfSelfPrompt.
-func Content() string {
-	entries, err := Load("")
+// Content renders the self-prompt stored in dir for the system prompt. A
+// missing file renders nothing; an unreadable or malformed file renders
+// nothing too, so a broken file never breaks a session. The entries are read
+// at call time, so the caller decides when an update becomes visible.
+// See TheoryOfSelfPrompt.
+func Content(dir pathutil.TaiDir) string {
+	entries, err := load(dir)
 	if err != nil {
 		return ""
 	}
 	return Render(entries)
 }
 
-// Load reads the map stored in the tai dir. An empty dir means the process's
-// tai dir. A missing file is an empty map.
-func Load(dir string) (Entries, error) {
-	return load(taiDirOf(dir))
-}
-
-// load reads the map of one resolved tai dir. A missing file is an empty
-// map.
-func load(dir string) (Entries, error) {
-	content, err := os.ReadFile(filepath.Join(dir, selfPromptPath))
+// load reads the map of one tai dir. A missing file is an empty map.
+func load(dir pathutil.TaiDir) (Entries, error) {
+	content, err := os.ReadFile(selfPromptFilePath(dir))
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return Entries{}, nil
@@ -247,18 +220,15 @@ func (e Entries) Size() int {
 }
 
 // Apply applies a batch of self-prompt blocks as one atomic update of the map
-// stored in the tai dir. An empty dir means the process's tai dir, so a
-// session started in a subdirectory updates the module's or repository's one
-// file. Every block is parsed and every parsed operation is validated against
-// a copy of the stored map, so one round reports every problem at once and
-// the model corrects the batch in a single pass. Any problem discards the
-// whole batch through a RejectedError: a partially applied batch would leave
-// the map in a state the model did not describe. write tells whether the
-// validated map reaches the file: a dry run validates and reports without
-// touching the tree. On success Apply returns the operations in block order.
-// See TheoryOfSelfPrompt.
-func Apply(dir string, bs []blocks.Block, write bool) ([]Operation, error) {
-	dir = taiDirOf(dir)
+// stored in dir. Every block is parsed and every parsed operation is
+// validated against a copy of the stored map, so one round reports every
+// problem at once and the model corrects the batch in a single pass. Any
+// problem discards the whole batch through a RejectedError: a partially
+// applied batch would leave the map in a state the model did not describe.
+// write tells whether the validated map reaches the file: a dry run validates
+// and reports without touching the tree. On success Apply returns the
+// operations in block order. See TheoryOfSelfPrompt.
+func Apply(dir pathutil.TaiDir, bs []blocks.Block, write bool) ([]Operation, error) {
 	entries, err := load(dir)
 	if err != nil {
 		return nil, err
@@ -360,16 +330,16 @@ func applyOperation(entries Entries, op Operation) error {
 // save writes the map to the tai dir's state file, creating the .tai
 // directory on first use. JSON keeps the file reviewable: one entry per line,
 // keys sorted.
-func save(dir string, entries Entries) error {
+func save(dir pathutil.TaiDir, entries Entries) error {
 	content, err := json.MarshalIndent(entries, "", "  ")
 	if err != nil {
 		return err
 	}
 	content = append(content, '\n')
-	if err := os.MkdirAll(filepath.Join(dir, selfPromptDir), 0o755); err != nil {
+	if err := os.MkdirAll(dir.StateDir(), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dir, selfPromptPath), content, 0o644)
+	return os.WriteFile(selfPromptFilePath(dir), content, 0o644)
 }
 
 // decode reads the JSON map. An empty file is an empty map.

@@ -5,34 +5,19 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/components"
 	"github.com/reusee/tai/generators"
+	"github.com/reusee/tai/pathutil"
 )
 
 // testDir returns a fresh tai dir: the directory whose .tai the test writes.
-func testDir(t *testing.T) string {
+func testDir(t *testing.T) pathutil.TaiDir {
 	t.Helper()
-	return t.TempDir()
-}
-
-// pinTaiDir creates a directory that is its own tai dir — the go.mod entry
-// pins the boundary — and makes it the process working directory. A test that
-// relied on an empty temp directory would read or write the .tai of whatever
-// tree the test runner's TMPDIR happens to live in; the pinned boundary keeps
-// the test on its own state. It returns the directory. See TheoryOfSelfPrompt.
-func pinTaiDir(t *testing.T) string {
-	t.Helper()
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module test\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	t.Chdir(dir)
-	return dir
+	return pathutil.TaiDir(t.TempDir())
 }
 
 // testBlock builds a self-prompt block, leaving a parameter out when its
@@ -87,7 +72,7 @@ func TestApplyAddModifyDelete(t *testing.T) {
 	}, true); err != nil {
 		t.Fatal(err)
 	}
-	entries, err := Load(dir)
+	entries, err := load(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +94,7 @@ func TestApplyBatchIsAtomic(t *testing.T) {
 	if !errors.As(err, &rejected) {
 		t.Fatalf("got %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, selfPromptPath)); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(selfPromptFilePath(dir)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("the rejected batch wrote the file: %v", err)
 	}
 }
@@ -141,7 +126,7 @@ func TestApplyDryRunWritesNothing(t *testing.T) {
 	if len(ops) != 1 {
 		t.Fatalf("got %v", ops)
 	}
-	if _, err := os.Stat(filepath.Join(dir, selfPromptPath)); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(selfPromptFilePath(dir)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("the dry run wrote the file: %v", err)
 	}
 }
@@ -177,37 +162,37 @@ func TestRenderEntries(t *testing.T) {
 	}
 }
 
-// TestContentReadsTaiDir checks that the entries are read from the tai dir: the
-// pinned boundary makes the temp directory its own tai dir, so the file the
-// test writes is the one a session renders.
-// See TheoryOfSelfPrompt.
+// TestContentReadsTaiDir checks that the entries are read from the tai dir
+// the caller passes: the component renders the state of that directory and
+// no other. An empty dir resolves to the scope-provided value, which
+// pathutil.TestModuleTaiDir covers. See TheoryOfSelfPrompt.
 func TestContentReadsTaiDir(t *testing.T) {
-	dir := pinTaiDir(t)
-	if content := Content(); content != "" {
+	dir := testDir(t)
+	if content := Content(dir); content != "" {
 		t.Fatalf("a missing file must render nothing, got %q", content)
 	}
-	if err := os.MkdirAll(filepath.Join(dir, selfPromptDir), 0o755); err != nil {
+	if err := os.MkdirAll(dir.StateDir(), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, selfPromptPath), []byte(`{"tone": "Write short sentences."}`), 0o644); err != nil {
+	if err := os.WriteFile(selfPromptFilePath(dir), []byte(`{"tone": "Write short sentences."}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if content := Content(); !strings.Contains(content, "- tone: Write short sentences.") {
+	if content := Content(dir); !strings.Contains(content, "- tone: Write short sentences.") {
 		t.Fatalf("got %q", content)
 	}
 }
 
 func TestComponentSetPromptSections(t *testing.T) {
-	dir := pinTaiDir(t)
-	if err := os.MkdirAll(filepath.Join(dir, selfPromptDir), 0o755); err != nil {
+	dir := testDir(t)
+	if err := os.MkdirAll(dir.StateDir(), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, selfPromptPath), []byte(`{"tone": "Write short sentences."}`), 0o644); err != nil {
+	if err := os.WriteFile(selfPromptFilePath(dir), []byte(`{"tone": "Write short sentences."}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	sections := components.ComponentSet{
-		NewComponent(false),
-		NewContentComponent(),
+		NewComponent(dir, false),
+		NewContentComponent(dir),
 	}.PromptSections()
 	if !strings.Contains(sections, "op=add") {
 		t.Fatal("the kind prompt is missing")
@@ -218,14 +203,14 @@ func TestComponentSetPromptSections(t *testing.T) {
 	if strings.Index(sections, "op=add") > strings.Index(sections, "- tone:") {
 		t.Fatal("the content must follow the kind prompt")
 	}
-	if sections := (components.ComponentSet{NewComponent(false)}).PromptSections(); strings.Contains(sections, "- tone:") {
+	if sections := (components.ComponentSet{NewComponent(dir, false)}).PromptSections(); strings.Contains(sections, "- tone:") {
 		t.Fatal("the kind component must not carry the entries")
 	}
 }
 
 func TestProcessBatchFeedback(t *testing.T) {
-	pinTaiDir(t)
-	rejectedResult := processBatch(&components.ProcessContext{
+	dir := testDir(t)
+	rejectedResult := processBatch(dir, &components.ProcessContext{
 		Blocks: []blocks.Block{testBlock(OpModify, "missing", "A directive.")},
 	}, true)
 	if rejectedResult.Err != nil {
@@ -242,7 +227,7 @@ func TestProcessBatchFeedback(t *testing.T) {
 		t.Fatalf("got %q", text)
 	}
 
-	appliedResult := processBatch(&components.ProcessContext{
+	appliedResult := processBatch(dir, &components.ProcessContext{
 		Blocks: []blocks.Block{testBlock(OpAdd, "tone", "Write short sentences.")},
 	}, false)
 	if appliedResult.Err != nil {
@@ -261,14 +246,14 @@ func TestProcessBatchFeedback(t *testing.T) {
 }
 
 // TestComponentProcessWritesTaiDir checks the component's own path from a
-// batch to the file: an applied batch writes .tai/self-prompt in the tai dir
-// and reports it as round feedback, a dry run reports the same batch and
-// leaves the tree alone. See TheoryOfSelfPrompt.
+// batch to the file: an applied batch writes the self-prompt file in the
+// given tai dir and reports it as round feedback, a dry run reports the same
+// batch and leaves the tree alone. See TheoryOfSelfPrompt.
 func TestComponentProcessWritesTaiDir(t *testing.T) {
-	dir := pinTaiDir(t)
-	path := filepath.Join(dir, selfPromptPath)
+	dir := testDir(t)
+	path := selfPromptFilePath(dir)
 
-	comp := NewComponent(false)
+	comp := NewComponent(dir, false)
 	result := comp.Process(context.Background(), &components.ProcessContext{
 		Blocks: []blocks.Block{testBlock(OpAdd, "tone", "Write short sentences.")},
 	})
@@ -278,7 +263,7 @@ func TestComponentProcessWritesTaiDir(t *testing.T) {
 	if len(result.Parts) != 1 {
 		t.Fatalf("an applied batch must trigger the next round, got %v", result.Parts)
 	}
-	entries, err := Load(dir)
+	entries, err := load(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -289,7 +274,7 @@ func TestComponentProcessWritesTaiDir(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result = NewComponent(true).Process(context.Background(), &components.ProcessContext{
+	result = NewComponent(dir, true).Process(context.Background(), &components.ProcessContext{
 		Blocks: []blocks.Block{testBlock(OpAdd, "tone", "Write short sentences.")},
 	})
 	if result.Err != nil {
@@ -300,56 +285,5 @@ func TestComponentProcessWritesTaiDir(t *testing.T) {
 	}
 	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("the dry run wrote the file: %v", err)
-	}
-}
-
-// TestApplyFromSubdirectoryWritesTaiDir checks the tai dir rule on the write
-// path: a batch applied from a module subdirectory lands in the module root's
-// .tai and leaves no private .tai behind. This is the rule that keeps one
-// directive file per tree. See TheoryOfSelfPrompt.
-func TestApplyFromSubdirectoryWritesTaiDir(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module test\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	sub := filepath.Join(root, "a", "b")
-	if err := os.MkdirAll(sub, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Chdir(sub)
-	if _, err := Apply("", []blocks.Block{
-		testBlock(OpAdd, "tone", "Write short sentences."),
-	}, true); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(filepath.Join(root, selfPromptPath)); err != nil {
-		t.Fatalf("the batch did not reach the module root's file: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(sub, selfPromptDir)); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("a private .tai appeared in the subdirectory: %v", err)
-	}
-}
-
-// TestContentReadsModuleRootFromSubdirectory checks the read path of the same
-// rule: a session started in a module subdirectory renders the module root's
-// directives. See TheoryOfSelfPrompt.
-func TestContentReadsModuleRootFromSubdirectory(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module test\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(root, selfPromptDir), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, selfPromptPath), []byte(`{"tone": "Write short sentences."}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	sub := filepath.Join(root, "a", "b")
-	if err := os.MkdirAll(sub, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Chdir(sub)
-	if content := Content(); !strings.Contains(content, "- tone: Write short sentences.") {
-		t.Fatalf("got %q", content)
 	}
 }

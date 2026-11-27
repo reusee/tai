@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 
@@ -12,7 +13,9 @@ import (
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/gotools"
 	"github.com/reusee/tai/modes"
+	"github.com/reusee/tai/pathutil"
 	"github.com/reusee/tai/pipeline/codetypes"
+	"github.com/reusee/tai/selfprompts"
 )
 
 func TestSystemPromptGoTestBlock(t *testing.T) {
@@ -196,4 +199,43 @@ func TestCodesComponentsExcludesGoFamilyPromptForNonGoProvider(t *testing.T) {
 	if strings.Contains(prompt, "go gemini family prompt") {
 		t.Fatal("non-go session must not include go-specific family prompt")
 	}
+}
+
+// TestCodesComponentsSelfPromptUsesInjectedTaiDir checks that the tai dir
+// reaches the self-prompt component through the scope: a scope-level
+// override redirects the state file, so a package that persists state takes
+// the one resolved value instead of resolving a directory of its own.
+// See pathutil.TheoryOfTaiDir and selfprompts.TheoryOfSelfPrompt.
+func TestCodesComponentsSelfPromptUsesInjectedTaiDir(t *testing.T) {
+	dir := pathutil.TaiDir(t.TempDir())
+	comps := dscope.New(
+		modes.ForTest(t),
+		new(Module),
+	).Fork(
+		func() codetypes.PartsProvider { return mockPartsProvider{} },
+		func() pathutil.TaiDir { return dir },
+	).Get[CodesComponents]()
+	for _, comp := range comps.Processable() {
+		if comp.Kind != selfprompts.Kind {
+			continue
+		}
+		result := comp.Process(context.Background(), &components.ProcessContext{
+			Blocks: []blocks.Block{{
+				Kind:       selfprompts.Kind,
+				Attributes: map[string]string{"op": "add", "name": "tests"},
+				Body:       "Run the tests before claiming a fix is complete.",
+			}},
+		})
+		if result.Err != nil {
+			t.Fatal(result.Err)
+		}
+		if len(result.Parts) != 1 {
+			t.Fatalf("an applied batch must report itself, got %v", result.Parts)
+		}
+		if _, err := os.Stat(dir.StatePath("self-prompt")); err != nil {
+			t.Fatalf("the batch did not reach the injected tai dir: %v", err)
+		}
+		return
+	}
+	t.Fatal("self-prompt component not found")
 }

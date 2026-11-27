@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/reusee/dscope"
 	"github.com/reusee/tai/apps"
@@ -15,16 +16,28 @@ import (
 )
 
 func main() {
-	// The tai dir is resolved before the container layer starts: the sandbox
-	// makes it writable so a session in a module subdirectory may write the
-	// tree's .tai, and the re-executed child reads the value from the
-	// environment instead of re-deriving it after the mounts hardened.
+	// The tai dir is resolved once, before the container layer starts: the
+	// sandbox makes it writable so a session in a module subdirectory may
+	// write the tree's .tai, and the re-executed child reads the value from
+	// the environment instead of re-deriving it after the mounts hardened.
+	// The same value enters the scope below, so every package that persists
+	// state writes the directory the sandbox allows.
 	// See pathutil.TheoryOfTaiDir and security.TheoryOfWritableDirs.
-	recordTaiDir()
+	taiDir := pathutil.ResolveTaiDir()
+	if filepath.IsAbs(string(taiDir)) {
+		security.SetTaiDir(string(taiDir))
+	}
 
 	security.MaybeRunInContainer()
 
 	scope := dscope.New(dscope.Methods(new(Module))...)
+
+	// Pin the resolved tai dir: one resolution serves the sandbox and the
+	// scope, so a state file and the writable directory never disagree.
+	// See pathutil.TheoryOfTaiDir.
+	scope = scope.Fork(func() pathutil.TaiDir {
+		return taiDir
+	})
 
 	// Override the default configs.Loader (provided by configs.Module)
 	// with the tai-specific loader from taiconfigs. The taiconfigs loader
@@ -86,20 +99,4 @@ func main() {
 	}
 
 	app.Call(scope)
-}
-
-// recordTaiDir resolves the tai dir of the process working directory and
-// records it for the container layer, which makes it writable. The
-// resolution walks up to the go.mod directory, then the git worktree root,
-// and falls back to the working directory, so every subdirectory of a tree
-// addresses the same .tai. A failure to determine the working directory
-// leaves the value unset, and the sandbox then permits only its own
-// working directory. See pathutil.TheoryOfTaiDir and
-// security.TheoryOfWritableDirs.
-func recordTaiDir() {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return
-	}
-	security.SetTaiDir(pathutil.FindTaiDir(cwd))
 }

@@ -10,14 +10,10 @@ import (
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/gotools"
 	"github.com/reusee/tai/logs"
+	"github.com/reusee/tai/pathutil"
 	"github.com/reusee/tai/records"
 )
 
-// Module holds the generation loop, the generation pipeline built on it,
-// and the state layers (handoff, thought summarization); they resolve in
-// a single dscope scope. The chat phases (interactive chat prompt and
-// idle handler) also live in this package, alongside the loop that
-// invokes them.
 type Module struct {
 	dscope.Module
 	Generators generators.Module
@@ -29,4 +25,5 @@ type Module struct {
 	Components components.Module
 	Logs       logs.Module
 	Records    records.Module
+	PathUtil   pathutil.Module
 }

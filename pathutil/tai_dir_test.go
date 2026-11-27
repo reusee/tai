@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/reusee/dscope"
 )
 
 func TestFindGitRoot(t *testing.T) {
@@ -93,8 +95,37 @@ func TestFindTaiDir(t *testing.T) {
 	}
 }
 
-func TestStateDir(t *testing.T) {
-	if got := StateDir("/proj"); got != filepath.Join("/proj", ".tai") {
-		t.Fatalf("got %q", got)
+// TestModuleTaiDir checks the dscope provider path: the scope resolves the
+// tai dir of the working directory, a scope-level override wins, and the
+// resolved value carries the state path helpers. The command pins its own
+// single resolution this way, so the sandbox rule and every state file agree.
+// See TheoryOfTaiDir.
+func TestModuleTaiDir(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module test\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sub := filepath.Join(root, "a", "b")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(sub)
+
+	taiDir := dscope.New(new(Module)).Get[TaiDir]()
+	if got, want := taiDir, TaiDir(root); got != want {
+		t.Fatalf("expected %q, got %q", want, got)
+	}
+	if got, want := taiDir.StateDir(), filepath.Join(root, StateDirName); got != want {
+		t.Fatalf("expected %q, got %q", want, got)
+	}
+	if got, want := taiDir.StatePath("self-prompt"), filepath.Join(root, StateDirName, "self-prompt"); got != want {
+		t.Fatalf("expected %q, got %q", want, got)
+	}
+
+	override := dscope.New(new(Module)).Fork(func() TaiDir {
+		return TaiDir("/pinned")
+	})
+	if got := override.Get[TaiDir](); got != TaiDir("/pinned") {
+		t.Fatalf("the scope override must win, got %q", got)
 	}
 }

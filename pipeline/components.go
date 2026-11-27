@@ -11,6 +11,7 @@ import (
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/gotools"
 	"github.com/reusee/tai/nets"
+	"github.com/reusee/tai/pathutil"
 	"github.com/reusee/tai/pipeline/codetypes"
 	"github.com/reusee/tai/records"
 	"github.com/reusee/tai/selfprompts"
@@ -300,6 +301,7 @@ func (Module) CodesComponents(
 	hiddenPatterns gotools.HiddenPatterns,
 	lspHandler blocks.LSPHandler,
 	queryRecord records.QueryRecord,
+	taiDir pathutil.TaiDir,
 ) CodesComponents {
 	// The Go-specific extra prompts apply only to Go sessions. The codes
 	// pipeline serves both auto-detected default commands: go_module
@@ -446,13 +448,13 @@ func (Module) CodesComponents(
 	comps = append(comps, components.CommonComponents(bool(flagShell), allowedShellCommands)...)
 
 	// Self-prompt component: the model edits the directive map at
-	// .tai/self-prompt, which the content component at the end of this
-	// set renders into the system prompt. A dry run validates the batch
-	// and reports it without writing: -no-apply must leave the tree
-	// untouched, and a task the decision model judged read-only must not
-	// write either. See selfprompts.TheoryOfSelfPrompt.
+	// .tai/self-prompt in the tai dir, which the content component at the
+	// end of this set renders into the system prompt. A dry run validates
+	// the batch and reports it without writing: -no-apply must leave the
+	// tree untouched, and a task the decision model judged read-only must
+	// not write either. See selfprompts.TheoryOfSelfPrompt.
 	dryRun := !bool(apply) || bool(readOnlyTask)
-	comps = append(comps, selfprompts.NewComponent(dryRun))
+	comps = append(comps, selfprompts.NewComponent(taiDir, dryRun))
 
 	// Disabled-blocks notice: shell without the flag and without a
 	// configured allowlist, and change for a task the decision model
@@ -582,7 +584,7 @@ func (Module) CodesComponents(
 	// this loop applies becomes visible in the next loop and never in a
 	// later attempt of the running loop. See
 	// selfprompts.TheoryOfSelfPrompt.
-	comps = append(comps, selfprompts.NewContentComponent())
+	comps = append(comps, selfprompts.NewContentComponent(taiDir))
 
 	return CodesComponents{comps}
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/memories"
+	"github.com/reusee/tai/pathutil"
 	"github.com/reusee/tai/pipeline"
 	"github.com/reusee/tai/selfprompts"
 )
@@ -70,6 +71,7 @@ func (Module) AIComponents(
 	modelFamily generators.ModelFamily,
 	noMemory NoMemory,
 	lspHandler blocks.LSPHandler,
+	taiDir pathutil.TaiDir,
 ) (ret AIComponents) {
 	var comps components.ComponentSet
 
@@ -106,7 +108,7 @@ func (Module) AIComponents(
 	// live conversation, and the user reviews the file in the working tree
 	// like any other source. See TheoryOfAIComponents and
 	// selfprompts.TheoryOfSelfPrompt.
-	comps = append(comps, selfprompts.NewComponent(false))
+	comps = append(comps, selfprompts.NewComponent(taiDir, false))
 
 	// Common components: shell only. Shell processing is enabled by the
 	// shell flag or by a configured command allowlist, which is the user's
@@ -209,7 +211,7 @@ func (Module) AIComponents(
 	// above stay in the LLM prefix cache when an entry changes. The file is
 	// read here, at component construction, once per session.
 	// See TheoryOfAIComponents and selfprompts.TheoryOfSelfPrompt.
-	comps = append(comps, selfprompts.NewContentComponent())
+	comps = append(comps, selfprompts.NewContentComponent(taiDir))
 
 	ret.ComponentSet = comps
 	return

@@ -14,6 +14,23 @@ resolves upward from the working directory, so every invocation inside a
 tree reads and writes the same state and no invocation creates a private
 copy in its own subdirectory — the rule go.mod and .git already follow.
 
+The tai dir is a distinct type, pathutil.TaiDir, not a bare string. The
+command resolves it once through ResolveTaiDir, records the value for the
+sandbox, and pins it in the dscope scope; every package that persists state
+takes the resolved value from the scope. One resolution keeps the sandbox
+rule and every state file on the same directory, and a new state file needs
+no new walk. A package must not resolve a tai dir of its own: two
+resolutions can disagree, and the disagreement surfaces as state that one
+invocation writes and another never reads. A scope-level override wins the
+resolution, which is how the command pins its own value and how a test
+steers the state into a temporary directory.
+
+The type owns the path arithmetic. StateDir and StatePath build the .tai
+directory and a named state file from it, so a caller never joins paths by
+hand and the state-directory name lives in one constant. The tai dir itself
+is never a state file's parent: the .tai directory is, and a state file
+written beside the tai dir would escape the directory the sandbox allows.
+
 The nearest go.mod directory wins: the module is the unit whose users share
 one tai state. Outside a module the git worktree root wins — the directory
 holding the .git entry, which for a linked worktree is the worktree's top
@@ -33,12 +50,6 @@ before the sandbox starts. See security.TheoryOfWritableDirs.
 
 // StateDirName names the directory a tai dir keeps its state files in.
 const StateDirName = ".tai"
-
-// StateDir returns the state directory of taiDir: the .tai directory that
-// holds the self-prompt and the other state files. See TheoryOfTaiDir.
-func StateDir(taiDir string) string {
-	return filepath.Join(taiDir, StateDirName)
-}
 
 // FindGitRoot returns the absolute path of the nearest directory at or above
 // dir holding a .git entry, and whether one exists. A .git file counts: a

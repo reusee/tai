@@ -7,32 +7,33 @@ import (
 
 	"github.com/reusee/tai/components"
 	"github.com/reusee/tai/generators"
+	"github.com/reusee/tai/pathutil"
 )
 
 // NewComponent returns the self-prompt block component: its prompt teaches
-// the kind, and its Process applies one round's batch to .tai/self-prompt.
-// dryRun validates and reports without writing, so a run that must not touch
-// the working tree keeps the batch reviewable and changes nothing. See
-// TheoryOfSelfPrompt.
-func NewComponent(dryRun bool) components.Component {
+// the kind, and its Process applies one round's batch to the self-prompt file
+// of dir. dryRun validates and reports without writing, so a run that must
+// not touch the working tree keeps the batch reviewable and changes nothing.
+// See TheoryOfSelfPrompt.
+func NewComponent(dir pathutil.TaiDir, dryRun bool) components.Component {
 	return components.Component{
 		Kind:          Kind,
 		PromptSection: SelfPromptBlockPrompt,
 		Process: func(ctx context.Context, pctx *components.ProcessContext) components.ProcessResult {
-			return processBatch(pctx, !dryRun)
+			return processBatch(dir, pctx, !dryRun)
 		},
 	}
 }
 
 // NewContentComponent returns the prompt-only component that renders the
-// stored directives into the system prompt. It reads the file at
+// stored directives into the system prompt. It reads the file of dir at
 // construction time — once per goal loop, once per session — which is the
 // mechanism that keeps an update out of the running loop. The caller places
 // it last, so the sections above stay in the LLM prefix cache when an entry
 // changes. See TheoryOfSelfPrompt.
-func NewContentComponent() components.Component {
+func NewContentComponent(dir pathutil.TaiDir) components.Component {
 	return components.Component{
-		PromptSection: Content(),
+		PromptSection: Content(dir),
 	}
 }
 
@@ -40,14 +41,14 @@ func NewContentComponent() components.Component {
 // becomes the next round's user content: a rejected batch lists every
 // problem so the model corrects it, an applied batch reports the entries and
 // reminds the model that this session's system prompt is unchanged. The
-// batch lands in the process's tai dir, so a session started in a
-// subdirectory updates the one file the whole tree shares.
-// See TheoryOfSelfPrompt.
+// batch lands in dir, the tai dir the scope resolved. See
+// TheoryOfSelfPrompt.
 func processBatch(
+	dir pathutil.TaiDir,
 	pctx *components.ProcessContext,
 	write bool,
 ) components.ProcessResult {
-	ops, err := Apply("", pctx.Blocks, write)
+	ops, err := Apply(dir, pctx.Blocks, write)
 	var rejected *RejectedError
 	if errors.As(err, &rejected) {
 		return components.ProcessResult{
@@ -86,7 +87,7 @@ func appliedFeedback(ops []Operation, write bool) string {
 	var sb strings.Builder
 	sb.WriteString("[self-prompt] ")
 	if write {
-		sb.WriteString("Wrote " + selfPromptPath + " in the tai dir: " + strings.Join(names, ", ") + ".\n")
+		sb.WriteString("Wrote .tai/" + selfPromptFile + " in the tai dir: " + strings.Join(names, ", ") + ".\n")
 		sb.WriteString("This session's system prompt is unchanged: the update takes effect in the next session or the next goal loop.\n\n")
 		return sb.String()
 	}
