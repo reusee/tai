@@ -10,6 +10,7 @@ import (
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/memories"
 	"github.com/reusee/tai/pipeline"
+	"github.com/reusee/tai/selfprompts"
 )
 
 const TheoryOfAIComponents = `
@@ -31,6 +32,16 @@ component's Process must stay inert — returning parts would trigger a
 generation round and double the memory update. The block node in the
 session tree then carries a result child and no longer reads as
 unprocessed. See TheoryOfSessionTree.
+
+The self-prompt pair lets the model maintain its own future system prompt.
+The kind component sits with the other kind prompts and applies one round's
+batch to .tai/self-prompt; the prompt-only content component is appended
+after the memory section, because both carry content that changes between
+sessions and both must sit below the static sections to keep them in the LLM
+prefix cache. The file is read at component construction — once per session —
+so a batch an attempt applies reaches the next session's prompt and never a
+later attempt's prompt of the running session.
+See selfprompts.TheoryOfSelfPrompt.
 `
 
 // baseAISystemPrompt is the base AI assistant prompt text, a prompt-only
@@ -84,6 +95,17 @@ func (Module) AIComponents(
 	// blocks.TheoryOfIngestBlocks.
 	comps = append(comps, pipeline.NewIngestComponent(lspHandler))
 
+	// Self-prompt component: the model edits the directive map at
+	// .tai/self-prompt, the directives it maintains for future sessions.
+	// Placed with the static kind prompts, above the memory section, so a
+	// changed profile never shifts it out of the LLM prefix cache; the
+	// rendered entries arrive through the content component at the end of
+	// the set. The file writes directly: the ai session is the user's own
+	// live conversation, and the user reviews the file in the working tree
+	// like any other source. See TheoryOfAIComponents and
+	// selfprompts.TheoryOfSelfPrompt.
+	comps = append(comps, selfprompts.NewComponent(false))
+
 	// Common components: shell only. Shell processing is enabled by the
 	// shell flag or by a configured command allowlist, which is the user's
 	// own decision to let the model run the listed commands; the component
@@ -107,14 +129,14 @@ func (Module) AIComponents(
 	// Disabled-blocks notice: list the block kinds this session cannot
 	// process so the model does not emit them from habit — an unprocessed
 	// block is silently ignored while implying an action that never
-	// happened. The ai command processes shell, ingest, and memory blocks:
-	// the remaining pipeline kinds (change, go-test, go-src) have no
-	// processor here, and continue is deliberately excluded because
-	// OnIdle is the sole input gateway. Shell is listed when neither the
-	// flag nor a configured allowlist enables it, memory when -no-memory
-	// is set. The notice is static per configuration and placed before the
-	// config-derived extras and the dynamic memory section, keeping the
-	// cacheable prefix stable. See
+	// happened. The ai command processes shell, ingest, memory, and
+	// self-prompt blocks: the remaining pipeline kinds (change, go-test,
+	// go-src) have no processor here, and continue is deliberately
+	// excluded because OnIdle is the sole input gateway. Shell is listed
+	// when neither the flag nor a configured allowlist enables it, memory
+	// when -no-memory is set. The notice is static per configuration and
+	// placed before the config-derived extras and the dynamic memory
+	// section, keeping the cacheable prefix stable. See
 	// components.TheoryOfDisabledBlocks and TheoryOfAIComponents.
 	disabledKinds := []string{
 		"change", "continue", "go-test", "go-src",
@@ -179,6 +201,13 @@ func (Module) AIComponents(
 			},
 		})
 	}
+
+	// Self-prompt content: the directives the model wrote for its future
+	// sessions, appended after the memory section so the static sections
+	// above stay in the LLM prefix cache when an entry changes. The file is
+	// read here, at component construction, once per session.
+	// See TheoryOfAIComponents and selfprompts.TheoryOfSelfPrompt.
+	comps = append(comps, selfprompts.NewContentComponent())
 
 	ret.ComponentSet = comps
 	return

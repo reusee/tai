@@ -13,6 +13,7 @@ import (
 	"github.com/reusee/tai/nets"
 	"github.com/reusee/tai/pipeline/codetypes"
 	"github.com/reusee/tai/records"
+	"github.com/reusee/tai/selfprompts"
 )
 
 const TheoryOfCodesComponents = `
@@ -22,10 +23,10 @@ the ai command's AIComponents).
 
 The pipeline reuses components.CommonComponents for the shell and continue
 component kinds, prepending its codes-specific components (change, go-test,
-go-src, ingest, query-record, new-plan, response, and the plan-op component)
-and appending summary, read-only files (prompt-only), skeleton files
-(prompt-only), hidden packages (prompt-only, conditional), and extra
-system prompt (prompt-only).
+go-src, ingest, query-record, new-plan, response, self-prompt, and the
+plan-op component) and appending summary, read-only files (prompt-only),
+skeleton files (prompt-only), hidden packages (prompt-only, conditional),
+and extra system prompt (prompt-only).
 
 The unified block format prompt (blocks.BlockFormatSystemPrompt) is included
 as the first prompt-only component: every block-using component set must carry
@@ -105,6 +106,21 @@ tree that the model operates through plan-op blocks; the whether-to-plan
 rule and the plan-driven round feedback live in TheoryOfPlan. The continue
 component stays in the common set: continue blocks remain the model's way
 of prompting the next round's user input.
+
+The self-prompt pair follows the same split. The kind component
+(selfprompts.NewComponent) sits with the other kind prompts and applies one
+round's batch to .tai/self-prompt, the directives the model maintains for its
+future sessions; the prompt-only content component
+(selfprompts.NewContentComponent) is appended last, after the extra prompts,
+so a changed entry never shifts the sections above it in the LLM prefix
+cache. The entries are read at component construction, which the goal runner
+performs once per loop, so a batch applied in one loop reaches the next
+loop's system prompt and never the running loop's. A dry run — -no-apply, or
+a task the decision model judged read-only — validates the batch and reports
+it without writing, because the block-driven write must respect the same
+tree constraint the change component does; the kind stays available in every
+session, so it needs no disabled-blocks entry.
+See selfprompts.TheoryOfSelfPrompt.
 
 Read-only files, skeleton files, and hidden packages are prompt-only
 Components: they contribute system prompt sections without defining a
@@ -424,6 +440,15 @@ func (Module) CodesComponents(
 	// See TheoryOfCommonComponents and blocks.TheoryOfShellAllowlist.
 	comps = append(comps, components.CommonComponents(bool(flagShell), allowedShellCommands)...)
 
+	// Self-prompt component: the model edits the directive map at
+	// .tai/self-prompt, which the content component at the end of this
+	// set renders into the system prompt. A dry run validates the batch
+	// and reports it without writing: -no-apply must leave the tree
+	// untouched, and a task the decision model judged read-only must not
+	// write either. See selfprompts.TheoryOfSelfPrompt.
+	dryRun := !bool(apply) || bool(readOnlyTask)
+	comps = append(comps, selfprompts.NewComponent(dryRun))
+
 	// Disabled-blocks notice: shell without the flag and without a
 	// configured allowlist, and change for a task the decision model
 	// explicitly judged read-only, are announced explicitly instead of
@@ -431,8 +456,10 @@ func (Module) CodesComponents(
 	// from habit would have it silently ignored while implying an action
 	// that never happened. Under -no-apply the change prompt above is still
 	// included and change is deliberately not listed as disabled: the
-	// blocks are the deliverable of a dry run. See
-	// components.TheoryOfDisabledBlocks and TheoryOfCodesComponents.
+	// blocks are the deliverable of a dry run. Self-prompt needs no entry:
+	// it stays available in every session and reports a dry run instead of
+	// writing. See components.TheoryOfDisabledBlocks and
+	// TheoryOfCodesComponents.
 	var disabled []string
 	if !allowedShellCommands.ShellEnabled(bool(flagShell)) {
 		disabled = append(disabled, "shell")
@@ -542,6 +569,15 @@ func (Module) CodesComponents(
 			}
 		}
 	}
+
+	// Self-prompt content: the model's own directives, appended last so
+	// every section above stays byte-identical across sessions and stays
+	// in the LLM prefix cache when an entry changes. The file is read
+	// here, at component construction — once per goal loop — so a batch
+	// this loop applies becomes visible in the next loop and never in a
+	// later attempt of the running loop. See
+	// selfprompts.TheoryOfSelfPrompt.
+	comps = append(comps, selfprompts.NewContentComponent())
 
 	return CodesComponents{comps}
 }
