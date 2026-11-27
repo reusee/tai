@@ -8,28 +8,32 @@ import (
 // TheoryOfTaiDir explains the tai dir: the single directory that holds a
 // working tree's tai state.
 const TheoryOfTaiDir = `
-The tai dir is the one directory that holds the tai state of a tree: the
-.tai directory with the self-prompt and the files stored beside it. It
-resolves upward from the working directory, so every invocation inside a
-tree reads and writes the same state and no invocation creates a private
-copy in its own subdirectory — the rule go.mod and .git already follow.
+The tai dir is the one directory that holds the tai state of a tree: its
+.tai directory holds the self-prompt and the other state files. It resolves
+upward from the working directory, so every invocation inside a tree reads
+and writes the same state and no invocation creates a private copy in its
+own subdirectory — the rule go.mod and .git already follow.
 
 The tai dir is a distinct type, pathutil.TaiDir, not a bare string. The
 command resolves it once through ResolveTaiDir, records the value for the
-sandbox, and pins it in the dscope scope; every package that persists state
-takes the resolved value from the scope. One resolution keeps the sandbox
-rule and every state file on the same directory, and a new state file needs
-no new walk. A package must not resolve a tai dir of its own: two
-resolutions can disagree, and the disagreement surfaces as state that one
-invocation writes and another never reads. A scope-level override wins the
-resolution, which is how the command pins its own value and how a test
-steers the state into a temporary directory.
+sandbox, and pins it in the dscope scope; every package that persists
+per-tree state takes the resolved value from the scope. State that one user
+shares among every tree — the memory profile, the interaction records —
+stays in the user config directory, because it belongs to the user and not
+to a tree. One resolution keeps the sandbox rule and every state file on
+the same directory, and a new state file needs no new walk. A package must
+not resolve a tai dir of its own: two resolutions can disagree, and the
+disagreement surfaces as state that one invocation writes and another
+never reads. A scope-level override wins the resolution, which is how the
+command pins its own value and how a test steers the state into a temporary
+directory.
 
 The type owns the path arithmetic. StateDir and StatePath build the .tai
 directory and a named state file from it, so a caller never joins paths by
-hand and the state-directory name lives in one constant. The tai dir itself
-is never a state file's parent: the .tai directory is, and a state file
-written beside the tai dir would escape the directory the sandbox allows.
+hand and the state-directory name lives in one constant. Every state file
+sits in the .tai directory, never directly in the tai dir: the one
+directory keeps the tree's state together, so the state never scatters
+among the tree's own files.
 
 The nearest go.mod directory wins: the module is the unit whose users share
 one tai state. Outside a module the git worktree root wins — the directory
@@ -44,8 +48,8 @@ private .tai and works without version control.
 
 The tai dir is resolved from the working directory, never from the target of
 a write. It may sit above the working directory, where the sandbox is
-read-only by default, so the container layer is told the state directory
-before the sandbox starts. See security.TheoryOfWritableDirs.
+read-only by default, so the container layer is told the tai dir before the
+sandbox starts. See security.TheoryOfWritableDirs.
 `
 
 // StateDirName names the directory a tai dir keeps its state files in.

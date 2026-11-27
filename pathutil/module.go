@@ -8,8 +8,8 @@ import (
 
 // Module is the dscope module of the tai dir. Embedding it makes the
 // process's tai dir resolvable from the scope, so every package that
-// persists state depends on the one type instead of resolving a directory of
-// its own. See TheoryOfTaiDir.
+// persists per-tree state depends on the one type instead of resolving a
+// directory of its own. See TheoryOfTaiDir.
 type Module struct {
 	dscope.Module
 }

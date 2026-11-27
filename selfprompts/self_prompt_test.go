@@ -164,8 +164,8 @@ func TestRenderEntries(t *testing.T) {
 
 // TestContentReadsTaiDir checks that the entries are read from the tai dir
 // the caller passes: the component renders the state of that directory and
-// no other. An empty dir resolves to the scope-provided value, which
-// pathutil.TestModuleTaiDir covers. See TheoryOfSelfPrompt.
+// no other. The resolution of the tai dir itself is
+// pathutil.TestModuleTaiDir's. See TheoryOfSelfPrompt.
 func TestContentReadsTaiDir(t *testing.T) {
 	dir := testDir(t)
 	if content := Content(dir); content != "" {

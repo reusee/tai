@@ -87,7 +87,7 @@ func appliedFeedback(ops []Operation, write bool) string {
 	var sb strings.Builder
 	sb.WriteString("[self-prompt] ")
 	if write {
-		sb.WriteString("Wrote .tai/" + selfPromptFile + " in the tai dir: " + strings.Join(names, ", ") + ".\n")
+		sb.WriteString("Wrote " + pathutil.StateDirName + "/" + selfPromptFile + " in the tai dir: " + strings.Join(names, ", ") + ".\n")
 		sb.WriteString("This session's system prompt is unchanged: the update takes effect in the next session or the next goal loop.\n\n")
 		return sb.String()
 	}

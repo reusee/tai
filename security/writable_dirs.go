@@ -27,8 +27,8 @@ time, surfacing the error before the model is invoked.
 The tai dir is the directory holding the tree's .tai state: the nearest
 go.mod directory, else the git worktree root, else the working directory
 itself. It usually sits at or above the working directory, so without the
-entry the sandbox would reject the self-prompt write from a module
-subdirectory — the one write the tai state is for. The value travels in
+entry the sandbox would reject a state write made from a module
+subdirectory. The value travels in
 taiDirEnv, because the mount layer must know it before the root turns
 read-only and the command resolves it before the re-exec. This package does
 not import pathutil (pathutil imports it), so the command sets the value

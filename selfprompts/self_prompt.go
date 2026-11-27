@@ -39,13 +39,14 @@ every problem fed back, so the model corrects the batch in the next round.
 
 The location is the tai dir, not the working directory: pathutil.TaiDir, a
 value the dscope scope resolves once per process and hands to this package
-(see pathutil.TheoryOfTaiDir). Every package that persists state takes that
-value instead of resolving a directory of its own, so every subdirectory of a
-module or repository edits the same file and no session leaves a private .tai
-behind. The write names a constant path, not model output, so it goes
-straight to the state file instead of through the session's filesystem root;
-the container layer is told the state directory so the sandbox permits the
-write from below the tai dir.
+(see pathutil.TheoryOfTaiDir). Every package that persists per-tree state
+takes that value instead of resolving a directory of its own, so every
+subdirectory of a module or repository edits the same file and no session
+leaves a private .tai behind. The write names a constant path, not model
+output, so it goes straight to the state file instead of through the
+session's filesystem root; the container layer is told the tai dir, not the
+.tai directory, because a fresh tree has no .tai directory before the first
+write and a writable rule over a missing directory admits nothing.
 
 Timing defines the mechanism. The entries are read once, when the component
 set is constructed: once per session for the ai command, and once per goal

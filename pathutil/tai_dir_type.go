@@ -4,8 +4,9 @@ import "path/filepath"
 
 // TaiDir is the tai dir of a process: the directory that holds the tree's
 // tai state. The command resolves it once and pins the value in the dscope
-// scope, and every package that persists state takes the value from the
-// scope instead of resolving a directory of its own. See TheoryOfTaiDir.
+// scope, and every package that persists per-tree state takes the value
+// from the scope instead of resolving a directory of its own. See
+// TheoryOfTaiDir.
 type TaiDir string
 
 // StateDir returns the .tai directory of the tai dir: the directory that
