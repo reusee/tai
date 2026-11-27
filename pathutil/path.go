@@ -38,11 +38,11 @@ func EscapesDir(cleaned string) bool {
 // IsOutsideWritableDirs reports whether the given path resolves to a
 // location outside all writable directories. The writable directories are
 // determined by the security package's container filesystem policy: the
-// current working directory, Go toolchain directories (GOCACHE,
+// current working directory, the tai dir, Go toolchain directories (GOCACHE,
 // GOMODCACHE, GOPATH/pkg), the user config directory, /tmp, and /dev/shm.
 // This ensures the focus file check is consistent with the security
 // package's container isolation — no more and no less restrictive.
-// See security.TheoryOfWritableDirs and TheoryOfPathSafety.
+// See security.TheoryOfWritableDirs, TheoryOfTaiDir, and TheoryOfPathSafety.
 func IsOutsideWritableDirs(path string) (bool, error) {
 	writable, err := security.IsWritablePath(path)
 	if err != nil {

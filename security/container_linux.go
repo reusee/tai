@@ -18,16 +18,24 @@ import (
 
 const TheoryOfContainerIsolation = `
 The process runs inside a user and mount namespace whose root is read-only
-except for one writable set: the current working directory, the Go toolchain
-directories (GOCACHE, GOMODCACHE, GOPATH/pkg), the user config directory,
-/tmp, and /dev/shm. Read access stays unrestricted, so the model can read
-anything it is pointed at; only writes are confined, which is what makes an
-unsupervised run safe to leave alone. TheoryOfWritableDirs owns the set's
-resolution and the caching rules, and TheoryOfLandlock owns the second
+except for one writable set: the current working directory, the tai dir, the
+Go toolchain directories (GOCACHE, GOMODCACHE, GOPATH/pkg), the user config
+directory, /tmp, and /dev/shm. Read access stays unrestricted, so the model
+can read anything it is pointed at; only writes are confined, which is what
+makes an unsupervised run safe to leave alone. TheoryOfWritableDirs owns the
+set's resolution and the caching rules, and TheoryOfLandlock owns the second
 enforcement plane over the same set.
 
-The re-exec is the mechanism. main's first statement calls
-MaybeRunInContainer: the parent starts a child with CLONE_NEWUSER and
+The tai dir is the tree's state directory (see pathutil.TheoryOfTaiDir): the
+nearest go.mod directory, else the git worktree root, else the working
+directory itself. A session started in a module subdirectory writes
+.tai/self-prompt at the module root, so the set must include a directory the
+working directory does not cover. The command resolves it before the re-exec
+and carries it in taiDirEnv; no layer re-resolves it, so the mount setup and
+the ruleset agree with the writer by construction.
+
+The re-exec is the mechanism. main's first statements record the tai dir and
+call MaybeRunInContainer: the parent starts a child with CLONE_NEWUSER and
 CLONE_NEWNS, maps the child's root to the caller's own uid and gid — so no
 privilege is gained over the host — and exits with the child's status.
 containerEnv marks the second entry, where the same function applies the
@@ -45,7 +53,15 @@ turns read-only: a failure at that stage aborts the setup while the process
 still carries its inherited policy, so the best-effort fallback keeps the
 working directory writable, and the read-only root, being the last step that
 can fail, cannot take write access away from those mounts because mount
-flags are per-mount. Making the root read-only is the hardening.
+flags are per-mount.
+
+The writable set is ordered outermost first. A bind mounts over its target:
+binding an ancestor after a descendant covers the descendant's writable
+bind, so the bind leaves the path view and the pre-read-only verification
+finds no mount at the working directory. The setup therefore orders the set
+by path depth, so the tai dir — the ancestor of the working directory in the
+case the rule exists for — mounts before the directory it encloses whatever
+else the set holds.
 
 A writable bind needs the process to re-enter it. The working directory
 handle holds the mount the process traversed at start, the writable bind
@@ -262,11 +278,14 @@ func setupContainerFilesystem(cwd string) error {
 }
 
 // writableMountDirs returns the directories the mount layer makes writable
-// again after the root turned read-only: the working directory, the Go
-// toolchain directories and the config directory resolved before the mounts.
-// Each entry is canonicalized, so the hardening pass compares it against the
-// mount table by the path the kernel names. /tmp and /dev/shm are absent
-// because their fresh tmpfs mounts are writable by construction.
+// again after the root turned read-only: the tai dir, the working directory,
+// the Go toolchain directories and the config directory resolved before the
+// mounts. The set is sorted by path depth so an outer directory always
+// mounts before the directories it encloses: a later bind over an ancestor
+// covers an earlier descendant bind, so the inner writable mount would leave
+// the path view. Each entry is canonicalized, so the hardening pass compares
+// it against the mount table by the path the kernel names. /tmp and /dev/shm
+// are absent because their fresh tmpfs mounts are writable by construction.
 // See TheoryOfContainerIsolation and TheoryOfWritableDirs.
 func writableMountDirs(cwd string) []string {
 	var dirs []string
@@ -283,11 +302,18 @@ func writableMountDirs(cwd string) []string {
 		seen[dir] = true
 		dirs = append(dirs, dir)
 	}
+	add(resolveTaiDir())
 	add(cwd)
 	for _, dir := range filepath.SplitList(os.Getenv(goWritableDirsEnv)) {
 		add(dir)
 	}
 	add(os.Getenv(configDirEnv))
+	depth := func(dir string) int {
+		return strings.Count(dir, string(filepath.Separator))
+	}
+	slices.SortStableFunc(dirs, func(a, b string) int {
+		return depth(a) - depth(b)
+	})
 	return dirs
 }
 

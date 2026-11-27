@@ -35,12 +35,14 @@ unprocessed. See TheoryOfSessionTree.
 
 The self-prompt pair lets the model maintain its own future system prompt.
 The kind component sits with the other kind prompts and applies one round's
-batch to .tai/self-prompt; the prompt-only content component is appended
-after the memory section, because both carry content that changes between
-sessions and both must sit below the static sections to keep them in the LLM
-prefix cache. The file is read at component construction — once per session —
-so a batch an attempt applies reaches the next session's prompt and never a
-later attempt's prompt of the running session.
+batch to .tai/self-prompt in the tai dir (see pathutil.TheoryOfTaiDir), so a
+session started in a subdirectory updates the one file the whole tree
+shares; the prompt-only content component is appended after the memory
+section, because both carry content that changes between sessions and both
+must sit below the static sections to keep them in the LLM prefix cache. The
+file is read at component construction — once per session — so a batch an
+attempt applies reaches the next session's prompt and never a later
+attempt's prompt of the running session.
 See selfprompts.TheoryOfSelfPrompt.
 `
 

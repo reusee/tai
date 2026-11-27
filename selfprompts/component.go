@@ -39,13 +39,15 @@ func NewContentComponent() components.Component {
 // processBatch applies one round's blocks and builds the feedback that
 // becomes the next round's user content: a rejected batch lists every
 // problem so the model corrects it, an applied batch reports the entries and
-// reminds the model that this session's system prompt is unchanged.
+// reminds the model that this session's system prompt is unchanged. The
+// batch lands in the process's tai dir, so a session started in a
+// subdirectory updates the one file the whole tree shares.
 // See TheoryOfSelfPrompt.
 func processBatch(
 	pctx *components.ProcessContext,
 	write bool,
 ) components.ProcessResult {
-	ops, err := Apply(pctx.Root, pctx.Blocks, write)
+	ops, err := Apply("", pctx.Blocks, write)
 	var rejected *RejectedError
 	if errors.As(err, &rejected) {
 		return components.ProcessResult{
@@ -84,7 +86,7 @@ func appliedFeedback(ops []Operation, write bool) string {
 	var sb strings.Builder
 	sb.WriteString("[self-prompt] ")
 	if write {
-		sb.WriteString("Wrote " + selfPromptPath + ": " + strings.Join(names, ", ") + ".\n")
+		sb.WriteString("Wrote " + selfPromptPath + " in the tai dir: " + strings.Join(names, ", ") + ".\n")
 		sb.WriteString("This session's system prompt is unchanged: the update takes effect in the next session or the next goal loop.\n\n")
 		return sb.String()
 	}

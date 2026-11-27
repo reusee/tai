@@ -85,6 +85,31 @@ func TestLandlockWritableDirsMirrorsMountWritableSet(t *testing.T) {
 	}
 }
 
+// TestLandlockWritableDirsIncludesTaiDir checks that the ruleset allow-lists
+// the tai dir: a session started in a subdirectory writes the tree's
+// .tai/self-prompt, and the rule set handles the write rights, so a missing
+// rule denies the write the mount layer permits.
+// See TheoryOfLandlock.
+func TestLandlockWritableDirsIncludesTaiDir(t *testing.T) {
+	t.Setenv(goWritableDirsEnv, "")
+	t.Setenv(configDirEnv, "")
+	taiDir := t.TempDir()
+	cwd := filepath.Join(taiDir, "sub")
+	if err := os.MkdirAll(cwd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(taiDirEnv, taiDir)
+
+	dirs := landlockWritableDirs(cwd)
+
+	if !slices.Contains(dirs, taiDir) {
+		t.Fatalf("tai dir %s missing from %v", taiDir, dirs)
+	}
+	if !slices.Contains(dirs, cwd) {
+		t.Fatalf("working directory %s missing from %v", cwd, dirs)
+	}
+}
+
 func TestLandlockWritableDevicesIncludeTerminalDevices(t *testing.T) {
 	devices := landlockWritableDevices()
 	for _, want := range []string{"/dev/null", "/dev/tty"} {

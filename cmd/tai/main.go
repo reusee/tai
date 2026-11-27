@@ -9,11 +9,19 @@ import (
 	"github.com/reusee/tai/apps"
 	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/flags"
+	"github.com/reusee/tai/pathutil"
 	"github.com/reusee/tai/security"
 	"github.com/reusee/tai/taiconfigs"
 )
 
 func main() {
+	// The tai dir is resolved before the container layer starts: the sandbox
+	// makes it writable so a session in a module subdirectory may write the
+	// tree's .tai, and the re-executed child reads the value from the
+	// environment instead of re-deriving it after the mounts hardened.
+	// See pathutil.TheoryOfTaiDir and security.TheoryOfWritableDirs.
+	recordTaiDir()
+
 	security.MaybeRunInContainer()
 
 	scope := dscope.New(dscope.Methods(new(Module))...)
@@ -78,4 +86,20 @@ func main() {
 	}
 
 	app.Call(scope)
+}
+
+// recordTaiDir resolves the tai dir of the process working directory and
+// records it for the container layer, which makes it writable. The
+// resolution walks up to the go.mod directory, then the git worktree root,
+// and falls back to the working directory, so every subdirectory of a tree
+// addresses the same .tai. A failure to determine the working directory
+// leaves the value unset, and the sandbox then permits only its own
+// working directory. See pathutil.TheoryOfTaiDir and
+// security.TheoryOfWritableDirs.
+func recordTaiDir() {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return
+	}
+	security.SetTaiDir(pathutil.FindTaiDir(cwd))
 }

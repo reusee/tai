@@ -272,6 +272,40 @@ func TestWritableMountDirsResolveSymlinks(t *testing.T) {
 	}
 }
 
+// TestWritableMountDirsPutsTaiDirFirst checks the mount order: the tai dir is
+// usually an ancestor of the working directory, and a bind of an ancestor
+// copies the mounts already stacked beneath it, so the outer mount must be
+// made before the inner one. See TheoryOfContainerIsolation.
+func TestWritableMountDirsPutsTaiDirFirst(t *testing.T) {
+	t.Setenv(goWritableDirsEnv, "")
+	t.Setenv(configDirEnv, "")
+	base := t.TempDir()
+	taiDir := filepath.Join(base, "tree")
+	cwd := filepath.Join(taiDir, "sub")
+	if err := os.MkdirAll(cwd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(taiDirEnv, taiDir)
+
+	dirs := writableMountDirs(cwd)
+
+	taiAt, cwdAt := -1, -1
+	for i, dir := range dirs {
+		switch dir {
+		case canonicalPath(taiDir):
+			taiAt = i
+		case canonicalPath(cwd):
+			cwdAt = i
+		}
+	}
+	if taiAt < 0 || cwdAt < 0 {
+		t.Fatalf("writable set %v misses the tai dir or the working directory", dirs)
+	}
+	if taiAt > cwdAt {
+		t.Fatalf("the tai dir mounts at position %d, after the working directory at %d", taiAt, cwdAt)
+	}
+}
+
 func TestMountWritableBindUsesBindRemount(t *testing.T) {
 	var flags []uintptr
 	prev := mountSyscall

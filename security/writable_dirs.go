@@ -12,24 +12,36 @@ import (
 
 const TheoryOfWritableDirs = `
 The writable directories are the set of paths that the container filesystem
-makes writable: the current working directory (bind-mounted read-write),
-Go toolchain directories (GOCACHE, GOMODCACHE, GOPATH/pkg), the user config
-directory, /tmp, and /dev/shm. The focus file check
-(pathutil.IsOutsideWritableDirs) and the symlink read-only annotation
-(anytexts.isOutsideWritableDirs) both delegate to security.IsWritablePath,
-which checks against this same set. This ensures the file collection check
-is consistent with the security package's container isolation — no more
-and no less restrictive. A focus file in a writable directory (e.g., /tmp,
-where Go's t.TempDir creates test directories) is allowed; a focus file in
-a read-only directory is rejected at collection time, surfacing the error
-before the model is invoked.
+makes writable: the current working directory (bind-mounted read-write), the
+tai dir (see pathutil.TheoryOfTaiDir), Go toolchain directories (GOCACHE,
+GOMODCACHE, GOPATH/pkg), the user config directory, /tmp, and /dev/shm. The
+focus file check (pathutil.IsOutsideWritableDirs) and the symlink read-only
+annotation (anytexts.isOutsideWritableDirs) both delegate to
+security.IsWritablePath, which checks against this same set. This ensures the
+file collection check is consistent with the security package's container
+isolation — no more and no less restrictive. A focus file in a writable
+directory (e.g., /tmp, where Go's t.TempDir creates test directories) is
+allowed; a focus file in a read-only directory is rejected at collection
+time, surfacing the error before the model is invoked.
+
+The tai dir is the directory holding the tree's .tai state: the nearest
+go.mod directory, else the git worktree root, else the working directory
+itself. It usually sits at or above the working directory, so without the
+entry the sandbox would reject the self-prompt write from a module
+subdirectory — the one write the tai state is for. The value travels in
+taiDirEnv, because the mount layer must know it before the root turns
+read-only and the command resolves it before the re-exec. This package does
+not import pathutil (pathutil imports it), so the command sets the value
+instead.
 
 The CWD is not cached because it can change during execution (e.g., tests
-that os.Chdir to a temp directory). The static writable dirs (Go toolchain
-dirs, config dir, /tmp, /dev/shm) are cached via sync.OnceValue because
-they are determined by the environment and do not change during execution.
-IsWritablePath resolves the CWD fresh on every call and checks it before
-the cached static dirs, ensuring correctness even after CWD changes.
+that os.Chdir to a temp directory). The tai dir is resolved fresh for the
+same reason: a test that points the variable at a scratch tree must see its
+own value. The static writable dirs (Go toolchain dirs, config dir, /tmp,
+/dev/shm) are cached via sync.OnceValue because they are determined by the
+environment and do not change during execution. IsWritablePath resolves the
+CWD and the tai dir fresh on every call and checks them before the cached
+static dirs, ensuring correctness even after CWD changes.
 
 Resolution spawns no subprocess inside the container. The toolchain
 directories and the config directory are resolved once, before the mount
@@ -57,6 +69,31 @@ identical without re-running ` + "`go env`" + ` inside the container.
 // compile elsewhere. See TheoryOfContainerIsolation and TheoryOfWritableDirs.
 const goWritableDirsEnv = "CAI_GO_WRITABLE_DIRS"
 
+// taiDirEnv carries the tai dir the command resolved before the container
+// layer started, so the sandbox makes the tree's .tai writable even when the
+// session's working directory is a subdirectory of it. A missing value leaves
+// the tai dir out of the set, which matches a process started without the
+// command. See TheoryOfWritableDirs and pathutil.TheoryOfTaiDir.
+const taiDirEnv = "CAI_TAI_DIR"
+
+// SetTaiDir records the tai dir for this process and its container child. The
+// command calls it before security.MaybeRunInContainer, so the re-executed
+// child inherits the value through the environment and the mount layer and
+// the Landlock ruleset both allow it. See TheoryOfWritableDirs.
+func SetTaiDir(dir string) {
+	if dir == "" {
+		return
+	}
+	os.Setenv(taiDirEnv, dir)
+}
+
+// resolveTaiDir returns the tai dir the environment carries, or the empty
+// string when the value is missing or names no existing directory.
+// See TheoryOfWritableDirs.
+func resolveTaiDir() string {
+	return usableDir(os.Getenv(taiDirEnv))
+}
+
 // configDirEnv carries the user config directory resolved before the mount
 // restrictions. It is declared in this file, which carries no build tag,
 // because resolveConfigDir reads it on every platform; a declaration under a
@@ -67,8 +104,10 @@ const configDirEnv = "CAI_CONFIG_DIR"
 // WritableDirs returns the list of directories that the container
 // filesystem setup makes writable. These directories match exactly
 // what setupContainerFilesystem in container_linux.go binds read-write:
-// the current working directory, Go toolchain directories (GOCACHE,
-// GOMODCACHE, GOPATH/pkg), the user config directory, /tmp, and /dev/shm.
+// the current working directory, the tai dir, Go toolchain directories
+// (GOCACHE, GOMODCACHE, GOPATH/pkg), the user config directory, /tmp, and
+// /dev/shm. The tai dir is resolved fresh rather than cached, because a test
+// that points taiDirEnv at a scratch tree must see its own value.
 // On platforms without container isolation, these directories are still
 // the canonical writable set, ensuring the focus file check is consistent
 // with the security package's restriction. See TheoryOfContainerIsolation
@@ -77,6 +116,9 @@ func WritableDirs() []string {
 	dirs := slices.Clone(cachedStaticWritableDirs())
 	if cwd, err := os.Getwd(); err == nil {
 		dirs = append(dirs, cwd)
+	}
+	if taiDir := resolveTaiDir(); taiDir != "" {
+		dirs = append(dirs, taiDir)
 	}
 	return dirs
 }
@@ -107,12 +149,12 @@ func resolvePathSymlinks(path string) string {
 // IsWritablePath reports whether the given path is within a writable
 // directory. A path is writable if it is inside one of the directories
 // that the container filesystem makes writable: the current working
-// directory, Go toolchain directories (GOCACHE, GOMODCACHE, GOPATH/pkg),
-// the user config directory, /tmp, or /dev/shm. Both the path and each
-// writable directory are canonicalized via filepath.EvalSymlinks before
-// comparison, so symlinked components are handled correctly. For a path
-// that does not exist yet, the nearest existing ancestor is resolved and
-// the missing suffix is reattached. An error is returned only if the
+// directory, the tai dir, Go toolchain directories (GOCACHE, GOMODCACHE,
+// GOPATH/pkg), the user config directory, /tmp, or /dev/shm. Both the path
+// and each writable directory are canonicalized via filepath.EvalSymlinks
+// before comparison, so symlinked components are handled correctly. For a
+// path that does not exist yet, the nearest existing ancestor is resolved
+// and the missing suffix is reattached. An error is returned only if the
 // current working directory cannot be determined or canonicalized.
 // See TheoryOfContainerIsolation in container_linux.go and
 // TheoryOfWritableDirs.
@@ -135,6 +177,16 @@ func IsWritablePath(path string) (bool, error) {
 	// change during execution — e.g., tests that os.Chdir).
 	if path == cwd || strings.HasPrefix(path, cwd+string(filepath.Separator)) {
 		return true, nil
+	}
+
+	// Check the tai dir next, also resolved fresh. It usually encloses the
+	// working directory, so the check admits the self-prompt write from a
+	// module subdirectory. See TheoryOfWritableDirs.
+	if taiDir := resolveTaiDir(); taiDir != "" {
+		resolved := resolvePathSymlinks(taiDir)
+		if path == resolved || strings.HasPrefix(path, resolved+string(filepath.Separator)) {
+			return true, nil
+		}
 	}
 
 	// Check static writable dirs (cached, do not change during execution).

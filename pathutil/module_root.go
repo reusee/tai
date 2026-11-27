@@ -10,11 +10,11 @@ import (
 const TheoryOfModuleRoot = `
 The nearest go.mod at or above a directory marks its Go module boundary.
 taiconfigs (module root as a config-file root), gotools (import-path to
-directory mapping under the working directory's module), and cmd/tai
-(default-command detection) all need that boundary and must agree on it,
-so the upward walk is implemented once here and every consumer derives
-its own semantics — existence, path, or a readable module path — from
-the single result.
+directory mapping under the working directory's module), cmd/tai
+(default-command detection), and the tai dir resolution (FindTaiDir) all
+need that boundary and must agree on it, so the upward walk is implemented
+once here and every consumer derives its own semantics — existence, path,
+or a readable module path — from the single result.
 `
 
 // FindGoModuleRoot returns the absolute path of the nearest directory at

@@ -24,8 +24,8 @@ the filesystem.
 
 The ruleset mirrors the mount policy exactly: it handles only write-side
 filesystem rights (write, remove, make, refer, truncate) and allow-lists
-the same directories setupContainerFilesystem made writable — the
-working directory, the pre-namespace-resolved Go and config directories
+the same directories setupContainerFilesystem made writable — the tai dir,
+the working directory, the pre-namespace-resolved Go and config directories
 (goWritableDirsEnv, configDirEnv), /tmp, and /dev/shm. Read and execute
 rights are never handled: the policy is read-only-everything, and
 handling them would deny reading project files and executing toolchain
@@ -158,8 +158,11 @@ func landlockHandledAccesses(abiVersion int) uint64 {
 // the same set setupContainerFilesystem made writable. The Go and config
 // directories come from the environment values the pre-namespace parent
 // resolved, so the LSM layer mirrors the mount layer by construction and
-// `go env` is not re-run inside the container. Directories under the
-// working directory are skipped: its rule already covers them.
+// `go env` is not re-run inside the container. The tai dir comes from the
+// value the command recorded; resolveTaiDir drops any value that no longer
+// names a directory, so a stale variable cannot widen the rule set.
+// Directories under the working directory are skipped: its rule already
+// covers them; the tai dir is usually above it and keeps its own rule.
 func landlockWritableDirs(cwd string) []string {
 	var dirs []string
 	seen := make(map[string]bool)
@@ -176,6 +179,7 @@ func landlockWritableDirs(cwd string) []string {
 			dirs = append(dirs, dir)
 		}
 	}
+	add(resolveTaiDir())
 	for _, dir := range filepath.SplitList(os.Getenv(goWritableDirsEnv)) {
 		add(dir)
 	}

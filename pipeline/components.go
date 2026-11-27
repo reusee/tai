@@ -109,17 +109,22 @@ of prompting the next round's user input.
 
 The self-prompt pair follows the same split. The kind component
 (selfprompts.NewComponent) sits with the other kind prompts and applies one
-round's batch to .tai/self-prompt, the directives the model maintains for its
-future sessions; the prompt-only content component
+round's batch to .tai/self-prompt in the tai dir — the nearest go.mod
+directory, else the git worktree root, else the working directory (see
+pathutil.TheoryOfTaiDir) — the directives the model maintains for its future
+sessions; the prompt-only content component
 (selfprompts.NewContentComponent) is appended last, after the extra prompts,
 so a changed entry never shifts the sections above it in the LLM prefix
 cache. The entries are read at component construction, which the goal runner
 performs once per loop, so a batch applied in one loop reaches the next
-loop's system prompt and never the running loop's. A dry run — -no-apply, or
-a task the decision model judged read-only — validates the batch and reports
-it without writing, because the block-driven write must respect the same
-tree constraint the change component does; the kind stays available in every
-session, so it needs no disabled-blocks entry.
+loop's system prompt and never the running loop's. The write names a
+constant path, not model output, so it reaches the state file directly
+rather than through the session's filesystem root; the container layer is
+told the tai dir so the sandbox permits the write from a subdirectory. A dry
+run — -no-apply, or a task the decision model judged read-only — validates
+the batch and reports it without writing, so a run that must not touch the
+working tree changes nothing; the kind stays available in every session, so
+it needs no disabled-blocks entry.
 See selfprompts.TheoryOfSelfPrompt.
 
 Read-only files, skeleton files, and hidden packages are prompt-only
